@@ -48,7 +48,7 @@ from .requests import (
     WORKSPACE_DEVICE_LINK_APPROVE_OPERATIONS, WORKSPACE_DEVICE_LINK_CREATE_OPERATIONS,
     WORKSPACE_DEVICE_LINK_DECLINE_OPERATIONS, WORKSPACE_DEVICE_LINK_PREVIEW_OPERATIONS,
     WORKSPACE_DEVICE_LINK_SUBMIT_OPERATIONS, WORKSPACE_DEVICE_LINKS_OPERATIONS,
-    WORKSPACE_OPERATIONS,
+    WORKSPACE_OPERATIONS, WORKSPACE_QUERY_OPERATIONS,
     WORKSPACE_CHANNELS_OPERATIONS, WORKSPACE_LIST_OPERATIONS, WORKSPACE_MEMBERS_OPERATIONS,
     WORKSPACE_INVITATION_CREATE_OPERATIONS,
     WORKSPACE_PREVIEW_OPERATIONS,
@@ -394,6 +394,11 @@ class CoreSession:
         return self._observe(grant, profile, operation, params)
 
     def _workspace_operation(self, grant, profiles, operation, params, key):
+        if operation in WORKSPACE_QUERY_OPERATIONS:
+            return self._workspace_query_operation(grant, profiles, operation, params)
+        return self._workspace_mutation_operation(grant, profiles, operation, params, key)
+
+    def _workspace_query_operation(self, grant, profiles, operation, params):
         if operation in WORKSPACE_LIST_OPERATIONS:
             target = profiles.get(params["profile"])
             if target is None:
@@ -407,6 +412,64 @@ class CoreSession:
                 params["profile"], params["workspace"],
                 [(self._handle(grant, "join_request", target, item.request), item)
                  for item in requests])
+        if operation in WORKSPACE_MEMBERS_OPERATIONS:
+            target, inside = self._workspace_scope(grant, profiles, params)
+            members = self._workspace_admin.members(target, inside)
+            return workspace_members_view(
+                params["profile"], params["workspace"],
+                [(self._handle(grant, "member", target, item.member), item)
+                 for item in members])
+        if operation in WORKSPACE_CHANNELS_OPERATIONS:
+            target, inside = self._workspace_scope(grant, profiles, params)
+            channels = self._workspace_admin.channels(target, inside)
+            return workspace_channels_view(
+                params["profile"], params["workspace"],
+                [(self._handle(grant, "channel", target, item.channel), item)
+                 for item in channels])
+        if operation in WORKSPACE_CHANNEL_MEMBERS_OPERATIONS:
+            target, inside, channel = self._workspace_channel_scope(grant, profiles, params)
+            members = self._workspace_admin.members(target, inside)
+            handles = {item.member: self._handle(grant, "member", target, item.member)
+                       for item in members}
+            current = [handles[item] for item in
+                       self._workspace_admin.channel_members(target, inside, channel)
+                       if item in handles]
+            return workspace_channel_members_view(
+                params["profile"], params["workspace"], params["channel"], current)
+        if operation in WORKSPACE_DEVICES_OPERATIONS:
+            target, inside = self._workspace_scope(grant, profiles, params)
+            members = {item.member: self._handle(grant, "member", target, item.member)
+                       for item in self._workspace_admin.members(target, inside)}
+            devices = self._workspace_admin.devices(target, inside)
+            mapped = [(self._handle(grant, "device", target, item.device),
+                       DeviceSummary(item.device, members.get(item.member, ""), item.current))
+                      for item in devices]
+            return workspace_devices_view(params["profile"], params["workspace"],
+                                          [(handle, value) for handle, value in mapped])
+        if operation in WORKSPACE_DEVICE_LINKS_OPERATIONS:
+            target, inside = self._workspace_scope(grant, profiles, params)
+            requests = self._workspace_admin.device_link_requests(target, inside)
+            return device_links_view(
+                params["profile"], params["workspace"],
+                [self._handle(grant, "device_link", target, item) for item in requests])
+        if operation in WORKSPACE_DEVICE_LINK_PREVIEW_OPERATIONS:
+            target = profiles.get(params["profile"])
+            if target is None:
+                raise ApiFailure("forbidden")
+            preview = self._workspace_admin.device_link_preview(
+                target, params["document"])
+            for handle, item in self._workspace_entries(grant, target):
+                if item.workspace == preview.workspace:
+                    return device_link_preview_view(params["profile"], handle, preview)
+            raise ApiFailure("forbidden")
+        if operation in WORKSPACE_PREVIEW_OPERATIONS:
+            target = profiles.get(params["profile"])
+            if target is None:
+                raise ApiFailure("forbidden")
+            return workspace_preview_view(params["profile"],
+                                          self._workspace.preview(target, params["document"]))
+
+    def _workspace_mutation_operation(self, grant, profiles, operation, params, key):
         if operation in WORKSPACE_APPROVE_OPERATIONS:
             target, inside = self._workspace_scope(grant, profiles, params)
             request = self._join_request_target(grant, target, inside, params["request"])
@@ -421,13 +484,6 @@ class CoreSession:
             declined = self._workspace_admin.decline(
                 target, inside, request, operation_id)
             return workspace_decline_view(params["profile"], params["workspace"], declined)
-        if operation in WORKSPACE_MEMBERS_OPERATIONS:
-            target, inside = self._workspace_scope(grant, profiles, params)
-            members = self._workspace_admin.members(target, inside)
-            return workspace_members_view(
-                params["profile"], params["workspace"],
-                [(self._handle(grant, "member", target, item.member), item)
-                 for item in members])
         if operation in WORKSPACE_ROLE_OPERATIONS:
             target, inside = self._workspace_scope(grant, profiles, params)
             member = self._member_target(grant, target, inside, params["member"])
@@ -448,13 +504,6 @@ class CoreSession:
                 params.get("i2p_access_point"), params.get("i2p_label"))
             return workspace_invitation_create_view(
                 params["profile"], params["workspace"], invitation)
-        if operation in WORKSPACE_CHANNELS_OPERATIONS:
-            target, inside = self._workspace_scope(grant, profiles, params)
-            channels = self._workspace_admin.channels(target, inside)
-            return workspace_channels_view(
-                params["profile"], params["workspace"],
-                [(self._handle(grant, "channel", target, item.channel), item)
-                 for item in channels])
         if operation in WORKSPACE_CHANNEL_CREATE_OPERATIONS:
             target, inside = self._workspace_scope(grant, profiles, params)
             if key is None:
@@ -471,16 +520,6 @@ class CoreSession:
                 created.name, created.visibility, created.state)
             return workspace_channel_create_view(
                 params["profile"], params["workspace"], summary)
-        if operation in WORKSPACE_CHANNEL_MEMBERS_OPERATIONS:
-            target, inside, channel = self._workspace_channel_scope(grant, profiles, params)
-            members = self._workspace_admin.members(target, inside)
-            handles = {item.member: self._handle(grant, "member", target, item.member)
-                       for item in members}
-            current = [handles[item] for item in
-                       self._workspace_admin.channel_members(target, inside, channel)
-                       if item in handles]
-            return workspace_channel_members_view(
-                params["profile"], params["workspace"], params["channel"], current)
         if operation in WORKSPACE_CHANNEL_MEMBERS_UPDATE_OPERATIONS:
             target, inside, channel = self._workspace_channel_scope(grant, profiles, params)
             if key is None:
@@ -517,16 +556,6 @@ class CoreSession:
             link = self._workspace_admin.device_link_create(
                 target, inside, self._operation_id(grant, target, key))
             return device_link_create_view(params["profile"], params["workspace"], link)
-        if operation in WORKSPACE_DEVICES_OPERATIONS:
-            target, inside = self._workspace_scope(grant, profiles, params)
-            members = {item.member: self._handle(grant, "member", target, item.member)
-                       for item in self._workspace_admin.members(target, inside)}
-            devices = self._workspace_admin.devices(target, inside)
-            mapped = [(self._handle(grant, "device", target, item.device),
-                       DeviceSummary(item.device, members.get(item.member, ""), item.current))
-                      for item in devices]
-            return workspace_devices_view(params["profile"], params["workspace"],
-                                          [(handle, value) for handle, value in mapped])
         if operation in WORKSPACE_DEVICE_REMOVE_OPERATIONS:
             target, inside = self._workspace_scope(grant, profiles, params)
             device_id = next(
@@ -568,12 +597,6 @@ class CoreSession:
                 target, inside, channel, self._operation_id(grant, target, key))
             return workspace_channel_transfer_accept_view(
                 params["profile"], params["workspace"], params["channel"])
-        if operation in WORKSPACE_DEVICE_LINKS_OPERATIONS:
-            target, inside = self._workspace_scope(grant, profiles, params)
-            requests = self._workspace_admin.device_link_requests(target, inside)
-            return device_links_view(
-                params["profile"], params["workspace"],
-                [self._handle(grant, "device_link", target, item) for item in requests])
         if operation in WORKSPACE_DEVICE_LINK_APPROVE_OPERATIONS or                 operation in WORKSPACE_DEVICE_LINK_DECLINE_OPERATIONS:
             target, inside = self._workspace_scope(grant, profiles, params)
             requests = self._workspace_admin.device_link_ids(target, inside)
@@ -606,22 +629,6 @@ class CoreSession:
                 if item.workspace == submitted.workspace:
                     return device_link_submit_view(params["profile"], handle, submitted)
             raise ApiFailure("internal")
-        if operation in WORKSPACE_DEVICE_LINK_PREVIEW_OPERATIONS:
-            target = profiles.get(params["profile"])
-            if target is None:
-                raise ApiFailure("forbidden")
-            preview = self._workspace_admin.device_link_preview(
-                target, params["document"])
-            for handle, item in self._workspace_entries(grant, target):
-                if item.workspace == preview.workspace:
-                    return device_link_preview_view(params["profile"], handle, preview)
-            raise ApiFailure("forbidden")
-        if operation in WORKSPACE_PREVIEW_OPERATIONS:
-            target = profiles.get(params["profile"])
-            if target is None:
-                raise ApiFailure("forbidden")
-            return workspace_preview_view(params["profile"],
-                                          self._workspace.preview(target, params["document"]))
         if operation in WORKSPACE_JOIN_OPERATIONS:
             target = profiles.get(params["profile"])
             if target is None:
