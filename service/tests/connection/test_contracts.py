@@ -66,7 +66,7 @@ def test_each_designed_operation_has_an_executable_request_vector_and_permission
     contract = validator("core-api/request-v1.schema.json")
     handle = "callerScopedHandle1"
     examples = {
-        "runtime.capabilities": {}, "runtime.stop": {},
+        "runtime.capabilities": {}, "runtime.stop": {}, "application.snapshot": {},
         "profile.create": {"display_name": "Alex"}, "profile.select": {},
         "profile.unlock": {"credential_handle": handle}, "profile.lock": {}, "profile.query": {},
         "peer.pairing_create": {},

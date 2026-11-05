@@ -14,6 +14,7 @@ from .service_pairing import ServicePairing
 from .service_recovery import ServiceRecovery
 from .service_diagnostics import ServiceDiagnostics
 from .service_intent import ServiceIntent
+from .application import ServiceApplication
 from .service_relationship import ServiceRelationship
 from .wire import FramedSession
 
@@ -58,7 +59,8 @@ def bind_service_session(service, authenticated_grant):
                       diagnostics=ServiceDiagnostics(service, messages), received=received,
                       intent=intent, relationship=relationship, pairing=pairing,
                       invitations=invitations, lifecycle=lifecycle, workspace=workspace,
-                      workspace_admin=workspace_admin)
+                      workspace_admin=workspace_admin,
+                      application=ServiceApplication(service))
         return CoreSession(current_grant, ServiceObservations(service), handle_key=handle_key,
                            transaction=service._dispatch_lock, ports=ports)
 

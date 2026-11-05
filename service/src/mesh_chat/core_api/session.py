@@ -37,7 +37,7 @@ from .diagnostic_views import diagnostics_view
 from .requests import (
     CURSOR, DIAGNOSTIC_OPERATIONS, INTENT_OPERATIONS, MESSAGE_OPERATIONS, OPERATIONS,
     INVITATION_OPERATIONS, PAIRING_OPERATIONS, RECEIVED_OPERATIONS, RECOVERY_OPERATIONS,
-    COMPONENT_OPERATIONS, RELATIONSHIP_OPERATIONS, REQUEST_OPERATIONS, STOP_OPERATIONS,
+    APPLICATION_OPERATIONS, COMPONENT_OPERATIONS, RELATIONSHIP_OPERATIONS, REQUEST_OPERATIONS, STOP_OPERATIONS,
     WORKSPACE_APPROVE_OPERATIONS, WORKSPACE_DECLINE_OPERATIONS, WORKSPACE_JOIN_OPERATIONS,
     WORKSPACE_CHANNEL_ARCHIVE_OPERATIONS, WORKSPACE_CHANNEL_CREATE_OPERATIONS,
     WORKSPACE_CHANNEL_MEMBERS_OPERATIONS,
@@ -93,6 +93,7 @@ PERMISSION_BY_OPERATION = {
     "peer.query": "observe",
     "peer.revoke": "approve",
     "profile.query": "observe",
+    "application.snapshot": "approve",
     "runtime.capabilities": "observe",
     "runtime.stop": "runtime_owner",
     "workspace.channel_archive": "approve",
@@ -164,6 +165,7 @@ class Ports:
     lifecycle: Lifecycle | None = None
     workspace: WorkspaceRelationships | None = None
     workspace_admin: WorkspaceAdmin | None = None
+    application: object | None = None
 
 
 class CoreSession:
@@ -185,6 +187,7 @@ class CoreSession:
         self._lifecycle = ports.lifecycle
         self._workspace = ports.workspace
         self._workspace_admin = ports.workspace_admin
+        self._application = ports.application
         self._stopped = False
         bound = set(OPERATIONS)
         for operations, port in (
@@ -197,6 +200,7 @@ class CoreSession:
             (REQUEST_OPERATIONS, self._pairing),
             (INVITATION_OPERATIONS, self._invitations),
             (STOP_OPERATIONS, self._lifecycle),
+            (APPLICATION_OPERATIONS, self._application),
             (WORKSPACE_PREVIEW_OPERATIONS, self._workspace),
             (WORKSPACE_JOIN_OPERATIONS, self._workspace),
             (WORKSPACE_LIST_OPERATIONS, self._workspace_admin),
@@ -627,6 +631,10 @@ class CoreSession:
             result = stop_view(self._lifecycle.stop())
             self._stopped = True
             return result
+        if operation in APPLICATION_OPERATIONS:
+            if self._application is None:
+                raise ApiFailure("unavailable")
+            return self._application.snapshot()
         profile = profiles.get(params["profile"])
         if profile is None:
             raise ApiFailure("forbidden")

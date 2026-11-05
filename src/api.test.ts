@@ -15,7 +15,7 @@ vi.mock("@tauri-apps/plugin-deep-link", () => ({
 }));
 vi.mock("@tauri-apps/api/app", () => ({ onBackButtonPress: vi.fn() }));
 
-import { beginCallAudio, lockService, onInvitation, pickInvitationFile, requestMediaPermission, type ServiceEvent } from "./api";
+import { beginCallAudio, lockService, onInvitation, pickInvitationFile, requestMediaPermission, serviceCommand, type ServiceEvent } from "./api";
 import { loadPairingResume, savePairingResume } from "./pairing-resume";
 
 it("forgets encrypted pairing secrets when locking the service", async () => {
@@ -30,6 +30,31 @@ afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   vi.clearAllMocks();
+});
+
+it("routes snapshot reads through the application facade", async () => {
+  const state = { profile: { display_name: "Alex" }, contacts: [], messages: [] };
+  tauri.invoke.mockResolvedValue(state);
+  await expect(serviceCommand("snapshot")).resolves.toEqual(state);
+  expect(tauri.invoke).toHaveBeenCalledWith("core_api_request", {
+    operation: "application.snapshot",
+    params: {},
+    idempotencyKey: null,
+  });
+  expect(tauri.invoke).not.toHaveBeenCalledWith("service_command", expect.anything());
+});
+
+it("falls back to the legacy snapshot only when the facade is unavailable", async () => {
+  const state = { profile: { display_name: "Alex" }, contacts: [], messages: [] };
+  tauri.invoke.mockImplementation(async (command: string) => {
+    if (command === "core_api_request") throw new Error("core_api_unavailable");
+    return state;
+  });
+  await expect(serviceCommand("snapshot")).resolves.toEqual(state);
+  expect(tauri.invoke).toHaveBeenCalledWith("service_command", {
+    command: "snapshot",
+    payload: {},
+  });
 });
 
 it("passes the chosen call media to Android permission and foreground-service commands", async () => {

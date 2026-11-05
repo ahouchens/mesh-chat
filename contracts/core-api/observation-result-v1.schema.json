@@ -76,7 +76,7 @@
           "type": "array",
           "uniqueItems": true,
           "minItems": 3,
-          "maxItems": 45,
+          "maxItems": 46,
           "items": {
             "enum": [
               "runtime.capabilities",

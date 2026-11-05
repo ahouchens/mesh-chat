@@ -23,6 +23,7 @@
     "peer.pairing_request",
     "peer.pairing_create",
     "runtime.stop",
+    "application.snapshot",
     "workspace.invitation_preview",
     "workspace.join",
     "workspace.query",
@@ -65,6 +66,13 @@
       "scope": "runtime",
       "mutation": true,
       "idempotency": "convergent_desired_state"
+    },
+    {
+      "operation": "application.snapshot",
+      "permission": "approve",
+      "scope": "runtime",
+      "mutation": false,
+      "idempotency": "query"
     },
     {
       "operation": "profile.create",

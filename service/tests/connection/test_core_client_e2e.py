@@ -123,6 +123,19 @@ def test_cli_lists_and_creates_a_workspace_invitation(host):
         created.close()
 
 
+def test_facade_application_snapshot_returns_ui_state(host):
+    service = host()
+    owner = HostedClient(service, frozenset({"observe", "read", "approve"}))
+    try:
+        client = CoreClient.open(owner.reader.readline, owner.writer.write)
+        snapshot = client.request("application.snapshot", {})
+        assert snapshot["profile"]["display_name"] == "Alex"
+        assert isinstance(snapshot["contacts"], list)
+        assert isinstance(snapshot["messages"], list)
+    finally:
+        owner.close()
+
+
 def test_unknown_profile_handle_is_rejected_as_forbidden(hosted):
     client = CoreClient.open(hosted.reader.readline, hosted.writer.write)
     with pytest.raises(CoreClientError) as raised:
