@@ -260,11 +260,13 @@ export class CoreClient {
     return this.request<InvitationView>("peer.pairing_create", { ...options, profile });
   }
 
-  async pairingAccept(profile: string, document: string): Promise<PairingView> {
+  async pairingAccept(profile: string, document: string, i2pConsent = false): Promise<PairingView> {
     if (document.length === 0) {
       throw new ProtocolError("pairing requires signed invitation material");
     }
-    return this.request<PairingView>("peer.pairing_accept", { profile, document });
+    return this.request<PairingView>("peer.pairing_accept", {
+      profile, document, i2p_consent: i2pConsent,
+    });
   }
 
   async workspacePreview(profile: string, document: string): Promise<WorkspacePreviewView> {

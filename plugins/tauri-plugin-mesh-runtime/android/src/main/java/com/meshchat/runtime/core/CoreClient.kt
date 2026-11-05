@@ -495,11 +495,12 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         )
     }
 
-    fun pairingAccept(profile: String, document: String): JSONObject {
+    fun pairingAccept(profile: String, document: String, i2pConsent: Boolean = false): JSONObject {
         if (document.isEmpty()) throw CoreException("invalid_request")
         return request(
             "peer.pairing_accept",
-            JSONObject().put("profile", profile).put("document", document),
+            JSONObject().put("profile", profile).put("document", document)
+                .put("i2p_consent", i2pConsent),
         )
     }
 

@@ -52,6 +52,7 @@ import {
   X,
 } from "lucide-react";
 import {
+  coreApiAcceptInvitation,
   coreApiCreateInvitation,
   coreApiPeerForDestination,
   coreApiRequest,
@@ -1623,7 +1624,13 @@ function Onboarding({
       await serviceCommand("create_profile", { display_name: name });
       const ready = await serviceCommand<Snapshot>("snapshot");
       if (mode === "join") {
-        await serviceCommand("accept_invitation", { invitation, ...(preview?.i2p_access_point ? { i2p_consent: i2pConsent } : {}) });
+        try {
+          await coreApiAcceptInvitation(invitation,
+            Boolean(preview?.i2p_access_point && i2pConsent));
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+          await serviceCommand("accept_invitation", { invitation, ...(preview?.i2p_access_point ? { i2p_consent: i2pConsent } : {}) });
+        }
         onReady(ready);
       } else {
         onReady(ready, pendingWorkspaceInvitation || undefined, webRTCJoin);
@@ -1916,7 +1923,14 @@ function NewChatDialog({ initialInvitation, initialTab = "invite", initialConnec
     if (busy || requestQueued) return;
     setBusy(true); setError(""); setCandidateResults([]);
     try {
-      const accepted = await serviceCommand<Contact>("accept_invitation", { invitation: raw, ...(preview?.i2p_access_point ? { i2p_consent: i2pConsent } : {}) });
+      let accepted: Contact;
+      try {
+        await coreApiAcceptInvitation(raw, Boolean(preview?.i2p_access_point && i2pConsent));
+        accepted = {} as Contact;
+      } catch (reason) {
+        if (!String(reason).includes("core_api_unavailable")) throw reason;
+        accepted = await serviceCommand<Contact>("accept_invitation", { invitation: raw, ...(preview?.i2p_access_point ? { i2p_consent: i2pConsent } : {}) });
+      }
       await onChanged();
       if (accepted.connection_results?.length && !accepted.connection_results.some((item) => item.result === "connected")) {
         setCandidateResults(accepted.connection_results);

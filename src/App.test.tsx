@@ -6,6 +6,7 @@ import type { ChatMessage, Contact, Group, GroupInvitation, GroupMessage, Snapsh
 
 const api = vi.hoisted(() => ({
   beginCallAudio: vi.fn(async () => ({ granted: true })),
+  coreApiAcceptInvitation: vi.fn(async () => { throw new Error("core_api_unavailable"); }),
   coreApiCreateInvitation: vi.fn(async () => { throw new Error("core_api_unavailable"); }),
   coreApiPeerForDestination: vi.fn(async (): Promise<{ profile: string; peer: string; destination: string }> => { throw new Error("core_api_unavailable"); }),
   coreApiRequest: vi.fn(async (): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
@@ -273,6 +274,7 @@ afterEach(() => {
   cleanup();
   vi.clearAllMocks();
   api.coreApiSendMessage.mockImplementation(async () => { throw new Error("core_api_unavailable"); });
+  api.coreApiAcceptInvitation.mockImplementation(async () => { throw new Error("core_api_unavailable"); });
   api.coreApiCreateInvitation.mockImplementation(async () => { throw new Error("core_api_unavailable"); });
   api.coreApiPeerForDestination.mockImplementation(async () => { throw new Error("core_api_unavailable"); });
   api.coreApiRequest.mockImplementation(async () => { throw new Error("core_api_unavailable"); });

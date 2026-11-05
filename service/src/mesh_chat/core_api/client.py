@@ -347,10 +347,13 @@ class CoreClient:
             raise ValueError("Workspace joins require signed material")
         return self.request("workspace.join", {"profile": handle, "document": document})
 
-    def pairing_accept(self, handle, document):
+    def pairing_accept(self, handle, document, *, i2p_consent=False):
         if not isinstance(document, str) or not document:
             raise ValueError("Signed pairing material is required")
-        return self.request("peer.pairing_accept", {"profile": handle, "document": document})
+        params = {"profile": handle, "document": document}
+        if i2p_consent:
+            params["i2p_consent"] = True
+        return self.request("peer.pairing_accept", params)
 
     def stop(self):
         return self.request("runtime.stop", {})

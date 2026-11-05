@@ -334,7 +334,8 @@ def parse_request(value, operations):
                 or not isinstance(params["profile"], str)
                 or HANDLE.fullmatch(params["profile"]) is None
                 or not isinstance(params["document"], str)
-                or not 1 <= len(params["document"]) <= 1048576):
+                or not 1 <= len(params["document"]) <= 1048576
+                or ("i2p_consent" in params and type(params["i2p_consent"]) is not bool)):
             raise ApiFailure("invalid_request")
         return operation, params
     if operation in WORKSPACE_JOIN_OPERATIONS:
@@ -373,7 +374,9 @@ def parse_request(value, operations):
         return operation, params
     if operation in PAIRING_OPERATIONS:
         params = value["params"]
-        if (not isinstance(params, dict) or set(params) != {"profile", "document"}
+        if (not isinstance(params, dict)
+                or not {"profile", "document"} <= set(params)
+                or set(params) - {"profile", "document", "i2p_consent"}
                 or not isinstance(params["profile"], str)
                 or HANDLE.fullmatch(params["profile"]) is None
                 or not isinstance(params["document"], str)

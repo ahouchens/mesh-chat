@@ -21,13 +21,15 @@ class ServicePairing:
         if self._service._identity is None:
             raise ApiFailure("locked")
 
-    def accept(self, profile, document):
+    def accept(self, profile, document, *, i2p_consent=False):
         self._require_local(profile)
+        if type(i2p_consent) is not bool:
+            raise ApiFailure("invalid_request")
         if (not isinstance(document, str) or not 1 <= len(document) <= MAX_DOCUMENT):
             raise ApiFailure("invalid_request")
         with storage_errors():
             try:
-                contact = self._service.accept_invitation(document)
+                contact = self._service.accept_invitation(document, i2p_consent=i2p_consent)
             except (ValidationError, InvitationInvalid, InvitationExpired) as error:
                 raise ApiFailure("invalid_request") from error
             contact_id, trust = contact.get("id"), contact.get("trust")

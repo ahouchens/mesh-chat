@@ -202,6 +202,18 @@ export async function coreApiCreateInvitation(
   return coreApiRequest("peer.pairing_create", { ...options, profile: profile.profile });
 }
 
+export async function coreApiAcceptInvitation(
+  document: string,
+  i2pConsent = false,
+): Promise<{ profile: string; peer: string; trust: string }> {
+  const profile = await coreApiProfile();
+  return coreApiRequest("peer.pairing_accept", {
+    profile: profile.profile,
+    document,
+    i2p_consent: i2pConsent,
+  });
+}
+
 export async function lockService(): Promise<void> {
   clearPairingResume();
   return invoke<void>("lock_service");

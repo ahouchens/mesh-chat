@@ -798,7 +798,8 @@ class CoreSession:
         return pairing_request_view(params["profile"], params["peer"], observation)
 
     def _pairing_operation(self, grant, profile, params):
-        observation = self._pairing.accept(profile, params["document"])
+        observation = self._pairing.accept(profile, params["document"],
+                                            i2p_consent=params.get("i2p_consent", False))
         peer = self._handle(grant, "peer", profile, observation.contact)
         return pairing_view(params["profile"], peer, observation)
 
