@@ -38,5 +38,5 @@ class CoreExchangeTransport(private val exchange: (ByteArray) -> ByteArray) : Co
     private fun singleFrame(text: String) = text.length in 2..MAX_FRAME_BYTES && text.endsWith('\n') &&
         text.indexOf('\n') == text.lastIndex && !text.contains('\r')
 
-    companion object { const val MAX_FRAME_BYTES = 256 * 1024 }
+    companion object { const val MAX_FRAME_BYTES = 800 * 1024 }
 }
