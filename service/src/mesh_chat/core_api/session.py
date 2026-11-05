@@ -15,7 +15,7 @@ from threading import RLock
 import uuid
 from typing import Protocol
 
-from .views import (peer_delete_view, peer_trust_view,
+from .views import (draft_view, peer_delete_view, peer_trust_view,
     acceptance_view, acknowledgment_view, connection_view, event_view, intent_view, message_view,
     invitation_view, pairing_request_view, pairing_view, peer_view, received_view,
     relationship_view, stop_view, workspace_approve_view, workspace_decline_view,
@@ -37,7 +37,7 @@ from .diagnostic_views import diagnostics_view
 from .requests import (
     CURSOR, DIAGNOSTIC_OPERATIONS, INTENT_OPERATIONS, MESSAGE_OPERATIONS, OPERATIONS,
     INVITATION_OPERATIONS, PAIRING_OPERATIONS, RECEIVED_OPERATIONS, RECOVERY_OPERATIONS,
-    APPLICATION_OPERATIONS, COMPONENT_OPERATIONS, RELATIONSHIP_OPERATIONS, REQUEST_OPERATIONS, STOP_OPERATIONS,
+    APPLICATION_OPERATIONS, COMPONENT_OPERATIONS, DRAFT_OPERATIONS, RELATIONSHIP_OPERATIONS, REQUEST_OPERATIONS, STOP_OPERATIONS,
     WORKSPACE_APPROVE_OPERATIONS, WORKSPACE_DECLINE_OPERATIONS, WORKSPACE_JOIN_OPERATIONS,
     WORKSPACE_CHANNEL_ARCHIVE_OPERATIONS, WORKSPACE_CHANNEL_CREATE_OPERATIONS,
     WORKSPACE_CHANNEL_MEMBERS_OPERATIONS,
@@ -94,6 +94,8 @@ PERMISSION_BY_OPERATION = {
     "peer.revoke": "approve",
     "peer.unblock": "approve",
     "peer.delete": "approve",
+    "peer.draft_get": "read",
+    "peer.draft_set": "send",
     "profile.query": "observe",
     "application.snapshot": "approve",
     "application.command": "approve",
@@ -169,6 +171,7 @@ class Ports:
     workspace: WorkspaceRelationships | None = None
     workspace_admin: WorkspaceAdmin | None = None
     application: object | None = None
+    drafts: object | None = None
 
 
 class CoreSession:
@@ -191,6 +194,7 @@ class CoreSession:
         self._workspace = ports.workspace
         self._workspace_admin = ports.workspace_admin
         self._application = ports.application
+        self._drafts = ports.drafts
         self._stopped = False
         bound = set(OPERATIONS)
         for operations, port in (
@@ -199,6 +203,7 @@ class CoreSession:
             (RECEIVED_OPERATIONS, self._received),
             (INTENT_OPERATIONS, self._intent),
             (RELATIONSHIP_OPERATIONS, self._relationship),
+            (DRAFT_OPERATIONS, self._drafts),
             (PAIRING_OPERATIONS, self._pairing),
             (REQUEST_OPERATIONS, self._pairing),
             (INVITATION_OPERATIONS, self._invitations),
@@ -652,6 +657,15 @@ class CoreSession:
             return self._received_messages(grant, profile, params)
         if operation in INTENT_OPERATIONS:
             return self._intent_operation(grant, profile, operation, params)
+        if operation in DRAFT_OPERATIONS:
+            contact = self._peers(grant, profile).get(params["peer"])
+            if contact is None:
+                raise ApiFailure("forbidden")
+            if operation == "peer.draft_set":
+                observation = self._drafts.set(profile, contact, params["text"])
+            else:
+                observation = self._drafts.get(profile, contact)
+            return draft_view(params["profile"], params["peer"], observation)
         if operation in RELATIONSHIP_OPERATIONS:
             return self._relationship_operation(grant, profile, operation, params)
         if operation in PAIRING_OPERATIONS:

@@ -21,6 +21,8 @@
     "peer.revoke",
     "peer.unblock",
     "peer.delete",
+    "peer.draft_get",
+    "peer.draft_set",
     "peer.pairing_accept",
     "peer.pairing_request",
     "peer.pairing_create",
@@ -265,6 +267,20 @@
       "scope": "profile",
       "mutation": true,
       "idempotency": "convergent_desired_state"
+    },
+    {
+      "operation": "peer.draft_get",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "peer.draft_set",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "last_write_wins"
     },
     {
       "operation": "connection.start",

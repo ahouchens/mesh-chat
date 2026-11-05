@@ -248,6 +248,14 @@ export class CoreClient {
     return this.request<RelationshipView>("peer.unblock", { profile, peer });
   }
 
+  async draftGet(profile: string, peer: string): Promise<{ profile: string; peer: string; text: string }> {
+    return this.request("peer.draft_get", { profile, peer });
+  }
+
+  async draftSet(profile: string, peer: string, text: string): Promise<{ profile: string; peer: string; text: string }> {
+    return this.request("peer.draft_set", { profile, peer, text });
+  }
+
   async deletePeer(profile: string, peer: string): Promise<{ profile: string; peer: string; deleted: boolean }> {
     return this.request("peer.delete", { profile, peer });
   }

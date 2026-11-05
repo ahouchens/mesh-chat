@@ -142,6 +142,24 @@ def test_facade_peer_lifecycle_unblocks_and_deletes(host):
         owner.close()
 
 
+def test_facade_draft_round_trip_uses_the_peer_handle(host):
+    service = host()
+    owner = HostedClient(service, frozenset({"observe", "read", "send", "approve"}))
+    try:
+        client = CoreClient.open(owner.reader.readline, owner.writer.write)
+        profile = client.capabilities["profiles"][0]
+        peers = client.profile(profile)["peers"]
+        peer = next(
+            handle for handle in peers
+            if client.peer_query(profile, handle)["destination"] == "ab" * 16
+        )
+        saved = client.draft_set(profile, peer, "Half-written reply")
+        assert saved["text"] == "Half-written reply"
+        assert client.draft_get(profile, peer)["text"] == "Half-written reply"
+    finally:
+        owner.close()
+
+
 def test_application_command_is_owner_only_and_allowlisted(host):
     service = host()
     owner = HostedClient(service, frozenset({"observe", "read", "approve"}))

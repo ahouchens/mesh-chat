@@ -112,6 +112,9 @@ def test_each_designed_operation_has_an_executable_request_vector_and_permission
         "peer.revoke": {"peer": handle},
         "peer.unblock": {"peer": handle},
         "peer.delete": {"peer": handle},
+        "peer.draft_get": {"peer": handle},
+        "peer.draft_set": {"peer": handle, "text": "draft"},
+
         "connection.start": {"connection": handle}, "connection.stop": {"connection": handle},
         "connection.retry": {"connection": handle}, "connection.snapshot": {"connection": handle},
         "message.enqueue": {"recipient": handle, "kind": "text", "text": "Hello"},

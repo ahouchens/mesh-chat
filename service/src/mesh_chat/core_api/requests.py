@@ -15,6 +15,7 @@ RECOVERY_OPERATIONS = ("message.list", "events.poll", "events.ack")
 RECEIVED_OPERATIONS = ("message.received",)
 INTENT_OPERATIONS = ("connection.start", "connection.stop")
 RELATIONSHIP_OPERATIONS = ("peer.approve", "peer.revoke", "peer.unblock", "peer.delete")
+DRAFT_OPERATIONS = ("peer.draft_get", "peer.draft_set")
 PAIRING_OPERATIONS = ("peer.pairing_accept",)
 REQUEST_OPERATIONS = ("peer.pairing_request",)
 INVITATION_OPERATIONS = ("peer.pairing_create",)
@@ -383,6 +384,17 @@ def parse_request(value, operations):
                 or not 1 <= len(params["document"]) <= 1048576):
             raise ApiFailure("invalid_request")
         return operation, params
+    if operation in DRAFT_OPERATIONS:
+        params = value["params"]
+        expected = {"profile", "peer"} | ({"text"} if operation == "peer.draft_set" else set())
+        if (not isinstance(params, dict) or set(params) != expected
+                or any(not isinstance(params[key], str) or HANDLE.fullmatch(params[key]) is None
+                       for key in ("profile", "peer"))
+                or (operation == "peer.draft_set"
+                    and (not isinstance(params["text"], str)
+                         or len(params["text"].encode("utf-8")) > 16384))):
+            raise ApiFailure("invalid_request")
+        return operation, params
     if operation in RELATIONSHIP_OPERATIONS:
         params = value["params"]
         if (not isinstance(params, dict) or set(params) != {"profile", "peer"}
@@ -462,6 +474,7 @@ COMPONENT_OPERATIONS = (
     + RECEIVED_OPERATIONS
     + INTENT_OPERATIONS
     + RELATIONSHIP_OPERATIONS
+    + DRAFT_OPERATIONS
     + PAIRING_OPERATIONS
     + REQUEST_OPERATIONS
     + INVITATION_OPERATIONS

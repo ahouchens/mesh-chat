@@ -131,6 +131,12 @@ class CoreClient:
     def unblock(self, handle, peer):
         return self.request("peer.unblock", {"profile": handle, "peer": peer})
 
+    def draft_get(self, handle, peer):
+        return self.request("peer.draft_get", {"profile": handle, "peer": peer})
+
+    def draft_set(self, handle, peer, text):
+        return self.request("peer.draft_set", {"profile": handle, "peer": peer, "text": text})
+
     def delete_peer(self, handle, peer):
         return self.request("peer.delete", {"profile": handle, "peer": peer})
 

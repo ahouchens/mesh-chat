@@ -515,3 +515,10 @@ def peer_trust_view(profile, peer, value):
            for item in (profile, peer)):
         raise ValueError("Invalid peer trust observation")
     return {"profile": profile, "peer": peer, "trust": TrustState(value.trust).value}
+
+
+def draft_view(profile, peer, value):
+    if any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
+           for item in (profile, peer)) or not isinstance(value.text, str):
+        raise ValueError("Invalid draft observation")
+    return {"profile": profile, "peer": peer, "text": value.text}
