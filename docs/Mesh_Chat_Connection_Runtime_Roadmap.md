@@ -1315,7 +1315,7 @@ M5 - supported reusable core
       `application.command` adapter, which dispatches only the shared renderer
       allowlist and keeps the service as the policy owner. State reads use
       `application.snapshot`.
-- [x] Direct-message drafts use typed peer.draft_get/peer.draft_set with caller-scoped handles; the UI still reads drafts from the snapshot.
+- [x] Direct-message drafts use typed peer.draft_get/peer.draft_set with caller-scoped handles; the composer saves through peer.draft_set and the UI still reads drafts from the snapshot.
 - [x] Pairing invitation acceptance uses peer.pairing_accept with optional I2P consent, and the UI falls back only when the facade is unavailable.
 - [x] Pairing invitation creation uses peer.pairing_create with all existing connection modes and returns file, link, text, expiry and optional host session; the UI falls back only when the facade is unavailable.
 - [x] Contact approval, blocking, unblocking and deletion use typed peer operations (peer.approve, peer.revoke, peer.unblock, peer.delete) with caller-scoped handles and pre-acceptance fallback only.
