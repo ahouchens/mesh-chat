@@ -1314,8 +1314,11 @@ M5 - supported reusable core
 - [x] The desktop renderer command surface is routed through the owner-scoped
       `application.command` adapter, which dispatches only the shared renderer
       allowlist and keeps the service as the policy owner. State reads use
-      `application.snapshot`; mobile still uses the legacy bridge because it has
-      no shipping Core pipe host.
+      `application.snapshot`.
+- [x] The Android Tauri plugin binds the same-process `MeshCoreApiService` and
+      sends renderer commands through `application.command`; it falls back to
+      its legacy Python bridge only when the Core exchange is unavailable or a
+      snapshot exceeds the Binder frame budget.
 - [ ] Calls, groups, settings, drafts, reactions and workspace administration
       typed as first-class facade operations instead of the compatibility
       adapter.
