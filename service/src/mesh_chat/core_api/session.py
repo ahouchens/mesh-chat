@@ -48,6 +48,7 @@ from .requests import (
     WORKSPACE_DEVICE_LINK_APPROVE_OPERATIONS, WORKSPACE_DEVICE_LINK_CREATE_OPERATIONS,
     WORKSPACE_DEVICE_LINK_DECLINE_OPERATIONS, WORKSPACE_DEVICE_LINK_PREVIEW_OPERATIONS,
     WORKSPACE_DEVICE_LINK_SUBMIT_OPERATIONS, WORKSPACE_DEVICE_LINKS_OPERATIONS,
+    WORKSPACE_OPERATIONS,
     WORKSPACE_CHANNELS_OPERATIONS, WORKSPACE_LIST_OPERATIONS, WORKSPACE_MEMBERS_OPERATIONS,
     WORKSPACE_INVITATION_CREATE_OPERATIONS,
     WORKSPACE_PREVIEW_OPERATIONS,
@@ -349,6 +350,50 @@ class CoreSession:
             return self._capabilities(profiles)
         if not self._negotiated:
             raise ApiFailure("negotiation_required")
+        if operation in WORKSPACE_OPERATIONS:
+            return self._workspace_operation(grant, profiles, operation, params, key)
+        if operation in STOP_OPERATIONS:
+            result = stop_view(self._lifecycle.stop())
+            self._stopped = True
+            return result
+        if operation in APPLICATION_OPERATIONS:
+            if self._application is None:
+                raise ApiFailure("unavailable")
+            if operation == "application.snapshot":
+                return self._application.snapshot()
+            return self._application.command(params["command"], params["payload"])
+        profile = self._profile_target(profiles, params)
+        if operation == "diagnostics.query":
+            return diagnostics_view(params["profile"], self._diagnostics.query(profile), params["limit"],
+                                    lambda internal: self._handle(grant, "connection", profile, internal))
+        if operation in MESSAGE_OPERATIONS:
+            return self._message(grant, profile, operation, params, key)
+        if operation in RECEIVED_OPERATIONS:
+            return self._received_messages(grant, profile, params)
+        if operation in INTENT_OPERATIONS:
+            return self._intent_operation(grant, profile, operation, params)
+        if operation in DRAFT_OPERATIONS:
+            contact = self._peers(grant, profile).get(params["peer"])
+            if contact is None:
+                raise ApiFailure("forbidden")
+            if operation == "peer.draft_set":
+                observation = self._drafts.set(profile, contact, params["text"])
+            else:
+                observation = self._drafts.get(profile, contact)
+            return draft_view(params["profile"], params["peer"], observation)
+        if operation in RELATIONSHIP_OPERATIONS:
+            return self._relationship_operation(grant, profile, operation, params)
+        if operation in PAIRING_OPERATIONS:
+            return self._pairing_operation(grant, profile, params)
+        if operation in REQUEST_OPERATIONS:
+            return self._pairing_request_operation(grant, profile, params)
+        if operation in INVITATION_OPERATIONS:
+            return self._invitation_operation(grant, profile, params)
+        if operation in RECOVERY_OPERATIONS:
+            return self._recover(grant, profile, operation, params, key)
+        return self._observe(grant, profile, operation, params)
+
+    def _workspace_operation(self, grant, profiles, operation, params, key):
         if operation in WORKSPACE_LIST_OPERATIONS:
             target = profiles.get(params["profile"])
             if target is None:
@@ -587,46 +632,6 @@ class CoreSession:
             joined = self._workspace.join(target, params["document"], operation_id)
             workspace = self._handle(grant, "workspace", target, joined.workspace)
             return workspace_join_view(params["profile"], workspace, joined)
-        if operation in STOP_OPERATIONS:
-            result = stop_view(self._lifecycle.stop())
-            self._stopped = True
-            return result
-        if operation in APPLICATION_OPERATIONS:
-            if self._application is None:
-                raise ApiFailure("unavailable")
-            if operation == "application.snapshot":
-                return self._application.snapshot()
-            return self._application.command(params["command"], params["payload"])
-        profile = self._profile_target(profiles, params)
-        if operation == "diagnostics.query":
-            return diagnostics_view(params["profile"], self._diagnostics.query(profile), params["limit"],
-                                    lambda internal: self._handle(grant, "connection", profile, internal))
-        if operation in MESSAGE_OPERATIONS:
-            return self._message(grant, profile, operation, params, key)
-        if operation in RECEIVED_OPERATIONS:
-            return self._received_messages(grant, profile, params)
-        if operation in INTENT_OPERATIONS:
-            return self._intent_operation(grant, profile, operation, params)
-        if operation in DRAFT_OPERATIONS:
-            contact = self._peers(grant, profile).get(params["peer"])
-            if contact is None:
-                raise ApiFailure("forbidden")
-            if operation == "peer.draft_set":
-                observation = self._drafts.set(profile, contact, params["text"])
-            else:
-                observation = self._drafts.get(profile, contact)
-            return draft_view(params["profile"], params["peer"], observation)
-        if operation in RELATIONSHIP_OPERATIONS:
-            return self._relationship_operation(grant, profile, operation, params)
-        if operation in PAIRING_OPERATIONS:
-            return self._pairing_operation(grant, profile, params)
-        if operation in REQUEST_OPERATIONS:
-            return self._pairing_request_operation(grant, profile, params)
-        if operation in INVITATION_OPERATIONS:
-            return self._invitation_operation(grant, profile, params)
-        if operation in RECOVERY_OPERATIONS:
-            return self._recover(grant, profile, operation, params, key)
-        return self._observe(grant, profile, operation, params)
 
     def _capabilities(self, profiles):
         limits = {"frame_bytes": MAX_FRAME_BYTES, "request_json_depth": MAX_REQUEST_JSON_DEPTH,
