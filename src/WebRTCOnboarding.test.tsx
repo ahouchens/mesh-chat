@@ -16,6 +16,8 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("./api", () => ({
   serviceCommand: mocks.serviceCommand,
+  loadCallSettings: async () => mocks.serviceCommand("call_settings"),
+  saveCallSettings: async (settings: Record<string, unknown>) => mocks.serviceCommand("update_call_settings", settings),
   onServiceEvent: mocks.onServiceEvent,
   desktopServiceHealth: mocks.desktopServiceHealth,
 }));
