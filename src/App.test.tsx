@@ -1900,6 +1900,33 @@ describe("incoming connection requests", () => {
     expect(screen.queryByRole("heading", { name: "Connection request" })).toBeNull();
   });
 
+  it("uses the facade peer handle to accept a contact request", async () => {
+    let current = snapshot([incoming]);
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.coreApiPeerForDestination.mockResolvedValue({
+      profile: "profile-handle", peer: "peer-handle", destination: incoming.destination_hash,
+    });
+    api.coreApiRequest.mockImplementation(async () => {
+      current = snapshot([{ ...incoming, trust: "approved" }]);
+      return { trust: "approved" };
+    });
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      return {};
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Accept and open chat" }));
+    await waitFor(() => expect(api.coreApiRequest).toHaveBeenCalledWith("peer.approve", {
+      profile: "profile-handle", peer: "peer-handle",
+    }));
+    expect(api.serviceCommand).not.toHaveBeenCalledWith("approve_request", expect.anything());
+    await screen.findByRole("heading", { name: "Taylor" });
+  });
+
   it("reconciles a timed-out approval that committed in the service", async () => {
     let current = snapshot([incoming]);
     api.runtimePlatform.mockResolvedValue("desktop");
