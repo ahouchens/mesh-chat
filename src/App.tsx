@@ -53,6 +53,7 @@ import {
 } from "lucide-react";
 import {
   coreApiAcceptInvitation,
+  coreApiCreateGroup,
   coreApiCreateInvitation,
   coreApiDraftGet,
   coreApiDraftSet,
@@ -2019,7 +2020,7 @@ function CreateGroupDialog({
 }: {
   contacts: Contact[];
   onClose: () => void;
-  onCreated: (group: Group) => Promise<void>;
+  onCreated: (group: Group | { name: string }) => Promise<void>;
 }) {
   const [mode, setMode] = useState<"group" | "channel">("group");
   const [title, setTitle] = useState("");
@@ -2041,6 +2042,16 @@ function CreateGroupDialog({
     setBusy(true);
     setError("");
     try {
+      const destinations = memberIds
+        .map((id) => contacts.find((contact) => contact.id === id)?.destination_hash)
+        .filter((value): value is string => Boolean(value));
+      try {
+        const created = await coreApiCreateGroup(title.trim(), postingPolicy, destinations);
+        await onCreated({ name: created.name });
+        return;
+      } catch (reason) {
+        if (!String(reason).includes("core_api_unavailable")) throw reason;
+      }
       const group = await serviceCommand<Group>("create_group", {
         title: title.trim(),
         member_ids: memberIds,
@@ -7196,7 +7207,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       {connectEntryOpen && <ConnectEntryDialog onClose={() => setConnectEntryOpen(false)} onInvite={() => { setNewChatStartTab("invite"); setNewChatTransport("direct_tcp"); setConnectEntryOpen(false); setNewChat(true); }} onJoin={() => { setNewChatStartTab("join"); setConnectEntryOpen(false); setNewChat(true); }} onWebRTC={() => { setConnectEntryOpen(false); setWebRtcOnboardingOpen(true); }} onTransport={(kind) => { setNewChatStartTab("invite"); setNewChatTransport(kind); setConnectEntryOpen(false); setNewChat(true); }} onResume={() => { setConnectEntryOpen(false); setResumePairingOpen(true); }} resumeCode={resumePairingCode} />}
       {webrtcOnboardingOpen && <WebRTCOnboardingDialog initialPairingCode={initialPairingCode || (resumePairingOpen ? resumePairingCode : "")} onClose={() => { setWebRtcOnboardingOpen(false); setResumePairingOpen(false); onPairingHandled?.(); }} onConnected={(path) => { setWebRtcSessionActive(true); setWebRtcSessionCount(getWebRTCSessionCount()); setWebrtcPath(path); }} onFallback={() => { setNewChatStartTab("invite"); setNewChat(true); }} onChanged={async () => { await refresh(true); }} workspaces={(snapshot.workspaces ?? []).map((workspace) => ({ id: workspace.id, name: workspace.name }))} />}
       {newChat && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><NewChatDialog initialInvitation={initialInvitation} initialTab={newChatStartTab} initialConnection={newChatTransport} remoteProfiles={snapshot.remote_profiles ?? []} onClose={() => { setNewChat(false); onInvitationHandled(); }} onChanged={async () => { await refresh(true); }} onWorkspaceInvitation={(value) => { setNewChat(false); setJoinWorkspaceValue(value); setJoinWorkspaceOpen(true); }} /></div>}
-      {newGroup && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><CreateGroupDialog contacts={snapshot.contacts} onClose={() => setNewGroup(false)} onCreated={async (group) => { await refresh(true); selectConversation({ kind: "group", id: group.id }); setNewGroup(false); }} /></div>}
+      {newGroup && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><CreateGroupDialog contacts={snapshot.contacts} onClose={() => setNewGroup(false)} onCreated={async (created) => { const refreshed = await refresh(true); const group = "id" in created ? created : refreshed.groups?.find((item) => item.title === created.name); if (group) selectConversation({ kind: "group", id: group.id }); setNewGroup(false); }} /></div>}
       {contactsOpen && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><ContactsDialog initialContactId={contactsInitialId} contacts={snapshot.contacts.filter((contact) => contact.trust !== "pending_request")} reconnect={reconnectCoordinator} onClose={() => setContactsOpen(false)} onChanged={async () => { await refresh(true); }} onOpenConversation={async (contact) => { const hidden = hiddenConversationKeys.has(`direct:${contact.id}`); setContactsOpen(false); await restoreAndSelect({ kind: "contact", id: contact.id }, hidden); }} onDeleted={async (contactId) => { if (selection?.kind === "contact" && selection.id === contactId) setSelection(null); setDrafts((current) => { const next = { ...current }; delete next[contactId]; return next; }); setLocallySavedMessages((current) => Object.fromEntries(Object.entries(current).filter(([, message]) => message.contact_id !== contactId))); await refresh(true); }} /></div>}
       {settings && <div className={`settings-page-slot ${hasForegroundRequest ? "dialog-suspended" : ""}`} aria-hidden={hasForegroundRequest ? true : undefined}><SettingsPage snapshot={snapshot} theme={theme} onThemeChange={onThemeChange} onClose={() => setSettings(false)} onBackHandlerChange={registerSettingsBackHandler} onSaved={async () => { await refresh(true); }} /></div>}
       {notificationTarget && !notificationTarget.available && <Dialog title="Notification unavailable" onClose={onNotificationHandled}><div className="form-stack"><p>{notificationTarget.message ?? "This notification is no longer available or authorized on this device."}</p><p className="muted">Mesh Chat did not open stale content or change any read state.</p><Button onClick={onNotificationHandled}>Done</Button></div></Dialog>}

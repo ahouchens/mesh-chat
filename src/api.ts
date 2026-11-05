@@ -301,6 +301,25 @@ export async function saveNetworkSettings(
   }
 }
 
+export async function coreApiCreateGroup(
+  title: string,
+  postingPolicy: "members" | "owner_admins",
+  memberDestinations: string[],
+): Promise<{ group: string; name: string; posting_policy: string }> {
+  const profile = await coreApiProfile();
+  const members: string[] = [];
+  for (const destination of memberDestinations) {
+    const target = await coreApiPeerForDestination(destination);
+    members.push(target.peer);
+  }
+  return coreApiRequest("group.create", {
+    profile: profile.profile,
+    title,
+    posting_policy: postingPolicy,
+    members,
+  });
+}
+
 export async function lockService(): Promise<void> {
   clearPairingResume();
   return invoke<void>("lock_service");
