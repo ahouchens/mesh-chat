@@ -76,6 +76,9 @@ class CoreClient:
             raise CoreClientError("protocol", request_id)
         raise CoreClientError(error["code"], request_id, error.get("retry_after_ms"))
 
+    def application_command(self, command, payload):
+        return self.request("application.command", {"command": command, "payload": payload})
+
     def application_snapshot(self):
         return self.request("application.snapshot", {})
 

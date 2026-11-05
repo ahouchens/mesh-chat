@@ -44,8 +44,20 @@ it("routes snapshot reads through the application facade", async () => {
   expect(tauri.invoke).not.toHaveBeenCalledWith("service_command", expect.anything());
 });
 
-it("falls back to the legacy snapshot only when the facade is unavailable", async () => {
-  const state = { profile: { display_name: "Alex" }, contacts: [], messages: [] };
+it("routes other service commands through the application adapter", async () => {
+  const saved = { id: "message-1", text: "hello" };
+  tauri.invoke.mockResolvedValue(saved);
+  await expect(serviceCommand("send_message", { contact_id: "contact-1", text: "hello" }))
+    .resolves.toEqual(saved);
+  expect(tauri.invoke).toHaveBeenCalledWith("core_api_request", {
+    operation: "application.command",
+    params: { command: "send_message", payload: { contact_id: "contact-1", text: "hello" } },
+    idempotencyKey: null,
+  });
+  expect(tauri.invoke).not.toHaveBeenCalledWith("service_command", expect.anything());
+});
+
+it("falls back to the legacy snapshot only when the facade is unavailable", async () => {  const state = { profile: { display_name: "Alex" }, contacts: [], messages: [] };
   tauri.invoke.mockImplementation(async (command: string) => {
     if (command === "core_api_request") throw new Error("core_api_unavailable");
     return state;

@@ -19,7 +19,7 @@ PAIRING_OPERATIONS = ("peer.pairing_accept",)
 REQUEST_OPERATIONS = ("peer.pairing_request",)
 INVITATION_OPERATIONS = ("peer.pairing_create",)
 STOP_OPERATIONS = ("runtime.stop",)
-APPLICATION_OPERATIONS = ("application.snapshot",)
+APPLICATION_OPERATIONS = ("application.snapshot", "application.command")
 WORKSPACE_PREVIEW_OPERATIONS = ("workspace.invitation_preview",)
 WORKSPACE_JOIN_OPERATIONS = ("workspace.join",)
 WORKSPACE_LIST_OPERATIONS = ("workspace.query",)
@@ -86,9 +86,17 @@ def parse_request(value, operations):
     if operation == "diagnostics.query":
         return operation, _diagnostic_params(value["params"])
     if operation in APPLICATION_OPERATIONS:
-        if value["params"] != {}:
+        params = value["params"]
+        if operation == "application.snapshot":
+            if params != {}:
+                raise ApiFailure("invalid_request")
+            return operation, {}
+        if (not isinstance(params, dict) or set(params) != {"command", "payload"}
+                or not isinstance(params["command"], str)
+                or not 1 <= len(params["command"]) <= 80
+                or not isinstance(params["payload"], dict)):
             raise ApiFailure("invalid_request")
-        return operation, {}
+        return operation, params
     if operation in RECOVERY_OPERATIONS:
         return operation, _recovery_params(value["params"])
     if operation in RECEIVED_OPERATIONS:

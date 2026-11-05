@@ -94,6 +94,7 @@ PERMISSION_BY_OPERATION = {
     "peer.revoke": "approve",
     "profile.query": "observe",
     "application.snapshot": "approve",
+    "application.command": "approve",
     "runtime.capabilities": "observe",
     "runtime.stop": "runtime_owner",
     "workspace.channel_archive": "approve",
@@ -634,7 +635,9 @@ class CoreSession:
         if operation in APPLICATION_OPERATIONS:
             if self._application is None:
                 raise ApiFailure("unavailable")
-            return self._application.snapshot()
+            if operation == "application.snapshot":
+                return self._application.snapshot()
+            return self._application.command(params["command"], params["payload"])
         profile = profiles.get(params["profile"])
         if profile is None:
             raise ApiFailure("forbidden")

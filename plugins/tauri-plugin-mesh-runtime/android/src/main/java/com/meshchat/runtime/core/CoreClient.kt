@@ -54,6 +54,9 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         return decodeReply(requestId)
     }
 
+    fun applicationCommand(command: String, payload: JSONObject = JSONObject()): JSONObject =
+        request("application.command", JSONObject().put("command", command).put("payload", payload))
+
     fun applicationSnapshot(): JSONObject = request("application.snapshot", JSONObject())
 
     fun profileQuery(profile: String): JSONObject =

@@ -123,6 +123,27 @@ def test_cli_lists_and_creates_a_workspace_invitation(host):
         created.close()
 
 
+def test_application_command_is_owner_only_and_allowlisted(host):
+    service = host()
+    owner = HostedClient(service, frozenset({"observe", "read", "approve"}))
+    try:
+        client = CoreClient.open(owner.reader.readline, owner.writer.write)
+        snapshot = client.application_command("snapshot", {})
+        assert snapshot["profile"]["display_name"] == "Alex"
+        with pytest.raises(CoreClientError):
+            client.application_command("arbitrary_shell", {})
+    finally:
+        owner.close()
+    consumer = HostedClient(service)
+    try:
+        client = CoreClient.open(consumer.reader.readline, consumer.writer.write)
+        with pytest.raises(CoreClientError) as raised:
+            client.application_command("snapshot", {})
+        assert raised.value.code == "forbidden"
+    finally:
+        consumer.close()
+
+
 def test_facade_application_snapshot_returns_ui_state(host):
     service = host()
     owner = HostedClient(service, frozenset({"observe", "read", "approve"}))

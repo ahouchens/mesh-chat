@@ -76,10 +76,11 @@
           "type": "array",
           "uniqueItems": true,
           "minItems": 3,
-          "maxItems": 46,
+          "maxItems": 47,
           "items": {
             "enum": [
               "application.snapshot",
+              "application.command",
               "runtime.capabilities",
               "profile.query",
               "connection.snapshot",

@@ -125,12 +125,13 @@ export async function serviceCommand<T>(
   command: string,
   payload: Record<string, unknown> = {},
 ): Promise<T> {
-  if (command === "snapshot") {
-    try {
+  try {
+    if (command === "snapshot") {
       return await coreApiRequest<T>("application.snapshot");
-    } catch (reason) {
-      if (!String(reason).includes("core_api_unavailable")) throw reason;
     }
+    return await coreApiRequest<T>("application.command", { command, payload });
+  } catch (reason) {
+    if (!String(reason).includes("core_api_unavailable")) throw reason;
   }
   try {
     return await invoke<T>("service_command", { command, payload });

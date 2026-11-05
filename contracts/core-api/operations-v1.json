@@ -24,6 +24,7 @@
     "peer.pairing_create",
     "runtime.stop",
     "application.snapshot",
+    "application.command",
     "workspace.invitation_preview",
     "workspace.join",
     "workspace.query",
@@ -73,6 +74,13 @@
       "scope": "runtime",
       "mutation": false,
       "idempotency": "query"
+    },
+    {
+      "operation": "application.command",
+      "permission": "approve",
+      "scope": "runtime",
+      "mutation": true,
+      "idempotency": "renderer_command_contract"
     },
     {
       "operation": "profile.create",
