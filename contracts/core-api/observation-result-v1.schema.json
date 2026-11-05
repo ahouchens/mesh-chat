@@ -76,7 +76,7 @@
           "type": "array",
           "uniqueItems": true,
           "minItems": 3,
-          "maxItems": 47,
+          "maxItems": 49,
           "items": {
             "enum": [
               "application.snapshot",
@@ -95,6 +95,8 @@
               "connection.stop",
               "peer.approve",
               "peer.revoke",
+              "peer.unblock",
+              "peer.delete",
               "peer.pairing_accept",
               "peer.pairing_request",
               "peer.pairing_create",

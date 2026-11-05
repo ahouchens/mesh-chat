@@ -244,6 +244,14 @@ export class CoreClient {
     return this.request<RelationshipView>("peer.approve", { profile, peer });
   }
 
+  async unblock(profile: string, peer: string): Promise<RelationshipView> {
+    return this.request<RelationshipView>("peer.unblock", { profile, peer });
+  }
+
+  async deletePeer(profile: string, peer: string): Promise<{ profile: string; peer: string; deleted: boolean }> {
+    return this.request("peer.delete", { profile, peer });
+  }
+
   async revoke(profile: string, peer: string): Promise<RelationshipView> {
     return this.request<RelationshipView>("peer.revoke", { profile, peer });
   }

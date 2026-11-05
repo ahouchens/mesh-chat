@@ -123,6 +123,25 @@ def test_cli_lists_and_creates_a_workspace_invitation(host):
         created.close()
 
 
+def test_facade_peer_lifecycle_unblocks_and_deletes(host):
+    service = host()
+    service.block_contact("internal-peer")
+    owner = HostedClient(service, frozenset({"observe", "read", "approve"}))
+    try:
+        client = CoreClient.open(owner.reader.readline, owner.writer.write)
+        profile = client.capabilities["profiles"][0]
+        query = client.profile(profile)
+        peer = next(
+            handle for handle in query["peers"]
+            if client.peer_query(profile, handle)["destination"] == "ab" * 16
+        )
+        assert client.unblock(profile, peer)["trust"] == "approved"
+        assert client.delete_peer(profile, peer)["deleted"] is True
+        assert service.store.get("contact", "internal-peer") is None
+    finally:
+        owner.close()
+
+
 def test_application_command_is_owner_only_and_allowlisted(host):
     service = host()
     owner = HostedClient(service, frozenset({"observe", "read", "approve"}))

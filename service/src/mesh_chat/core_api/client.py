@@ -128,6 +128,12 @@ class CoreClient:
     def approve(self, handle, peer):
         return self.request("peer.approve", {"profile": handle, "peer": peer})
 
+    def unblock(self, handle, peer):
+        return self.request("peer.unblock", {"profile": handle, "peer": peer})
+
+    def delete_peer(self, handle, peer):
+        return self.request("peer.delete", {"profile": handle, "peer": peer})
+
     def revoke(self, handle, peer):
         return self.request("peer.revoke", {"profile": handle, "peer": peer})
 

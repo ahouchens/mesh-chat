@@ -6,10 +6,10 @@ domain owns durability and its authority fence; this adapter never grants consen
 defaults or quietly retries.
 """
 
-from ..errors import ValidationError
+from ..errors import ContactInUse, ValidationError
 from ..models import TrustState
 from .errors import ApiFailure
-from .relationship import RelationshipObservation
+from .relationship import PeerDeletionObservation, RelationshipObservation
 from .service_messages import storage_errors
 
 
@@ -65,3 +65,26 @@ class ServiceRelationship:
             except ValidationError as error:
                 raise ApiFailure("invalid_request") from error
             return self._observation(contact_id)
+
+
+    def unblock(self, profile, contact_id):
+        with storage_errors():
+            contact = self._contact(profile, contact_id)
+            if contact.get("trust") != TrustState.BLOCKED.value:
+                raise ApiFailure("forbidden")
+            try:
+                self._service.unblock_contact(contact_id)
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            return self._observation(contact_id)
+
+    def delete(self, profile, contact_id):
+        with storage_errors():
+            self._contact(profile, contact_id)
+            try:
+                self._service.delete_contact(contact_id)
+            except ContactInUse as error:
+                raise ApiFailure("conflict") from error
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            return PeerDeletionObservation(True)

@@ -19,6 +19,8 @@
     "connection.stop",
     "peer.approve",
     "peer.revoke",
+    "peer.unblock",
+    "peer.delete",
     "peer.pairing_accept",
     "peer.pairing_request",
     "peer.pairing_create",
@@ -245,6 +247,20 @@
     },
     {
       "operation": "peer.revoke",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "convergent_desired_state"
+    },
+    {
+      "operation": "peer.unblock",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "convergent_desired_state"
+    },
+    {
+      "operation": "peer.delete",
       "permission": "approve",
       "scope": "profile",
       "mutation": true,

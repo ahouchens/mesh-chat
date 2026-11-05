@@ -15,7 +15,7 @@ from threading import RLock
 import uuid
 from typing import Protocol
 
-from .views import (
+from .views import (peer_delete_view, peer_trust_view,
     acceptance_view, acknowledgment_view, connection_view, event_view, intent_view, message_view,
     invitation_view, pairing_request_view, pairing_view, peer_view, received_view,
     relationship_view, stop_view, workspace_approve_view, workspace_decline_view,
@@ -92,6 +92,8 @@ PERMISSION_BY_OPERATION = {
     "peer.pairing_request": "pair",
     "peer.query": "observe",
     "peer.revoke": "approve",
+    "peer.unblock": "approve",
+    "peer.delete": "approve",
     "profile.query": "observe",
     "application.snapshot": "approve",
     "application.command": "approve",
@@ -796,6 +798,12 @@ class CoreSession:
         contact = self._peers(grant, profile).get(params["peer"])
         if contact is None:
             raise ApiFailure("forbidden")
+        if operation == "peer.delete":
+            observation = self._relationship.delete(profile, contact)
+            return peer_delete_view(params["profile"], params["peer"], observation)
+        if operation == "peer.unblock":
+            observation = self._relationship.unblock(profile, contact)
+            return peer_trust_view(params["profile"], params["peer"], observation)
         action = (self._relationship.approve if operation == "peer.approve"
                   else self._relationship.revoke)
         observation = action(profile, contact)

@@ -497,3 +497,17 @@ def workspace_device_remove_view(profile, workspace, device, state):
         raise ValueError("Invalid workspace device removal state")
     return {"profile": profile, "workspace": workspace, "device": device,
             "state": "removed"}
+
+
+def peer_delete_view(profile, peer, value):
+    if any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
+           for item in (profile, peer)) or value.deleted is not True:
+        raise ValueError("Invalid peer deletion observation")
+    return {"profile": profile, "peer": peer, "deleted": True}
+
+
+def peer_trust_view(profile, peer, value):
+    if any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
+           for item in (profile, peer)):
+        raise ValueError("Invalid peer trust observation")
+    return {"profile": profile, "peer": peer, "trust": TrustState(value.trust).value}

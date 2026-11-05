@@ -2337,12 +2337,13 @@ function ContactsDialog({
     setError("");
     try {
       let handled = false;
-      if (command === "block_contact") {
+      if (command === "block_contact" || command === "unblock_contact") {
         try {
           const target = await coreApiPeerForDestination(selected.destination_hash);
-          await coreApiRequest("peer.revoke", { profile: target.profile, peer: target.peer });
+          await coreApiRequest(command === "block_contact" ? "peer.revoke" : "peer.unblock",
+            { profile: target.profile, peer: target.peer });
           handled = true;
-        } catch { /* Fall back only when the facade did not accept the block. */ }
+        } catch { /* Fall back only when the facade did not accept the change. */ }
       }
       if (!handled) {
         await serviceCommand(command, { contact_id: selected.id });
@@ -2384,7 +2385,15 @@ function ContactsDialog({
     setBusy(true);
     setError("");
     try {
-      await serviceCommand("delete_contact", { contact_id: contactId });
+      let handled = false;
+      try {
+        const target = await coreApiPeerForDestination(selected.destination_hash);
+        await coreApiRequest("peer.delete", { profile: target.profile, peer: target.peer });
+        handled = true;
+      } catch { /* Fall back only when the facade did not accept the deletion. */ }
+      if (!handled) {
+        await serviceCommand("delete_contact", { contact_id: contactId });
+      }
       setConfirm(null);
       await onDeleted(contactId);
     } catch (reason) {
