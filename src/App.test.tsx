@@ -34,6 +34,7 @@ const api = vi.hoisted(() => {
   serviceCommand,
   loadCallSettings: vi.fn(async () => serviceCommand("call_settings")),
   saveCallSettings: vi.fn(async (settings: Record<string, unknown>) => serviceCommand("update_call_settings", settings)),
+  saveNetworkSettings: vi.fn(async (settings: Record<string, unknown>) => serviceCommand("update_settings", { settings })),
   };
 });
 

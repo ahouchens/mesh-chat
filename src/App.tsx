@@ -58,6 +58,7 @@ import {
   coreApiDraftSet,
   loadCallSettings,
   saveCallSettings,
+  saveNetworkSettings,
   coreApiPeerForDestination,
   coreApiRequest,
   coreApiSendMessage,
@@ -2903,7 +2904,7 @@ function SettingsPage({ snapshot, theme, onThemeChange, onClose, onSaved, onBack
     if (saving || !networkDirty) return;
     setSaving(true); setSaveError("");
     try {
-      await serviceCommand("update_settings", { settings });
+      await saveNetworkSettings(settings as unknown as Record<string, unknown>);
       setSavedNetworkSettings(settings);
       setSaved(true);
       await onSaved();
@@ -6302,14 +6303,12 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     if (workspaceActionBusy) return;
     setWorkspaceActionBusy(true); setWorkspaceActionError("");
     try {
-      await serviceCommand("update_settings", {
-        settings: {
-          ...snapshot.settings,
-          approved_propagation_nodes: [
-            ...new Set([...snapshot.settings.approved_propagation_nodes, node]),
-          ],
-        },
-      });
+      await saveNetworkSettings({
+        ...snapshot.settings,
+        approved_propagation_nodes: [
+          ...new Set([...snapshot.settings.approved_propagation_nodes, node]),
+        ],
+      } as unknown as Record<string, unknown>);
       await refresh(true);
     } catch (reason) { setWorkspaceActionError(errorMessage(reason)); }
     finally { setWorkspaceActionBusy(false); }

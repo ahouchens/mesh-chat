@@ -17,6 +17,7 @@ INTENT_OPERATIONS = ("connection.start", "connection.stop")
 RELATIONSHIP_OPERATIONS = ("peer.approve", "peer.revoke", "peer.unblock", "peer.delete")
 DRAFT_OPERATIONS = ("peer.draft_get", "peer.draft_set")
 CALL_OPERATIONS = ("call.settings_query", "call.settings_update")
+SETTINGS_OPERATIONS = ("settings.query", "settings.update")
 PAIRING_OPERATIONS = ("peer.pairing_accept",)
 REQUEST_OPERATIONS = ("peer.pairing_request",)
 INVITATION_OPERATIONS = ("peer.pairing_create",)
@@ -437,6 +438,16 @@ def parse_request(value, operations):
                 or not 1 <= len(params["document"]) <= 1048576):
             raise ApiFailure("invalid_request")
         return operation, params
+    if operation in SETTINGS_OPERATIONS:
+        params = value["params"]
+        expected = {"profile"} | ({"settings"} if operation == "settings.update" else set())
+        if (not isinstance(params, dict) or set(params) != expected
+                or not isinstance(params["profile"], str)
+                or HANDLE.fullmatch(params["profile"]) is None
+                or (operation == "settings.update"
+                    and not isinstance(params["settings"], dict))):
+            raise ApiFailure("invalid_request")
+        return operation, params
     if operation in CALL_OPERATIONS:
         params = value["params"]
         expected = {"profile"} | ({"settings"} if operation == "call.settings_update" else set())
@@ -539,6 +550,7 @@ COMPONENT_OPERATIONS = (
     + RELATIONSHIP_OPERATIONS
     + DRAFT_OPERATIONS
     + CALL_OPERATIONS
+    + SETTINGS_OPERATIONS
     + PAIRING_OPERATIONS
     + REQUEST_OPERATIONS
     + INVITATION_OPERATIONS

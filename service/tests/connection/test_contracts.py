@@ -116,6 +116,8 @@ def test_each_designed_operation_has_an_executable_request_vector_and_permission
         "peer.draft_set": {"peer": handle, "text": "draft"},
         "call.settings_query": {},
         "call.settings_update": {"settings": {"relay_only": True}},
+        "settings.query": {},
+        "settings.update": {"settings": {}},
 
         "connection.start": {"connection": handle}, "connection.stop": {"connection": handle},
         "connection.retry": {"connection": handle}, "connection.snapshot": {"connection": handle},

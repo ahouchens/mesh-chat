@@ -15,7 +15,8 @@ from threading import RLock
 import uuid
 from typing import Protocol
 
-from .views import (call_settings_view, draft_view, peer_delete_view, peer_trust_view,
+from .views import (call_settings_view, draft_view, network_settings_view,
+    peer_delete_view, peer_trust_view,
     acceptance_view, acknowledgment_view, connection_view, event_view, intent_view, message_view,
     invitation_view, pairing_request_view, pairing_view, peer_view, received_view,
     relationship_view, stop_view, workspace_approve_view, workspace_decline_view,
@@ -37,7 +38,8 @@ from .diagnostic_views import diagnostics_view
 from .requests import (
     CURSOR, DIAGNOSTIC_OPERATIONS, INTENT_OPERATIONS, MESSAGE_OPERATIONS, OPERATIONS,
     INVITATION_OPERATIONS, PAIRING_OPERATIONS, RECEIVED_OPERATIONS, RECOVERY_OPERATIONS,
-    APPLICATION_OPERATIONS, CALL_OPERATIONS, COMPONENT_OPERATIONS, DRAFT_OPERATIONS, RELATIONSHIP_OPERATIONS, REQUEST_OPERATIONS, STOP_OPERATIONS,
+    APPLICATION_OPERATIONS, CALL_OPERATIONS, COMPONENT_OPERATIONS, DRAFT_OPERATIONS,
+    RELATIONSHIP_OPERATIONS, SETTINGS_OPERATIONS, REQUEST_OPERATIONS, STOP_OPERATIONS,
     WORKSPACE_APPROVE_OPERATIONS, WORKSPACE_DECLINE_OPERATIONS, WORKSPACE_JOIN_OPERATIONS,
     WORKSPACE_CHANNEL_ARCHIVE_OPERATIONS, WORKSPACE_CHANNEL_CREATE_OPERATIONS,
     WORKSPACE_CHANNEL_MEMBERS_OPERATIONS,
@@ -100,6 +102,8 @@ PERMISSION_BY_OPERATION = {
     "peer.draft_set": "send",
     "call.settings_query": "read",
     "call.settings_update": "send",
+    "settings.query": "read",
+    "settings.update": "send",
     "profile.query": "observe",
     "application.snapshot": "approve",
     "application.command": "approve",
@@ -177,6 +181,7 @@ class Ports:
     application: object | None = None
     drafts: object | None = None
     calls: object | None = None
+    settings: object | None = None
 
 
 class CoreSession:
@@ -201,6 +206,7 @@ class CoreSession:
         self._application = ports.application
         self._drafts = ports.drafts
         self._calls = ports.calls
+        self._settings = ports.settings
         self._stopped = False
         bound = set(OPERATIONS)
         for operations, port in (
@@ -211,6 +217,7 @@ class CoreSession:
             (RELATIONSHIP_OPERATIONS, self._relationship),
             (DRAFT_OPERATIONS, self._drafts),
             (CALL_OPERATIONS, self._calls),
+            (SETTINGS_OPERATIONS, self._settings),
             (PAIRING_OPERATIONS, self._pairing),
             (REQUEST_OPERATIONS, self._pairing),
             (INVITATION_OPERATIONS, self._invitations),
@@ -378,6 +385,12 @@ class CoreSession:
             return self._received_messages(grant, profile, params)
         if operation in INTENT_OPERATIONS:
             return self._intent_operation(grant, profile, operation, params)
+        if operation in SETTINGS_OPERATIONS:
+            if operation == "settings.update":
+                observation = self._settings.update(profile, params["settings"])
+            else:
+                observation = self._settings.get(profile)
+            return network_settings_view(params["profile"], observation)
         if operation in CALL_OPERATIONS:
             if operation == "call.settings_update":
                 observation = self._calls.update(profile, params["settings"])

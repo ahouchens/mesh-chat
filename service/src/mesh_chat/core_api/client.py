@@ -131,6 +131,12 @@ class CoreClient:
     def unblock(self, handle, peer):
         return self.request("peer.unblock", {"profile": handle, "peer": peer})
 
+    def network_settings(self, handle):
+        return self.request("settings.query", {"profile": handle})
+
+    def update_network_settings(self, handle, settings):
+        return self.request("settings.update", {"profile": handle, "settings": settings})
+
     def call_settings_get(self, handle):
         return self.request("call.settings_query", {"profile": handle})
 

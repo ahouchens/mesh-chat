@@ -25,6 +25,8 @@
     "peer.draft_set",
     "call.settings_query",
     "call.settings_update",
+    "settings.query",
+    "settings.update",
     "peer.pairing_accept",
     "peer.pairing_request",
     "peer.pairing_create",
@@ -293,6 +295,20 @@
     },
     {
       "operation": "call.settings_update",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "last_write_wins"
+    },
+    {
+      "operation": "settings.query",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "settings.update",
       "permission": "send",
       "scope": "profile",
       "mutation": true,

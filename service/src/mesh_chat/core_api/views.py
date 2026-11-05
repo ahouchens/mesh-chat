@@ -529,3 +529,10 @@ def call_settings_view(profile, value):
             or not isinstance(value.settings, dict)):
         raise ValueError("Invalid call settings observation")
     return {"profile": profile, "settings": value.settings}
+
+
+def network_settings_view(profile, value):
+    if (not isinstance(profile, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", profile) is None
+            or not isinstance(value.settings, dict)):
+        raise ValueError("Invalid network settings observation")
+    return {"profile": profile, "settings": value.settings}

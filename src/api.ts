@@ -261,6 +261,46 @@ export async function saveCallSettings(
   }
 }
 
+export async function coreApiNetworkSettings(): Promise<Record<string, unknown>> {
+  const profile = await coreApiProfile();
+  const result = await coreApiRequest("settings.query", { profile: profile.profile }) as {
+    settings?: Record<string, unknown>;
+  };
+  return result.settings ?? {};
+}
+
+export async function coreApiUpdateNetworkSettings(
+  settings: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const profile = await coreApiProfile();
+  const result = await coreApiRequest("settings.update", {
+    profile: profile.profile,
+    settings,
+  }) as { settings?: Record<string, unknown> };
+  return result.settings ?? {};
+}
+
+export async function loadNetworkSettings(): Promise<Record<string, unknown>> {
+  try {
+    return await coreApiNetworkSettings();
+  } catch (reason) {
+    if (!String(reason).includes("core_api_unavailable")) throw reason;
+    const snapshot = await serviceCommand<{ settings?: Record<string, unknown> }>("snapshot");
+    return snapshot.settings ?? {};
+  }
+}
+
+export async function saveNetworkSettings(
+  settings: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  try {
+    return await coreApiUpdateNetworkSettings(settings);
+  } catch (reason) {
+    if (!String(reason).includes("core_api_unavailable")) throw reason;
+    return serviceCommand("update_settings", { settings });
+  }
+}
+
 export async function lockService(): Promise<void> {
   clearPairingResume();
   return invoke<void>("lock_service");

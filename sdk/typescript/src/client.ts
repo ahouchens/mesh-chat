@@ -248,6 +248,14 @@ export class CoreClient {
     return this.request<RelationshipView>("peer.unblock", { profile, peer });
   }
 
+  async networkSettings(profile: string): Promise<{ profile: string; settings: Record<string, unknown> }> {
+    return this.request("settings.query", { profile });
+  }
+
+  async updateNetworkSettings(profile: string, settings: Record<string, unknown>): Promise<{ profile: string; settings: Record<string, unknown> }> {
+    return this.request("settings.update", { profile, settings });
+  }
+
   async callSettingsGet(profile: string): Promise<{ profile: string; settings: Record<string, unknown> }> {
     return this.request("call.settings_query", { profile });
   }
