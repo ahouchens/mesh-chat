@@ -49,6 +49,7 @@ from .requests import (
     WORKSPACE_DEVICE_LINK_DECLINE_OPERATIONS, WORKSPACE_DEVICE_LINK_PREVIEW_OPERATIONS,
     WORKSPACE_DEVICE_LINK_SUBMIT_OPERATIONS, WORKSPACE_DEVICE_LINKS_OPERATIONS,
     WORKSPACE_OPERATIONS, WORKSPACE_QUERY_OPERATIONS,
+    WORKSPACE_ACCESS_MUTATION_OPERATIONS,
     WORKSPACE_CHANNELS_OPERATIONS, WORKSPACE_LIST_OPERATIONS, WORKSPACE_MEMBERS_OPERATIONS,
     WORKSPACE_INVITATION_CREATE_OPERATIONS,
     WORKSPACE_PREVIEW_OPERATIONS,
@@ -470,6 +471,11 @@ class CoreSession:
                                           self._workspace.preview(target, params["document"]))
 
     def _workspace_mutation_operation(self, grant, profiles, operation, params, key):
+        if operation in WORKSPACE_ACCESS_MUTATION_OPERATIONS:
+            return self._workspace_access_mutation(grant, profiles, operation, params, key)
+        return self._workspace_resource_mutation(grant, profiles, operation, params, key)
+
+    def _workspace_access_mutation(self, grant, profiles, operation, params, key):
         if operation in WORKSPACE_APPROVE_OPERATIONS:
             target, inside = self._workspace_scope(grant, profiles, params)
             request = self._join_request_target(grant, target, inside, params["request"])
@@ -504,6 +510,50 @@ class CoreSession:
                 params.get("i2p_access_point"), params.get("i2p_label"))
             return workspace_invitation_create_view(
                 params["profile"], params["workspace"], invitation)
+        if operation in WORKSPACE_DEVICE_LINK_APPROVE_OPERATIONS or                 operation in WORKSPACE_DEVICE_LINK_DECLINE_OPERATIONS:
+            target, inside = self._workspace_scope(grant, profiles, params)
+            requests = self._workspace_admin.device_link_ids(target, inside)
+            request_id = next(
+                (item for item in requests
+                 if self._handle(grant, "device_link", target, item) == params["request"]),
+                None)
+            if request_id is None:
+                raise ApiFailure("forbidden")
+            if key is None:
+                raise ApiFailure("invalid_request")
+            operation_id = self._operation_id(grant, target, key)
+            if operation in WORKSPACE_DEVICE_LINK_APPROVE_OPERATIONS:
+                state = self._workspace_admin.approve_device_link(
+                    target, inside, request_id, operation_id)
+            else:
+                state = self._workspace_admin.decline_device_link(
+                    target, inside, request_id, operation_id)
+            return device_link_decision_view(
+                params["profile"], params["workspace"], params["request"], state)
+        if operation in WORKSPACE_DEVICE_LINK_SUBMIT_OPERATIONS:
+            target = profiles.get(params["profile"])
+            if target is None:
+                raise ApiFailure("forbidden")
+            if key is None:
+                raise ApiFailure("invalid_request")
+            submitted = self._workspace_admin.device_link_submit(
+                target, params["document"], self._operation_id(grant, target, key))
+            for handle, item in self._workspace_entries(grant, target):
+                if item.workspace == submitted.workspace:
+                    return device_link_submit_view(params["profile"], handle, submitted)
+            raise ApiFailure("internal")
+        if operation in WORKSPACE_JOIN_OPERATIONS:
+            target = profiles.get(params["profile"])
+            if target is None:
+                raise ApiFailure("forbidden")
+            if key is None:
+                raise ApiFailure("invalid_request")
+            operation_id = self._operation_id(grant, target, key)
+            joined = self._workspace.join(target, params["document"], operation_id)
+            workspace = self._handle(grant, "workspace", target, joined.workspace)
+            return workspace_join_view(params["profile"], workspace, joined)
+
+    def _workspace_resource_mutation(self, grant, profiles, operation, params, key):
         if operation in WORKSPACE_CHANNEL_CREATE_OPERATIONS:
             target, inside = self._workspace_scope(grant, profiles, params)
             if key is None:
@@ -597,48 +647,6 @@ class CoreSession:
                 target, inside, channel, self._operation_id(grant, target, key))
             return workspace_channel_transfer_accept_view(
                 params["profile"], params["workspace"], params["channel"])
-        if operation in WORKSPACE_DEVICE_LINK_APPROVE_OPERATIONS or                 operation in WORKSPACE_DEVICE_LINK_DECLINE_OPERATIONS:
-            target, inside = self._workspace_scope(grant, profiles, params)
-            requests = self._workspace_admin.device_link_ids(target, inside)
-            request_id = next(
-                (item for item in requests
-                 if self._handle(grant, "device_link", target, item) == params["request"]),
-                None)
-            if request_id is None:
-                raise ApiFailure("forbidden")
-            if key is None:
-                raise ApiFailure("invalid_request")
-            operation_id = self._operation_id(grant, target, key)
-            if operation in WORKSPACE_DEVICE_LINK_APPROVE_OPERATIONS:
-                state = self._workspace_admin.approve_device_link(
-                    target, inside, request_id, operation_id)
-            else:
-                state = self._workspace_admin.decline_device_link(
-                    target, inside, request_id, operation_id)
-            return device_link_decision_view(
-                params["profile"], params["workspace"], params["request"], state)
-        if operation in WORKSPACE_DEVICE_LINK_SUBMIT_OPERATIONS:
-            target = profiles.get(params["profile"])
-            if target is None:
-                raise ApiFailure("forbidden")
-            if key is None:
-                raise ApiFailure("invalid_request")
-            submitted = self._workspace_admin.device_link_submit(
-                target, params["document"], self._operation_id(grant, target, key))
-            for handle, item in self._workspace_entries(grant, target):
-                if item.workspace == submitted.workspace:
-                    return device_link_submit_view(params["profile"], handle, submitted)
-            raise ApiFailure("internal")
-        if operation in WORKSPACE_JOIN_OPERATIONS:
-            target = profiles.get(params["profile"])
-            if target is None:
-                raise ApiFailure("forbidden")
-            if key is None:
-                raise ApiFailure("invalid_request")
-            operation_id = self._operation_id(grant, target, key)
-            joined = self._workspace.join(target, params["document"], operation_id)
-            workspace = self._handle(grant, "workspace", target, joined.workspace)
-            return workspace_join_view(params["profile"], workspace, joined)
 
     def _capabilities(self, profiles):
         limits = {"frame_bytes": MAX_FRAME_BYTES, "request_json_depth": MAX_REQUEST_JSON_DEPTH,
