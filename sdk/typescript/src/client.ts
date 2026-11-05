@@ -264,9 +264,9 @@ export class CoreClient {
     if (document.length === 0) {
       throw new ProtocolError("pairing requires signed invitation material");
     }
-    return this.request<PairingView>("peer.pairing_accept", {
-      profile, document, i2p_consent: i2pConsent,
-    });
+    const params: Record<string, unknown> = { profile, document };
+    if (i2pConsent) params.i2p_consent = true;
+    return this.request<PairingView>("peer.pairing_accept", params);
   }
 
   async workspacePreview(profile: string, document: string): Promise<WorkspacePreviewView> {
