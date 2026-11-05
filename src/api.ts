@@ -163,6 +163,14 @@ export async function coreApiSendMessage(
   });
 }
 
+export async function coreApiRequest<T>(
+  operation: string,
+  params: Record<string, unknown> = {},
+  idempotencyKey?: string,
+): Promise<T> {
+  return invoke("core_api_request", { operation, params, idempotencyKey: idempotencyKey ?? null });
+}
+
 export async function lockService(): Promise<void> {
   clearPairingResume();
   return invoke<void>("lock_service");

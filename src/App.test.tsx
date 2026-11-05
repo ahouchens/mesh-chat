@@ -6,6 +6,7 @@ import type { ChatMessage, Contact, Group, GroupInvitation, GroupMessage, Snapsh
 
 const api = vi.hoisted(() => ({
   beginCallAudio: vi.fn(async () => ({ granted: true })),
+  coreApiSendMessage: vi.fn(async () => { throw new Error("core_api_unavailable"); }),
   endCallAudio: vi.fn(async () => ({ active: false })),
   initializeService: vi.fn(),
   lockService: vi.fn(),
@@ -3934,6 +3935,42 @@ describe("connected conversation", () => {
     expect(await within(conversation).findByText(outbound.text)).toBeTruthy();
     expect(screen.getByText("Saved on this device")).toBeTruthy();
     expect(snapshotCalls).toBe(2);
+  });
+
+  it("uses the facade send path and refreshes the authoritative message", async () => {
+    const before = snapshot([approved]);
+    const outbound: ChatMessage = {
+      ...firstMessage,
+      id: "outbound-via-facade",
+      contact_id: approved.id,
+      direction: "outbound",
+      text: "Facade send",
+      state: "queued",
+    };
+    let snapshots = 0;
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(before);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.coreApiSendMessage.mockResolvedValue({ message: "facade-handle" });
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") {
+        snapshots += 1;
+        return snapshots === 1 ? before : { ...before, messages: [outbound] };
+      }
+      return {};
+    });
+
+    render(<App />);
+    const composer = await screen.findByRole("textbox", { name: "Message Taylor" });
+    fireEvent.change(composer, { target: { value: outbound.text } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    await waitFor(() => expect(api.coreApiSendMessage).toHaveBeenCalledWith(
+      approved.destination_hash, outbound.text, expect.any(String)));
+    expect(api.serviceCommand).not.toHaveBeenCalledWith("send_message", expect.anything());
+    const conversation = screen.getByLabelText("Conversation with Taylor");
+    expect(await within(conversation).findByText(outbound.text)).toBeTruthy();
   });
 
   it("shows the durable mobile send result before draft cleanup or snapshot refresh finishes", async () => {

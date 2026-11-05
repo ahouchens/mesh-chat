@@ -1441,6 +1441,54 @@ fn core_api_send_message(
 
 #[cfg(desktop)]
 #[tauri::command]
+fn core_api_request(
+    state: State<'_, ServiceState>,
+    operation: String,
+    params: Value,
+    idempotency_key: Option<String>,
+) -> Result<Value, String> {
+    #[cfg(windows)]
+    {
+        let name = state
+            .core_api_pipe
+            .lock()
+            .map_err(|_| "core_api_unavailable".to_string())?
+            .clone()
+            .ok_or_else(|| "core_api_unavailable".to_string())?;
+        let mut client = core_api::CoreApiClient::connect(&name)?;
+        let capabilities = client.capabilities()?;
+        let advertised = capabilities
+            .get("operations")
+            .and_then(Value::as_array)
+            .map(|items| items.iter().any(|item| item.as_str() == Some(operation.as_str())))
+            .unwrap_or(false);
+        if !advertised {
+            return Err("core_api_operation_unavailable".into());
+        }
+        return match idempotency_key.as_deref() {
+            Some(key) => client.request_with_key(&operation, params, key),
+            None => client.request(&operation, params),
+        };
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (state, operation, params, idempotency_key);
+        Err("core_api_unavailable".into())
+    }
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+fn core_api_request(
+    _operation: String,
+    _params: Value,
+    _idempotency_key: Option<String>,
+) -> Result<Value, String> {
+    Err("core_api_unavailable".into())
+}
+
+#[cfg(desktop)]
+#[tauri::command]
 fn core_api_send_message(
     state: State<'_, ServiceState>,
     destination: String,
@@ -1982,6 +2030,7 @@ pub fn run() {
             service_command,
             core_api_capabilities,
             core_api_profile,
+            core_api_request,
             core_api_send_message,
             lock_service,
             desktop_service_health,
