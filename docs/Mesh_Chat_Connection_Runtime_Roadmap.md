@@ -1306,6 +1306,8 @@ M5 - supported reusable core
       handle, enqueues through the facade with an idempotency key, and refreshes
       the authoritative snapshot. Mobile or a pre-accept failure falls back to
       the legacy command; a successful facade send never falls back.
+- [x] Desktop new-contact acceptance resolves the peer handle and calls
+      `peer.approve` through the facade, falling back before acceptance only.
 - [ ] Mesh Chat messaging read paths and the remaining UI commands routed
       through the supported facade.
 - [ ] Independent Windows and Android consumers built only from distribution
