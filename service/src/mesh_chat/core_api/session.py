@@ -322,6 +322,11 @@ class CoreSession:
                           hashlib.sha256).digest()[:16]
         return str(uuid.UUID(bytes=digest))
 
+    def _workspace_channel_scope(self, grant, profiles, params):
+        target, inside = self._workspace_scope(grant, profiles, params)
+        return target, inside, self._channel_target(
+            grant, target, inside, params["channel"])
+
     def _profile_target(self, profiles, params):
         target = profiles.get(params["profile"])
         if target is None:
@@ -422,8 +427,7 @@ class CoreSession:
             return workspace_channel_create_view(
                 params["profile"], params["workspace"], summary)
         if operation in WORKSPACE_CHANNEL_MEMBERS_OPERATIONS:
-            target, inside = self._workspace_scope(grant, profiles, params)
-            channel = self._channel_target(grant, target, inside, params["channel"])
+            target, inside, channel = self._workspace_channel_scope(grant, profiles, params)
             members = self._workspace_admin.members(target, inside)
             handles = {item.member: self._handle(grant, "member", target, item.member)
                        for item in members}
@@ -433,8 +437,7 @@ class CoreSession:
             return workspace_channel_members_view(
                 params["profile"], params["workspace"], params["channel"], current)
         if operation in WORKSPACE_CHANNEL_MEMBERS_UPDATE_OPERATIONS:
-            target, inside = self._workspace_scope(grant, profiles, params)
-            channel = self._channel_target(grant, target, inside, params["channel"])
+            target, inside, channel = self._workspace_channel_scope(grant, profiles, params)
             if key is None:
                 raise ApiFailure("invalid_request")
             member_ids = tuple(self._member_target(grant, target, inside, handle)
@@ -446,8 +449,7 @@ class CoreSession:
                 params["profile"], params["workspace"], params["channel"],
                 sorted(params["members"]))
         if operation in WORKSPACE_CHANNEL_UPDATE_OPERATIONS:
-            target, inside = self._workspace_scope(grant, profiles, params)
-            channel = self._channel_target(grant, target, inside, params["channel"])
+            target, inside, channel = self._workspace_channel_scope(grant, profiles, params)
             if key is None:
                 raise ApiFailure("invalid_request")
             edited = self._workspace_admin.update_channel(
@@ -456,8 +458,7 @@ class CoreSession:
             return workspace_channel_update_view(
                 params["profile"], params["workspace"], params["channel"], edited)
         if operation in WORKSPACE_CHANNEL_ARCHIVE_OPERATIONS:
-            target, inside = self._workspace_scope(grant, profiles, params)
-            channel = self._channel_target(grant, target, inside, params["channel"])
+            target, inside, channel = self._workspace_channel_scope(grant, profiles, params)
             if key is None:
                 raise ApiFailure("invalid_request")
             archived = self._workspace_admin.archive_channel(
@@ -504,8 +505,7 @@ class CoreSession:
                 params["invitation_requests"], self._operation_id(grant, target, key))
             return workspace_policies_view(params["profile"], params["workspace"], applied)
         if operation in WORKSPACE_CHANNEL_TRANSFER_OFFER_OPERATIONS:
-            target, inside = self._workspace_scope(grant, profiles, params)
-            channel = self._channel_target(grant, target, inside, params["channel"])
+            target, inside, channel = self._workspace_channel_scope(grant, profiles, params)
             member_id = self._member_target(grant, target, inside, params["member"])
             if key is None:
                 raise ApiFailure("invalid_request")
@@ -516,8 +516,7 @@ class CoreSession:
                 params["profile"], params["workspace"], params["channel"],
                 params["member"])
         if operation in WORKSPACE_CHANNEL_TRANSFER_ACCEPT_OPERATIONS:
-            target, inside = self._workspace_scope(grant, profiles, params)
-            channel = self._channel_target(grant, target, inside, params["channel"])
+            target, inside, channel = self._workspace_channel_scope(grant, profiles, params)
             if key is None:
                 raise ApiFailure("invalid_request")
             self._workspace_admin.accept_channel_transfer(
