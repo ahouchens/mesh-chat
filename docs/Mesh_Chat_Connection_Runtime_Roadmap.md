@@ -1308,8 +1308,11 @@ M5 - supported reusable core
       the legacy command; a successful facade send never falls back.
 - [x] Desktop new-contact acceptance resolves the peer handle and calls
       `peer.approve` through the facade, falling back before acceptance only.
-- [ ] Mesh Chat messaging read paths and the remaining UI commands routed
-      through the supported facade.
+- [x] The UI state refresh reads `application.snapshot` through the facade, so
+      direct-message display is facade-backed. Legacy fallback applies only when
+      the facade pipe is unavailable.
+- [ ] Calls, groups, settings, drafts, reactions and most workspace commands
+      routed through the supported facade.
 - [ ] Independent Windows and Android consumers built only from distribution
       artifacts and documentation.
 
