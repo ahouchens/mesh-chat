@@ -1311,8 +1311,14 @@ M5 - supported reusable core
 - [x] The UI state refresh reads `application.snapshot` through the facade, so
       direct-message display is facade-backed. Legacy fallback applies only when
       the facade pipe is unavailable.
-- [ ] Calls, groups, settings, drafts, reactions and most workspace commands
-      routed through the supported facade.
+- [x] The desktop renderer command surface is routed through the owner-scoped
+      `application.command` adapter, which dispatches only the shared renderer
+      allowlist and keeps the service as the policy owner. State reads use
+      `application.snapshot`; mobile still uses the legacy bridge because it has
+      no shipping Core pipe host.
+- [ ] Calls, groups, settings, drafts, reactions and workspace administration
+      typed as first-class facade operations instead of the compatibility
+      adapter.
 - [ ] Independent Windows and Android consumers built only from distribution
       artifacts and documentation.
 
