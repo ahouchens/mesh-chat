@@ -1317,6 +1317,7 @@ M5 - supported reusable core
       `application.snapshot`.
 - [x] The facade dispatcher resolves profiles, workspace scopes, workspace channels and idempotency keys through helpers; workspace operations are split into query, access-mutation and resource-mutation handlers, leaving _execute a 50-line cross-cutting dispatcher.
 - [x] Reconnect start/stop use typed connection.start/connection.stop with the profile destination, falling back only when Core is unavailable.
+- [x] Message reactions use typed message.reaction_set with caller-scoped message handles.
 - [x] Network settings use typed settings.query/settings.update; the network settings UI saves through the facade with legacy fallback only when unavailable.
 - [x] Call settings use typed call.settings_query/call.settings_update; Settings and onboarding read/save through the facade with legacy fallback only when unavailable.
 - [x] Direct-message drafts use typed peer.draft_get/peer.draft_set with caller-scoped handles; the composer saves through peer.draft_set and opening a contact fills an empty draft through peer.draft_get, with snapshot fallback.
