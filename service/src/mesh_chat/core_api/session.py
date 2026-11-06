@@ -282,6 +282,7 @@ class CoreSession:
             (WORKSPACE_POLICY_UPDATE_OPERATIONS, self._workspace_admin),
             (WORKSPACE_METADATA_OPERATIONS, self._workspace_admin),
             (WORKSPACE_RETENTION_OPERATIONS, self._workspace_admin),
+            (WORKSPACE_ADMIN_REQUEST_OPERATIONS, self._workspace_admin),
             (WORKSPACE_DEVICES_OPERATIONS, self._workspace_admin),
             (WORKSPACE_DEVICE_REMOVE_OPERATIONS, self._workspace_admin),
             (DIAGNOSTIC_OPERATIONS, self._diagnostics),
