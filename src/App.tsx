@@ -71,6 +71,7 @@ import {
   coreApiUpdateWorkspaceChannel,
   coreApiUpdateChannelMembers,
   coreApiWorkspaceDeviceLinkDecision,
+  coreApiCreateWorkspaceDeviceLink,
   coreApiOfferChannelTransfer,
   coreApiAcceptChannelTransfer,
   coreApiLeaveGroup,
@@ -6331,10 +6332,21 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     if (!selectedWorkspace || workspaceActionBusy) return null;
     setWorkspaceActionBusy(true); setWorkspaceActionError("");
     try {
-      const result = await serviceCommand<WorkspaceDeviceLinkFormats>("create_workspace_device_link", {
-        operation_id: newOperationId(),
-        workspace_id: selectedWorkspace.id,
-      });
+      let result: WorkspaceDeviceLinkFormats | null = null;
+      if (selectedWorkspace.core_handle) {
+        try {
+          result = await coreApiCreateWorkspaceDeviceLink(
+            selectedWorkspace.core_handle, newOperationId());
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+        }
+      }
+      if (!result) {
+        result = await serviceCommand<WorkspaceDeviceLinkFormats>("create_workspace_device_link", {
+          operation_id: newOperationId(),
+          workspace_id: selectedWorkspace.id,
+        });
+      }
       await refresh(true);
       return result;
     } catch (reason) {

@@ -371,6 +371,26 @@ export async function coreApiCreateWorkspaceChannel(
   return created;
 }
 
+export async function coreApiCreateWorkspaceDeviceLink(
+  workspace: string,
+  idempotencyKey: string,
+): Promise<{ id: string; workspace_id: string; link: string; text: string; value: string; expires_at: number }> {
+  const profile = await coreApiProfile();
+  const created = await coreApiRequest<{ document: string; link: string; expires_at: number }>(
+    "workspace.device_link_create",
+    { profile: profile.profile, workspace },
+    idempotencyKey,
+  );
+  return {
+    id: created.link,
+    workspace_id: workspace,
+    link: created.link,
+    text: created.document,
+    value: created.document,
+    expires_at: created.expires_at,
+  };
+}
+
 export async function coreApiWorkspaceDeviceLinkDecision(
   workspace: string,
   request: string,
