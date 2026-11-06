@@ -16,6 +16,7 @@ RECEIVED_OPERATIONS = ("message.received",)
 INTENT_OPERATIONS = ("connection.start", "connection.stop")
 RELATIONSHIP_OPERATIONS = ("peer.approve", "peer.revoke", "peer.unblock", "peer.delete")
 DRAFT_OPERATIONS = ("peer.draft_get", "peer.draft_set")
+CALL_CONTROL_OPERATIONS = ("call.control",)
 CALL_OPERATIONS = ("call.settings_query", "call.settings_update", "call.ice_servers",
                     "call.media_query")
 SETTINGS_OPERATIONS = ("settings.query", "settings.update")
@@ -835,6 +836,28 @@ def parse_request(value, operations):
                     and not isinstance(params["settings"], dict))):
             raise ApiFailure("invalid_request")
         return operation, params
+    if operation in CALL_CONTROL_OPERATIONS:
+        params = value[params]
+        action = params.get(action) if isinstance(params, dict) else None
+        allowed = {
+            start: {profile, action, contact_id, media, sdp, dtls_fingerprint},
+            answer: {profile, action, call_id, sdp, dtls_fingerprint},
+            restart: {profile, action, call_id, sdp, dtls_fingerprint},
+            answer_restart: {profile, action, call_id, sdp, dtls_fingerprint},
+            end: {profile, action, call_id, reason},
+            candidate: {profile, action, call_id, candidate},
+            signal_publish: {profile, action, document, role,
+                               session_id, mailbox_token},
+            signal_fetch: {profile, action, session, role, mailbox_token},
+        }
+        if not isinstance(params, dict) or action not in allowed:
+            raise ApiFailure(invalid_request)
+        required = allowed[action] - {session_id, mailbox_token}
+        if not required <= set(params) or set(params) - allowed[action]:
+            raise ApiFailure(invalid_request)
+        if not isinstance(params[profile], str) or HANDLE.fullmatch(params[profile]) is None:
+            raise ApiFailure(invalid_request)
+        return operation, params
     if operation in CALL_OPERATIONS:
         params = value["params"]
         expected = ({"profile"} if operation in {"call.settings_query", "call.ice_servers"}
@@ -942,6 +965,7 @@ COMPONENT_OPERATIONS = (
     + RELATIONSHIP_OPERATIONS
     + DRAFT_OPERATIONS
     + CALL_OPERATIONS
+    + CALL_CONTROL_OPERATIONS
     + SETTINGS_OPERATIONS
     + REACTION_OPERATIONS
     + GROUP_OPERATIONS

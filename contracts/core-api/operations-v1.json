@@ -844,6 +844,13 @@
       "scope": "profile",
       "mutation": true,
       "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "call.control",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
     }
   ],
   "limits": {

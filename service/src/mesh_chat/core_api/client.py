@@ -172,6 +172,11 @@ class CoreClient:
     def update_network_settings(self, handle, settings):
         return self.request("settings.update", {"profile": handle, "settings": settings})
 
+    def call_control(self, handle, action, key, **params):
+        return self.request("call.control",
+                            {"profile": handle, "action": action, **params},
+                            idempotency_key=key)
+
     def call_media(self, handle, call):
         return self.request("call.media_query", {"profile": handle, "call": call})
 

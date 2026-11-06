@@ -296,6 +296,11 @@ export class CoreClient {
     return this.request("settings.update", { profile, settings });
   }
 
+  async callControl(profile: string, action: string, params: Record<string, unknown>,
+                      idempotencyKey: string): Promise<unknown> {
+    return this.request("call.control", { profile, action, ...params }, { idempotencyKey });
+  }
+
   async callMedia(profile: string, call: string): Promise<{ profile: string; call: string; media: Record<string, unknown> }> {
     return this.request("call.media_query", { profile, call });
   }

@@ -2456,6 +2456,41 @@
     {
       "type": "object",
       "properties": {
+        "api_version": {"const": 1},
+        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"},
+        "operation": {"const": "call.control"},
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {"": "#//handle"},
+            "action": {"enum": ["start", "answer", "restart", "answer_restart",
+                                    "end", "candidate", "signal_publish", "signal_fetch"]},
+            "contact_id": {"type": "string", "minLength": 1, "maxLength": 160},
+            "call_id": {"type": "string", "minLength": 1, "maxLength": 160},
+            "media": {"enum": ["audio", "video"]},
+            "sdp": {"type": "string", "minLength": 1, "maxLength": 65536},
+            "dtls_fingerprint": {"type": "string", "minLength": 1, "maxLength": 256},
+            "reason": {"type": "string", "minLength": 1, "maxLength": 64},
+            "candidate": {"type": "string", "minLength": 1, "maxLength": 4096},
+            "document": {"type": "string", "minLength": 1, "maxLength": 65536},
+            "role": {"enum": ["caller", "callee"]},
+            "session": {"type": "string", "minLength": 1, "maxLength": 256},
+            "session_id": {"type": "string", "minLength": 1, "maxLength": 256},
+            "mailbox_token": {"type": "string", "minLength": 1, "maxLength": 4096}
+          },
+          "required": ["profile", "action"],
+          "additionalProperties": false
+        },
+        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"}
+      },
+      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
         "api_version": {
           "const": 1
         },

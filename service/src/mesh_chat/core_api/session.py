@@ -45,7 +45,7 @@ from .diagnostic_views import diagnostics_view
 from .requests import (
     CURSOR, DIAGNOSTIC_OPERATIONS, INTENT_OPERATIONS, MESSAGE_OPERATIONS, OPERATIONS,
     INVITATION_OPERATIONS, PAIRING_OPERATIONS, RECEIVED_OPERATIONS, RECOVERY_OPERATIONS,
-    APPLICATION_OPERATIONS, CALL_OPERATIONS, COMPONENT_OPERATIONS, DRAFT_OPERATIONS,
+    APPLICATION_OPERATIONS, CALL_OPERATIONS, CALL_CONTROL_OPERATIONS, COMPONENT_OPERATIONS, DRAFT_OPERATIONS,
     GROUP_OPERATIONS, REACTION_OPERATIONS, RELATIONSHIP_OPERATIONS, SETTINGS_OPERATIONS, REQUEST_OPERATIONS, STOP_OPERATIONS,
     WORKSPACE_APPROVE_OPERATIONS, WORKSPACE_DECLINE_OPERATIONS, WORKSPACE_JOIN_OPERATIONS,
     WORKSPACE_CHANNEL_ARCHIVE_OPERATIONS, WORKSPACE_CHANNEL_CREATE_OPERATIONS,
@@ -114,6 +114,7 @@ PERMISSION_BY_OPERATION = {
     "call.settings_update": "send",
     "call.ice_servers": "read",
     "call.media_query": "read",
+    "call.control": "send",
     "settings.query": "read",
     "settings.update": "send",
     "message.reaction_set": "send",
@@ -279,6 +280,7 @@ class CoreSession:
             (RELATIONSHIP_OPERATIONS, self._relationship),
             (DRAFT_OPERATIONS, self._drafts),
             (CALL_OPERATIONS, self._calls),
+            (CALL_CONTROL_OPERATIONS, self._calls),
             (SETTINGS_OPERATIONS, self._settings),
             (REACTION_OPERATIONS, self._reactions),
             (GROUP_OPERATIONS, self._groups),
@@ -590,6 +592,9 @@ class CoreSession:
                 observation = self._calls.update(profile, params["settings"])
             elif operation == "call.ice_servers":
                 return call_ice_view(params["profile"], self._calls.ice(profile))
+            elif operation == "call.control":
+                return {"profile": params["profile"], "result": self._calls.control(
+                    profile, params["action"], params)}
             elif operation == "call.media_query":
                 call_id = next(
                     (item for item in self._calls.call_ids(profile)

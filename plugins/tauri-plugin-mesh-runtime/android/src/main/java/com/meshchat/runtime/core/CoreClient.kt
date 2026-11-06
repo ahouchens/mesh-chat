@@ -152,6 +152,14 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         request("settings.update", JSONObject().put("profile", profile)
             .put("settings", settings))
 
+    fun callControl(profile: String, action: String, params: JSONObject,
+                    idempotencyKey: String): JSONObject {
+        val payload = JSONObject().put("profile", profile).put("action", action)
+        val keys = params.keys()
+        while (keys.hasNext()) { val key = keys.next(); payload.put(key, params.get(key)) }
+        return dispatch("call.control", payload, idempotencyKey)
+    }
+
     fun callMedia(profile: String, call: String): JSONObject =
         request("call.media_query", JSONObject().put("profile", profile).put("call", call))
 

@@ -63,3 +63,39 @@ class ServiceCallSettings:
             if not isinstance(value, dict):
                 raise ApiFailure("internal")
             return CallMediaObservation(dict(value))
+
+
+    def control(self, profile, action, params):
+        self._require_local(profile)
+        with storage_errors():
+            try:
+                if action == "start":
+                    value = self._service.start_call(params["contact_id"], params["media"],
+                                                    params["sdp"], params["dtls_fingerprint"])
+                elif action == "answer":
+                    value = self._service.answer_call(params["call_id"], params["sdp"],
+                                                     params["dtls_fingerprint"])
+                elif action == "restart":
+                    value = self._service.restart_call(params["call_id"], params["sdp"],
+                                                      params["dtls_fingerprint"])
+                elif action == "answer_restart":
+                    value = self._service.answer_call_restart(params["call_id"], params["sdp"],
+                                                             params["dtls_fingerprint"])
+                elif action == "end":
+                    value = self._service.end_call(params["call_id"], params["reason"])
+                elif action == "candidate":
+                    value = self._service.add_call_candidate(params["call_id"], params["candidate"])
+                elif action == "signal_publish":
+                    value = self._service.signal_publish(params["document"], params["role"],
+                                                        params.get("session_id"),
+                                                        params.get("mailbox_token"))
+                elif action == "signal_fetch":
+                    value = self._service.signal_fetch(params["session"], params["role"],
+                                                      params.get("mailbox_token"))
+                else:
+                    raise ApiFailure("invalid_request")
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            if not isinstance(value, dict):
+                raise ApiFailure("internal")
+            return dict(value)
