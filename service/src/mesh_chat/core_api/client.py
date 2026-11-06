@@ -249,6 +249,15 @@ class CoreClient:
         "dismiss": "workspace.admin_request_dismiss",
     }
 
+    def workspace_timeline_query(self, handle, workspace, view, **params):
+        return self.request("workspace.timeline_query",
+                            {"profile": handle, "workspace": workspace, "view": view, **params})
+
+    def workspace_timeline_mutation(self, handle, workspace, action, key, **params):
+        return self.request("workspace.timeline_mutation",
+                            {"profile": handle, "workspace": workspace,
+                             "action": action, **params}, idempotency_key=key)
+
     def workspace_invitation_revoke(self, handle, workspace, invitation, key):
         return self.request("workspace.invitation_revoke",
                             {"profile": handle, "workspace": workspace,

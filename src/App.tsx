@@ -81,6 +81,8 @@ import {
   coreApiWorkspaceAuthority,
   coreApiWorkspaceAuthorityOffer,
   coreApiWorkspaceAdminSubmit,
+  coreApiTimelineMutation,
+  coreApiTimelineQuery,
   coreApiAdmissionGrantEnd,
   coreApiAdmissionGrantAccept,
   coreApiAdmissionGrantCreate,
@@ -402,6 +404,40 @@ async function fetchCallMedia(
   }
   if (!callId) throw new Error("call_not_found");
   return serviceCommand<CallMedia>("call_media", { call_id: callId });
+}
+
+async function fetchWorkspaceTimeline(
+  workspace: { id: string; core_handle?: string },
+  view: "threads" | "thread_messages" | "mentions" | "search",
+  params: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  if (workspace.core_handle) {
+    try {
+      return await coreApiTimelineQuery(workspace.core_handle, view, params);
+    } catch (reason) {
+      if (!String(reason).includes("core_api_unavailable")) throw reason;
+    }
+  }
+  const command = view === "threads" ? "list_workspace_threads"
+    : view === "thread_messages" ? "list_workspace_thread_messages"
+    : view === "mentions" ? "list_workspace_mentions" : "search_workspace";
+  return serviceCommand<Record<string, unknown>>(command, { workspace_id: workspace.id, ...params });
+}
+
+async function mutateWorkspaceTimeline(
+  workspace: { id: string; core_handle?: string },
+  action: "thread_reply" | "thread_read" | "mentions_read" | "notification_preference",
+  params: Record<string, unknown>,
+  fallbackCommand: string,
+): Promise<Record<string, unknown>> {
+  if (workspace.core_handle) {
+    try {
+      return await coreApiTimelineMutation(workspace.core_handle, action, params, newOperationId());
+    } catch (reason) {
+      if (!String(reason).includes("core_api_unavailable")) throw reason;
+    }
+  }
+  return serviceCommand<Record<string, unknown>>(fallbackCommand, { workspace_id: workspace.id, operation_id: newOperationId(), ...params });
 }
 
 function errorMessage(error: unknown): string {
@@ -5653,11 +5689,10 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     workspaceMentionsInFlight.current = true;
     setWorkspaceMentionLoading(true);
     try {
-      const page = await serviceCommand<WorkspaceMentionPage>("list_workspace_mentions", {
-        workspace_id: selectedWorkspace.id,
+      const page = await fetchWorkspaceTimeline(selectedWorkspace, "mentions", {
         cursor: append ? workspaceMentionPage?.next_cursor ?? null : null,
         limit: 50,
-      });
+      }) as unknown as WorkspaceMentionPage;
       setWorkspaceMentionPage((current) => append && current ? { ...page, mentions: [...current.mentions, ...page.mentions] } : page);
     } catch (reason) { setWorkspaceError(errorMessage(reason)); }
     finally { workspaceMentionsInFlight.current = false; setWorkspaceMentionLoading(false); }
@@ -5677,13 +5712,12 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     setWorkspaceSearchLoading(true);
     if (!append) setWorkspaceSearchError("");
     try {
-      const page = await serviceCommand<WorkspaceSearchPage>("search_workspace", {
-        workspace_id: selectedWorkspace.id,
+      const page = await fetchWorkspaceTimeline(selectedWorkspace, "search", {
         query: workspaceSearchQuery,
         scope: workspaceSearchScope,
         cursor: append ? workspaceSearchPage?.next_cursor ?? null : null,
         limit: 25,
-      });
+      }) as unknown as WorkspaceSearchPage;
       if (request !== workspaceSearchRequest.current) return;
       setWorkspaceSearchPage((current) => append && current
         ? { ...page, results: [...current.results, ...page.results] }
@@ -5712,11 +5746,10 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     workspaceThreadsInFlight.current = true;
     setWorkspaceThreadActivityLoading(true);
     try {
-      const page = await serviceCommand<WorkspaceThreadActivityPage>("list_workspace_threads", {
-        workspace_id: selectedWorkspace.id,
+      const page = await fetchWorkspaceTimeline(selectedWorkspace, "threads", {
         cursor: append ? workspaceThreadActivityPage?.next_cursor ?? null : null,
         limit: 50,
-      });
+      }) as unknown as WorkspaceThreadActivityPage;
       setWorkspaceThreadActivityPage((current) => append && current ? { ...page, threads: [...current.threads, ...page.threads] } : page);
     } catch (reason) { setWorkspaceError(errorMessage(reason)); }
     finally { workspaceThreadsInFlight.current = false; setWorkspaceThreadActivityLoading(false); }
@@ -5736,21 +5769,18 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     workspaceThreadInFlight.current = true;
     setWorkspaceThreadLoading(true);
     try {
-      const page = await serviceCommand<WorkspaceThreadPage>("list_workspace_thread_messages", {
-        workspace_id: selectedWorkspace.id,
-        thread_root_id: workspaceThreadRootId,
+      const page = await fetchWorkspaceTimeline(selectedWorkspace, "thread_messages", {
+        thread_root: workspaceThreadRootId,
         cursor: append ? workspaceThreadPage?.next_cursor ?? null : null,
         limit: 50,
-      });
+      }) as unknown as WorkspaceThreadPage;
       if (workspaceThreadSelection.current !== selectionKey) return;
       setWorkspaceThreadPage((current) => append && current ? { ...page, unread_count: current.unread_count, replies: [...page.replies, ...current.replies] } : page);
       if (!append && page.unread_count > 0) {
-        await serviceCommand("mark_workspace_thread_read", {
-          operation_id: newOperationId(),
-          workspace_id: selectedWorkspace.id,
-          thread_root_id: workspaceThreadRootId,
+        await mutateWorkspaceTimeline(selectedWorkspace, "thread_read", {
+          thread_root: workspaceThreadRootId,
           high_water: page.high_water,
-        });
+        }, "mark_workspace_thread_read");
         setWorkspaceThreadPage((current) => current ? { ...current, unread_count: 0 } : current);
         void refresh(true);
       }
@@ -6793,12 +6823,9 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     if (!selectedWorkspace || workspaceActionBusy) return;
     setWorkspaceActionBusy(true); setWorkspaceActionError("");
     try {
-      await serviceCommand("set_workspace_notification_preference", {
-        operation_id: newOperationId(),
-        workspace_id: selectedWorkspace.id,
-        conversation_id: conversationId,
-        mode,
-      });
+      await mutateWorkspaceTimeline(selectedWorkspace, "notification_preference", {
+        conversation: conversationId, mode,
+      }, "set_workspace_notification_preference");
       await refresh(true);
     } catch (reason) { setWorkspaceActionError(errorMessage(reason)); }
     finally { setWorkspaceActionBusy(false); }
@@ -6922,15 +6949,12 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     await cancelPendingDraftWrite(draftWriteKey);
     let saved: WorkspaceMessage;
     try {
-      saved = await serviceCommand<WorkspaceMessage>("send_workspace_thread_reply", {
-        operation_id: durable.operationId,
+      saved = await mutateWorkspaceTimeline(selectedWorkspace, "thread_reply", {
         event_id: durable.eventId,
-        workspace_id: durable.workspaceId,
-        conversation_id: durable.conversationId,
-        thread_root_id: durable.threadRootId,
+        conversation: durable.conversationId,
+        thread_root: durable.threadRootId,
         text: durable.text,
-        mention_member_ids: durable.mentionMemberIds,
-      });
+      }, "send_workspace_thread_reply") as unknown as WorkspaceMessage;
     } catch (reason) {
       setWorkspaceError(`${errorMessage(reason)} Your reply is still in the composer; retrying will reuse the same durable message ID.`);
       workspaceSendInFlight.current = false;
@@ -6980,11 +7004,9 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     if (!selectedWorkspace || !workspaceMentionPage || workspaceMentionPage.unread_count === 0) return;
     setWorkspaceError("");
     try {
-      await serviceCommand("mark_workspace_mentions_read", {
-        operation_id: newOperationId(),
-        workspace_id: selectedWorkspace.id,
+      await mutateWorkspaceTimeline(selectedWorkspace, "mentions_read", {
         high_water: workspaceMentionPage.high_water,
-      });
+      }, "mark_workspace_mentions_read");
       setWorkspaceMentionPage((current) => current ? {
         ...current,
         unread_count: 0,

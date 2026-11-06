@@ -2248,6 +2248,61 @@
     {
       "type": "object",
       "properties": {
+        "api_version": {"const": 1},
+        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"},
+        "operation": {"const": "workspace.timeline_query"},
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {"$ref": "#/$defs/handle"},
+            "workspace": {"$ref": "#/$defs/handle"},
+            "view": {"enum": ["threads", "thread_messages", "mentions", "search"]},
+            "cursor": {"type": ["string", "null"], "maxLength": 256},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+            "thread_root": {"type": "string", "minLength": 1, "maxLength": 160},
+            "query": {"type": "string", "minLength": 2, "maxLength": 200},
+            "scope": {"type": "string", "minLength": 1, "maxLength": 32}
+          },
+          "required": ["profile", "workspace", "view"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["api_version", "request_id", "operation", "params"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "api_version": {"const": 1},
+        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"},
+        "operation": {"const": "workspace.timeline_mutation"},
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {"$ref": "#/$defs/handle"},
+            "workspace": {"$ref": "#/$defs/handle"},
+            "action": {"enum": ["thread_reply", "thread_read", "mentions_read", "notification_preference"]},
+            "conversation": {"type": "string", "minLength": 1, "maxLength": 160},
+            "thread_root": {"type": "string", "minLength": 1, "maxLength": 160},
+            "text": {"type": "string", "minLength": 1, "maxLength": 4000},
+            "event_id": {"type": "string", "minLength": 1, "maxLength": 160},
+            "high_water": {"type": "string", "minLength": 1, "maxLength": 160},
+            "mode": {"enum": ["all", "mentions", "none"]}
+          },
+          "required": ["profile", "workspace", "action"],
+          "additionalProperties": false
+        },
+        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"}
+      },
+      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
         "api_version": {
           "const": 1
         },

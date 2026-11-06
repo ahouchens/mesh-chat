@@ -292,6 +292,24 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         )
     }
 
+    fun workspaceTimelineQuery(profile: String, workspace: String, view: String,
+                               params: JSONObject = JSONObject()): JSONObject {
+        val payload = JSONObject().put("profile", profile).put("workspace", workspace)
+            .put("view", view)
+        val keys = params.keys()
+        while (keys.hasNext()) { val key = keys.next(); payload.put(key, params.get(key)) }
+        return request("workspace.timeline_query", payload)
+    }
+
+    fun workspaceTimelineMutation(profile: String, workspace: String, action: String,
+                                  params: JSONObject, idempotencyKey: String): JSONObject {
+        val payload = JSONObject().put("profile", profile).put("workspace", workspace)
+            .put("action", action)
+        val keys = params.keys()
+        while (keys.hasNext()) { val key = keys.next(); payload.put(key, params.get(key)) }
+        return dispatch("workspace.timeline_mutation", payload, idempotencyKey)
+    }
+
     fun workspaceInvitationRevoke(profile: String, workspace: String, invitation: String,
                                   idempotencyKey: String): JSONObject =
         dispatch("workspace.invitation_revoke", JSONObject().put("profile", profile)

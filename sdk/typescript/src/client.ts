@@ -521,6 +521,19 @@ export class CoreClient {
     );
   }
 
+  async workspaceTimelineQuery(profile: string, workspace: string, view: string,
+                               params: Record<string, unknown> = {}): Promise<unknown> {
+    return this.request("workspace.timeline_query",
+      { profile, workspace, view, ...params });
+  }
+
+  async workspaceTimelineMutation(profile: string, workspace: string, action: string,
+                                  params: Record<string, unknown>,
+                                  idempotencyKey: string): Promise<unknown> {
+    return this.request("workspace.timeline_mutation",
+      { profile, workspace, action, ...params }, { idempotencyKey });
+  }
+
   async workspaceInvitationRevoke(profile: string, workspace: string, invitation: string,
                                   idempotencyKey: string): Promise<unknown> {
     return this.request("workspace.invitation_revoke",

@@ -9,6 +9,7 @@ from .service_invitations import ServiceInvitations
 from .service_lifecycle import ServiceLifecycle
 from .service_workspace import ServiceWorkspace
 from .service_workspace_admin import ServiceWorkspaceAdmin
+from .service_workspace_timeline import ServiceWorkspaceTimeline
 from .service_messages import ServiceMessages
 from .service_pairing import ServicePairing
 from .service_recovery import ServiceRecovery
@@ -60,11 +61,14 @@ def bind_service_session(service, authenticated_grant):
                      if hasattr(service, "submit_workspace_join") else None)
         workspace_admin = (ServiceWorkspaceAdmin(service)
                            if hasattr(service, "approve_workspace_join") else None)
+        workspace_timeline = (ServiceWorkspaceTimeline(service, service.store)
+                              if hasattr(service, "list_workspace_threads") else None)
         ports = Ports(messages=messages, recovery=recovery,
                       diagnostics=ServiceDiagnostics(service, messages), received=received,
                       intent=intent, relationship=relationship, pairing=pairing,
                       invitations=invitations, lifecycle=lifecycle, workspace=workspace,
                       workspace_admin=workspace_admin,
+                      workspace_timeline=workspace_timeline,
                       application=ServiceApplication(service),
                       drafts=ServiceDrafts(service),
                       calls=ServiceCallSettings(service),

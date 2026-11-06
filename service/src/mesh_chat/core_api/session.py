@@ -53,7 +53,7 @@ from .requests import (
     WORKSPACE_CHANNEL_MEMBERS_UPDATE_OPERATIONS, WORKSPACE_CHANNEL_UPDATE_OPERATIONS,
     WORKSPACE_CHANNEL_TRANSFER_ACCEPT_OPERATIONS, WORKSPACE_CHANNEL_TRANSFER_OFFER_OPERATIONS,
     WORKSPACE_POLICY_UPDATE_OPERATIONS, WORKSPACE_METADATA_OPERATIONS,
-    WORKSPACE_RETENTION_OPERATIONS, WORKSPACE_ADMIN_REQUEST_OPERATIONS, WORKSPACE_LIFECYCLE_OPERATIONS, WORKSPACE_AUTHORITY_LOSS_OPERATIONS, WORKSPACE_AUTHORITY_OPERATIONS, WORKSPACE_AUTHORITY_OFFER_OPERATIONS, WORKSPACE_EDGE_OPERATIONS, WORKSPACE_ADMISSION_OPERATIONS, WORKSPACE_DEVICES_OPERATIONS,
+    WORKSPACE_RETENTION_OPERATIONS, WORKSPACE_ADMIN_REQUEST_OPERATIONS, WORKSPACE_LIFECYCLE_OPERATIONS, WORKSPACE_AUTHORITY_LOSS_OPERATIONS, WORKSPACE_AUTHORITY_OPERATIONS, WORKSPACE_AUTHORITY_OFFER_OPERATIONS, WORKSPACE_EDGE_OPERATIONS, WORKSPACE_ADMISSION_OPERATIONS, WORKSPACE_TIMELINE_OPERATIONS, WORKSPACE_DEVICES_OPERATIONS,
     WORKSPACE_DEVICE_REMOVE_OPERATIONS,
     WORKSPACE_DEVICE_REMOVAL_REQUEST_OPERATIONS,
     WORKSPACE_DEVICE_REMOVAL_DECIDE_OPERATIONS,
@@ -180,6 +180,8 @@ PERMISSION_BY_OPERATION = {
     "workspace.admission_grant_create": "approve",
     "workspace.admission_grant_accept": "approve",
     "workspace.admission_grant_end": "approve",
+    "workspace.timeline_query": "read",
+    "workspace.timeline_mutation": "send",
     "workspace.query": "read",
 }
 
@@ -224,6 +226,7 @@ class Ports:
     lifecycle: Lifecycle | None = None
     workspace: WorkspaceRelationships | None = None
     workspace_admin: WorkspaceAdmin | None = None
+    workspace_timeline: object | None = None
     application: object | None = None
     drafts: object | None = None
     calls: object | None = None
@@ -251,6 +254,7 @@ class CoreSession:
         self._lifecycle = ports.lifecycle
         self._workspace = ports.workspace
         self._workspace_admin = ports.workspace_admin
+        self._workspace_timeline = ports.workspace_timeline
         self._application = ports.application
         self._drafts = ports.drafts
         self._calls = ports.calls
@@ -308,6 +312,7 @@ class CoreSession:
             (WORKSPACE_AUTHORITY_OFFER_OPERATIONS, self._workspace_admin),
             (WORKSPACE_EDGE_OPERATIONS, self._workspace_admin),
             (WORKSPACE_ADMISSION_OPERATIONS, self._workspace_admin),
+            (WORKSPACE_TIMELINE_OPERATIONS, self._workspace_timeline),
             (WORKSPACE_DEVICES_OPERATIONS, self._workspace_admin),
             (WORKSPACE_DEVICE_REMOVE_OPERATIONS, self._workspace_admin),
             (DIAGNOSTIC_OPERATIONS, self._diagnostics),
@@ -618,6 +623,22 @@ class CoreSession:
                 target, inside, invitation_id, operation_id)
             return {"profile": params["profile"], "workspace": params["workspace"],
                     "invitation": params["invitation"], "state": state}
+        if operation in WORKSPACE_TIMELINE_OPERATIONS:
+            target, inside = self._workspace_scope(grant, profiles, params)
+            if operation == "workspace.timeline_query":
+                result = self._workspace_timeline.query(
+                    target, inside, params["view"], params)
+                if not isinstance(result, dict):
+                    raise ApiFailure("internal")
+                return {"profile": params["profile"], "workspace": params["workspace"],
+                        "result": result}
+            operation_id = self._required_operation_id(grant, target, key)
+            result = self._workspace_timeline.mutate(
+                target, inside, params["action"], params, operation_id)
+            if not isinstance(result, dict):
+                raise ApiFailure("internal")
+            return {"profile": params["profile"], "workspace": params["workspace"],
+                    "result": result}
         if operation in WORKSPACE_ADMISSION_OPERATIONS:
             target, inside = self._workspace_scope(grant, profiles, params)
             if operation == "workspace.admission_grant_list":

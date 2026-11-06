@@ -58,6 +58,8 @@ WORKSPACE_RETENTION_OPERATIONS = ("workspace.retention_update",)
 WORKSPACE_AUTHORITY_LOSS_OPERATIONS = ("workspace.authority_loss_report",)
 WORKSPACE_AUTHORITY_OPERATIONS = ("workspace.authority_accept", "workspace.authority_finalize")
 WORKSPACE_AUTHORITY_OFFER_OPERATIONS = ("workspace.authority_offer",)
+WORKSPACE_TIMELINE_OPERATIONS = ("workspace.timeline_query",
+                                "workspace.timeline_mutation")
 WORKSPACE_ADMISSION_OPERATIONS = ("workspace.invitation_revoke",
                                 "workspace.admission_grant_list",
                                 "workspace.admission_grant_create",
@@ -242,6 +244,57 @@ def parse_request(value, operations):
                 or "idempotency_key" not in value
                 or any(not isinstance(item, str) or HANDLE.fullmatch(item) is None
                        for item in params.values())):
+            raise ApiFailure("invalid_request")
+        return operation, params
+    if operation in WORKSPACE_TIMELINE_OPERATIONS:
+        params = value["params"]
+        if (not isinstance(params, dict) or not isinstance(params.get("profile"), str)
+                or not isinstance(params.get("workspace"), str)
+                or HANDLE.fullmatch(params["profile"]) is None
+                or HANDLE.fullmatch(params["workspace"]) is None):
+            raise ApiFailure("invalid_request")
+        if operation == "workspace.timeline_query":
+            view = params.get("view")
+            allowed = {"profile", "workspace", "view", "cursor", "limit",
+                       "thread_root", "query", "scope"}
+            if view not in {"threads", "thread_messages", "mentions", "search"}:
+                raise ApiFailure("invalid_request")
+            if set(params) - allowed:
+                raise ApiFailure("invalid_request")
+            if view in {"thread_messages"} and not isinstance(params.get("thread_root"), str):
+                raise ApiFailure("invalid_request")
+            if view == "search" and (not isinstance(params.get("query"), str)
+                                     or not 2 <= len(params["query"]) <= 200):
+                raise ApiFailure("invalid_request")
+            if "cursor" in params and params["cursor"] is not None and not isinstance(params["cursor"], str):
+                raise ApiFailure("invalid_request")
+            if "limit" in params and (type(params["limit"]) is not int
+                                      or not 1 <= params["limit"] <= 100):
+                raise ApiFailure("invalid_request")
+            return operation, params
+        action = params.get("action")
+        if action not in {"thread_reply", "thread_read", "mentions_read",
+                          "notification_preference"}:
+            raise ApiFailure("invalid_request")
+        required = {"profile", "workspace", "action"}
+        if action == "thread_reply":
+            required |= {"conversation", "thread_root", "text", "event_id"}
+        elif action == "thread_read":
+            required |= {"thread_root", "high_water"}
+        elif action == "mentions_read":
+            required |= {"high_water"}
+        else:
+            required |= {"conversation", "mode"}
+        if set(params) != required:
+            raise ApiFailure("invalid_request")
+        for key in required - {"profile", "workspace", "action", "high_water",
+                                "text", "event_id", "mode"}:
+            if not isinstance(params[key], str):
+                raise ApiFailure("invalid_request")
+        if action == "thread_reply" and (not isinstance(params["text"], str)
+                                        or not 1 <= len(params["text"]) <= 4000):
+            raise ApiFailure("invalid_request")
+        if action == "notification_preference" and params["mode"] not in {"all", "mentions", "none"}:
             raise ApiFailure("invalid_request")
         return operation, params
     if operation in WORKSPACE_ADMISSION_OPERATIONS:
@@ -811,6 +864,7 @@ COMPONENT_OPERATIONS = (
     + WORKSPACE_AUTHORITY_OFFER_OPERATIONS
     + WORKSPACE_EDGE_OPERATIONS
     + WORKSPACE_ADMISSION_OPERATIONS
+    + WORKSPACE_TIMELINE_OPERATIONS
     + WORKSPACE_DEVICES_OPERATIONS
     + WORKSPACE_DEVICE_REMOVE_OPERATIONS
     + WORKSPACE_DEVICE_REMOVAL_DECIDE_OPERATIONS

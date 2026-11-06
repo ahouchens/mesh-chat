@@ -433,6 +433,28 @@ export async function coreApiCreateWorkspaceDeviceLink(
   };
 }
 
+export async function coreApiTimelineQuery(
+  workspace: string, view: "threads" | "thread_messages" | "mentions" | "search",
+  params: Record<string, unknown> = {},
+): Promise<Record<string, unknown>> {
+  const profile = await coreApiProfile();
+  const result = await coreApiRequest("workspace.timeline_query",
+    { profile: profile.profile, workspace, view, ...params }) as { result?: Record<string, unknown> };
+  return result.result ?? {};
+}
+
+export async function coreApiTimelineMutation(
+  workspace: string,
+  action: "thread_reply" | "thread_read" | "mentions_read" | "notification_preference",
+  params: Record<string, unknown>,
+  idempotencyKey: string,
+): Promise<Record<string, unknown>> {
+  const profile = await coreApiProfile();
+  const result = await coreApiRequest("workspace.timeline_mutation",
+    { profile: profile.profile, workspace, action, ...params }, idempotencyKey) as { result?: Record<string, unknown> };
+  return result.result ?? {};
+}
+
 export async function coreApiWorkspaceInvitationRevoke(
   workspace: string, invitation: string, idempotencyKey: string,
 ): Promise<unknown> {

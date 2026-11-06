@@ -55,6 +55,8 @@
     "workspace.member_role",
     "workspace.channels",
     "workspace.invitation_create",
+    "workspace.timeline_mutation",
+    "workspace.timeline_query",
     "workspace.admission_grant_end",
     "workspace.admission_grant_accept",
     "workspace.admission_grant_create",
@@ -780,6 +782,20 @@
       "scope": "profile",
       "mutation": true,
       "idempotency": "repeatable"
+    },
+    {
+      "operation": "workspace.timeline_query",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "workspace.timeline_mutation",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
     }
   ],
   "limits": {
