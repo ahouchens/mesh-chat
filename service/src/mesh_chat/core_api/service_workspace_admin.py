@@ -6,7 +6,7 @@ from ..errors import (ContactNotApproved, DirectConnectionUnavailable, Invitatio
                       InvitationInvalid, ValidationError)
 from .errors import ApiFailure
 from .service_messages import storage_errors
-from .workspace_admin import (ChannelEdit, ChannelSummary, DeviceLink, DeviceLinkPreview,
+from .workspace_admin import (WorkspaceMetadata, WorkspaceRetention,ChannelEdit, ChannelSummary, DeviceLink, DeviceLinkPreview,
                               DeviceSummary,
                               WorkspacePolicies,
                               DeviceLinkSubmission,
@@ -720,3 +720,35 @@ class ServiceWorkspaceAdmin:
 
     def decline_device_removal(self, profile, workspace_id, removal_id, operation_id):
         return self._decide_device_removal(profile, workspace_id, removal_id, operation_id, False)
+
+
+    def update_metadata(self, profile, workspace_id, name, description, operation_id):
+        self._require_local(profile)
+        with storage_errors():
+            workspace = self._workspace(workspace_id)
+            if workspace.get("local_role") not in {"owner", "admin"}:
+                raise ApiFailure("forbidden")
+            try:
+                result = self._service.update_workspace_metadata(
+                    workspace_id, name, description, operation_id)
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            if not isinstance(result, dict):
+                raise ApiFailure("internal")
+            return WorkspaceMetadata(result.get("name", name),
+                                     result.get("description", description))
+
+    def update_retention(self, profile, workspace_id, retention_days, operation_id):
+        self._require_local(profile)
+        with storage_errors():
+            workspace = self._workspace(workspace_id)
+            if workspace.get("local_role") not in {"owner", "admin"}:
+                raise ApiFailure("forbidden")
+            try:
+                result = self._service.update_workspace_retention(
+                    workspace_id, retention_days, operation_id)
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            if not isinstance(result, dict):
+                raise ApiFailure("internal")
+            return WorkspaceRetention(result.get("retention_days"))

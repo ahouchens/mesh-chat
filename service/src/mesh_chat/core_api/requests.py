@@ -52,6 +52,8 @@ WORKSPACE_DEVICE_LINK_DECLINE_OPERATIONS = ("workspace.device_link_decline",)
 WORKSPACE_CHANNEL_TRANSFER_OFFER_OPERATIONS = ("workspace.channel_transfer_offer",)
 WORKSPACE_CHANNEL_TRANSFER_ACCEPT_OPERATIONS = ("workspace.channel_transfer_accept",)
 WORKSPACE_POLICY_UPDATE_OPERATIONS = ("workspace.policy_update",)
+WORKSPACE_METADATA_OPERATIONS = ("workspace.metadata_update",)
+WORKSPACE_RETENTION_OPERATIONS = ("workspace.retention_update",)
 WORKSPACE_DEVICES_OPERATIONS = ("workspace.devices",)
 WORKSPACE_DEVICE_REMOVE_OPERATIONS = ("workspace.device_remove",)
 WORKSPACE_DEVICE_REMOVAL_REQUEST_OPERATIONS = ("workspace.device_removal_request",)
@@ -222,6 +224,25 @@ def parse_request(value, operations):
                 or "idempotency_key" not in value
                 or any(not isinstance(item, str) or HANDLE.fullmatch(item) is None
                        for item in params.values())):
+            raise ApiFailure("invalid_request")
+        return operation, params
+    if operation in WORKSPACE_METADATA_OPERATIONS:
+        params = value["params"]
+        if (not isinstance(params, dict)
+                or set(params) != {"profile", "workspace", "name", "description"}
+                or any(not isinstance(params[key], str) or HANDLE.fullmatch(params[key]) is None
+                       for key in ("profile", "workspace"))
+                or not isinstance(params["name"], str) or not 1 <= len(params["name"].strip()) <= 128
+                or not isinstance(params["description"], str) or len(params["description"]) > 1000):
+            raise ApiFailure("invalid_request")
+        return operation, params
+    if operation in WORKSPACE_RETENTION_OPERATIONS:
+        params = value["params"]
+        if (not isinstance(params, dict)
+                or set(params) != {"profile", "workspace", "retention_days"}
+                or any(not isinstance(params[key], str) or HANDLE.fullmatch(params[key]) is None
+                       for key in ("profile", "workspace"))
+                or params["retention_days"] not in {None, 30, 90, 365}):
             raise ApiFailure("invalid_request")
         return operation, params
     if operation in WORKSPACE_POLICY_UPDATE_OPERATIONS:
@@ -657,6 +678,8 @@ COMPONENT_OPERATIONS = (
     + WORKSPACE_CHANNEL_TRANSFER_OFFER_OPERATIONS
     + WORKSPACE_CHANNEL_TRANSFER_ACCEPT_OPERATIONS
     + WORKSPACE_POLICY_UPDATE_OPERATIONS
+    + WORKSPACE_METADATA_OPERATIONS
+    + WORKSPACE_RETENTION_OPERATIONS
     + WORKSPACE_DEVICES_OPERATIONS
     + WORKSPACE_DEVICE_REMOVE_OPERATIONS
     + WORKSPACE_DEVICE_REMOVAL_DECIDE_OPERATIONS

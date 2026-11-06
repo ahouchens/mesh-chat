@@ -289,6 +289,18 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         )
     }
 
+    fun workspaceMetadata(profile: String, workspace: String, name: String,
+                           description: String, idempotencyKey: String): JSONObject =
+        request("workspace.metadata_update", JSONObject().put("profile", profile)
+            .put("workspace", workspace).put("name", name).put("description", description),
+            idempotencyKey)
+
+    fun workspaceRetention(profile: String, workspace: String, retentionDays: Int?,
+                           idempotencyKey: String): JSONObject =
+        request("workspace.retention_update", JSONObject().put("profile", profile)
+            .put("workspace", workspace).put("retention_days", retentionDays ?: JSONObject.NULL),
+            idempotencyKey)
+
     fun workspaceDeviceLinkCreate(
         profile: String,
         workspace: String,

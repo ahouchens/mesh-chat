@@ -5,6 +5,17 @@ from typing import Protocol
 
 
 @dataclass(frozen=True)
+class WorkspaceMetadata:
+    name: str
+    description: str
+
+
+@dataclass(frozen=True)
+class WorkspaceRetention:
+    retention_days: int | None
+
+
+@dataclass(frozen=True)
 class DeviceSummary:
     device: str
     member: str
@@ -171,6 +182,12 @@ class WorkspaceAdmin(Protocol):
 
     def accept_channel_transfer(self, profile: str, workspace: str, channel: str,
                                 operation_id: str) -> str: ...
+
+    def update_metadata(self, profile: str, workspace: str, name: str,
+                        description: str, operation_id: str) -> WorkspaceMetadata: ...
+
+    def update_retention(self, profile: str, workspace: str, retention_days: int | None,
+                         operation_id: str) -> WorkspaceRetention: ...
 
     def update_policies(self, profile: str, workspace: str, channel_creation: str,
                         posting: str, invitation_requests: str,

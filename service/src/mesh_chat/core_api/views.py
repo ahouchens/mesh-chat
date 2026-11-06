@@ -610,3 +610,22 @@ def call_ice_view(profile, value):
             or not isinstance(value.ice, dict)):
         raise ValueError("Invalid call ICE observation")
     return {"profile": profile, "ice": value.ice}
+
+
+def workspace_metadata_view(profile, workspace, value):
+    if (any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
+            for item in (profile, workspace))
+            or not isinstance(value.name, str) or not value.name
+            or not isinstance(value.description, str)):
+        raise ValueError("Invalid workspace metadata")
+    return {"profile": profile, "workspace": workspace,
+            "name": value.name, "description": value.description}
+
+
+def workspace_retention_view(profile, workspace, value):
+    if (any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
+            for item in (profile, workspace))
+            or value.retention_days not in {None, 30, 90, 365}):
+        raise ValueError("Invalid workspace retention")
+    return {"profile": profile, "workspace": workspace,
+            "retention_days": value.retention_days}

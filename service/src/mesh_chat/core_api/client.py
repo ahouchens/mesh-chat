@@ -239,6 +239,18 @@ class CoreClient:
             raise ValueError("Public channels do not take a member list")
         return self.request("workspace.channel_create", params, idempotency_key=key)
 
+    def workspace_metadata(self, handle, workspace, name, description, key):
+        return self.request("workspace.metadata_update",
+                            {"profile": handle, "workspace": workspace,
+                             "name": name, "description": description},
+                            idempotency_key=key)
+
+    def workspace_retention(self, handle, workspace, retention_days, key):
+        return self.request("workspace.retention_update",
+                            {"profile": handle, "workspace": workspace,
+                             "retention_days": retention_days},
+                            idempotency_key=key)
+
     def workspace_device_link_create(self, handle, workspace, key):
         if not isinstance(key, str) or len(key) < 16:
             raise ValueError("Device links require a caller-scoped key")

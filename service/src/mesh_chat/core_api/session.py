@@ -16,6 +16,7 @@ import uuid
 from typing import Protocol
 
 from .views import (call_ice_view, call_settings_view, device_removal_view, draft_view,
+    workspace_metadata_view, workspace_retention_view,
     group_invitation_decision_view,
     group_list_view, group_membership_view,
     group_message_sent_view, group_view, network_settings_view, reaction_view,
@@ -48,7 +49,8 @@ from .requests import (
     WORKSPACE_CHANNEL_MEMBERS_OPERATIONS,
     WORKSPACE_CHANNEL_MEMBERS_UPDATE_OPERATIONS, WORKSPACE_CHANNEL_UPDATE_OPERATIONS,
     WORKSPACE_CHANNEL_TRANSFER_ACCEPT_OPERATIONS, WORKSPACE_CHANNEL_TRANSFER_OFFER_OPERATIONS,
-    WORKSPACE_POLICY_UPDATE_OPERATIONS, WORKSPACE_DEVICES_OPERATIONS,
+    WORKSPACE_POLICY_UPDATE_OPERATIONS, WORKSPACE_METADATA_OPERATIONS,
+    WORKSPACE_RETENTION_OPERATIONS, WORKSPACE_DEVICES_OPERATIONS,
     WORKSPACE_DEVICE_REMOVE_OPERATIONS,
     WORKSPACE_DEVICE_REMOVAL_REQUEST_OPERATIONS,
     WORKSPACE_DEVICE_REMOVAL_DECIDE_OPERATIONS,
@@ -153,6 +155,8 @@ PERMISSION_BY_OPERATION = {
     "workspace.invitation_create": "approve",
     "workspace.members": "approve",
     "workspace.policy_update": "approve",
+    "workspace.metadata_update": "approve",
+    "workspace.retention_update": "approve",
     "workspace.query": "read",
 }
 
@@ -557,6 +561,18 @@ class CoreSession:
         return self._observe(grant, profile, operation, params)
 
     def _workspace_operation(self, grant, profiles, operation, params, key):
+        if operation in WORKSPACE_METADATA_OPERATIONS:
+            target, inside = self._workspace_scope(grant, profiles, params)
+            operation_id = self._required_operation_id(grant, target, key)
+            value = self._workspace_admin.update_metadata(
+                target, inside, params["name"], params["description"], operation_id)
+            return workspace_metadata_view(params["profile"], params["workspace"], value)
+        if operation in WORKSPACE_RETENTION_OPERATIONS:
+            target, inside = self._workspace_scope(grant, profiles, params)
+            operation_id = self._required_operation_id(grant, target, key)
+            value = self._workspace_admin.update_retention(
+                target, inside, params["retention_days"], operation_id)
+            return workspace_retention_view(params["profile"], params["workspace"], value)
         if operation in WORKSPACE_QUERY_OPERATIONS:
             return self._workspace_query_operation(grant, profiles, operation, params)
         return self._workspace_mutation_operation(grant, profiles, operation, params, key)

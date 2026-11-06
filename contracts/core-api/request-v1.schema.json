@@ -1728,6 +1728,61 @@
     {
       "type": "object",
       "properties": {
+        "api_version": {"const": 1},
+        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"},
+        "operation": {"const": "workspace.metadata_update"},
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {"$ref": "#/$defs/handle"},
+            "workspace": {"$ref": "#/$defs/handle"},
+            "name": {"type": "string", "minLength": 1, "maxLength": 128},
+            "description": {"type": "string", "maxLength": 1000}
+          },
+          "required": ["profile", "workspace", "name", "description"],
+          "additionalProperties": false
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
+      },
+      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "api_version": {"const": 1},
+        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"},
+        "operation": {"const": "workspace.retention_update"},
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {"$ref": "#/$defs/handle"},
+            "workspace": {"$ref": "#/$defs/handle"},
+            "retention_days": {"enum": [null, 30, 90, 365]}
+          },
+          "required": ["profile", "workspace", "retention_days"],
+          "additionalProperties": false
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
+      },
+      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
         "api_version": {
           "const": 1
         },

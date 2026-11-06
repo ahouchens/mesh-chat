@@ -517,6 +517,18 @@ export class CoreClient {
     );
   }
 
+  async workspaceMetadata(profile: string, workspace: string, name: string,
+                           description: string, idempotencyKey: string): Promise<unknown> {
+    return this.request("workspace.metadata_update",
+      { profile, workspace, name, description }, { idempotencyKey });
+  }
+
+  async workspaceRetention(profile: string, workspace: string, retentionDays: number | null,
+                           idempotencyKey: string): Promise<unknown> {
+    return this.request("workspace.retention_update",
+      { profile, workspace, retention_days: retentionDays }, { idempotencyKey });
+  }
+
   async workspaceDeviceLinkCreate(
     profile: string,
     workspace: string,

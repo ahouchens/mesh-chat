@@ -73,6 +73,8 @@ import {
   coreApiUpdateChannelMembers,
   coreApiWorkspaceDeviceLinkDecision,
   coreApiRequestDeviceRemoval,
+  coreApiWorkspaceMetadata,
+  coreApiWorkspaceRetention,
   coreApiDecideDeviceRemoval,
   coreApiCreateWorkspaceDeviceLink,
   coreApiSubmitDeviceLink,
@@ -6290,6 +6292,28 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     setWorkspaceActionBusy(true); setWorkspaceActionError("");
     try {
       let handled = false;
+      if (command === "update_workspace_metadata" && selectedWorkspace.core_handle
+          && typeof payload.name === "string" && typeof payload.description === "string") {
+        try {
+          await coreApiWorkspaceMetadata(
+            selectedWorkspace.core_handle, payload.name, payload.description, newOperationId());
+          await refresh(true);
+          return;
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+        }
+      }
+      if (command === "update_workspace_retention" && selectedWorkspace.core_handle
+          && (payload.retention_days === null || typeof payload.retention_days === "number")) {
+        try {
+          await coreApiWorkspaceRetention(
+            selectedWorkspace.core_handle, payload.retention_days, newOperationId());
+          await refresh(true);
+          return;
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+        }
+      }
       if (command === "request_workspace_device_removal" && selectedWorkspace.core_handle
           && typeof payload.target_device_id === "string") {
         const device = selectedWorkspace.members
