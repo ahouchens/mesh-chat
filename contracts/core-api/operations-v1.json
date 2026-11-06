@@ -100,7 +100,8 @@
     "workspace.retention_update",
     "workspace.snapshot",
     "workspace.timeline_mutation",
-    "workspace.timeline_query"
+    "workspace.timeline_query",
+    "call.control"
   ],
   "operations": [
     {
