@@ -595,3 +595,11 @@ def group_invitation_decision_view(profile, invitation, value):
             or value.state not in {"accepted", "declined"}):
         raise ValueError("Invalid group invitation decision")
     return {"profile": profile, "invitation": invitation, "state": value.state}
+
+
+def device_removal_view(profile, workspace, handle, state):
+    if (any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
+            for item in (profile, workspace, handle))
+            or state not in {"requested", "approved", "declined"}):
+        raise ValueError("Invalid device removal observation")
+    return {"profile": profile, "workspace": workspace, "handle": handle, "state": state}

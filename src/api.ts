@@ -407,6 +407,33 @@ export async function coreApiCreateWorkspaceDeviceLink(
   };
 }
 
+export async function coreApiRequestDeviceRemoval(
+  workspace: string,
+  device: string,
+  idempotencyKey: string,
+): Promise<unknown> {
+  const profile = await coreApiProfile();
+  return coreApiRequest(
+    "workspace.device_removal_request",
+    { profile: profile.profile, workspace, device },
+    idempotencyKey,
+  );
+}
+
+export async function coreApiDecideDeviceRemoval(
+  workspace: string,
+  request: string,
+  approve: boolean,
+  idempotencyKey: string,
+): Promise<unknown> {
+  const profile = await coreApiProfile();
+  return coreApiRequest(
+    approve ? "workspace.device_removal_approve" : "workspace.device_removal_decline",
+    { profile: profile.profile, workspace, request },
+    idempotencyKey,
+  );
+}
+
 export async function coreApiWorkspaceDeviceLinkDecision(
   workspace: string,
   request: string,

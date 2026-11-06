@@ -272,6 +272,23 @@ class CoreClient:
                             {"profile": handle, "document": document},
                             idempotency_key=key)
 
+    def workspace_device_removal_request(self, handle, workspace, device, key):
+        if not isinstance(key, str) or len(key) < 16:
+            raise ValueError("Device removal requires a caller-scoped key")
+        return self.request("workspace.device_removal_request",
+                            {"profile": handle, "workspace": workspace, "device": device},
+                            idempotency_key=key)
+
+    def workspace_device_removal_decide(self, handle, workspace, request_handle, key, approve):
+        if not isinstance(key, str) or len(key) < 16:
+            raise ValueError("Device removal decisions require a caller-scoped key")
+        operation = ("workspace.device_removal_approve" if approve
+                     else "workspace.device_removal_decline")
+        return self.request(operation,
+                            {"profile": handle, "workspace": workspace,
+                             "request": request_handle},
+                            idempotency_key=key)
+
     def workspace_device_link_preview(self, handle, document):
         if not isinstance(document, str) or not document:
             raise ValueError("Device link material is required")

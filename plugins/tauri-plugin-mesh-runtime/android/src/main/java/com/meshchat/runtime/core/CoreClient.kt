@@ -313,6 +313,31 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         )
     }
 
+    fun workspaceDeviceRemovalRequest(
+        profile: String,
+        workspace: String,
+        device: String,
+        idempotencyKey: String,
+    ): JSONObject = request(
+        "workspace.device_removal_request",
+        JSONObject().put("profile", profile).put("workspace", workspace).put("device", device),
+        idempotencyKey,
+    )
+
+    fun workspaceDeviceRemovalDecide(
+        profile: String,
+        workspace: String,
+        requestHandle: String,
+        approve: Boolean,
+        idempotencyKey: String,
+    ): JSONObject = request(
+        if (approve) "workspace.device_removal_approve"
+        else "workspace.device_removal_decline",
+        JSONObject().put("profile", profile).put("workspace", workspace)
+            .put("request", requestHandle),
+        idempotencyKey,
+    )
+
     fun workspaceDeviceLinks(profile: String, workspace: String): JSONObject = request(
         "workspace.device_links",
         JSONObject().put("profile", profile).put("workspace", workspace),

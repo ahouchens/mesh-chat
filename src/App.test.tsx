@@ -17,6 +17,8 @@ const api = vi.hoisted(() => {
   coreApiRequest: vi.fn(async (): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiSubmitDeviceLink: vi.fn(async (..._args: unknown[]): Promise<never> => { throw new Error("core_api_unavailable"); }),
   coreApiCreateWorkspaceDeviceLink: vi.fn(async (..._args: unknown[]): Promise<{ id: string; workspace_id: string; link: string; text: string; value: string; expires_at: number }> => { throw new Error("core_api_unavailable"); }),
+  coreApiRequestDeviceRemoval: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiDecideDeviceRemoval: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiWorkspaceDeviceLinkDecision: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiUpdateChannelMembers: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiOfferChannelTransfer: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),

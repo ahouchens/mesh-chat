@@ -54,6 +54,9 @@ WORKSPACE_CHANNEL_TRANSFER_ACCEPT_OPERATIONS = ("workspace.channel_transfer_acce
 WORKSPACE_POLICY_UPDATE_OPERATIONS = ("workspace.policy_update",)
 WORKSPACE_DEVICES_OPERATIONS = ("workspace.devices",)
 WORKSPACE_DEVICE_REMOVE_OPERATIONS = ("workspace.device_remove",)
+WORKSPACE_DEVICE_REMOVAL_REQUEST_OPERATIONS = ("workspace.device_removal_request",)
+WORKSPACE_DEVICE_REMOVAL_DECIDE_OPERATIONS = ("workspace.device_removal_approve",
+                                              "workspace.device_removal_decline")
 WORKSPACE_QUERY_OPERATIONS = frozenset().union(
     WORKSPACE_LIST_OPERATIONS,
     WORKSPACE_REQUESTS_OPERATIONS,
@@ -195,6 +198,22 @@ def parse_request(value, operations):
         if (not isinstance(params, dict) or set(params) != {"profile", "workspace"}
                 or any(not isinstance(item, str) or HANDLE.fullmatch(item) is None
                        for item in params.values())):
+            raise ApiFailure("invalid_request")
+        return operation, params
+    if operation in WORKSPACE_DEVICE_REMOVAL_REQUEST_OPERATIONS:
+        params = value["params"]
+        if (not isinstance(params, dict)
+                or set(params) != {"profile", "workspace", "device"}
+                or any(not isinstance(params[key], str) or HANDLE.fullmatch(params[key]) is None
+                       for key in ("profile", "workspace", "device"))):
+            raise ApiFailure("invalid_request")
+        return operation, params
+    if operation in WORKSPACE_DEVICE_REMOVAL_DECIDE_OPERATIONS:
+        params = value["params"]
+        if (not isinstance(params, dict)
+                or set(params) != {"profile", "workspace", "request"}
+                or any(not isinstance(params[key], str) or HANDLE.fullmatch(params[key]) is None
+                       for key in ("profile", "workspace", "request"))):
             raise ApiFailure("invalid_request")
         return operation, params
     if operation in WORKSPACE_DEVICE_REMOVE_OPERATIONS:
@@ -639,5 +658,7 @@ COMPONENT_OPERATIONS = (
     + WORKSPACE_POLICY_UPDATE_OPERATIONS
     + WORKSPACE_DEVICES_OPERATIONS
     + WORKSPACE_DEVICE_REMOVE_OPERATIONS
+    + WORKSPACE_DEVICE_REMOVAL_DECIDE_OPERATIONS
+    + WORKSPACE_DEVICE_REMOVAL_REQUEST_OPERATIONS
     + DIAGNOSTIC_OPERATIONS
 )

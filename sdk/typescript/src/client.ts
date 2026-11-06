@@ -543,6 +543,32 @@ export class CoreClient {
     );
   }
 
+  async workspaceDeviceRemovalRequest(
+    profile: string,
+    workspace: string,
+    device: string,
+    idempotencyKey: string,
+  ): Promise<unknown> {
+    if (idempotencyKey.length < 16) throw new ProtocolError("device removal requires a caller key");
+    return this.request("workspace.device_removal_request",
+      { profile, workspace, device }, { idempotencyKey });
+  }
+
+  async workspaceDeviceRemovalDecide(
+    profile: string,
+    workspace: string,
+    requestHandle: string,
+    approve: boolean,
+    idempotencyKey: string,
+  ): Promise<unknown> {
+    if (idempotencyKey.length < 16) throw new ProtocolError("device removal requires a caller key");
+    return this.request(
+      approve ? "workspace.device_removal_approve" : "workspace.device_removal_decline",
+      { profile, workspace, request: requestHandle },
+      { idempotencyKey },
+    );
+  }
+
   async workspaceDeviceLinks(profile: string, workspace: string): Promise<WorkspaceDeviceLinksView> {
     return this.request<WorkspaceDeviceLinksView>("workspace.device_links", { profile, workspace });
   }

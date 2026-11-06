@@ -226,6 +226,7 @@ export interface WorkspaceMember {
   };
   devices?: Array<{
     id: string;
+    core_handle?: string;
     destination_hash: string;
     fingerprint: string;
   }>;

@@ -71,6 +71,8 @@ import {
   coreApiUpdateWorkspaceChannel,
   coreApiUpdateChannelMembers,
   coreApiWorkspaceDeviceLinkDecision,
+  coreApiRequestDeviceRemoval,
+  coreApiDecideDeviceRemoval,
   coreApiCreateWorkspaceDeviceLink,
   coreApiSubmitDeviceLink,
   coreApiOfferChannelTransfer,
@@ -6287,6 +6289,38 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     setWorkspaceActionBusy(true); setWorkspaceActionError("");
     try {
       let handled = false;
+      if (command === "request_workspace_device_removal" && selectedWorkspace.core_handle
+          && typeof payload.target_device_id === "string") {
+        const device = selectedWorkspace.members
+          .flatMap((member) => member.devices ?? [])
+          .find((item) => item.id === payload.target_device_id);
+        if (device?.core_handle) {
+          try {
+            await coreApiRequestDeviceRemoval(
+              selectedWorkspace.core_handle, device.core_handle, newOperationId());
+            await refresh(true);
+            return;
+          } catch (reason) {
+            if (!String(reason).includes("core_api_unavailable")) throw reason;
+          }
+        }
+      }
+      if ((command === "approve_workspace_device_removal"
+           || command === "decline_workspace_device_removal")
+          && selectedWorkspace.core_handle && typeof payload.removal_id === "string") {
+        const transition = workspaceDeviceTransitions.find((item) => item.id === payload.removal_id);
+        if (transition?.core_handle) {
+          try {
+            await coreApiDecideDeviceRemoval(
+              selectedWorkspace.core_handle, transition.core_handle,
+              command === "approve_workspace_device_removal", newOperationId());
+            await refresh(true);
+            return;
+          } catch (reason) {
+            if (!String(reason).includes("core_api_unavailable")) throw reason;
+          }
+        }
+      }
       if ((command === "approve_workspace_device_link" || command === "decline_workspace_device_link")
           && selectedWorkspace.core_handle && typeof payload.link_id === "string") {
         const transition = workspaceDeviceTransitions.find((item) => item.id === payload.link_id);

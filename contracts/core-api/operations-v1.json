@@ -575,6 +575,27 @@
       "scope": "profile",
       "mutation": true,
       "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.device_removal_request",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "repeatable"
+    },
+    {
+      "operation": "workspace.device_removal_approve",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "repeatable"
+    },
+    {
+      "operation": "workspace.device_removal_decline",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "repeatable"
     }
   ],
   "limits": {

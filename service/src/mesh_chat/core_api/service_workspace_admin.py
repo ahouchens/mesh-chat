@@ -665,3 +665,58 @@ class ServiceWorkspaceAdmin:
             if device_id in remaining:
                 raise ApiFailure("internal")
             return "removed"
+    def request_device_removal(self, profile, workspace_id, target_device_id, operation_id):
+        self._require_local(profile)
+        with storage_errors():
+            workspace = self._workspace(workspace_id)
+            if workspace.get("local_role") not in {"owner", "admin"}:
+                raise ApiFailure("forbidden")
+            try:
+                outcome = self._service.request_workspace_device_removal(
+                    workspace_id, target_device_id, operation_id)
+            except (ValidationError, ContactNotApproved) as error:
+                raise ApiFailure("invalid_request") from error
+            if not isinstance(outcome, dict) or not isinstance(outcome.get("id"), str):
+                raise ApiFailure("internal")
+            return outcome["id"]
+
+    def removal_ids(self, profile, workspace_id):
+        self._require_local(profile)
+        with storage_errors():
+            workspace = self._workspace(workspace_id)
+            if workspace.get("local_role") != "owner":
+                raise ApiFailure("forbidden")
+            ids = []
+            for item in self._store.list("workspace_device_transition"):
+                if (item.get("workspace_id") == workspace_id
+                        and item.get("transition_kind") == "removal"
+                        and item.get("state") == "pending"
+                        and isinstance(item.get("id"), str)):
+                    ids.append(item["id"])
+            return tuple(sorted(ids))
+
+    def _decide_device_removal(self, profile, workspace_id, removal_id, operation_id, approve):
+        self._require_local(profile)
+        with storage_errors():
+            workspace = self._workspace(workspace_id)
+            if workspace.get("local_role") != "owner":
+                raise ApiFailure("forbidden")
+            if removal_id not in self.removal_ids(profile, workspace_id):
+                raise ApiFailure("forbidden")
+            try:
+                outcome = (self._service.approve_workspace_device_removal(
+                    workspace_id, removal_id, operation_id) if approve
+                    else self._service.decline_workspace_device_removal(
+                        workspace_id, removal_id, operation_id))
+            except (ValidationError, ContactNotApproved) as error:
+                raise ApiFailure("invalid_request") from error
+            expected = "approved" if approve else "declined"
+            if not isinstance(outcome, dict) or outcome.get("id") != removal_id:
+                raise ApiFailure("internal")
+            return expected
+
+    def approve_device_removal(self, profile, workspace_id, removal_id, operation_id):
+        return self._decide_device_removal(profile, workspace_id, removal_id, operation_id, True)
+
+    def decline_device_removal(self, profile, workspace_id, removal_id, operation_id):
+        return self._decide_device_removal(profile, workspace_id, removal_id, operation_id, False)

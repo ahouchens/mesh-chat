@@ -15,7 +15,8 @@ from threading import RLock
 import uuid
 from typing import Protocol
 
-from .views import (call_settings_view, draft_view, group_invitation_decision_view,
+from .views import (call_settings_view, device_removal_view, draft_view,
+    group_invitation_decision_view,
     group_list_view, group_membership_view,
     group_message_sent_view, group_view, network_settings_view, reaction_view,
     peer_delete_view, peer_trust_view,
@@ -49,6 +50,8 @@ from .requests import (
     WORKSPACE_CHANNEL_TRANSFER_ACCEPT_OPERATIONS, WORKSPACE_CHANNEL_TRANSFER_OFFER_OPERATIONS,
     WORKSPACE_POLICY_UPDATE_OPERATIONS, WORKSPACE_DEVICES_OPERATIONS,
     WORKSPACE_DEVICE_REMOVE_OPERATIONS,
+    WORKSPACE_DEVICE_REMOVAL_REQUEST_OPERATIONS,
+    WORKSPACE_DEVICE_REMOVAL_DECIDE_OPERATIONS,
     WORKSPACE_DEVICE_LINK_APPROVE_OPERATIONS, WORKSPACE_DEVICE_LINK_CREATE_OPERATIONS,
     WORKSPACE_DEVICE_LINK_DECLINE_OPERATIONS, WORKSPACE_DEVICE_LINK_PREVIEW_OPERATIONS,
     WORKSPACE_DEVICE_LINK_SUBMIT_OPERATIONS, WORKSPACE_DEVICE_LINKS_OPERATIONS,
@@ -136,6 +139,9 @@ PERMISSION_BY_OPERATION = {
     "workspace.device_link_submit": "pair",
     "workspace.device_links": "approve",
     "workspace.device_remove": "approve",
+    "workspace.device_removal_request": "send",
+    "workspace.device_removal_approve": "approve",
+    "workspace.device_removal_decline": "approve",
     "workspace.devices": "approve",
     "workspace.invitation_preview": "read",
     "workspace.join": "pair",
@@ -387,8 +393,17 @@ class CoreSession:
         handled = dict(item)
         handled["core_handle"] = self._handle(grant, kind, profile, identifier)
         if kind == "workspace" and isinstance(item.get("members"), list):
-            handled["members"] = [self._snapshot_handle(grant, "member", profile, member)
-                                  for member in item["members"] if isinstance(member, dict)]
+            members = []
+            for member in item["members"]:
+                if not isinstance(member, dict):
+                    continue
+                handled_member = self._snapshot_handle(grant, "member", profile, member)
+                if isinstance(member.get("devices"), list):
+                    handled_member["devices"] = [
+                        self._snapshot_handle(grant, "device", profile, device)
+                        for device in member["devices"] if isinstance(device, dict)]
+                members.append(handled_member)
+            handled["members"] = members
         return handled
 
     def _snapshot_handle(self, grant, kind, profile, item):
@@ -750,6 +765,45 @@ class CoreSession:
             link = self._workspace_admin.device_link_create(
                 target, inside, self._operation_id(grant, target, key))
             return device_link_create_view(params["profile"], params["workspace"], link)
+        if operation in WORKSPACE_DEVICE_REMOVAL_REQUEST_OPERATIONS:
+            target = profiles.get(params["profile"])
+            if target is None:
+                raise ApiFailure("forbidden")
+            inside = self._workspace_target(grant, target, params["workspace"])
+            device_id = next(
+                (item for item in self._workspace_admin.device_ids(target, inside)
+                 if self._handle(grant, "device", target, item) == params["device"]),
+                None)
+            if device_id is None:
+                raise ApiFailure("forbidden")
+            if key is None:
+                raise ApiFailure("invalid_request")
+            self._workspace_admin.request_device_removal(
+                target, inside, device_id, self._operation_id(grant, target, key))
+            return device_removal_view(params["profile"], params["workspace"],
+                                       params["device"], "requested")
+        if operation in WORKSPACE_DEVICE_REMOVAL_DECIDE_OPERATIONS:
+            target = profiles.get(params["profile"])
+            if target is None:
+                raise ApiFailure("forbidden")
+            inside = self._workspace_target(grant, target, params["workspace"])
+            removal_id = next(
+                (item for item in self._workspace_admin.removal_ids(target, inside)
+                 if self._handle(grant, "device_link", target, item) == params["request"]),
+                None)
+            if removal_id is None:
+                raise ApiFailure("forbidden")
+            if key is None:
+                raise ApiFailure("invalid_request")
+            operation_id = self._operation_id(grant, target, key)
+            if operation == "workspace.device_removal_approve":
+                state = self._workspace_admin.approve_device_removal(
+                    target, inside, removal_id, operation_id)
+            else:
+                state = self._workspace_admin.decline_device_removal(
+                    target, inside, removal_id, operation_id)
+            return device_removal_view(params["profile"], params["workspace"],
+                                       params["request"], state)
         if operation in WORKSPACE_DEVICE_REMOVE_OPERATIONS:
             target, inside = self._workspace_scope(grant, profiles, params)
             device_id = next(
