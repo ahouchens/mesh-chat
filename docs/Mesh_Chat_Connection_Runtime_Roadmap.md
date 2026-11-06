@@ -1344,6 +1344,7 @@ M5 - supported reusable core
 - [x] Groups expose typed group.query and group.create with caller-scoped handles; the create dialog resolves member destinations and saves through the facade with legacy fallback only when unavailable.
 - [x] Message reactions use typed message.reaction_set with caller-scoped message handles.
 - [x] Network settings use typed settings.query/settings.update; the network settings UI saves through the facade with legacy fallback only when unavailable.
+- [x] Call control start/answer/restart/end/candidate/signalling is available as a typed call.control operation; renderer routing remains pending.
 - [x] Call media polling uses typed call.media_query with scoped call handles and legacy fallback only when unavailable.
 - [x] Call ICE configuration uses typed call.ice_servers; call setup and onboarding read it with legacy fallback only when unavailable.
 - [x] Call settings use typed call.settings_query/call.settings_update; Settings and onboarding read/save through the facade with legacy fallback only when unavailable.
