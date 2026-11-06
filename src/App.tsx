@@ -76,6 +76,7 @@ import {
   coreApiOfferChannelTransfer,
   coreApiAcceptChannelTransfer,
   coreApiLeaveGroup,
+  coreApiRetryGroupInvitation,
   coreApiRemoveGroupMember,
   coreApiSendGroupMessage,
   coreApiSendMessage,
@@ -6154,12 +6155,16 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     setGroupActionError("");
     try {
       let handled = false;
-      if (selectedGroup?.core_handle && command !== "retry_group_invitation") {
+      if (selectedGroup?.core_handle) {
         try {
           if (command === "leave_group") {
             await coreApiLeaveGroup(selectedGroup.core_handle);
           } else if (command === "close_group") {
             await coreApiCloseGroup(selectedGroup.core_handle);
+          } else if (command === "retry_group_invitation"
+              && typeof payload.destination_hash === "string") {
+            await coreApiRetryGroupInvitation(
+              selectedGroup.core_handle, payload.destination_hash);
           } else if (typeof payload.destination_hash === "string") {
             await coreApiRemoveGroupMember(selectedGroup.core_handle, payload.destination_hash);
           }

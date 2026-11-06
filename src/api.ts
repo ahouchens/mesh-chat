@@ -531,6 +531,19 @@ export async function coreApiGroupInvitation(
   });
 }
 
+export async function coreApiRetryGroupInvitation(
+  group: string,
+  destination: string,
+): Promise<unknown> {
+  const profile = await coreApiProfile();
+  const member = await coreApiPeerForDestination(destination);
+  return coreApiRequest("group.invitation_retry", {
+    profile: profile.profile,
+    group,
+    member: member.peer,
+  });
+}
+
 export async function coreApiLeaveGroup(group: string): Promise<unknown> {
   const profile = await coreApiProfile();
   return coreApiRequest("group.leave", { profile: profile.profile, group });

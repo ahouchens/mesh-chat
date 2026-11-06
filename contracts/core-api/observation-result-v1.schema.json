@@ -76,7 +76,7 @@
           "type": "array",
           "uniqueItems": true,
           "minItems": 3,
-          "maxItems": 64,
+          "maxItems": 65,
           "items": {
             "enum": [
               "application.snapshot",
@@ -109,6 +109,7 @@
               "group.message_enqueue",
               "group.member_remove",
               "group.invitation_decline",
+              "group.invitation_retry",
               "group.invitation_accept",
               "group.close",
               "group.leave",

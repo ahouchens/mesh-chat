@@ -87,6 +87,18 @@ class ServiceGroups:
             return GroupMembershipObservation("removed")
 
 
+    def retry_invitation(self, profile, group_id, contact_id):
+        self._require_local(profile)
+        with storage_errors():
+            contact = self._store.get("contact", contact_id)
+            if contact is None or not isinstance(contact.get("destination_hash"), str):
+                raise ApiFailure("forbidden")
+            try:
+                self._service.retry_group_invitation(group_id, contact["destination_hash"])
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            return GroupMembershipObservation("retrying")
+
     def invitations(self, profile):
         self._require_local(profile)
         with storage_errors():

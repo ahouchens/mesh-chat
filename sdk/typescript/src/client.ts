@@ -254,6 +254,10 @@ export class CoreClient {
     return this.request("group.create", { profile, title, posting_policy: postingPolicy, members });
   }
 
+  async retryGroupInvitation(profile: string, group: string, member: string): Promise<unknown> {
+    return this.request("group.invitation_retry", { profile, group, member });
+  }
+
   async groupInvitation(profile: string, invitation: string, accept: boolean): Promise<unknown> {
     return this.request(accept ? "group.invitation_accept" : "group.invitation_decline", {
       profile, invitation,

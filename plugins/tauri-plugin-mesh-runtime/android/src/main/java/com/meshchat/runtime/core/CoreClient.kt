@@ -116,6 +116,10 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         request("group.create", JSONObject().put("profile", profile).put("title", title)
             .put("posting_policy", postingPolicy).put("members", JSONArray(members)))
 
+    fun retryGroupInvitation(profile: String, group: String, member: String): JSONObject =
+        request("group.invitation_retry", JSONObject().put("profile", profile)
+            .put("group", group).put("member", member))
+
     fun groupInvitation(profile: String, invitation: String, accept: Boolean): JSONObject =
         request(if (accept) "group.invitation_accept" else "group.invitation_decline",
             JSONObject().put("profile", profile).put("invitation", invitation))

@@ -115,6 +115,7 @@ PERMISSION_BY_OPERATION = {
     "group.member_remove": "send",
     "group.invitation_accept": "send",
     "group.invitation_decline": "send",
+    "group.invitation_retry": "send",
     "profile.query": "observe",
     "application.snapshot": "approve",
     "application.command": "approve",
@@ -462,13 +463,18 @@ class CoreSession:
                     observation = self._groups.decline_invitation(profile, invitation_id)
                 return group_invitation_decision_view(
                     params["profile"], params["invitation"], observation)
-            if operation in {"group.leave", "group.close", "group.member_remove"}:
+            if operation in {"group.leave", "group.close", "group.member_remove",
+                             "group.invitation_retry"}:
                 group_id = self._group_identifier(grant, profile, params["group"])
-                if operation == "group.member_remove":
+                if operation in {"group.member_remove", "group.invitation_retry"}:
                     contact_id = self._peers(grant, profile).get(params["member"])
                     if contact_id is None:
                         raise ApiFailure("forbidden")
-                    observation = self._groups.remove(profile, group_id, contact_id)
+                    if operation == "group.invitation_retry":
+                        observation = self._groups.retry_invitation(
+                            profile, group_id, contact_id)
+                    else:
+                        observation = self._groups.remove(profile, group_id, contact_id)
                 elif operation == "group.leave":
                     observation = self._groups.leave(profile, group_id)
                 else:

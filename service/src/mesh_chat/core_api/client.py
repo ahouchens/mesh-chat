@@ -136,6 +136,10 @@ class CoreClient:
             "profile": handle, "title": title, "posting_policy": posting_policy,
             "members": members})
 
+    def retry_group_invitation(self, handle, group, member):
+        return self.request("group.invitation_retry", {
+            "profile": handle, "group": group, "member": member})
+
     def group_invitation(self, handle, invitation, accept):
         return self.request(
             "group.invitation_accept" if accept else "group.invitation_decline",

@@ -33,6 +33,7 @@
     "group.message_enqueue",
     "group.member_remove",
     "group.invitation_decline",
+    "group.invitation_retry",
     "group.invitation_accept",
     "group.close",
     "group.leave",
@@ -360,6 +361,13 @@
     },
     {
       "operation": "group.invitation_decline",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "repeatable"
+    },
+    {
+      "operation": "group.invitation_retry",
       "permission": "send",
       "scope": "profile",
       "mutation": true,

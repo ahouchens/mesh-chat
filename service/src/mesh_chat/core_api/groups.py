@@ -45,6 +45,9 @@ class Groups(Protocol):
     def remove(self, profile: str, group_id: str,
                contact_id: str) -> GroupMembershipObservation: ...
 
+    def retry_invitation(self, profile: str, group_id: str,
+                         contact_id: str) -> GroupMembershipObservation: ...
+
     def invitations(self, profile: str) -> list[GroupInvitationObservation]: ...
 
     def accept_invitation(self, profile: str,
