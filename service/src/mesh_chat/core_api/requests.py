@@ -61,6 +61,8 @@ WORKSPACE_AUTHORITY_OFFER_OPERATIONS = ("workspace.authority_offer",)
 WORKSPACE_ACCESS_OPERATIONS = ("workspace.access_recommendation",)
 WORKSPACE_HISTORY_OPERATIONS = ("workspace.history",)
 WORKSPACE_CONNECTION_OPERATIONS = ("workspace.connection",)
+RUNTIME_QUERY_OPERATIONS = ("runtime.query",)
+RUNTIME_MUTATION_OPERATIONS = ("runtime.mutate",)
 WORKSPACE_SNAPSHOT_OPERATIONS = ("workspace.snapshot",)
 WORKSPACE_TIMELINE_OPERATIONS = ("workspace.timeline_query",
                                 "workspace.timeline_mutation")
@@ -330,6 +332,30 @@ def parse_request(value, operations):
                                    or type(params[lifetime_days]) is not int):
             raise ApiFailure(invalid_request)
         if action in {apply, apply_by_id} and type(params[consent]) is not bool:
+            raise ApiFailure(invalid_request)
+        return operation, params
+    if operation in RUNTIME_QUERY_OPERATIONS:
+        params = value[params]
+        if (not isinstance(params, dict) or set(params) != {profile, action}
+                or params[action] not in {background, notifications}
+                or not isinstance(params[profile], str)
+                or HANDLE.fullmatch(params[profile]) is None):
+            raise ApiFailure(invalid_request)
+        return operation, params
+    if operation in RUNTIME_MUTATION_OPERATIONS:
+        params = value[params]
+        action = params.get(action) if isinstance(params, dict) else None
+        allowed = {background_set: {profile, action, enabled},
+                   notification_previews: {profile, action, hidden},
+                   notification_open: {profile, action, notification_id}}
+        if not isinstance(params, dict) or action not in allowed or set(params) != allowed[action]:
+            raise ApiFailure(invalid_request)
+        if action == background_set and type(params[enabled]) is not bool:
+            raise ApiFailure(invalid_request)
+        if action == notification_previews and type(params[hidden]) is not bool:
+            raise ApiFailure(invalid_request)
+        if action == notification_open and (not isinstance(params[notification_id], str)
+                                              or not 1 <= len(params[notification_id]) <= 160):
             raise ApiFailure(invalid_request)
         return operation, params
     if operation in WORKSPACE_SNAPSHOT_OPERATIONS:
@@ -959,6 +985,8 @@ COMPONENT_OPERATIONS = (
     + WORKSPACE_ADMISSION_OPERATIONS
     + WORKSPACE_TIMELINE_OPERATIONS
     + WORKSPACE_SNAPSHOT_OPERATIONS
+    + RUNTIME_QUERY_OPERATIONS
+    + RUNTIME_MUTATION_OPERATIONS
     + WORKSPACE_ACCESS_OPERATIONS
     + WORKSPACE_HISTORY_OPERATIONS
     + WORKSPACE_CONNECTION_OPERATIONS

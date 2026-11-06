@@ -264,6 +264,14 @@ class CoreClient:
                             {"profile": handle, "workspace": workspace,
                              "action": action, **params}, idempotency_key=key)
 
+    def runtime_query(self, handle, action):
+        return self.request("runtime.query", {"profile": handle, "action": action})
+
+    def runtime_mutate(self, handle, action, key, **params):
+        return self.request("runtime.mutate",
+                            {"profile": handle, "action": action, **params},
+                            idempotency_key=key)
+
     def workspace_snapshot(self, handle):
         return self.request("workspace.snapshot", {"profile": handle})
 

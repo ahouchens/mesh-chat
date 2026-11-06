@@ -324,6 +324,17 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         else dispatch("workspace.access_recommendation", payload, idempotencyKey)
     }
 
+    fun runtimeQuery(profile: String, action: String): JSONObject =
+        request("runtime.query", JSONObject().put("profile", profile).put("action", action))
+
+    fun runtimeMutate(profile: String, action: String, params: JSONObject,
+                      idempotencyKey: String): JSONObject {
+        val payload = JSONObject().put("profile", profile).put("action", action)
+        val keys = params.keys()
+        while (keys.hasNext()) { val key = keys.next(); payload.put(key, params.get(key)) }
+        return dispatch("runtime.mutate", payload, idempotencyKey)
+    }
+
     fun workspaceSnapshot(profile: String): JSONObject =
         request("workspace.snapshot", JSONObject().put("profile", profile))
 

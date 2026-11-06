@@ -81,6 +81,8 @@ import {
   coreApiWorkspaceAuthority,
   coreApiWorkspaceAuthorityOffer,
   coreApiWorkspaceAdminSubmit,
+  coreApiRuntimeMutate,
+  coreApiRuntimeQuery,
   coreApiWorkspaceConnection,
   coreApiWorkspaceHistory,
   coreApiWorkspaceAccessRecommendation,
@@ -506,6 +508,51 @@ async function fetchWorkspaceConnection(
   return serviceCommand<Record<string, unknown>>(fallbackCommand,
     { ...(workspace ? { workspace_id: workspace.id } : {}), ...params,
       ...(key ? { operation_id: key } : {}) });
+}
+
+async function fetchBackgroundStatus(): Promise<BackgroundAvailability> {
+  try {
+    return await coreApiRuntimeQuery("background") as unknown as BackgroundAvailability;
+  } catch (reason) {
+    if (!String(reason).includes("core_api_unavailable")) throw reason;
+  }
+  return serviceCommand<BackgroundAvailability>("background_status");
+}
+
+async function setBackgroundAvailability(enabled: boolean): Promise<BackgroundAvailability> {
+  try {
+    return await coreApiRuntimeMutate("background_set", { enabled }, newOperationId()) as unknown as BackgroundAvailability;
+  } catch (reason) {
+    if (!String(reason).includes("core_api_unavailable")) throw reason;
+  }
+  return serviceCommand<BackgroundAvailability>("set_background_availability", { enabled });
+}
+
+async function fetchNotificationState(): Promise<WorkspaceNotificationState> {
+  try {
+    return await coreApiRuntimeQuery("notifications") as unknown as WorkspaceNotificationState;
+  } catch (reason) {
+    if (!String(reason).includes("core_api_unavailable")) throw reason;
+  }
+  return serviceCommand<WorkspaceNotificationState>("get_notification_state");
+}
+
+async function setNotificationPreviews(hidden: boolean): Promise<WorkspaceNotificationState> {
+  try {
+    return await coreApiRuntimeMutate("notification_previews", { hidden }, newOperationId()) as unknown as WorkspaceNotificationState;
+  } catch (reason) {
+    if (!String(reason).includes("core_api_unavailable")) throw reason;
+  }
+  return serviceCommand<WorkspaceNotificationState>("set_hide_notification_previews", { hidden, operation_id: newOperationId() });
+}
+
+async function openNotificationTarget(notificationId: string): Promise<NotificationOpenTarget> {
+  try {
+    return await coreApiRuntimeMutate("notification_open", { notification_id: notificationId }, newOperationId()) as unknown as NotificationOpenTarget;
+  } catch (reason) {
+    if (!String(reason).includes("core_api_unavailable")) throw reason;
+  }
+  return serviceCommand<NotificationOpenTarget>("open_notification_target", { notification_id: notificationId });
 }
 
 function errorMessage(error: unknown): string {
@@ -2718,7 +2765,7 @@ function BackgroundAvailabilitySettings({
   const enabled = value?.enabled === true;
   useEffect(() => {
     let active = true;
-    const update = () => { void serviceCommand<BackgroundAvailability>("background_status")
+    const update = () => { void fetchBackgroundStatus()
       .then((next) => { if (active) setValue(next); }).catch(() => undefined); };
     update();
     const timer = window.setInterval(update, 3000);
@@ -2739,15 +2786,15 @@ function BackgroundAvailabilitySettings({
     setError("");
     try {
       if (next) {
-        setValue(await serviceCommand<BackgroundAvailability>("set_background_availability", { enabled: true }));
+        setValue(await setBackgroundAvailability(true));
         try {
           await setNativeBackgroundAvailability(true);
         } catch (reason) {
-          setValue(await serviceCommand<BackgroundAvailability>("set_background_availability", { enabled: false }).catch(() => undefined));
+          setValue(await setBackgroundAvailability(false).catch(() => undefined));
           throw reason;
         }
       } else {
-        setValue(await serviceCommand<BackgroundAvailability>("set_background_availability", { enabled: false }));
+        setValue(await setBackgroundAvailability(false));
         await setNativeBackgroundAvailability(false);
       }
       await onChanged();
@@ -3040,7 +3087,7 @@ function SettingsPage({ snapshot, theme, onThemeChange, onClose, onSaved, onBack
   const refreshNotification = useCallback(async () => {
     const native = await notificationCapability();
     setCapability(native);
-    setNotification(await serviceCommand<WorkspaceNotificationState>("get_notification_state"));
+    setNotification(await fetchNotificationState());
   }, []);
   useEffect(() => { void refreshNotification().catch(() => undefined); }, [refreshNotification]);
   const requestPermission = async () => {
@@ -3059,9 +3106,7 @@ function SettingsPage({ snapshot, theme, onThemeChange, onClose, onSaved, onBack
     if (!notification || notificationBusy) return;
     setNotificationBusy(true); setNotificationError("");
     try {
-      setNotification(await serviceCommand<WorkspaceNotificationState>("set_hide_notification_previews", {
-        operation_id: newOperationId(), hidden: !notification.hide_previews,
-      }));
+      setNotification(await setNotificationPreviews(!notification.hide_previews));
       await onSaved();
     } catch (reason) { setNotificationError(errorMessage(reason)); }
     finally { setNotificationBusy(false); }
@@ -7965,7 +8010,7 @@ export default function App() {
     }).then(keepCleanup).catch(() => undefined);
     void onNotificationOpen(async (notificationId) => {
       try {
-        const target = await serviceCommand<NotificationOpenTarget>("open_notification_target", { notification_id: notificationId });
+        const target = await openNotificationTarget(notificationId);
         if (active) {
           await refresh(true);
           if (active) setNotificationTarget({ ...target });
@@ -7986,7 +8031,7 @@ export default function App() {
       busy = true;
       try {
         if (await runtimePlatform() !== "android" || !active) return;
-        const background = await serviceCommand<BackgroundAvailability>("background_status");
+        const background = await fetchBackgroundStatus();
         if (!active || background?.native?.enabled !== true) return;
         let capability = await notificationCapability();
         if (!active) return;

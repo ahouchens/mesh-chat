@@ -53,7 +53,7 @@ from .requests import (
     WORKSPACE_CHANNEL_MEMBERS_UPDATE_OPERATIONS, WORKSPACE_CHANNEL_UPDATE_OPERATIONS,
     WORKSPACE_CHANNEL_TRANSFER_ACCEPT_OPERATIONS, WORKSPACE_CHANNEL_TRANSFER_OFFER_OPERATIONS,
     WORKSPACE_POLICY_UPDATE_OPERATIONS, WORKSPACE_METADATA_OPERATIONS,
-    WORKSPACE_RETENTION_OPERATIONS, WORKSPACE_ADMIN_REQUEST_OPERATIONS, WORKSPACE_LIFECYCLE_OPERATIONS, WORKSPACE_AUTHORITY_LOSS_OPERATIONS, WORKSPACE_AUTHORITY_OPERATIONS, WORKSPACE_AUTHORITY_OFFER_OPERATIONS, WORKSPACE_EDGE_OPERATIONS, WORKSPACE_ADMISSION_OPERATIONS, WORKSPACE_TIMELINE_OPERATIONS, WORKSPACE_SNAPSHOT_OPERATIONS, WORKSPACE_ACCESS_OPERATIONS, WORKSPACE_HISTORY_OPERATIONS, WORKSPACE_CONNECTION_OPERATIONS, WORKSPACE_DEVICES_OPERATIONS,
+    WORKSPACE_RETENTION_OPERATIONS, WORKSPACE_ADMIN_REQUEST_OPERATIONS, WORKSPACE_LIFECYCLE_OPERATIONS, WORKSPACE_AUTHORITY_LOSS_OPERATIONS, WORKSPACE_AUTHORITY_OPERATIONS, WORKSPACE_AUTHORITY_OFFER_OPERATIONS, WORKSPACE_EDGE_OPERATIONS, WORKSPACE_ADMISSION_OPERATIONS, WORKSPACE_TIMELINE_OPERATIONS, WORKSPACE_SNAPSHOT_OPERATIONS, WORKSPACE_ACCESS_OPERATIONS, WORKSPACE_HISTORY_OPERATIONS, WORKSPACE_CONNECTION_OPERATIONS, RUNTIME_QUERY_OPERATIONS, RUNTIME_MUTATION_OPERATIONS, WORKSPACE_DEVICES_OPERATIONS,
     WORKSPACE_DEVICE_REMOVE_OPERATIONS,
     WORKSPACE_DEVICE_REMOVAL_REQUEST_OPERATIONS,
     WORKSPACE_DEVICE_REMOVAL_DECIDE_OPERATIONS,
@@ -180,6 +180,8 @@ PERMISSION_BY_OPERATION = {
     "workspace.admission_grant_create": "approve",
     "workspace.admission_grant_accept": "approve",
     "workspace.admission_grant_end": "approve",
+    "runtime.query": "read",
+    "runtime.mutate": "send",
     "workspace.snapshot": "read",
     "workspace.access_recommendation": "send",
     "workspace.history": "send",
@@ -231,6 +233,7 @@ class Ports:
     workspace: WorkspaceRelationships | None = None
     workspace_admin: WorkspaceAdmin | None = None
     workspace_timeline: object | None = None
+    runtime: object | None = None
     application: object | None = None
     drafts: object | None = None
     calls: object | None = None
@@ -259,6 +262,7 @@ class CoreSession:
         self._workspace = ports.workspace
         self._workspace_admin = ports.workspace_admin
         self._workspace_timeline = ports.workspace_timeline
+        self._runtime = ports.runtime
         self._application = ports.application
         self._drafts = ports.drafts
         self._calls = ports.calls
@@ -318,6 +322,8 @@ class CoreSession:
             (WORKSPACE_ADMISSION_OPERATIONS, self._workspace_admin),
             (WORKSPACE_TIMELINE_OPERATIONS, self._workspace_timeline),
             (WORKSPACE_SNAPSHOT_OPERATIONS, self._workspace_admin),
+            (RUNTIME_QUERY_OPERATIONS, self._runtime),
+            (RUNTIME_MUTATION_OPERATIONS, self._runtime),
             (WORKSPACE_ACCESS_OPERATIONS, self._workspace_admin),
             (WORKSPACE_HISTORY_OPERATIONS, self._workspace_admin),
             (WORKSPACE_CONNECTION_OPERATIONS, self._workspace_admin),
@@ -659,6 +665,16 @@ class CoreSession:
                 target, inside, params[action], params, operation_id)
             return {profile: params[profile], workspace: params[workspace],
                     result: result}
+        if operation in RUNTIME_QUERY_OPERATIONS:
+            target = self._profile_target(profiles, params)
+            result = self._runtime.query(target, params[action])
+            return {profile: params[profile], result: result}
+        if operation in RUNTIME_MUTATION_OPERATIONS:
+            target = self._profile_target(profiles, params)
+            operation_id = self._required_operation_id(grant, target, key)
+            result = self._runtime.mutate(
+                target, params[action], params, operation_id)
+            return {profile: params[profile], result: result}
         if operation in WORKSPACE_SNAPSHOT_OPERATIONS:
             target = self._profile_target(profiles, params)
             return self._workspace_admin.snapshot(target)

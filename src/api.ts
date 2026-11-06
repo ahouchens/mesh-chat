@@ -472,6 +472,26 @@ export async function coreApiWorkspaceAccessRecommendation(
   return result.result ?? {};
 }
 
+export async function coreApiRuntimeQuery(
+  action: "background" | "notifications",
+): Promise<Record<string, unknown>> {
+  const profile = await coreApiProfile();
+  const result = await coreApiRequest("runtime.query",
+    { profile: profile.profile, action }) as { result?: Record<string, unknown> };
+  return result.result ?? {};
+}
+
+export async function coreApiRuntimeMutate(
+  action: "background_set" | "notification_previews" | "notification_open",
+  params: Record<string, unknown>,
+  idempotencyKey: string,
+): Promise<Record<string, unknown>> {
+  const profile = await coreApiProfile();
+  const result = await coreApiRequest("runtime.mutate",
+    { profile: profile.profile, action, ...params }, idempotencyKey) as { result?: Record<string, unknown> };
+  return result.result ?? {};
+}
+
 export async function coreApiWorkspaceSnapshot(): Promise<Record<string, unknown>> {
   const profile = await coreApiProfile();
   return coreApiRequest("workspace.snapshot", { profile: profile.profile });

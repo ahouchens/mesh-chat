@@ -543,6 +543,16 @@ export class CoreClient {
       idempotencyKey ? { idempotencyKey } : undefined);
   }
 
+  async runtimeQuery(profile: string, action: string): Promise<unknown> {
+    return this.request("runtime.query", { profile, action });
+  }
+
+  async runtimeMutate(profile: string, action: string, params: Record<string, unknown>,
+                      idempotencyKey: string): Promise<unknown> {
+    return this.request("runtime.mutate", { profile, action, ...params },
+      { idempotencyKey });
+  }
+
   async workspaceSnapshot(profile: string): Promise<unknown> {
     return this.request("workspace.snapshot", { profile });
   }
