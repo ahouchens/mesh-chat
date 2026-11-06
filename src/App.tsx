@@ -81,6 +81,7 @@ import {
   coreApiWorkspaceAuthority,
   coreApiWorkspaceAuthorityOffer,
   coreApiWorkspaceAdminSubmit,
+  coreApiWorkspaceAccessRecommendation,
   coreApiWorkspaceSnapshot,
   coreApiTimelineMutation,
   coreApiTimelineQuery,
@@ -448,6 +449,24 @@ async function loadWorkspaceSnapshot(): Promise<WorkspaceSnapshot> {
     if (!String(reason).includes("core_api_unavailable")) throw reason;
   }
   return serviceCommand<WorkspaceSnapshot>("workspace_snapshot");
+}
+
+async function fetchWorkspaceAccessRecommendation(
+  workspace: { id: string; core_handle?: string },
+  action: string,
+  params: Record<string, unknown>,
+  fallbackCommand: string,
+  key?: string,
+): Promise<Record<string, unknown>> {
+  if (workspace.core_handle) {
+    try {
+      return await coreApiWorkspaceAccessRecommendation(workspace.core_handle, action as never, params, key);
+    } catch (reason) {
+      if (!String(reason).includes("core_api_unavailable")) throw reason;
+    }
+  }
+  return serviceCommand<Record<string, unknown>>(fallbackCommand,
+    { workspace_id: workspace.id, ...params, ...(key ? { operation_id: key } : {}) });
 }
 
 function errorMessage(error: unknown): string {
@@ -4403,7 +4422,8 @@ export function WorkspaceAccessSettingsContent({ workspace, onSaved }: { workspa
   const owner = workspace.local_role === "owner" && workspace.local_device_id === workspace.authority_device_id && workspace.state === "active";
   const loadReceived = async () => {
     try {
-      const value = await serviceCommand<{ recommendations: WorkspaceAccessRecommendationSummary[] }>("list_workspace_access_recommendations", { workspace_id: workspace.id });
+      const value = await fetchWorkspaceAccessRecommendation(workspace, "list", {},
+        "list_workspace_access_recommendations") as unknown as { recommendations: WorkspaceAccessRecommendationSummary[] };
       setReceived(value.recommendations ?? []);
     } catch {
       setReceived([]);
@@ -4421,7 +4441,9 @@ export function WorkspaceAccessSettingsContent({ workspace, onSaved }: { workspa
   const create = async () => {
     setBusy(true); setError(""); setNotice("");
     try {
-      const result = await serviceCommand<WorkspaceAccessRecommendation>("create_workspace_access_recommendation", { workspace_id: workspace.id, remote_profile_id: profileId, lifetime_days: 7 });
+      const result = await fetchWorkspaceAccessRecommendation(workspace, "create",
+        { remote_profile_id: profileId, lifetime_days: 7 },
+        "create_workspace_access_recommendation") as unknown as WorkspaceAccessRecommendation;
       setCreated(result);
       setRecommendation(result.text);
       setNotice("Recommendation created. Share the complete text with members.");
@@ -4431,14 +4453,17 @@ export function WorkspaceAccessSettingsContent({ workspace, onSaved }: { workspa
     if (!created) return;
     setBusy(true); setError(""); setNotice("");
     try {
-      const result = await serviceCommand<{ sent_devices: number }>("send_workspace_access_recommendation", { workspace_id: workspace.id, recommendation: created.text, operation_id: newOperationId() });
+      const result = await fetchWorkspaceAccessRecommendation(workspace, "send",
+        { recommendation: created.text }, "send_workspace_access_recommendation",
+        newOperationId()) as unknown as { sent_devices: number };
       setNotice(`Queued the recommendation for ${result.sent_devices} active member device${result.sent_devices === 1 ? "" : "s"}. Delivery remains retryable.`);
     } catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); }
   };
   const reviewReceived = async (id: string) => {
     setBusy(true); setError(""); setNotice(""); setReceivedPreview(null); setReceivedConsent(false);
     try {
-      const result = await serviceCommand<WorkspaceAccessPreview>("preview_workspace_access_recommendation_by_id", { workspace_id: workspace.id, recommendation_id: id });
+      const result = await fetchWorkspaceAccessRecommendation(workspace, "preview_by_id",
+        { recommendation_id: id }, "preview_workspace_access_recommendation_by_id") as unknown as WorkspaceAccessPreview;
       setReceivedPreview(result); setReceivedId(id);
     } catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); }
   };
@@ -4446,7 +4471,9 @@ export function WorkspaceAccessSettingsContent({ workspace, onSaved }: { workspa
     if (!receivedId) return;
     setBusy(true); setError(""); setNotice("");
     try {
-      const result = await serviceCommand<WorkspaceAccessApplyResult>("apply_workspace_access_recommendation_by_id", { workspace_id: workspace.id, recommendation_id: receivedId, consent: receivedConsent });
+      const result = await fetchWorkspaceAccessRecommendation(workspace, "apply_by_id",
+        { recommendation_id: receivedId, consent: receivedConsent },
+        "apply_workspace_access_recommendation_by_id") as unknown as WorkspaceAccessApplyResult;
       setNotice(`Attached “${result.profile.label}” to this workspace.`);
       setReceivedPreview(null); setReceivedId(null); setReceivedConsent(false);
       await loadReceived();
@@ -4456,13 +4483,17 @@ export function WorkspaceAccessSettingsContent({ workspace, onSaved }: { workspa
   const check = async () => {
     setBusy(true); setError(""); setNotice(""); setPreview(null); setConsent(false);
     try {
-      setPreview(await serviceCommand<WorkspaceAccessPreview>("preview_workspace_access_recommendation", { recommendation: recommendation.trim() }));
+      setPreview(await fetchWorkspaceAccessRecommendation(workspace, "preview",
+        { recommendation: recommendation.trim() },
+        "preview_workspace_access_recommendation") as unknown as WorkspaceAccessPreview);
     } catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); }
   };
   const apply = async () => {
     setBusy(true); setError(""); setNotice("");
     try {
-      const result = await serviceCommand<WorkspaceAccessApplyResult>("apply_workspace_access_recommendation", { recommendation: recommendation.trim(), consent });
+      const result = await fetchWorkspaceAccessRecommendation(workspace, "apply",
+        { recommendation: recommendation.trim(), consent },
+        "apply_workspace_access_recommendation") as unknown as WorkspaceAccessApplyResult;
       setNotice(`Attached “${result.profile.label}” to this workspace.`);
       setPreview(null); setConsent(false);
       await onSaved();

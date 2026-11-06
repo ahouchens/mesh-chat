@@ -433,6 +433,18 @@ export async function coreApiCreateWorkspaceDeviceLink(
   };
 }
 
+export async function coreApiWorkspaceAccessRecommendation(
+  workspace: string,
+  action: "list" | "create" | "send" | "preview" | "preview_by_id" | "apply" | "apply_by_id",
+  params: Record<string, unknown>,
+  idempotencyKey?: string,
+): Promise<Record<string, unknown>> {
+  const profile = await coreApiProfile();
+  const result = await coreApiRequest("workspace.access_recommendation",
+    { profile: profile.profile, workspace, action, ...params }, idempotencyKey) as { result?: Record<string, unknown> };
+  return result.result ?? {};
+}
+
 export async function coreApiWorkspaceSnapshot(): Promise<Record<string, unknown>> {
   const profile = await coreApiProfile();
   return coreApiRequest("workspace.snapshot", { profile: profile.profile });

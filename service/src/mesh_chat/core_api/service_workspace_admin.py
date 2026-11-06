@@ -1002,3 +1002,33 @@ class ServiceWorkspaceAdmin:
             if not isinstance(value, dict):
                 raise ApiFailure("internal")
             return dict(value)
+
+
+    def access_recommendation(self, profile, workspace_id, action, params, operation_id):
+        self._require_local(profile)
+        with storage_errors():
+            try:
+                if action == "list":
+                    return dict(self._service.list_workspace_access_recommendations(workspace_id))
+                if action == "create":
+                    return dict(self._service.create_workspace_access_recommendation(
+                        workspace_id, params["remote_profile_id"],
+                        params.get("lifetime_days", 7)))
+                if action == "send":
+                    return dict(self._service.send_workspace_access_recommendation(
+                        workspace_id, params["recommendation"], operation_id))
+                if action == "preview_by_id":
+                    return dict(self._service.preview_workspace_access_recommendation_by_id(
+                        workspace_id, params["recommendation_id"]))
+                if action == "apply_by_id":
+                    return dict(self._service.apply_workspace_access_recommendation_by_id(
+                        workspace_id, params["recommendation_id"], params["consent"]))
+                if action == "preview":
+                    return dict(self._service.preview_workspace_access_recommendation(
+                        params["recommendation"]))
+                if action == "apply":
+                    return dict(self._service.apply_workspace_access_recommendation(
+                        params["recommendation"], params["consent"]))
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            raise ApiFailure("invalid_request")

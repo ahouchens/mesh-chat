@@ -521,6 +521,14 @@ export class CoreClient {
     );
   }
 
+  async workspaceAccessRecommendation(profile: string, workspace: string,
+                                      action: string, params: Record<string, unknown> = {},
+                                      idempotencyKey?: string): Promise<unknown> {
+    return this.request("workspace.access_recommendation",
+      { profile, workspace, action, ...params },
+      idempotencyKey ? { idempotencyKey } : undefined);
+  }
+
   async workspaceSnapshot(profile: string): Promise<unknown> {
     return this.request("workspace.snapshot", { profile });
   }

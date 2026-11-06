@@ -76,7 +76,7 @@
           "type": "array",
           "uniqueItems": true,
           "minItems": 3,
-          "maxItems": 94,
+          "maxItems": 95,
           "items": {
             "enum": [
               "application.snapshot",
@@ -131,6 +131,7 @@
               "workspace.timeline_mutation",
               "workspace.timeline_query",
               "workspace.snapshot",
+              "workspace.access_recommendation",
               "workspace.admission_grant_end",
               "workspace.admission_grant_accept",
               "workspace.admission_grant_create",

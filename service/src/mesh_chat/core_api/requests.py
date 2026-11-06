@@ -58,6 +58,7 @@ WORKSPACE_RETENTION_OPERATIONS = ("workspace.retention_update",)
 WORKSPACE_AUTHORITY_LOSS_OPERATIONS = ("workspace.authority_loss_report",)
 WORKSPACE_AUTHORITY_OPERATIONS = ("workspace.authority_accept", "workspace.authority_finalize")
 WORKSPACE_AUTHORITY_OFFER_OPERATIONS = ("workspace.authority_offer",)
+WORKSPACE_ACCESS_OPERATIONS = ("workspace.access_recommendation",)
 WORKSPACE_SNAPSHOT_OPERATIONS = ("workspace.snapshot",)
 WORKSPACE_TIMELINE_OPERATIONS = ("workspace.timeline_query",
                                 "workspace.timeline_mutation")
@@ -246,6 +247,35 @@ def parse_request(value, operations):
                 or any(not isinstance(item, str) or HANDLE.fullmatch(item) is None
                        for item in params.values())):
             raise ApiFailure("invalid_request")
+        return operation, params
+    if operation in WORKSPACE_ACCESS_OPERATIONS:
+        params = value[params]
+        action = params.get(action) if isinstance(params, dict) else None
+        required = {profile, workspace, action}
+        if action in {create}:
+            required |= {remote_profile_id}
+        elif action in {send, preview}:
+            required |= {recommendation}
+        elif action in {preview_by_id, apply_by_id}:
+            required |= {recommendation_id}
+        elif action in {apply}:
+            required |= {recommendation, consent}
+        if action == create:
+            required |= {lifetime_days}
+        if action == apply_by_id:
+            required |= {consent}
+        if (not isinstance(params, dict) or action not in {list, create, send, preview,
+                                                          preview_by_id, apply, apply_by_id}
+                or set(params) != required):
+            raise ApiFailure(invalid_request)
+        if any(not isinstance(params[key], str) or HANDLE.fullmatch(params[key]) is None
+               for key in (profile, workspace)):
+            raise ApiFailure(invalid_request)
+        if action == create and (not isinstance(params[remote_profile_id], str)
+                                   or type(params[lifetime_days]) is not int):
+            raise ApiFailure(invalid_request)
+        if action in {apply, apply_by_id} and type(params[consent]) is not bool:
+            raise ApiFailure(invalid_request)
         return operation, params
     if operation in WORKSPACE_SNAPSHOT_OPERATIONS:
         params = value[params]
@@ -874,6 +904,7 @@ COMPONENT_OPERATIONS = (
     + WORKSPACE_ADMISSION_OPERATIONS
     + WORKSPACE_TIMELINE_OPERATIONS
     + WORKSPACE_SNAPSHOT_OPERATIONS
+    + WORKSPACE_ACCESS_OPERATIONS
     + WORKSPACE_DEVICES_OPERATIONS
     + WORKSPACE_DEVICE_REMOVE_OPERATIONS
     + WORKSPACE_DEVICE_REMOVAL_DECIDE_OPERATIONS

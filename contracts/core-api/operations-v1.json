@@ -803,6 +803,13 @@
       "scope": "profile",
       "mutation": false,
       "idempotency": "query"
+    },
+    {
+      "operation": "workspace.access_recommendation",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
     }
   ],
   "limits": {
