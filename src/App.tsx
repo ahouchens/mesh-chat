@@ -64,6 +64,7 @@ import {
   coreApiRequest,
   coreApiCloseGroup,
   coreApiGroupInvitation,
+  coreApiWorkspaceJoinDecision,
   coreApiLeaveGroup,
   coreApiRemoveGroupMember,
   coreApiSendGroupMessage,
@@ -6170,7 +6171,20 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     };
     let roleWarning = "";
     try {
-      await serviceCommand(accept ? "approve_workspace_join" : "decline_workspace_join", { operation_id: newOperationId(), workspace_id: request.workspace_id, request_id: request.id });
+      const workspace = workspaces.find((candidate) => candidate.id === request.workspace_id);
+      let handled = false;
+      if (workspace?.core_handle && request.core_handle) {
+        try {
+          await coreApiWorkspaceJoinDecision(
+            workspace.core_handle, request.core_handle, accept, newOperationId());
+          handled = true;
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+        }
+      }
+      if (!handled) {
+        await serviceCommand(accept ? "approve_workspace_join" : "decline_workspace_join", { operation_id: newOperationId(), workspace_id: request.workspace_id, request_id: request.id });
+      }
       if (accept && role === "admin") {
         try {
           await serviceCommand("change_workspace_role", { operation_id: newOperationId(), workspace_id: request.workspace_id, member_id: request.member_id, role: "admin" });

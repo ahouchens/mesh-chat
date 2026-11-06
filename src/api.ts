@@ -329,6 +329,20 @@ export async function coreApiSendGroupMessage(group: string, text: string): Prom
   });
 }
 
+export async function coreApiWorkspaceJoinDecision(
+  workspace: string,
+  request: string,
+  accept: boolean,
+  idempotencyKey: string,
+): Promise<unknown> {
+  const profile = await coreApiProfile();
+  return coreApiRequest(
+    accept ? "workspace.join_approve" : "workspace.join_decline",
+    { profile: profile.profile, workspace, request },
+    idempotencyKey,
+  );
+}
+
 export async function coreApiGroupInvitation(
   invitation: string,
   accept: boolean,

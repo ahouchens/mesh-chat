@@ -369,6 +369,7 @@ class CoreSession:
         result = dict(snapshot)
         for key, kind in (("contacts", "peer"), ("groups", "group"),
                           ("group_invitations", "group_invitation"),
+                          ("workspace_join_requests", "workspace_join_request"),
                           ("workspaces", "workspace")):
             values = result.get(key)
             if isinstance(values, list):

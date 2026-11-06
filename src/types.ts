@@ -594,6 +594,7 @@ export interface WorkspaceSearchPage {
 
 export interface WorkspaceJoinRequest {
   id: string;
+  core_handle?: string;
   workspace_id: string;
   member_id: string;
   display_name: string;
