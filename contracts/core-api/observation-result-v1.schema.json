@@ -76,7 +76,7 @@
           "type": "array",
           "uniqueItems": true,
           "minItems": 3,
-          "maxItems": 59,
+          "maxItems": 62,
           "items": {
             "enum": [
               "application.snapshot",
@@ -107,6 +107,9 @@
               "group.query",
               "group.create",
               "group.message_enqueue",
+              "group.member_remove",
+              "group.close",
+              "group.leave",
               "peer.pairing_accept",
               "peer.pairing_request",
               "peer.pairing_create",

@@ -329,6 +329,29 @@ export async function coreApiSendGroupMessage(group: string, text: string): Prom
   });
 }
 
+export async function coreApiLeaveGroup(group: string): Promise<unknown> {
+  const profile = await coreApiProfile();
+  return coreApiRequest("group.leave", { profile: profile.profile, group });
+}
+
+export async function coreApiCloseGroup(group: string): Promise<unknown> {
+  const profile = await coreApiProfile();
+  return coreApiRequest("group.close", { profile: profile.profile, group });
+}
+
+export async function coreApiRemoveGroupMember(
+  group: string,
+  destination: string,
+): Promise<unknown> {
+  const profile = await coreApiProfile();
+  const member = await coreApiPeerForDestination(destination);
+  return coreApiRequest("group.member_remove", {
+    profile: profile.profile,
+    group,
+    member: member.peer,
+  });
+}
+
 export async function lockService(): Promise<void> {
   clearPairingResume();
   return invoke<void>("lock_service");

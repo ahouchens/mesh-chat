@@ -19,7 +19,8 @@ DRAFT_OPERATIONS = ("peer.draft_get", "peer.draft_set")
 CALL_OPERATIONS = ("call.settings_query", "call.settings_update")
 SETTINGS_OPERATIONS = ("settings.query", "settings.update")
 REACTION_OPERATIONS = ("message.reaction_set",)
-GROUP_OPERATIONS = ("group.query", "group.create", "group.message_enqueue")
+GROUP_OPERATIONS = ("group.query", "group.create", "group.message_enqueue",
+                    "group.leave", "group.close", "group.member_remove")
 PAIRING_OPERATIONS = ("peer.pairing_accept",)
 REQUEST_OPERATIONS = ("peer.pairing_request",)
 INVITATION_OPERATIONS = ("peer.pairing_create",)
@@ -444,10 +445,18 @@ def parse_request(value, operations):
         params = value["params"]
         expected = ({"profile"} if operation == "group.query"
                     else {"profile", "group", "text"} if operation == "group.message_enqueue"
+                    else {"profile", "group", "member"} if operation == "group.member_remove"
+                    else {"profile", "group"} if operation in {"group.leave", "group.close"}
                     else {"profile", "title", "posting_policy", "members"})
         if (not isinstance(params, dict) or set(params) != expected
                 or not isinstance(params["profile"], str)
                 or HANDLE.fullmatch(params["profile"]) is None
+                or (operation in {"group.leave", "group.close", "group.member_remove"}
+                    and (not isinstance(params["group"], str)
+                         or HANDLE.fullmatch(params["group"]) is None))
+                or (operation == "group.member_remove"
+                    and (not isinstance(params["member"], str)
+                         or HANDLE.fullmatch(params["member"]) is None))
                 or (operation == "group.message_enqueue"
                     and (not isinstance(params["group"], str)
                          or HANDLE.fullmatch(params["group"]) is None

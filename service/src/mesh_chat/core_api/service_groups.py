@@ -1,19 +1,24 @@
-"""Private adapter for first-class group summaries."""
+"""Private adapter for first-class group operations."""
 
+from ..errors import ValidationError
 from .errors import ApiFailure
-from .groups import GroupMessageObservation, GroupObservation
+from .groups import GroupMembershipObservation, GroupMessageObservation, GroupObservation
 from .service_messages import storage_errors
 
 
 class ServiceGroups:
     def __init__(self, service):
         self._service = service
+        self._store = service.store
 
-    def list(self, profile):
+    def _require_local(self, profile):
         if profile != "local":
             raise ApiFailure("forbidden")
         if self._service._identity is None:
             raise ApiFailure("locked")
+
+    def list(self, profile):
+        self._require_local(profile)
         with storage_errors():
             snapshot = self._service.group_snapshot()
             return [self._observation(group) for group in snapshot.get("groups", [])]
@@ -29,12 +34,7 @@ class ServiceGroups:
         return GroupObservation(group_id, name, policy)
 
     def create(self, profile, title, member_ids, posting_policy):
-        from ..errors import ValidationError
-
-        if profile != "local":
-            raise ApiFailure("forbidden")
-        if self._service._identity is None:
-            raise ApiFailure("locked")
+        self._require_local(profile)
         if not isinstance(title, str) or not title.strip():
             raise ApiFailure("invalid_request")
         with storage_errors():
@@ -43,13 +43,9 @@ class ServiceGroups:
             except ValidationError as error:
                 raise ApiFailure("invalid_request") from error
             return self._observation(group)
-    def send(self, profile, group_id, text):
-        from ..errors import ValidationError
 
-        if profile != "local":
-            raise ApiFailure("forbidden")
-        if self._service._identity is None:
-            raise ApiFailure("locked")
+    def send(self, profile, group_id, text):
+        self._require_local(profile)
         if not isinstance(text, str) or not text.strip():
             raise ApiFailure("invalid_request")
         with storage_errors():
@@ -58,3 +54,33 @@ class ServiceGroups:
             except ValidationError as error:
                 raise ApiFailure("invalid_request") from error
             return GroupMessageObservation(text)
+
+    def leave(self, profile, group_id):
+        self._require_local(profile)
+        with storage_errors():
+            try:
+                self._service.leave_group(group_id)
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            return GroupMembershipObservation("left")
+
+    def close(self, profile, group_id):
+        self._require_local(profile)
+        with storage_errors():
+            try:
+                self._service.close_group(group_id)
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            return GroupMembershipObservation("closed")
+
+    def remove(self, profile, group_id, contact_id):
+        self._require_local(profile)
+        with storage_errors():
+            contact = self._store.get("contact", contact_id)
+            if contact is None or not isinstance(contact.get("destination_hash"), str):
+                raise ApiFailure("forbidden")
+            try:
+                self._service.remove_group_member(group_id, contact["destination_hash"])
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            return GroupMembershipObservation("removed")

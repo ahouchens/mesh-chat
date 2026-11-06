@@ -31,6 +31,9 @@
     "group.query",
     "group.create",
     "group.message_enqueue",
+    "group.member_remove",
+    "group.close",
+    "group.leave",
     "peer.pairing_accept",
     "peer.pairing_request",
     "peer.pairing_create",
@@ -341,6 +344,27 @@
     },
     {
       "operation": "group.message_enqueue",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "repeatable"
+    },
+    {
+      "operation": "group.member_remove",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "repeatable"
+    },
+    {
+      "operation": "group.close",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "repeatable"
+    },
+    {
+      "operation": "group.leave",
       "permission": "send",
       "scope": "profile",
       "mutation": true,

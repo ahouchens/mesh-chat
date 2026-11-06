@@ -62,6 +62,9 @@ import {
   saveNetworkSettings,
   coreApiPeerForDestination,
   coreApiRequest,
+  coreApiCloseGroup,
+  coreApiLeaveGroup,
+  coreApiRemoveGroupMember,
   coreApiSendGroupMessage,
   coreApiSendMessage,
   initializeService,
@@ -6116,7 +6119,22 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     setGroupActionBusy(true);
     setGroupActionError("");
     try {
-      await serviceCommand(command, payload);
+      let handled = false;
+      if (selectedGroup?.core_handle && command !== "retry_group_invitation") {
+        try {
+          if (command === "leave_group") {
+            await coreApiLeaveGroup(selectedGroup.core_handle);
+          } else if (command === "close_group") {
+            await coreApiCloseGroup(selectedGroup.core_handle);
+          } else if (typeof payload.destination_hash === "string") {
+            await coreApiRemoveGroupMember(selectedGroup.core_handle, payload.destination_hash);
+          }
+          handled = true;
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+        }
+      }
+      if (!handled) await serviceCommand(command, payload);
       if (leaveConversation) setSelection(null);
       await refresh(true);
     } catch (reason) {

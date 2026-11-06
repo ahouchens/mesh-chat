@@ -136,6 +136,16 @@ class CoreClient:
             "profile": handle, "title": title, "posting_policy": posting_policy,
             "members": members})
 
+    def leave_group(self, handle, group):
+        return self.request("group.leave", {"profile": handle, "group": group})
+
+    def close_group(self, handle, group):
+        return self.request("group.close", {"profile": handle, "group": group})
+
+    def remove_group_member(self, handle, group, member):
+        return self.request("group.member_remove", {
+            "profile": handle, "group": group, "member": member})
+
     def send_group(self, handle, group, text):
         return self.request("group.message_enqueue", {
             "profile": handle, "group": group, "text": text})

@@ -15,7 +15,8 @@ from threading import RLock
 import uuid
 from typing import Protocol
 
-from .views import (call_settings_view, draft_view, group_list_view, group_message_sent_view, group_view, network_settings_view, reaction_view,
+from .views import (call_settings_view, draft_view, group_list_view, group_membership_view,
+    group_message_sent_view, group_view, network_settings_view, reaction_view,
     peer_delete_view, peer_trust_view,
     acceptance_view, acknowledgment_view, connection_view, event_view, intent_view, message_view,
     invitation_view, pairing_request_view, pairing_view, peer_view, received_view,
@@ -108,6 +109,9 @@ PERMISSION_BY_OPERATION = {
     "group.query": "read",
     "group.create": "send",
     "group.message_enqueue": "send",
+    "group.leave": "send",
+    "group.close": "send",
+    "group.member_remove": "send",
     "profile.query": "observe",
     "application.snapshot": "approve",
     "application.command": "approve",
@@ -346,6 +350,15 @@ class CoreSession:
                           hashlib.sha256).digest()[:16]
         return str(uuid.UUID(bytes=digest))
 
+    def _group_identifier(self, grant, profile, handle):
+        group_id = next(
+            (item.group_id for item in self._groups.list(profile)
+             if self._handle(grant, "group", profile, item.group_id) == handle),
+            None)
+        if group_id is None:
+            raise ApiFailure("forbidden")
+        return group_id
+
     def _owner_snapshot(self, grant, snapshot):
         if not isinstance(snapshot, dict) or len(grant.profiles) != 1:
             return snapshot
@@ -416,13 +429,20 @@ class CoreSession:
         if operation in INTENT_OPERATIONS:
             return self._intent_operation(grant, profile, operation, params)
         if operation in GROUP_OPERATIONS:
+            if operation in {"group.leave", "group.close", "group.member_remove"}:
+                group_id = self._group_identifier(grant, profile, params["group"])
+                if operation == "group.member_remove":
+                    contact_id = self._peers(grant, profile).get(params["member"])
+                    if contact_id is None:
+                        raise ApiFailure("forbidden")
+                    observation = self._groups.remove(profile, group_id, contact_id)
+                elif operation == "group.leave":
+                    observation = self._groups.leave(profile, group_id)
+                else:
+                    observation = self._groups.close(profile, group_id)
+                return group_membership_view(params["profile"], params["group"], observation)
             if operation == "group.message_enqueue":
-                group_id = next(
-                    (item.group_id for item in self._groups.list(profile)
-                     if self._handle(grant, "group", profile, item.group_id) == params["group"]),
-                    None)
-                if group_id is None:
-                    raise ApiFailure("forbidden")
+                group_id = self._group_identifier(grant, profile, params["group"])
                 observation = self._groups.send(profile, group_id, params["text"])
                 return group_message_sent_view(params["profile"], params["group"],
                                                observation)

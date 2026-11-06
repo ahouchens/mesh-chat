@@ -254,6 +254,18 @@ export class CoreClient {
     return this.request("group.create", { profile, title, posting_policy: postingPolicy, members });
   }
 
+  async leaveGroup(profile: string, group: string): Promise<unknown> {
+    return this.request("group.leave", { profile, group });
+  }
+
+  async closeGroup(profile: string, group: string): Promise<unknown> {
+    return this.request("group.close", { profile, group });
+  }
+
+  async removeGroupMember(profile: string, group: string, member: string): Promise<unknown> {
+    return this.request("group.member_remove", { profile, group, member });
+  }
+
   async sendGroup(profile: string, group: string, text: string): Promise<unknown> {
     return this.request("group.message_enqueue", { profile, group, text });
   }
