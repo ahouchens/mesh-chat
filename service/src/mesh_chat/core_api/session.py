@@ -15,7 +15,7 @@ from threading import RLock
 import uuid
 from typing import Protocol
 
-from .views import (call_settings_view, device_removal_view, draft_view,
+from .views import (call_ice_view, call_settings_view, device_removal_view, draft_view,
     group_invitation_decision_view,
     group_list_view, group_membership_view,
     group_message_sent_view, group_view, network_settings_view, reaction_view,
@@ -107,6 +107,7 @@ PERMISSION_BY_OPERATION = {
     "peer.draft_set": "send",
     "call.settings_query": "read",
     "call.settings_update": "send",
+    "call.ice_servers": "read",
     "settings.query": "read",
     "settings.update": "send",
     "message.reaction_set": "send",
@@ -529,6 +530,8 @@ class CoreSession:
         if operation in CALL_OPERATIONS:
             if operation == "call.settings_update":
                 observation = self._calls.update(profile, params["settings"])
+            elif operation == "call.ice_servers":
+                return call_ice_view(params["profile"], self._calls.ice(profile))
             else:
                 observation = self._calls.get(profile)
             return call_settings_view(params["profile"], observation)

@@ -57,6 +57,7 @@ import {
   coreApiCreateInvitation,
   coreApiDraftGet,
   coreApiDraftSet,
+  loadCallIceServers,
   loadCallSettings,
   saveCallSettings,
   saveNetworkSettings,
@@ -1335,7 +1336,7 @@ function CallDialog({
       const focus = await acquireCallAudio(audioOwner, media);
       if (!current()) throw new Error("Call cancelled.");
       if (!focus.granted) throw new Error("Android could not take call-audio focus.");
-      const configuration = await serviceCommand<CallIceConfiguration>("call_ice_servers");
+      const configuration = await loadCallIceServers() as unknown as CallIceConfiguration;
       if (!current()) throw new Error("Call cancelled.");
       const pc = attachPeer(configuration);
       capturedStream.getTracks().forEach((track) => pc.addTrack(track, capturedStream));
@@ -1400,7 +1401,7 @@ function CallDialog({
       const focus = await acquireCallAudio(audioOwner, call.media);
       if (!current()) throw new Error("Call cancelled.");
       if (!focus.granted) throw new Error("Android could not take call-audio focus.");
-      const configuration = await serviceCommand<CallIceConfiguration>("call_ice_servers");
+      const configuration = await loadCallIceServers() as unknown as CallIceConfiguration;
       if (!current()) throw new Error("Call cancelled.");
       const pc = attachPeer(configuration);
       await pc.setRemoteDescription({ type: "offer", sdp: details.remote_sdp });

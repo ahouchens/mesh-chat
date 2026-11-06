@@ -25,6 +25,7 @@
     "peer.draft_set",
     "call.settings_query",
     "call.settings_update",
+    "call.ice_servers",
     "settings.query",
     "settings.update",
     "message.reaction_set",
@@ -309,6 +310,13 @@
       "scope": "profile",
       "mutation": true,
       "idempotency": "last_write_wins"
+    },
+    {
+      "operation": "call.ice_servers",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
     },
     {
       "operation": "settings.query",

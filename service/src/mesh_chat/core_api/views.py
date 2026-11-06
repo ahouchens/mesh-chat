@@ -603,3 +603,10 @@ def device_removal_view(profile, workspace, handle, state):
             or state not in {"requested", "approved", "declined"}):
         raise ValueError("Invalid device removal observation")
     return {"profile": profile, "workspace": workspace, "handle": handle, "state": state}
+
+
+def call_ice_view(profile, value):
+    if (not isinstance(profile, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", profile) is None
+            or not isinstance(value.ice, dict)):
+        raise ValueError("Invalid call ICE observation")
+    return {"profile": profile, "ice": value.ice}

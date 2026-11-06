@@ -9,7 +9,14 @@ class CallSettingsObservation:
     settings: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class CallIceObservation:
+    ice: dict[str, Any] = field(default_factory=dict)
+
+
 class CallSettings(Protocol):
     def get(self, profile: str) -> CallSettingsObservation: ...
+
+    def ice(self, profile: str) -> CallIceObservation: ...
 
     def update(self, profile: str, settings: dict[str, Any]) -> CallSettingsObservation: ...

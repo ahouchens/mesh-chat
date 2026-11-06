@@ -172,6 +172,9 @@ class CoreClient:
     def update_network_settings(self, handle, settings):
         return self.request("settings.update", {"profile": handle, "settings": settings})
 
+    def call_ice_servers(self, handle):
+        return self.request("call.ice_servers", {"profile": handle})
+
     def call_settings_get(self, handle):
         return self.request("call.settings_query", {"profile": handle})
 

@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { Check, Copy, Phone, RefreshCw, X } from "lucide-react";
 
-import { coreApiCreateInvitation, desktopServiceHealth, loadCallSettings, saveCallSettings, serviceCommand, onServiceEvent, type ServiceEvent } from "./api";
+import { coreApiCreateInvitation, desktopServiceHealth, loadCallIceServers,
+  loadCallSettings, saveCallSettings, serviceCommand, onServiceEvent, type ServiceEvent } from "./api";
 import { attachWebRTCBridge, isWindowsWebRTCPlatform, shouldAutoCloseWebRTCOnboarding, webRTCWindowsChecklist, type WebRTCBridge } from "./webrtc-onboarding";
 import { usesServiceWebRTCTransport, nativeWebRTCAccept, nativeWebRTCApplyAnswer, nativeWebRTCClose, nativeWebRTCControl, nativeWebRTCOffer, nativeWebRTCStats, type NativeChannelSpec } from "./native-webrtc";
 import { rememberWebRTCDiagnostics } from "./webrtc-diagnostics";
@@ -698,7 +699,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
     setAnswerInput(""); setAnswerDocument(""); setAnswerPreview(null);
     setDiagnostics("");
     try {
-      const ice = await serviceCommand<CallIceConfiguration>("call_ice_servers");
+      const ice = await loadCallIceServers() as unknown as CallIceConfiguration;
       if (attemptRef.current !== attempt) return;
       iceSummaryRef.current = summarizeIce(ice);
       if (nativeMode) {
@@ -931,7 +932,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       peerDestinationRef.current = preview.signer_destination;
       setOfferPreview(preview);
       operation = "call_ice_servers";
-      const ice = await serviceCommand<CallIceConfiguration>("call_ice_servers");
+      const ice = await loadCallIceServers() as unknown as CallIceConfiguration;
       if (attemptRef.current !== attempt) return;
       iceSummaryRef.current = summarizeIce(ice);
       if (nativeMode) {

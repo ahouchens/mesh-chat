@@ -241,6 +241,23 @@ export async function coreApiUpdateCallSettings(
   return result.settings ?? {};
 }
 
+export async function coreApiCallIceServers(): Promise<Record<string, unknown>> {
+  const profile = await coreApiProfile();
+  const result = await coreApiRequest("call.ice_servers", { profile: profile.profile }) as {
+    ice?: Record<string, unknown>;
+  };
+  return result.ice ?? {};
+}
+
+export async function loadCallIceServers(): Promise<Record<string, unknown>> {
+  try {
+    return await coreApiCallIceServers();
+  } catch (reason) {
+    if (!String(reason).includes("core_api_unavailable")) throw reason;
+    return serviceCommand("call_ice_servers");
+  }
+}
+
 export async function loadCallSettings(): Promise<Record<string, unknown>> {
   try {
     return await coreApiCallSettings();

@@ -52,6 +52,7 @@ const api = vi.hoisted(() => {
   setNativeBackgroundAvailability: vi.fn(async () => ({ enabled: true })),
   setNativeTheme: vi.fn(async () => undefined),
   serviceCommand,
+  loadCallIceServers: vi.fn(async () => serviceCommand("call_ice_servers")),
   loadCallSettings: vi.fn(async () => serviceCommand("call_settings")),
   saveCallSettings: vi.fn(async (settings: Record<string, unknown>) => serviceCommand("update_call_settings", settings)),
   saveNetworkSettings: vi.fn(async (settings: Record<string, unknown>) => serviceCommand("update_settings", { settings })),

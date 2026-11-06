@@ -1,7 +1,7 @@
 """Private adapter for typed call settings through the existing domain rules."""
 
 from ..errors import ValidationError
-from .calls import CallSettingsObservation
+from .calls import CallIceObservation, CallSettingsObservation
 from .errors import ApiFailure
 from .service_messages import storage_errors
 
@@ -33,3 +33,15 @@ class ServiceCallSettings:
             if not isinstance(updated, dict):
                 raise ApiFailure("internal")
             return CallSettingsObservation(dict(updated))
+
+
+    def ice(self, profile):
+        self._require_local(profile)
+        with storage_errors():
+            try:
+                value = self._service.call_ice_servers()
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            if not isinstance(value, dict):
+                raise ApiFailure("internal")
+            return CallIceObservation(dict(value))
