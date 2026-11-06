@@ -65,6 +65,7 @@ import {
   coreApiCloseGroup,
   coreApiGroupInvitation,
   coreApiWorkspaceJoinDecision,
+  coreApiWorkspaceMemberRole,
   coreApiLeaveGroup,
   coreApiRemoveGroupMember,
   coreApiSendGroupMessage,
@@ -6261,11 +6262,27 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     if (!selectedWorkspace || workspaceActionBusy) return;
     setWorkspaceActionBusy(true); setWorkspaceActionError("");
     try {
-      await serviceCommand(command, {
-        operation_id: newOperationId(),
-        workspace_id: selectedWorkspace.id,
-        ...payload,
-      });
+      let handled = false;
+      if (command === "change_workspace_role" && selectedWorkspace.core_handle
+          && typeof payload.member_id === "string") {
+        const member = selectedWorkspace.members.find((item) => item.id === payload.member_id);
+        if (member?.core_handle && (payload.role === "member" || payload.role === "admin")) {
+          try {
+            await coreApiWorkspaceMemberRole(
+              selectedWorkspace.core_handle, member.core_handle, payload.role, newOperationId());
+            handled = true;
+          } catch (reason) {
+            if (!String(reason).includes("core_api_unavailable")) throw reason;
+          }
+        }
+      }
+      if (!handled) {
+        await serviceCommand(command, {
+          operation_id: newOperationId(),
+          workspace_id: selectedWorkspace.id,
+          ...payload,
+        });
+      }
       await refresh(true);
     } catch (reason) { setWorkspaceActionError(errorMessage(reason)); }
     finally { setWorkspaceActionBusy(false); }

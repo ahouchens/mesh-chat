@@ -373,9 +373,20 @@ class CoreSession:
                           ("workspaces", "workspace")):
             values = result.get(key)
             if isinstance(values, list):
-                result[key] = [self._snapshot_handle(grant, kind, profile, item)
+                result[key] = [self._snapshot_item(grant, kind, profile, item)
                                for item in values if isinstance(item, dict)]
         return result
+
+    def _snapshot_item(self, grant, kind, profile, item):
+        identifier = item.get("id")
+        if not isinstance(identifier, str):
+            return item
+        handled = dict(item)
+        handled["core_handle"] = self._handle(grant, kind, profile, identifier)
+        if kind == "workspace" and isinstance(item.get("members"), list):
+            handled["members"] = [self._snapshot_handle(grant, "member", profile, member)
+                                  for member in item["members"] if isinstance(member, dict)]
+        return handled
 
     def _snapshot_handle(self, grant, kind, profile, item):
         identifier = item.get("id")

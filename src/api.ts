@@ -343,6 +343,20 @@ export async function coreApiWorkspaceJoinDecision(
   );
 }
 
+export async function coreApiWorkspaceMemberRole(
+  workspace: string,
+  member: string,
+  role: "member" | "admin",
+  idempotencyKey: string,
+): Promise<unknown> {
+  const profile = await coreApiProfile();
+  return coreApiRequest(
+    "workspace.member_role",
+    { profile: profile.profile, workspace, member, role },
+    idempotencyKey,
+  );
+}
+
 export async function coreApiGroupInvitation(
   invitation: string,
   accept: boolean,

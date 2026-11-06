@@ -214,6 +214,7 @@ export type WorkspaceState =
 
 export interface WorkspaceMember {
   id: string;
+  core_handle?: string;
   display_name: string;
   role: WorkspaceRole;
   status: "joining" | "active" | "left" | "removed";
