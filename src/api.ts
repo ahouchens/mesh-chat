@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { onBackButtonPress } from "@tauri-apps/api/app";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
-import type { NotificationCapability, Snapshot } from "./types";
+import type { AdmissionGrant, NotificationCapability, Snapshot } from "./types";
 import { clearPairingResume } from "./pairing-resume";
 
 export interface ServiceEvent {
@@ -431,6 +431,49 @@ export async function coreApiCreateWorkspaceDeviceLink(
     value: created.document,
     expires_at: created.expires_at,
   };
+}
+
+export async function coreApiWorkspaceInvitationRevoke(
+  workspace: string, invitation: string, idempotencyKey: string,
+): Promise<unknown> {
+  const profile = await coreApiProfile();
+  return coreApiRequest("workspace.invitation_revoke",
+    { profile: profile.profile, workspace, invitation }, idempotencyKey);
+}
+
+export async function coreApiAdmissionGrantList(
+  workspace: string,
+): Promise<{ grants: AdmissionGrant[] }> {
+  const profile = await coreApiProfile();
+  return coreApiRequest("workspace.admission_grant_list",
+    { profile: profile.profile, workspace }) as Promise<{ grants: AdmissionGrant[] }>;
+}
+
+export async function coreApiAdmissionGrantCreate(
+  workspace: string, member: string, device: string, v2Ready: boolean,
+  idempotencyKey: string,
+): Promise<unknown> {
+  const profile = await coreApiProfile();
+  return coreApiRequest("workspace.admission_grant_create", {
+    profile: profile.profile, workspace, admin_member: member, admin_device: device,
+    max_admissions: 5, lifetime_days: 7, v2_ready: v2Ready,
+  }, idempotencyKey);
+}
+
+export async function coreApiAdmissionGrantAccept(
+  workspace: string, grant: string, idempotencyKey: string,
+): Promise<unknown> {
+  const profile = await coreApiProfile();
+  return coreApiRequest("workspace.admission_grant_accept",
+    { profile: profile.profile, workspace, grant }, idempotencyKey);
+}
+
+export async function coreApiAdmissionGrantEnd(
+  workspace: string, grant: string, idempotencyKey: string,
+): Promise<unknown> {
+  const profile = await coreApiProfile();
+  return coreApiRequest("workspace.admission_grant_end",
+    { profile: profile.profile, workspace, grant }, idempotencyKey);
 }
 
 export async function coreApiWorkspaceAdminSubmit(

@@ -55,6 +55,11 @@
     "workspace.member_role",
     "workspace.channels",
     "workspace.invitation_create",
+    "workspace.admission_grant_end",
+    "workspace.admission_grant_accept",
+    "workspace.admission_grant_create",
+    "workspace.admission_grant_list",
+    "workspace.invitation_revoke",
     "workspace.channel_create",
     "workspace.channel_members",
     "workspace.channel_members_update",
@@ -246,6 +251,41 @@
     },
     {
       "operation": "workspace.invitation_create",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.admission_grant_end",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.admission_grant_accept",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.admission_grant_create",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.admission_grant_list",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.invitation_revoke",
       "permission": "approve",
       "scope": "profile",
       "mutation": true,

@@ -926,3 +926,70 @@ class ServiceWorkspaceAdmin:
             if not isinstance(outcome, dict):
                 raise ApiFailure("internal")
             return "updated"
+
+
+    def invitation_ids(self, profile, workspace_id):
+        self._require_local(profile)
+        with storage_errors():
+            self._workspace(workspace_id)
+            return tuple(item["id"] for item in self._store.list("workspace_invitation")
+                         if item.get("workspace_id") == workspace_id
+                         and isinstance(item.get("id"), str))
+
+    def revoke_invitation(self, profile, workspace_id, invitation_id, operation_id):
+        self._require_local(profile)
+        with storage_errors():
+            try:
+                self._service.revoke_workspace_invitation(
+                    workspace_id, invitation_id, operation_id)
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            return "revoked"
+
+    def admission_grant_ids(self, profile, workspace_id):
+        self._require_local(profile)
+        with storage_errors():
+            self._workspace(workspace_id)
+            return tuple(item["id"] for item in self._store.list("workspace_admission_grant")
+                         if item.get("workspace_id") == workspace_id
+                         and isinstance(item.get("id"), str))
+
+    def admission_grants(self, profile, workspace_id):
+        self._require_local(profile)
+        with storage_errors():
+            rows = self._service.list_workspace_admission_grants(workspace_id)
+            if not isinstance(rows, list):
+                raise ApiFailure("internal")
+            return tuple(dict(row) for row in rows if isinstance(row, dict))
+
+    def create_admission_grant(self, profile, workspace_id, member_id, device_id,
+                               max_admissions, lifetime_days, v2_ready, operation_id):
+        self._require_local(profile)
+        with storage_errors():
+            try:
+                outcome = self._service.create_workspace_admission_grant(
+                    workspace_id, member_id, device_id, max_admissions,
+                    lifetime_days, v2_ready)
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            if not isinstance(outcome, dict):
+                raise ApiFailure("internal")
+            return dict(outcome)
+
+    def accept_admission_grant(self, profile, workspace_id, grant_id, operation_id):
+        self._require_local(profile)
+        with storage_errors():
+            try:
+                self._service.accept_workspace_admission_grant(workspace_id, grant_id)
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            return "accepted"
+
+    def end_admission_grant(self, profile, workspace_id, grant_id, operation_id):
+        self._require_local(profile)
+        with storage_errors():
+            try:
+                self._service.end_workspace_admission_grant(workspace_id, grant_id)
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            return "ended"

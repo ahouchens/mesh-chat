@@ -521,6 +521,38 @@ export class CoreClient {
     );
   }
 
+  async workspaceInvitationRevoke(profile: string, workspace: string, invitation: string,
+                                  idempotencyKey: string): Promise<unknown> {
+    return this.request("workspace.invitation_revoke",
+      { profile, workspace, invitation }, { idempotencyKey });
+  }
+
+  async workspaceAdmissionGrantList(profile: string, workspace: string): Promise<unknown> {
+    return this.request("workspace.admission_grant_list", { profile, workspace });
+  }
+
+  async workspaceAdmissionGrantCreate(profile: string, workspace: string, member: string,
+                                      device: string, maxAdmissions: number,
+                                      lifetimeDays: number, v2Ready: boolean,
+                                      idempotencyKey: string): Promise<unknown> {
+    return this.request("workspace.admission_grant_create", {
+      profile, workspace, admin_member: member, admin_device: device,
+      max_admissions: maxAdmissions, lifetime_days: lifetimeDays, v2_ready: v2Ready,
+    }, { idempotencyKey });
+  }
+
+  async workspaceAdmissionGrantAccept(profile: string, workspace: string, grant: string,
+                                      idempotencyKey: string): Promise<unknown> {
+    return this.request("workspace.admission_grant_accept",
+      { profile, workspace, grant }, { idempotencyKey });
+  }
+
+  async workspaceAdmissionGrantEnd(profile: string, workspace: string, grant: string,
+                                   idempotencyKey: string): Promise<unknown> {
+    return this.request("workspace.admission_grant_end",
+      { profile, workspace, grant }, { idempotencyKey });
+  }
+
   async workspaceAuthorityOffer(profile: string, workspace: string,
                                 transitionKind: "ownership_transfer" | "same_owner_rotation",
                                 successorMember: string, successorDevice: string,

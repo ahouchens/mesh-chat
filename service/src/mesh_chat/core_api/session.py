@@ -53,7 +53,7 @@ from .requests import (
     WORKSPACE_CHANNEL_MEMBERS_UPDATE_OPERATIONS, WORKSPACE_CHANNEL_UPDATE_OPERATIONS,
     WORKSPACE_CHANNEL_TRANSFER_ACCEPT_OPERATIONS, WORKSPACE_CHANNEL_TRANSFER_OFFER_OPERATIONS,
     WORKSPACE_POLICY_UPDATE_OPERATIONS, WORKSPACE_METADATA_OPERATIONS,
-    WORKSPACE_RETENTION_OPERATIONS, WORKSPACE_ADMIN_REQUEST_OPERATIONS, WORKSPACE_LIFECYCLE_OPERATIONS, WORKSPACE_AUTHORITY_LOSS_OPERATIONS, WORKSPACE_AUTHORITY_OPERATIONS, WORKSPACE_AUTHORITY_OFFER_OPERATIONS, WORKSPACE_EDGE_OPERATIONS, WORKSPACE_DEVICES_OPERATIONS,
+    WORKSPACE_RETENTION_OPERATIONS, WORKSPACE_ADMIN_REQUEST_OPERATIONS, WORKSPACE_LIFECYCLE_OPERATIONS, WORKSPACE_AUTHORITY_LOSS_OPERATIONS, WORKSPACE_AUTHORITY_OPERATIONS, WORKSPACE_AUTHORITY_OFFER_OPERATIONS, WORKSPACE_EDGE_OPERATIONS, WORKSPACE_ADMISSION_OPERATIONS, WORKSPACE_DEVICES_OPERATIONS,
     WORKSPACE_DEVICE_REMOVE_OPERATIONS,
     WORKSPACE_DEVICE_REMOVAL_REQUEST_OPERATIONS,
     WORKSPACE_DEVICE_REMOVAL_DECIDE_OPERATIONS,
@@ -172,9 +172,14 @@ PERMISSION_BY_OPERATION = {
     "workspace.authority_accept": "approve",
     "workspace.authority_finalize": "approve",
     "workspace.authority_offer": "approve",
+    "workspace.invitation_revoke": "approve",
     "workspace.admin_request_submit": "send",
     "workspace.display_name_request": "send",
     "workspace.read_hint_sync": "send",
+    "workspace.admission_grant_list": "read",
+    "workspace.admission_grant_create": "approve",
+    "workspace.admission_grant_accept": "approve",
+    "workspace.admission_grant_end": "approve",
     "workspace.query": "read",
 }
 
@@ -302,6 +307,7 @@ class CoreSession:
             (WORKSPACE_AUTHORITY_OPERATIONS, self._workspace_admin),
             (WORKSPACE_AUTHORITY_OFFER_OPERATIONS, self._workspace_admin),
             (WORKSPACE_EDGE_OPERATIONS, self._workspace_admin),
+            (WORKSPACE_ADMISSION_OPERATIONS, self._workspace_admin),
             (WORKSPACE_DEVICES_OPERATIONS, self._workspace_admin),
             (WORKSPACE_DEVICE_REMOVE_OPERATIONS, self._workspace_admin),
             (DIAGNOSTIC_OPERATIONS, self._diagnostics),
@@ -599,6 +605,66 @@ class CoreSession:
         return self._observe(grant, profile, operation, params)
 
     def _workspace_operation(self, grant, profiles, operation, params, key):
+        if operation == "workspace.invitation_revoke":
+            target, inside = self._workspace_scope(grant, profiles, params)
+            operation_id = self._required_operation_id(grant, target, key)
+            invitation_id = next(
+                (item for item in self._workspace_admin.invitation_ids(target, inside)
+                 if self._handle(grant, "workspace_invitation", target, item)
+                 == params["invitation"]), None)
+            if invitation_id is None:
+                raise ApiFailure("forbidden")
+            state = self._workspace_admin.revoke_invitation(
+                target, inside, invitation_id, operation_id)
+            return {"profile": params["profile"], "workspace": params["workspace"],
+                    "invitation": params["invitation"], "state": state}
+        if operation in WORKSPACE_ADMISSION_OPERATIONS:
+            target, inside = self._workspace_scope(grant, profiles, params)
+            if operation == "workspace.admission_grant_list":
+                rows = []
+                for row in self._workspace_admin.admission_grants(target, inside):
+                    handled = dict(row)
+                    if isinstance(row.get("id"), str):
+                        handled["admission_grant"] = self._handle(
+                            grant, "admission_grant", target, row["id"])
+                    rows.append(handled)
+                return {"profile": params["profile"], "workspace": params["workspace"],
+                        "grants": rows}
+            operation_id = self._required_operation_id(grant, target, key)
+            if operation == "workspace.admission_grant_create":
+                member_id = next(
+                    (item.member for item in self._workspace_admin.members(target, inside)
+                     if self._handle(grant, "member", target, item.member)
+                     == params["admin_member"]), None)
+                device_id = next(
+                    (item for item in self._workspace_admin.device_ids(target, inside)
+                     if self._handle(grant, "device", target, item)
+                     == params["admin_device"]), None)
+                if member_id is None or device_id is None:
+                    raise ApiFailure("forbidden")
+                row = self._workspace_admin.create_admission_grant(
+                    target, inside, member_id, device_id, params["max_admissions"],
+                    params["lifetime_days"], params["v2_ready"], operation_id)
+                view = dict(row)
+                if isinstance(row.get("id"), str):
+                    view["admission_grant"] = self._handle(
+                        grant, "admission_grant", target, row["id"])
+                return {"profile": params["profile"], "workspace": params["workspace"],
+                        "state": "created", "grant": view}
+            grant_id = next(
+                (item for item in self._workspace_admin.admission_grant_ids(target, inside)
+                 if self._handle(grant, "admission_grant", target, item)
+                 == params["grant"]), None)
+            if grant_id is None:
+                raise ApiFailure("forbidden")
+            if operation == "workspace.admission_grant_accept":
+                state = self._workspace_admin.accept_admission_grant(
+                    target, inside, grant_id, operation_id)
+            else:
+                state = self._workspace_admin.end_admission_grant(
+                    target, inside, grant_id, operation_id)
+            return {"profile": params["profile"], "workspace": params["workspace"],
+                    "grant": params["grant"], "state": state}
         if operation in WORKSPACE_EDGE_OPERATIONS:
             target, inside = self._workspace_scope(grant, profiles, params)
             operation_id = self._required_operation_id(grant, target, key)

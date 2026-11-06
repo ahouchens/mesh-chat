@@ -221,6 +221,7 @@ export interface WorkspaceMember {
   short_id: string;
   device: {
     id: string;
+    core_handle?: string;
     destination_hash: string;
     fingerprint: string;
   };
@@ -609,8 +610,21 @@ export interface WorkspaceJoinRequest {
   created_at: number;
 }
 
+export interface AdmissionGrant {
+  id: string;
+  admission_grant?: string;
+  state: string;
+  admin_member_id: string;
+  admin_device_id: string;
+  max_admissions: number;
+  use_count: number;
+  expires_at: number;
+  accepted: boolean;
+}
+
 export interface WorkspaceInvitation {
   id: string;
+  core_handle?: string;
   workspace_id: string;
   offered_manifest_digest: string;
   state: "active";
@@ -662,6 +676,7 @@ export interface WorkspaceInvitationPreview {
 
 export interface WorkspaceInvitationFormats {
   id: string;
+  core_handle?: string;
   workspace_id: string;
   link: string;
   text: string;

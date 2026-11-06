@@ -58,6 +58,11 @@ WORKSPACE_RETENTION_OPERATIONS = ("workspace.retention_update",)
 WORKSPACE_AUTHORITY_LOSS_OPERATIONS = ("workspace.authority_loss_report",)
 WORKSPACE_AUTHORITY_OPERATIONS = ("workspace.authority_accept", "workspace.authority_finalize")
 WORKSPACE_AUTHORITY_OFFER_OPERATIONS = ("workspace.authority_offer",)
+WORKSPACE_ADMISSION_OPERATIONS = ("workspace.invitation_revoke",
+                                "workspace.admission_grant_list",
+                                "workspace.admission_grant_create",
+                                "workspace.admission_grant_accept",
+                                "workspace.admission_grant_end")
 WORKSPACE_EDGE_OPERATIONS = ("workspace.admin_request_submit",
                              "workspace.display_name_request",
                              "workspace.read_hint_sync")
@@ -238,6 +243,34 @@ def parse_request(value, operations):
                 or any(not isinstance(item, str) or HANDLE.fullmatch(item) is None
                        for item in params.values())):
             raise ApiFailure("invalid_request")
+        return operation, params
+    if operation in WORKSPACE_ADMISSION_OPERATIONS:
+        params = value["params"]
+        if operation == "workspace.invitation_revoke":
+            expected = {"profile", "workspace", "invitation"}
+        elif operation == "workspace.admission_grant_list":
+            expected = {"profile", "workspace"}
+        elif operation == "workspace.admission_grant_create":
+            expected = {"profile", "workspace", "admin_member", "admin_device",
+                        "max_admissions", "lifetime_days", "v2_ready"}
+        else:
+            expected = {"profile", "workspace", "grant"}
+        if not isinstance(params, dict) or set(params) != expected:
+            raise ApiFailure("invalid_request")
+        if any(not isinstance(params[key], str) or HANDLE.fullmatch(params[key]) is None
+               for key in ("profile", "workspace")):
+            raise ApiFailure("invalid_request")
+        for key in ("admin_member", "admin_device", "grant", "invitation"):
+            if key in params and (not isinstance(params[key], str)
+                                  or HANDLE.fullmatch(params[key]) is None):
+                raise ApiFailure("invalid_request")
+        if operation == "workspace.admission_grant_create":
+            if (type(params["max_admissions"]) is not int
+                    or not 1 <= params["max_admissions"] <= 50
+                    or type(params["lifetime_days"]) is not int
+                    or not 1 <= params["lifetime_days"] <= 90
+                    or type(params["v2_ready"]) is not bool):
+                raise ApiFailure("invalid_request")
         return operation, params
     if operation in WORKSPACE_EDGE_OPERATIONS:
         params = value[params]
@@ -777,6 +810,7 @@ COMPONENT_OPERATIONS = (
     + WORKSPACE_AUTHORITY_OPERATIONS
     + WORKSPACE_AUTHORITY_OFFER_OPERATIONS
     + WORKSPACE_EDGE_OPERATIONS
+    + WORKSPACE_ADMISSION_OPERATIONS
     + WORKSPACE_DEVICES_OPERATIONS
     + WORKSPACE_DEVICE_REMOVE_OPERATIONS
     + WORKSPACE_DEVICE_REMOVAL_DECIDE_OPERATIONS

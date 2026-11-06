@@ -2130,6 +2130,124 @@
     {
       "type": "object",
       "properties": {
+        "api_version": {"const": 1},
+        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"},
+        "operation": {"const": "workspace.invitation_revoke"},
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {"$ref": "#/$defs/handle"},
+            "workspace": {"$ref": "#/$defs/handle"},
+            "invitation": {"$ref": "#/$defs/handle"}
+          },
+          "required": ["profile", "workspace", "invitation"],
+          "additionalProperties": false
+        },
+        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"}
+      },
+      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "api_version": {"const": 1},
+        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"},
+        "operation": {"const": "workspace.admission_grant_list"},
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {"$ref": "#/$defs/handle"},
+            "workspace": {"$ref": "#/$defs/handle"}
+          },
+          "required": ["profile", "workspace"],
+          "additionalProperties": false
+        },
+        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"}
+      },
+      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "api_version": {"const": 1},
+        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"},
+        "operation": {"const": "workspace.admission_grant_create"},
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {"$ref": "#/$defs/handle"},
+            "workspace": {"$ref": "#/$defs/handle"},
+            "admin_member": {"$ref": "#/$defs/handle"},
+            "admin_device": {"$ref": "#/$defs/handle"},
+            "max_admissions": {"type": "integer", "minimum": 1, "maximum": 50},
+            "lifetime_days": {"type": "integer", "minimum": 1, "maximum": 90},
+            "v2_ready": {"type": "boolean"}
+          },
+          "required": ["profile", "workspace", "admin_member", "admin_device", "max_admissions", "lifetime_days", "v2_ready"],
+          "additionalProperties": false
+        },
+        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"}
+      },
+      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "api_version": {"const": 1},
+        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"},
+        "operation": {"const": "workspace.admission_grant_accept"},
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {"$ref": "#/$defs/handle"},
+            "workspace": {"$ref": "#/$defs/handle"},
+            "grant": {"$ref": "#/$defs/handle"}
+          },
+          "required": ["profile", "workspace", "grant"],
+          "additionalProperties": false
+        },
+        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"}
+      },
+      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "api_version": {"const": 1},
+        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"},
+        "operation": {"const": "workspace.admission_grant_end"},
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {"$ref": "#/$defs/handle"},
+            "workspace": {"$ref": "#/$defs/handle"},
+            "grant": {"$ref": "#/$defs/handle"}
+          },
+          "required": ["profile", "workspace", "grant"],
+          "additionalProperties": false
+        },
+        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"}
+      },
+      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
         "api_version": {
           "const": 1
         },

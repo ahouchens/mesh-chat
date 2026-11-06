@@ -81,6 +81,11 @@ import {
   coreApiWorkspaceAuthority,
   coreApiWorkspaceAuthorityOffer,
   coreApiWorkspaceAdminSubmit,
+  coreApiAdmissionGrantEnd,
+  coreApiAdmissionGrantAccept,
+  coreApiAdmissionGrantCreate,
+  coreApiAdmissionGrantList,
+  coreApiWorkspaceInvitationRevoke,
   coreApiWorkspaceDisplayNameRequest,
   coreApiWorkspaceReadHintSync,
   coreApiWorkspaceRetention,
@@ -4064,7 +4069,18 @@ function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles,
     if (!invitationId || busy) return;
     setBusy(true); setError("");
     try {
-      await serviceCommand("revoke_workspace_invitation", { operation_id: newOperationId(), workspace_id: workspace.id, invitation_id: invitationId });
+      let handled = false;
+      const invitationHandle = existing.find((item) => item.id === invitationId)?.core_handle
+        ?? (invitation?.id === invitationId ? invitation.core_handle : undefined);
+      if (workspace.core_handle && invitationHandle) {
+        try {
+          await coreApiWorkspaceInvitationRevoke(workspace.core_handle, invitationHandle, newOperationId());
+          handled = true;
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+        }
+      }
+      if (!handled) await serviceCommand("revoke_workspace_invitation", { operation_id: newOperationId(), workspace_id: workspace.id, invitation_id: invitationId });
       if (invitation?.id === invitationId) { setInvitation(null); setShared(false); }
       setExisting((current) => current.filter((item) => item.id !== invitationId)); setCopied(false);
     } catch (reason) { setError(errorMessage(reason)); }
@@ -4088,7 +4104,11 @@ function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles,
   };
   const closeDialog = async () => {
     if (invitation?.host_session_id && !shared) {
-      await serviceCommand("revoke_workspace_invitation", { operation_id: newOperationId(), workspace_id: workspace.id, invitation_id: invitation.id }).catch(() => undefined);
+      if (workspace.core_handle && invitation.core_handle) {
+        await coreApiWorkspaceInvitationRevoke(workspace.core_handle, invitation.core_handle, newOperationId()).catch(() => undefined);
+      } else {
+        await serviceCommand("revoke_workspace_invitation", { operation_id: newOperationId(), workspace_id: workspace.id, invitation_id: invitation.id }).catch(() => undefined);
+      }
     } else if (manualSetup) {
       await serviceCommand("stop_participant_host", { access_id: manualSetup.setup_id }).catch(() => undefined);
     }
@@ -4454,7 +4474,7 @@ function WorkspaceReconnectSettings({ workspace, coordinator }: { workspace: Wor
 }
 
 function WorkspaceAdmissionGrants({ workspace }: { workspace: Workspace }) {
-  type Grant = { id: string; state: string; admin_member_id: string; admin_device_id: string; max_admissions: number; use_count: number; expires_at: number; accepted: boolean };
+  type Grant = { id: string; admission_grant?: string; state: string; admin_member_id: string; admin_device_id: string; max_admissions: number; use_count: number; expires_at: number; accepted: boolean };
   const [grants, setGrants] = useState<Grant[]>([]);
   const [adminMemberId, setAdminMemberId] = useState("");
   const [adminDeviceId, setAdminDeviceId] = useState("");
@@ -4465,10 +4485,22 @@ function WorkspaceAdmissionGrants({ workspace }: { workspace: Workspace }) {
   const candidates = workspace.members.filter((member) => member.role === "admin" && member.status === "active");
   const selectedAdmin = candidates.find((member) => member.id === adminMemberId) ?? candidates[0];
   const adminDevices = selectedAdmin?.devices ?? (selectedAdmin ? [selectedAdmin.device] : []);
+  const loadGrants = async (): Promise<Grant[]> => {
+    if (workspace.core_handle) {
+      try {
+        const result = await coreApiAdmissionGrantList(workspace.core_handle);
+        return Array.isArray(result.grants) ? result.grants as unknown as Grant[] : [];
+      } catch (reason) {
+        if (!String(reason).includes("core_api_unavailable")) throw reason;
+      }
+    }
+    const rows = await serviceCommand<Grant[]>("list_workspace_admission_grants", { workspace_id: workspace.id });
+    return Array.isArray(rows) ? rows : [];
+  };
   useEffect(() => {
     let active = true;
-    void serviceCommand<Grant[]>("list_workspace_admission_grants", { workspace_id: workspace.id }).then((rows) => {
-      if (active) setGrants(Array.isArray(rows) ? rows : []);
+    void loadGrants().then((rows) => {
+      if (active) setGrants(rows);
     }).catch(() => { if (active) setError("Admission grants are unavailable."); });
     return () => { active = false; };
   }, [workspace.id]);
@@ -4478,27 +4510,62 @@ function WorkspaceAdmissionGrants({ workspace }: { workspace: Workspace }) {
     setAdminDeviceId((current) => adminDevices.some((device) => device.id === current) ? current : adminDevices[0]?.id ?? "");
   }, [selectedAdmin?.id, adminDevices.map((device) => device.id).join(":")]);
   const refresh = async () => {
-    const rows = await serviceCommand<Grant[]>("list_workspace_admission_grants", { workspace_id: workspace.id });
-    setGrants(Array.isArray(rows) ? rows : []);
+    setGrants(await loadGrants());
   };
   const create = async () => {
     if (!selectedAdmin || !adminDeviceId) return;
     setBusy(true); setError("");
     try {
-      await serviceCommand("create_workspace_admission_grant", { workspace_id: workspace.id, admin_member_id: selectedAdmin.id, admin_device_id: adminDeviceId, max_admissions: 5, lifetime_days: 7, v2_ready: v2Ready });
+      let handled = false;
+      const device = adminDevices.find((item) => item.id === adminDeviceId);
+      if (workspace.core_handle && selectedAdmin.core_handle && device?.core_handle) {
+        try {
+          await coreApiAdmissionGrantCreate(workspace.core_handle, selectedAdmin.core_handle, device.core_handle, v2Ready, newOperationId());
+          handled = true;
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+        }
+      }
+      if (!handled) await serviceCommand("create_workspace_admission_grant", { workspace_id: workspace.id, admin_member_id: selectedAdmin.id, admin_device_id: adminDeviceId, max_admissions: 5, lifetime_days: 7, v2_ready: v2Ready });
       await refresh();
     } catch (reason) { setError(errorMessage(reason)); }
     finally { setBusy(false); }
   };
   const accept = async (grantId: string) => {
     setBusy(true); setError("");
-    try { await serviceCommand("accept_workspace_admission_grant", { workspace_id: workspace.id, grant_id: grantId }); await refresh(); }
+    try {
+      let handled = false;
+      const grant = grants.find((item) => item.id === grantId);
+      if (workspace.core_handle && grant?.admission_grant) {
+        try {
+          await coreApiAdmissionGrantAccept(workspace.core_handle, grant.admission_grant, newOperationId());
+          handled = true;
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+        }
+      }
+      if (!handled) await serviceCommand("accept_workspace_admission_grant", { workspace_id: workspace.id, grant_id: grantId });
+      await refresh();
+    }
     catch (reason) { setError(errorMessage(reason)); }
     finally { setBusy(false); }
   };
   const end = async (grantId: string) => {
     setBusy(true); setError("");
-    try { await serviceCommand("end_workspace_admission_grant", { workspace_id: workspace.id, grant_id: grantId }); await refresh(); }
+    try {
+      let handled = false;
+      const grant = grants.find((item) => item.id === grantId);
+      if (workspace.core_handle && grant?.admission_grant) {
+        try {
+          await coreApiAdmissionGrantEnd(workspace.core_handle, grant.admission_grant, newOperationId());
+          handled = true;
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+        }
+      }
+      if (!handled) await serviceCommand("end_workspace_admission_grant", { workspace_id: workspace.id, grant_id: grantId });
+      await refresh();
+    }
     catch (reason) { setError(errorMessage(reason)); }
     finally { setBusy(false); }
   };

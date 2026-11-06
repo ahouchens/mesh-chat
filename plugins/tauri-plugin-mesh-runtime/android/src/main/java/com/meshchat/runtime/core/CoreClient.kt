@@ -292,6 +292,33 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         )
     }
 
+    fun workspaceInvitationRevoke(profile: String, workspace: String, invitation: String,
+                                  idempotencyKey: String): JSONObject =
+        dispatch("workspace.invitation_revoke", JSONObject().put("profile", profile)
+            .put("workspace", workspace).put("invitation", invitation), idempotencyKey)
+
+    fun workspaceAdmissionGrantList(profile: String, workspace: String): JSONObject =
+        request("workspace.admission_grant_list",
+            JSONObject().put("profile", profile).put("workspace", workspace))
+
+    fun workspaceAdmissionGrantCreate(profile: String, workspace: String, member: String,
+                                      device: String, maxAdmissions: Int, lifetimeDays: Int,
+                                      v2Ready: Boolean, idempotencyKey: String): JSONObject =
+        dispatch("workspace.admission_grant_create", JSONObject().put("profile", profile)
+            .put("workspace", workspace).put("admin_member", member)
+            .put("admin_device", device).put("max_admissions", maxAdmissions)
+            .put("lifetime_days", lifetimeDays).put("v2_ready", v2Ready), idempotencyKey)
+
+    fun workspaceAdmissionGrantAccept(profile: String, workspace: String, grant: String,
+                                      idempotencyKey: String): JSONObject =
+        dispatch("workspace.admission_grant_accept", JSONObject().put("profile", profile)
+            .put("workspace", workspace).put("grant", grant), idempotencyKey)
+
+    fun workspaceAdmissionGrantEnd(profile: String, workspace: String, grant: String,
+                                   idempotencyKey: String): JSONObject =
+        dispatch("workspace.admission_grant_end", JSONObject().put("profile", profile)
+            .put("workspace", workspace).put("grant", grant), idempotencyKey)
+
     fun workspaceAuthorityOffer(profile: String, workspace: String, transitionKind: String,
                                 successorMember: String, successorDevice: String,
                                 outgoingRole: String?, idempotencyKey: String): JSONObject =

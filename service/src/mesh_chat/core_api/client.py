@@ -249,6 +249,34 @@ class CoreClient:
         "dismiss": "workspace.admin_request_dismiss",
     }
 
+    def workspace_invitation_revoke(self, handle, workspace, invitation, key):
+        return self.request("workspace.invitation_revoke",
+                            {"profile": handle, "workspace": workspace,
+                             "invitation": invitation}, idempotency_key=key)
+
+    def workspace_admission_grant_list(self, handle, workspace):
+        return self.request("workspace.admission_grant_list",
+                            {"profile": handle, "workspace": workspace})
+
+    def workspace_admission_grant_create(self, handle, workspace, member, device,
+                                         max_admissions, lifetime_days, v2_ready, key):
+        return self.request("workspace.admission_grant_create", {
+            "profile": handle, "workspace": workspace,
+            "admin_member": member, "admin_device": device,
+            "max_admissions": max_admissions, "lifetime_days": lifetime_days,
+            "v2_ready": v2_ready,
+        }, idempotency_key=key)
+
+    def workspace_admission_grant_accept(self, handle, workspace, grant, key):
+        return self.request("workspace.admission_grant_accept",
+                            {"profile": handle, "workspace": workspace,
+                             "grant": grant}, idempotency_key=key)
+
+    def workspace_admission_grant_end(self, handle, workspace, grant, key):
+        return self.request("workspace.admission_grant_end",
+                            {"profile": handle, "workspace": workspace,
+                             "grant": grant}, idempotency_key=key)
+
     def workspace_authority_offer(self, handle, workspace, transition_kind,
                                   successor_member, successor_device, outgoing_role, key):
         return self.request("workspace.authority_offer", {
