@@ -1317,6 +1317,7 @@ M5 - supported reusable core
       `application.snapshot`.
 - [x] The facade dispatcher resolves profiles, workspace scopes, workspace channels and idempotency keys through helpers; workspace operations are split into query, access-mutation and resource-mutation handlers, leaving _execute a 50-line cross-cutting dispatcher.
 - [x] Reconnect start/stop use typed connection.start/connection.stop with the profile destination, falling back only when Core is unavailable.
+- [x] pplication.snapshot adds caller-scoped core_handle fields to contacts, groups and workspaces, allowing aggregate UI state to drive typed operations without internal IDs.
 - [x] Groups expose typed group.query and group.create with caller-scoped handles; the create dialog resolves member destinations and saves through the facade with legacy fallback only when unavailable.
 - [x] Message reactions use typed message.reaction_set with caller-scoped message handles.
 - [x] Network settings use typed settings.query/settings.update; the network settings UI saves through the facade with legacy fallback only when unavailable.
