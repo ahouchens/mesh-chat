@@ -1327,6 +1327,7 @@ M5 - supported reusable core
 - [x] Workspace policy updates use typed workspace.policy_update with the snapshot workspace handle and legacy fallback only when unavailable.
 - [x] Workspace role changes use typed workspace.member_role with snapshot workspace/member handles and legacy fallback only when unavailable.
 - [x] Workspace join requests carry caller-scoped handles in the snapshot; approve/decline use typed workspace.join_approve/decline with fallback only when Core is unavailable.
+- [x] Group invitation retry uses typed group.invitation_retry with group and member handles.
 - [x] Group invitations accept/decline through typed facade operations using snapshot invitation handles, with fallback only when Core is unavailable.
 - [x] Group membership uses typed group.leave, group.close and group.member_remove; the UI resolves the snapshot handle and falls back only when Core is unavailable.
 - [x] Group messages use typed group.message_enqueue; the composer resolves selectedGroup.core_handle and falls back only when Core is unavailable.
