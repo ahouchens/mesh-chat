@@ -68,6 +68,7 @@ import {
   coreApiRequest,
   coreApiCloseGroup,
   coreApiCallMedia,
+  coreApiCallControl,
   coreApiGroupInvitation,
   coreApiWorkspaceJoinDecision,
   coreApiWorkspaceMemberRole,
@@ -411,6 +412,21 @@ function legacyWorkspaceParams(params: Record<string, unknown>): Record<string, 
     delete legacy.conversation;
   }
   return legacy;
+}
+
+async function callControl(
+  action: string,
+  params: Record<string, unknown>,
+  fallbackCommand: string,
+): Promise<Record<string, unknown>> {
+  if (typeof coreApiCallControl === "function") {
+    try {
+      return await coreApiCallControl(action, params, newOperationId());
+    } catch (reason) {
+      if (!String(reason).includes("core_api_unavailable")) throw reason;
+    }
+  }
+  return serviceCommand<Record<string, unknown>>(fallbackCommand, params);
 }
 
 async function fetchCallMedia(
@@ -964,7 +980,7 @@ function IncomingCallPrompt({ call, name, onReview, onChanged }: {
     setBusy(true);
     setError("");
     try {
-      await serviceCommand("end_call", { call_id: call.id, reason: "declined" });
+      await callControl("end", { call_id: call.id, reason: "declined" }, "end_call");
       await onChanged();
     } catch {
       setError("The call could not be dismissed. Try again.");
@@ -1065,7 +1081,7 @@ function CallDialog({
     const callId = callIdRef.current;
     cleanup();
     if (callId) {
-      void serviceCommand("end_call", { call_id: callId, reason: "cancelled" }).catch(() => undefined);
+      void callControl("end", { call_id: callId, reason: "cancelled" }, "end_call").catch(() => undefined);
     }
     setError(message);
     setPhase("error");
@@ -1246,11 +1262,11 @@ function CallDialog({
               if (!current()) return;
               const sdp = pc.localDescription?.sdp;
               if (sdp) {
-                await serviceCommand("answer_call_restart", {
+                await callControl("answer_restart", {
                   call_id: callId,
                   sdp,
                   dtls_fingerprint: callFingerprint(sdp),
-                });
+                }, "answer_call_restart");
                 if (!current()) return;
                 lastRestartOfferRef.current = latest.restart_offer;
                 setPhase(pc.connectionState === "connected" ? "in_call" : "connecting");
@@ -1314,11 +1330,11 @@ function CallDialog({
       const sdp = pc.localDescription?.sdp;
       if (!sdp) throw new Error("The reconnecting call offer could not be created.");
       if (!callHasNetworkCandidate(sdp)) throw new Error("No call network candidate was found. Check the connection or configure TURN.");
-      await serviceCommand("restart_call", {
+      await callControl("restart", {
         call_id: callId,
         sdp,
         dtls_fingerprint: callFingerprint(sdp),
-      });
+      }, "restart_call");
       if (!current()) return;
       setPhase(pc.connectionState === "connected" ? "in_call" : "connecting");
     } catch (reason) {
@@ -1400,14 +1416,14 @@ function CallDialog({
       const sdp = pc.localDescription?.sdp;
       if (!sdp) throw new Error("The call offer could not be created.");
       if (!callHasNetworkCandidate(sdp)) throw new Error("No call network candidate was found. Check the connection or configure TURN.");
-      const result = await serviceCommand<CallSummary>("start_call", {
+      const result = await callControl("start", {
         contact_id: contact.id,
         media,
         sdp,
         dtls_fingerprint: callFingerprint(sdp),
-      });
+      }, "start_call") as unknown as CallSummary;
       if (!current()) {
-        await serviceCommand("end_call", { call_id: result.id, reason: "cancelled" }).catch(() => undefined);
+        await callControl("end", { call_id: result.id, reason: "cancelled" }, "end_call").catch(() => undefined);
         throw new Error("Call cancelled.");
       }
       callIdRef.current = result.id;
@@ -1467,11 +1483,11 @@ function CallDialog({
       const sdp = pc.localDescription?.sdp;
       if (!sdp) throw new Error("The call answer could not be created.");
       if (!callHasNetworkCandidate(sdp)) throw new Error("No call network candidate was found. Check the connection or configure TURN.");
-      const result = await serviceCommand<CallSummary>("answer_call", {
+      const result = await callControl("answer", {
         call_id: call.id,
         sdp,
         dtls_fingerprint: callFingerprint(sdp),
-      });
+      }, "answer_call") as unknown as CallSummary;
       if (!current()) throw new Error("Call cancelled.");
       setCall(result);
       roleRef.current = result.role;
@@ -1498,7 +1514,7 @@ function CallDialog({
     setPhase("ended");
     if (callId) {
       try {
-        await serviceCommand("end_call", { call_id: callId, reason });
+        await callControl("end", { call_id: callId, reason }, "end_call");
         await onChanged();
       } catch {
         // The call may already have ended on the other side.
