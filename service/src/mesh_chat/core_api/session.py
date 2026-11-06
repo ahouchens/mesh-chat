@@ -345,6 +345,26 @@ class CoreSession:
                           hashlib.sha256).digest()[:16]
         return str(uuid.UUID(bytes=digest))
 
+    def _owner_snapshot(self, grant, snapshot):
+        if not isinstance(snapshot, dict) or len(grant.profiles) != 1:
+            return snapshot
+        profile = grant.profiles[0]
+        result = dict(snapshot)
+        for key, kind in (("contacts", "peer"), ("groups", "group"), ("workspaces", "workspace")):
+            values = result.get(key)
+            if isinstance(values, list):
+                result[key] = [self._snapshot_handle(grant, kind, profile, item)
+                               for item in values if isinstance(item, dict)]
+        return result
+
+    def _snapshot_handle(self, grant, kind, profile, item):
+        identifier = item.get("id")
+        if not isinstance(identifier, str):
+            return item
+        handled = dict(item)
+        handled["core_handle"] = self._handle(grant, kind, profile, identifier)
+        return handled
+
     def _workspace_channel_scope(self, grant, profiles, params):
         target, inside = self._workspace_scope(grant, profiles, params)
         return target, inside, self._channel_target(
@@ -382,7 +402,7 @@ class CoreSession:
             if self._application is None:
                 raise ApiFailure("unavailable")
             if operation == "application.snapshot":
-                return self._application.snapshot()
+                return self._owner_snapshot(grant, self._application.snapshot())
             return self._application.command(params["command"], params["payload"])
         profile = self._profile_target(profiles, params)
         if operation == "diagnostics.query":

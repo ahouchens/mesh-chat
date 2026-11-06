@@ -250,6 +250,7 @@ def test_facade_application_snapshot_returns_ui_state(host):
         assert snapshot["profile"]["display_name"] == "Alex"
         assert isinstance(snapshot["contacts"], list)
         assert isinstance(snapshot["messages"], list)
+        assert all(len(contact["core_handle"]) >= 16 for contact in snapshot["contacts"])
     finally:
         owner.close()
 

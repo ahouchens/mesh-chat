@@ -28,6 +28,7 @@ export interface Profile {
 
 export interface Contact {
   id: string;
+  core_handle?: string;
   display_name: string;
   public_identity: string;
   identity_hash: string;
@@ -93,6 +94,7 @@ export interface GroupMember {
 
 export interface Group {
   id: string;
+  core_handle?: string;
   title: string;
   owner_destination: string;
   posting_policy: GroupPostingPolicy;
@@ -229,6 +231,7 @@ export interface WorkspaceMember {
 
 export interface Workspace {
   id: string;
+  core_handle?: string;
   name: string;
   description: string;
   state: WorkspaceState;
