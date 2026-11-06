@@ -19,7 +19,7 @@ DRAFT_OPERATIONS = ("peer.draft_get", "peer.draft_set")
 CALL_OPERATIONS = ("call.settings_query", "call.settings_update")
 SETTINGS_OPERATIONS = ("settings.query", "settings.update")
 REACTION_OPERATIONS = ("message.reaction_set",)
-GROUP_OPERATIONS = ("group.query", "group.create")
+GROUP_OPERATIONS = ("group.query", "group.create", "group.message_enqueue")
 PAIRING_OPERATIONS = ("peer.pairing_accept",)
 REQUEST_OPERATIONS = ("peer.pairing_request",)
 INVITATION_OPERATIONS = ("peer.pairing_create",)
@@ -442,11 +442,17 @@ def parse_request(value, operations):
         return operation, params
     if operation in GROUP_OPERATIONS:
         params = value["params"]
-        expected = {"profile"} if operation == "group.query" else {
-            "profile", "title", "posting_policy", "members"}
+        expected = ({"profile"} if operation == "group.query"
+                    else {"profile", "group", "text"} if operation == "group.message_enqueue"
+                    else {"profile", "title", "posting_policy", "members"})
         if (not isinstance(params, dict) or set(params) != expected
                 or not isinstance(params["profile"], str)
                 or HANDLE.fullmatch(params["profile"]) is None
+                or (operation == "group.message_enqueue"
+                    and (not isinstance(params["group"], str)
+                         or HANDLE.fullmatch(params["group"]) is None
+                         or not isinstance(params["text"], str)
+                         or not 1 <= len(params["text"].encode("utf-8")) <= 16384))
                 or (operation == "group.create"
                     and (not isinstance(params["title"], str)
                          or not 1 <= len(params["title"].strip()) <= 128

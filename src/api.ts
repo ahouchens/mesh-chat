@@ -320,6 +320,15 @@ export async function coreApiCreateGroup(
   });
 }
 
+export async function coreApiSendGroupMessage(group: string, text: string): Promise<unknown> {
+  const profile = await coreApiProfile();
+  return coreApiRequest("group.message_enqueue", {
+    profile: profile.profile,
+    group,
+    text,
+  });
+}
+
 export async function lockService(): Promise<void> {
   clearPairingResume();
   return invoke<void>("lock_service");

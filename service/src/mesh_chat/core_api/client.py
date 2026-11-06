@@ -136,6 +136,10 @@ class CoreClient:
             "profile": handle, "title": title, "posting_policy": posting_policy,
             "members": members})
 
+    def send_group(self, handle, group, text):
+        return self.request("group.message_enqueue", {
+            "profile": handle, "group": group, "text": text})
+
     def groups(self, handle):
         return self.request("group.query", {"profile": handle})
 

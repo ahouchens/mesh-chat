@@ -116,6 +116,10 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         request("group.create", JSONObject().put("profile", profile).put("title", title)
             .put("posting_policy", postingPolicy).put("members", JSONArray(members)))
 
+    fun sendGroup(profile: String, group: String, text: String): JSONObject =
+        request("group.message_enqueue", JSONObject().put("profile", profile)
+            .put("group", group).put("text", text))
+
     fun groups(profile: String): JSONObject =
         request("group.query", JSONObject().put("profile", profile))
 

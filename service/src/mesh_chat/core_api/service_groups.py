@@ -1,7 +1,7 @@
 """Private adapter for first-class group summaries."""
 
 from .errors import ApiFailure
-from .groups import GroupObservation
+from .groups import GroupMessageObservation, GroupObservation
 from .service_messages import storage_errors
 
 
@@ -43,3 +43,18 @@ class ServiceGroups:
             except ValidationError as error:
                 raise ApiFailure("invalid_request") from error
             return self._observation(group)
+    def send(self, profile, group_id, text):
+        from ..errors import ValidationError
+
+        if profile != "local":
+            raise ApiFailure("forbidden")
+        if self._service._identity is None:
+            raise ApiFailure("locked")
+        if not isinstance(text, str) or not text.strip():
+            raise ApiFailure("invalid_request")
+        with storage_errors():
+            try:
+                self._service.send_group_message(group_id, text)
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            return GroupMessageObservation(text)

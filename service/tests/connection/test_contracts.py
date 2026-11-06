@@ -122,6 +122,9 @@ def test_each_designed_operation_has_an_executable_request_vector_and_permission
         "group.query": {},
         "group.create": {"title": "Team", "posting_policy": "members",
                           "members": [handle]},
+        "group.message_enqueue": {"group": handle, "text": "Hello"},
+        "group.create": {"title": "Team", "posting_policy": "members",
+                          "members": [handle]},
 
         "connection.start": {"connection": handle}, "connection.stop": {"connection": handle},
         "connection.retry": {"connection": handle}, "connection.snapshot": {"connection": handle},

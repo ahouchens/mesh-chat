@@ -62,6 +62,7 @@ import {
   saveNetworkSettings,
   coreApiPeerForDestination,
   coreApiRequest,
+  coreApiSendGroupMessage,
   coreApiSendMessage,
   initializeService,
   lockService,
@@ -5953,7 +5954,16 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     setGroupDrafts((current) => ({ ...current, [groupId]: "" }));
     await cancelPendingDraftWrite(draftKey);
     try {
-      await serviceCommand("send_group_message", { group_id: groupId, text });
+      let sent = false;
+      if (selectedGroup.core_handle) {
+        try {
+          await coreApiSendGroupMessage(selectedGroup.core_handle, text);
+          sent = true;
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+        }
+      }
+      if (!sent) await serviceCommand("send_group_message", { group_id: groupId, text });
     } catch (reason) {
       setGroupDrafts((current) => current[groupId] ? current : { ...current, [groupId]: text });
       scheduleDraftWrite(draftKey, {

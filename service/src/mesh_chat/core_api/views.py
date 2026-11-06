@@ -571,3 +571,11 @@ def group_view(profile, group, value):
         raise ValueError("Invalid group observation")
     return {"profile": profile, "group": group, "name": value.name,
             "posting_policy": value.posting_policy}
+
+
+def group_message_sent_view(profile, group, value):
+    if (any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
+            for item in (profile, group))
+            or not isinstance(value.text, str) or not value.text):
+        raise ValueError("Invalid group message observation")
+    return {"profile": profile, "group": group, "sent": True}

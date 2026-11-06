@@ -254,6 +254,10 @@ export class CoreClient {
     return this.request("group.create", { profile, title, posting_policy: postingPolicy, members });
   }
 
+  async sendGroup(profile: string, group: string, text: string): Promise<unknown> {
+    return this.request("group.message_enqueue", { profile, group, text });
+  }
+
   async groups(profile: string): Promise<unknown> {
     return this.request("group.query", { profile });
   }
