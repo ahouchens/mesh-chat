@@ -80,6 +80,7 @@
     "workspace.authority_loss_report",
     "workspace.authority_finalize",
     "workspace.authority_accept",
+    "workspace.authority_offer",
     "workspace.leave",
     "workspace.close",
     "diagnostics.query"
@@ -661,6 +662,13 @@
     },
     {
       "operation": "workspace.authority_accept",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.authority_offer",
       "permission": "approve",
       "scope": "profile",
       "mutation": true,

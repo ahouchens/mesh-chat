@@ -78,6 +78,7 @@ import {
   coreApiWorkspaceLifecycle,
   coreApiReportAuthorityLoss,
   coreApiWorkspaceAuthority,
+  coreApiWorkspaceAuthorityOffer,
   coreApiWorkspaceRetention,
   coreApiDecideDeviceRemoval,
   coreApiCreateWorkspaceDeviceLink,
@@ -6308,6 +6309,27 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
             await coreApiWorkspaceAdminRequest(
               selectedWorkspace.core_handle, request.core_handle,
               action as "approve" | "decline" | "cancel" | "dismiss", newOperationId());
+            await refresh(true);
+            return;
+          } catch (reason) {
+            if (!String(reason).includes("core_api_unavailable")) throw reason;
+          }
+        }
+      }
+      if (command === "offer_workspace_authority_transition" && selectedWorkspace.core_handle
+          && typeof payload.successor_member_id === "string"
+          && typeof payload.successor_device_id === "string"
+          && (payload.transition_kind === "ownership_transfer"
+              || payload.transition_kind === "same_owner_rotation")) {
+        const member = selectedWorkspace.members.find((item) => item.id === payload.successor_member_id);
+        const device = member?.devices?.find((item) => item.id === payload.successor_device_id);
+        const outgoing = payload.outgoing_owner_role === "admin" || payload.outgoing_owner_role === "member"
+          ? payload.outgoing_owner_role : null;
+        if (member?.core_handle && device?.core_handle) {
+          try {
+            await coreApiWorkspaceAuthorityOffer(
+              selectedWorkspace.core_handle, payload.transition_kind,
+              member.core_handle, device.core_handle, outgoing, newOperationId());
             await refresh(true);
             return;
           } catch (reason) {

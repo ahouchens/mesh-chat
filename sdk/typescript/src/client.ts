@@ -517,6 +517,18 @@ export class CoreClient {
     );
   }
 
+  async workspaceAuthorityOffer(profile: string, workspace: string,
+                                transitionKind: "ownership_transfer" | "same_owner_rotation",
+                                successorMember: string, successorDevice: string,
+                                outgoingRole: "admin" | "member" | null,
+                                idempotencyKey: string): Promise<unknown> {
+    return this.request("workspace.authority_offer", {
+      profile, workspace, transition_kind: transitionKind,
+      successor_member: successorMember, successor_device: successorDevice,
+      outgoing_owner_role: outgoingRole,
+    }, { idempotencyKey });
+  }
+
   async workspaceAuthorityAccept(profile: string, workspace: string, transition: string,
                                  idempotencyKey: string): Promise<unknown> {
     return this.request("workspace.authority_accept",

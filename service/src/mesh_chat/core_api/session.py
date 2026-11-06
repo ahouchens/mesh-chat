@@ -16,7 +16,8 @@ import uuid
 from typing import Protocol
 
 from .views import (call_ice_view, call_settings_view, device_removal_view, draft_view,
-    workspace_admin_request_view, workspace_authority_loss_view, workspace_authority_view, workspace_lifecycle_view,
+    workspace_admin_request_view, workspace_authority_loss_view, workspace_authority_offer_view,
+    workspace_authority_view, workspace_lifecycle_view,
     workspace_metadata_view, workspace_retention_view,
     group_invitation_decision_view,
     group_list_view, group_membership_view,
@@ -51,7 +52,7 @@ from .requests import (
     WORKSPACE_CHANNEL_MEMBERS_UPDATE_OPERATIONS, WORKSPACE_CHANNEL_UPDATE_OPERATIONS,
     WORKSPACE_CHANNEL_TRANSFER_ACCEPT_OPERATIONS, WORKSPACE_CHANNEL_TRANSFER_OFFER_OPERATIONS,
     WORKSPACE_POLICY_UPDATE_OPERATIONS, WORKSPACE_METADATA_OPERATIONS,
-    WORKSPACE_RETENTION_OPERATIONS, WORKSPACE_ADMIN_REQUEST_OPERATIONS, WORKSPACE_LIFECYCLE_OPERATIONS, WORKSPACE_AUTHORITY_LOSS_OPERATIONS, WORKSPACE_AUTHORITY_OPERATIONS, WORKSPACE_DEVICES_OPERATIONS,
+    WORKSPACE_RETENTION_OPERATIONS, WORKSPACE_ADMIN_REQUEST_OPERATIONS, WORKSPACE_LIFECYCLE_OPERATIONS, WORKSPACE_AUTHORITY_LOSS_OPERATIONS, WORKSPACE_AUTHORITY_OPERATIONS, WORKSPACE_AUTHORITY_OFFER_OPERATIONS, WORKSPACE_DEVICES_OPERATIONS,
     WORKSPACE_DEVICE_REMOVE_OPERATIONS,
     WORKSPACE_DEVICE_REMOVAL_REQUEST_OPERATIONS,
     WORKSPACE_DEVICE_REMOVAL_DECIDE_OPERATIONS,
@@ -168,6 +169,7 @@ PERMISSION_BY_OPERATION = {
     "workspace.authority_loss_report": "approve",
     "workspace.authority_accept": "approve",
     "workspace.authority_finalize": "approve",
+    "workspace.authority_offer": "approve",
     "workspace.query": "read",
 }
 
@@ -293,6 +295,7 @@ class CoreSession:
             (WORKSPACE_LIFECYCLE_OPERATIONS, self._workspace_admin),
             (WORKSPACE_AUTHORITY_LOSS_OPERATIONS, self._workspace_admin),
             (WORKSPACE_AUTHORITY_OPERATIONS, self._workspace_admin),
+            (WORKSPACE_AUTHORITY_OFFER_OPERATIONS, self._workspace_admin),
             (WORKSPACE_DEVICES_OPERATIONS, self._workspace_admin),
             (WORKSPACE_DEVICE_REMOVE_OPERATIONS, self._workspace_admin),
             (DIAGNOSTIC_OPERATIONS, self._diagnostics),
@@ -580,6 +583,24 @@ class CoreSession:
         return self._observe(grant, profile, operation, params)
 
     def _workspace_operation(self, grant, profiles, operation, params, key):
+        if operation in WORKSPACE_AUTHORITY_OFFER_OPERATIONS:
+            target, inside = self._workspace_scope(grant, profiles, params)
+            operation_id = self._required_operation_id(grant, target, key)
+            member_id = next(
+                (item.member for item in self._workspace_admin.members(target, inside)
+                 if self._handle(grant, "member", target, item.member)
+                 == params["successor_member"]),
+                None)
+            device_id = next(
+                (item for item in self._workspace_admin.device_ids(target, inside)
+                 if self._handle(grant, "device", target, item) == params["successor_device"]),
+                None)
+            if member_id is None or device_id is None:
+                raise ApiFailure("forbidden")
+            state = self._workspace_admin.offer_authority_transition(
+                target, inside, params["transition_kind"], member_id, device_id,
+                params["outgoing_owner_role"], operation_id)
+            return workspace_authority_offer_view(params["profile"], params["workspace"], state)
         if operation in WORKSPACE_AUTHORITY_OPERATIONS:
             target, inside = self._workspace_scope(grant, profiles, params)
             operation_id = self._required_operation_id(grant, target, key)

@@ -246,6 +246,16 @@ class CoreClient:
         "dismiss": "workspace.admin_request_dismiss",
     }
 
+    def workspace_authority_offer(self, handle, workspace, transition_kind,
+                                  successor_member, successor_device, outgoing_role, key):
+        return self.request("workspace.authority_offer", {
+            "profile": handle, "workspace": workspace,
+            "transition_kind": transition_kind,
+            "successor_member": successor_member,
+            "successor_device": successor_device,
+            "outgoing_owner_role": outgoing_role,
+        }, idempotency_key=key)
+
     def workspace_authority_accept(self, handle, workspace, transition, key):
         return self.request("workspace.authority_accept",
                             {"profile": handle, "workspace": workspace,

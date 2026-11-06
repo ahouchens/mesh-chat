@@ -872,3 +872,18 @@ class ServiceWorkspaceAdmin:
             except ValidationError as error:
                 raise ApiFailure("invalid_request") from error
             return "finalized"
+
+
+    def offer_authority_transition(self, profile, workspace_id, transition_kind, member_id,
+                                   device_id, outgoing_owner_role, operation_id):
+        self._require_local(profile)
+        with storage_errors():
+            try:
+                outcome = self._service.offer_workspace_authority_transition(
+                    workspace_id, transition_kind, member_id, device_id,
+                    outgoing_owner_role, operation_id)
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            if not isinstance(outcome, dict):
+                raise ApiFailure("internal")
+            return "offered"

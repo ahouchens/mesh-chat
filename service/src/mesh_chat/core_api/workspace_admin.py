@@ -192,6 +192,10 @@ class WorkspaceAdmin(Protocol):
     def dismiss_admin_request(self, profile: str, workspace: str, request: str,
                               operation_id: str) -> str: ...
 
+    def offer_authority_transition(self, profile: str, workspace: str, transition_kind: str,
+                                   member_id: str, device_id: str, outgoing_owner_role: str,
+                                   operation_id: str) -> str: ...
+
     def authority_transition_ids(self, profile: str, workspace: str) -> tuple[str, ...]: ...
 
     def accept_authority_transition(self, profile: str, workspace: str, transition: str,

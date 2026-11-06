@@ -424,6 +424,25 @@ export async function coreApiCreateWorkspaceDeviceLink(
   };
 }
 
+export async function coreApiWorkspaceAuthorityOffer(
+  workspace: string,
+  transitionKind: "ownership_transfer" | "same_owner_rotation",
+  successorMember: string,
+  successorDevice: string,
+  outgoingRole: "admin" | "member" | null,
+  idempotencyKey: string,
+): Promise<unknown> {
+  const profile = await coreApiProfile();
+  return coreApiRequest("workspace.authority_offer", {
+    profile: profile.profile,
+    workspace,
+    transition_kind: transitionKind,
+    successor_member: successorMember,
+    successor_device: successorDevice,
+    outgoing_owner_role: outgoingRole,
+  }, idempotencyKey);
+}
+
 export async function coreApiWorkspaceAuthority(
   workspace: string,
   transition: string,

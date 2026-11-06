@@ -56,6 +56,7 @@ WORKSPACE_METADATA_OPERATIONS = ("workspace.metadata_update",)
 WORKSPACE_RETENTION_OPERATIONS = ("workspace.retention_update",)
 WORKSPACE_AUTHORITY_LOSS_OPERATIONS = ("workspace.authority_loss_report",)
 WORKSPACE_AUTHORITY_OPERATIONS = ("workspace.authority_accept", "workspace.authority_finalize")
+WORKSPACE_AUTHORITY_OFFER_OPERATIONS = ("workspace.authority_offer",)
 WORKSPACE_LIFECYCLE_OPERATIONS = ("workspace.close", "workspace.leave",
                                   "workspace.remove_data")
 WORKSPACE_ADMIN_REQUEST_OPERATIONS = ("workspace.admin_request_approve",
@@ -233,6 +234,18 @@ def parse_request(value, operations):
                 or any(not isinstance(item, str) or HANDLE.fullmatch(item) is None
                        for item in params.values())):
             raise ApiFailure("invalid_request")
+        return operation, params
+    if operation in WORKSPACE_AUTHORITY_OFFER_OPERATIONS:
+        params = value[params]
+        if (not isinstance(params, dict)
+                or set(params) != {profile, workspace, transition_kind,
+                                   successor_member, successor_device,
+                                   outgoing_owner_role}
+                or any(not isinstance(params[key], str) or HANDLE.fullmatch(params[key]) is None
+                       for key in (profile, workspace, successor_member, successor_device))
+                or params[transition_kind] not in {owner_rotation, device_handoff, owner_handoff}
+                or params[outgoing_owner_role] not in {admin, member}):
+            raise ApiFailure(invalid_request)
         return operation, params
     if operation in WORKSPACE_AUTHORITY_OPERATIONS:
         params = value[params]
@@ -727,6 +740,7 @@ COMPONENT_OPERATIONS = (
     + WORKSPACE_LIFECYCLE_OPERATIONS
     + WORKSPACE_AUTHORITY_LOSS_OPERATIONS
     + WORKSPACE_AUTHORITY_OPERATIONS
+    + WORKSPACE_AUTHORITY_OFFER_OPERATIONS
     + WORKSPACE_DEVICES_OPERATIONS
     + WORKSPACE_DEVICE_REMOVE_OPERATIONS
     + WORKSPACE_DEVICE_REMOVAL_DECIDE_OPERATIONS
