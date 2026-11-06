@@ -16,7 +16,8 @@ RECEIVED_OPERATIONS = ("message.received",)
 INTENT_OPERATIONS = ("connection.start", "connection.stop")
 RELATIONSHIP_OPERATIONS = ("peer.approve", "peer.revoke", "peer.unblock", "peer.delete")
 DRAFT_OPERATIONS = ("peer.draft_get", "peer.draft_set")
-CALL_OPERATIONS = ("call.settings_query", "call.settings_update", "call.ice_servers")
+CALL_OPERATIONS = ("call.settings_query", "call.settings_update", "call.ice_servers",
+                    "call.media_query")
 SETTINGS_OPERATIONS = ("settings.query", "settings.update")
 REACTION_OPERATIONS = ("message.reaction_set",)
 GROUP_OPERATIONS = ("group.query", "group.create", "group.message_enqueue",
@@ -602,12 +603,16 @@ def parse_request(value, operations):
     if operation in CALL_OPERATIONS:
         params = value["params"]
         expected = ({"profile"} if operation in {"call.settings_query", "call.ice_servers"}
+                    else {"profile", "call"} if operation == "call.media_query"
                     else {"profile", "settings"})
         if (not isinstance(params, dict) or set(params) != expected
                 or not isinstance(params["profile"], str)
                 or HANDLE.fullmatch(params["profile"]) is None
                 or (operation == "call.settings_update"
-                    and not isinstance(params["settings"], dict))):
+                    and not isinstance(params["settings"], dict))
+                or (operation == "call.media_query"
+                    and (not isinstance(params["call"], str)
+                         or HANDLE.fullmatch(params["call"]) is None))):
             raise ApiFailure("invalid_request")
         return operation, params
     if operation in DRAFT_OPERATIONS:

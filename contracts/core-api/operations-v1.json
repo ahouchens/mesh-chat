@@ -26,6 +26,7 @@
     "call.settings_query",
     "call.settings_update",
     "call.ice_servers",
+    "call.media_query",
     "settings.query",
     "settings.update",
     "message.reaction_set",
@@ -326,6 +327,13 @@
     },
     {
       "operation": "call.ice_servers",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "call.media_query",
       "permission": "read",
       "scope": "profile",
       "mutation": false,

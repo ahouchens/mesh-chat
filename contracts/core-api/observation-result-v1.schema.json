@@ -76,7 +76,7 @@
           "type": "array",
           "uniqueItems": true,
           "minItems": 3,
-          "maxItems": 82,
+          "maxItems": 83,
           "items": {
             "enum": [
               "application.snapshot",
@@ -102,6 +102,7 @@
               "call.settings_query",
               "call.settings_update",
               "call.ice_servers",
+              "call.media_query",
               "settings.query",
               "settings.update",
               "message.reaction_set",

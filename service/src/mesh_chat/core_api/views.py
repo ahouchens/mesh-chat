@@ -670,3 +670,11 @@ def workspace_authority_offer_view(profile, workspace, state):
             or state != "offered"):
         raise ValueError("Invalid workspace authority offer observation")
     return {"profile": profile, "workspace": workspace, "state": "offered"}
+
+
+def call_media_view(profile, call, value):
+    if (any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
+            for item in (profile, call))
+            or not isinstance(value.media, dict)):
+        raise ValueError("Invalid call media observation")
+    return {"profile": profile, "call": call, "media": value.media}

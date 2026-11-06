@@ -15,7 +15,7 @@ from threading import RLock
 import uuid
 from typing import Protocol
 
-from .views import (call_ice_view, call_settings_view, device_removal_view, draft_view,
+from .views import (call_ice_view, call_media_view, call_settings_view, device_removal_view, draft_view,
     workspace_admin_request_view, workspace_authority_loss_view, workspace_authority_offer_view,
     workspace_authority_view, workspace_lifecycle_view,
     workspace_metadata_view, workspace_retention_view,
@@ -112,6 +112,7 @@ PERMISSION_BY_OPERATION = {
     "call.settings_query": "read",
     "call.settings_update": "send",
     "call.ice_servers": "read",
+    "call.media_query": "read",
     "settings.query": "read",
     "settings.update": "send",
     "message.reaction_set": "send",
@@ -402,6 +403,7 @@ class CoreSession:
         for key, kind in (("contacts", "peer"), ("groups", "group"),
                           ("group_invitations", "group_invitation"),
                           ("workspace_join_requests", "workspace_join_request"),
+                          ("calls", "call"),
                           ("workspace_channels", "channel"),
                           ("workspace_device_transitions", "device_link"),
                           ("workspace_admin_requests", "workspace_admin_request"),
@@ -558,6 +560,15 @@ class CoreSession:
                 observation = self._calls.update(profile, params["settings"])
             elif operation == "call.ice_servers":
                 return call_ice_view(params["profile"], self._calls.ice(profile))
+            elif operation == "call.media_query":
+                call_id = next(
+                    (item for item in self._calls.call_ids(profile)
+                     if self._handle(grant, "call", profile, item) == params["call"]),
+                    None)
+                if call_id is None:
+                    raise ApiFailure("forbidden")
+                return call_media_view(
+                    params["profile"], params["call"], self._calls.media(profile, call_id))
             else:
                 observation = self._calls.get(profile)
             return call_settings_view(params["profile"], observation)

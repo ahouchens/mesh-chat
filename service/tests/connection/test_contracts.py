@@ -136,6 +136,7 @@ def test_each_designed_operation_has_an_executable_request_vector_and_permission
         "peer.draft_set": {"peer": handle, "text": "draft"},
         "call.settings_query": {},
         "call.ice_servers": {},
+        "call.media_query": {"call": handle},
         "call.settings_update": {"settings": {"relay_only": True}},
         "settings.query": {},
         "settings.update": {"settings": {}},

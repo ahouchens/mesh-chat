@@ -152,6 +152,9 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         request("settings.update", JSONObject().put("profile", profile)
             .put("settings", settings))
 
+    fun callMedia(profile: String, call: String): JSONObject =
+        request("call.media_query", JSONObject().put("profile", profile).put("call", call))
+
     fun callIceServers(profile: String): JSONObject =
         request("call.ice_servers", JSONObject().put("profile", profile))
 

@@ -64,6 +64,7 @@ import {
   coreApiPeerForDestination,
   coreApiRequest,
   coreApiCloseGroup,
+  coreApiCallMedia,
   coreApiGroupInvitation,
   coreApiWorkspaceJoinDecision,
   coreApiWorkspaceMemberRole,
@@ -378,6 +379,21 @@ function groupDeliveryLabel(message: GroupMessage): string {
   if (failed + expired > 0 && pending === 0) return `Partially delivered · ${delivered} of ${total}`;
   if (delivered > 0) return `Delivered to ${delivered} of ${total}${pending > 0 ? ` · ${pending} pending` : ""}`;
   return `Sending to ${total}`;
+}
+
+async function fetchCallMedia(
+  call: { id: string; core_handle?: string } | undefined,
+  callId = call?.id,
+): Promise<CallMedia> {
+  if (call?.core_handle) {
+    try {
+      return await coreApiCallMedia(call.core_handle) as unknown as CallMedia;
+    } catch (reason) {
+      if (!String(reason).includes("core_api_unavailable")) throw reason;
+    }
+  }
+  if (!callId) throw new Error("call_not_found");
+  return serviceCommand<CallMedia>("call_media", { call_id: callId });
 }
 
 function errorMessage(error: unknown): string {
@@ -1038,7 +1054,7 @@ function CallDialog({
       if (busy) return;
       busy = true;
       try {
-        const latest = await serviceCommand<CallMedia>("call_media", { call_id: call.id });
+        const latest = await fetchCallMedia(call);
         if (!active) return;
         if (["ended", "declined", "busy", "no_answer", "failed"].includes(latest.state)) {
           cleanup();
@@ -1158,7 +1174,7 @@ function CallDialog({
       try {
         let latest: CallMedia;
         try {
-          latest = await serviceCommand<CallMedia>("call_media", { call_id: callId });
+          latest = await fetchCallMedia(undefined, callId);
         } catch {
           // A transient service read can be retried on the next poll.
           return;
@@ -1396,7 +1412,7 @@ function CallDialog({
     setError("");
     setPhase("preparing");
     try {
-      const details = await serviceCommand<CallMedia>("call_media", { call_id: call.id });
+      const details = await fetchCallMedia(call);
       if (!current()) throw new Error("Call cancelled.");
       if (!details.remote_sdp) throw new Error("This call invitation has no media description.");
       const capturedStream = await prepareMedia(call.media);

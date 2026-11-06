@@ -296,6 +296,10 @@ export class CoreClient {
     return this.request("settings.update", { profile, settings });
   }
 
+  async callMedia(profile: string, call: string): Promise<{ profile: string; call: string; media: Record<string, unknown> }> {
+    return this.request("call.media_query", { profile, call });
+  }
+
   async callIceServers(profile: string): Promise<{ profile: string; ice: Record<string, unknown> }> {
     return this.request("call.ice_servers", { profile });
   }

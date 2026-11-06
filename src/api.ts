@@ -241,6 +241,15 @@ export async function coreApiUpdateCallSettings(
   return result.settings ?? {};
 }
 
+export async function coreApiCallMedia(call: string): Promise<Record<string, unknown>> {
+  const profile = await coreApiProfile();
+  const result = await coreApiRequest("call.media_query", {
+    profile: profile.profile,
+    call,
+  }) as { media?: Record<string, unknown> };
+  return result.media ?? {};
+}
+
 export async function coreApiCallIceServers(): Promise<Record<string, unknown>> {
   const profile = await coreApiProfile();
   const result = await coreApiRequest("call.ice_servers", { profile: profile.profile }) as {
