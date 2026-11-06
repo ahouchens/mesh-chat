@@ -571,7 +571,7 @@ class CoreSession:
         if operation in WORKSPACE_ADMIN_REQUEST_OPERATIONS:
             target, inside = self._workspace_scope(grant, profiles, params)
             request_id = next(
-                (item for item in self._workspace_admin.request_ids(target, inside)
+                (item for item in self._workspace_admin.admin_request_ids(target, inside)
                  if self._handle(grant, "workspace_admin_request", target, item)
                  == params["request"]),
                 None)

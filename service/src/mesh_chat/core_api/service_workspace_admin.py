@@ -754,7 +754,7 @@ class ServiceWorkspaceAdmin:
             return WorkspaceRetention(result.get("retention_days"))
 
 
-    def request_ids(self, profile, workspace_id):
+    def admin_request_ids(self, profile, workspace_id):
         self._require_local(profile)
         with storage_errors():
             self._workspace(workspace_id)
