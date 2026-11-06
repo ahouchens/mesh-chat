@@ -16,7 +16,7 @@ import uuid
 from typing import Protocol
 
 from .views import (call_ice_view, call_settings_view, device_removal_view, draft_view,
-    workspace_metadata_view, workspace_retention_view,
+    workspace_admin_request_view, workspace_metadata_view, workspace_retention_view,
     group_invitation_decision_view,
     group_list_view, group_membership_view,
     group_message_sent_view, group_view, network_settings_view, reaction_view,
@@ -50,7 +50,7 @@ from .requests import (
     WORKSPACE_CHANNEL_MEMBERS_UPDATE_OPERATIONS, WORKSPACE_CHANNEL_UPDATE_OPERATIONS,
     WORKSPACE_CHANNEL_TRANSFER_ACCEPT_OPERATIONS, WORKSPACE_CHANNEL_TRANSFER_OFFER_OPERATIONS,
     WORKSPACE_POLICY_UPDATE_OPERATIONS, WORKSPACE_METADATA_OPERATIONS,
-    WORKSPACE_RETENTION_OPERATIONS, WORKSPACE_DEVICES_OPERATIONS,
+    WORKSPACE_RETENTION_OPERATIONS, WORKSPACE_ADMIN_REQUEST_OPERATIONS, WORKSPACE_DEVICES_OPERATIONS,
     WORKSPACE_DEVICE_REMOVE_OPERATIONS,
     WORKSPACE_DEVICE_REMOVAL_REQUEST_OPERATIONS,
     WORKSPACE_DEVICE_REMOVAL_DECIDE_OPERATIONS,
@@ -157,6 +157,10 @@ PERMISSION_BY_OPERATION = {
     "workspace.policy_update": "approve",
     "workspace.metadata_update": "approve",
     "workspace.retention_update": "approve",
+    "workspace.admin_request_approve": "approve",
+    "workspace.admin_request_decline": "approve",
+    "workspace.admin_request_cancel": "send",
+    "workspace.admin_request_dismiss": "send",
     "workspace.query": "read",
 }
 
@@ -386,6 +390,7 @@ class CoreSession:
                           ("workspace_join_requests", "workspace_join_request"),
                           ("workspace_channels", "channel"),
                           ("workspace_device_transitions", "device_link"),
+                          ("workspace_admin_requests", "workspace_admin_request"),
                           ("workspaces", "workspace")):
             values = result.get(key)
             if isinstance(values, list):
@@ -563,6 +568,30 @@ class CoreSession:
         return self._observe(grant, profile, operation, params)
 
     def _workspace_operation(self, grant, profiles, operation, params, key):
+        if operation in WORKSPACE_ADMIN_REQUEST_OPERATIONS:
+            target, inside = self._workspace_scope(grant, profiles, params)
+            request_id = next(
+                (item for item in self._workspace_admin.request_ids(target, inside)
+                 if self._handle(grant, "workspace_admin_request", target, item)
+                 == params["request"]),
+                None)
+            if request_id is None:
+                raise ApiFailure("forbidden")
+            operation_id = self._required_operation_id(grant, target, key)
+            if operation == "workspace.admin_request_approve":
+                state = self._workspace_admin.decide_admin_request(
+                    target, inside, request_id, True, operation_id)
+            elif operation == "workspace.admin_request_decline":
+                state = self._workspace_admin.decide_admin_request(
+                    target, inside, request_id, False, operation_id)
+            elif operation == "workspace.admin_request_cancel":
+                state = self._workspace_admin.cancel_admin_request(
+                    target, inside, request_id, operation_id)
+            else:
+                state = self._workspace_admin.dismiss_admin_request(
+                    target, inside, request_id, operation_id)
+            return workspace_admin_request_view(
+                params["profile"], params["workspace"], params["request"], state)
         if operation in WORKSPACE_METADATA_OPERATIONS:
             target, inside = self._workspace_scope(grant, profiles, params)
             operation_id = self._required_operation_id(grant, target, key)

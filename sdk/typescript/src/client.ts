@@ -517,6 +517,19 @@ export class CoreClient {
     );
   }
 
+  async workspaceAdminRequest(profile: string, workspace: string, request: string,
+                              action: "approve" | "decline" | "cancel" | "dismiss",
+                              idempotencyKey: string): Promise<unknown> {
+    const operations = {
+      approve: "workspace.admin_request_approve",
+      decline: "workspace.admin_request_decline",
+      cancel: "workspace.admin_request_cancel",
+      dismiss: "workspace.admin_request_dismiss",
+    } as const;
+    return this.request(operations[action],
+      { profile, workspace, request }, { idempotencyKey });
+  }
+
   async workspaceMetadata(profile: string, workspace: string, name: string,
                            description: string, idempotencyKey: string): Promise<unknown> {
     return this.request("workspace.metadata_update",

@@ -239,6 +239,18 @@ class CoreClient:
             raise ValueError("Public channels do not take a member list")
         return self.request("workspace.channel_create", params, idempotency_key=key)
 
+    ADMIN_REQUEST_OPERATIONS = {
+        "approve": "workspace.admin_request_approve",
+        "decline": "workspace.admin_request_decline",
+        "cancel": "workspace.admin_request_cancel",
+        "dismiss": "workspace.admin_request_dismiss",
+    }
+
+    def workspace_admin_request(self, handle, workspace, request, action, key):
+        return self.request(self.ADMIN_REQUEST_OPERATIONS[action],
+                            {"profile": handle, "workspace": workspace, "request": request},
+                            idempotency_key=key)
+
     def workspace_metadata(self, handle, workspace, name, description, key):
         return self.request("workspace.metadata_update",
                             {"profile": handle, "workspace": workspace,

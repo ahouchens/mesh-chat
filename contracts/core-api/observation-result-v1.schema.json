@@ -76,7 +76,7 @@
           "type": "array",
           "uniqueItems": true,
           "minItems": 3,
-          "maxItems": 71,
+          "maxItems": 75,
           "items": {
             "enum": [
               "application.snapshot",
@@ -143,6 +143,10 @@
               "workspace.channel_transfer_accept",
               "workspace.policy_update",
               "workspace.retention_update",
+              "workspace.admin_request_dismiss",
+              "workspace.admin_request_cancel",
+              "workspace.admin_request_decline",
+              "workspace.admin_request_approve",
               "workspace.metadata_update",
               "workspace.devices",
               "workspace.device_remove",

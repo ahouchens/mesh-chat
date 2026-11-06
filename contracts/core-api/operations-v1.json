@@ -69,6 +69,10 @@
     "workspace.channel_transfer_accept",
     "workspace.policy_update",
     "workspace.retention_update",
+    "workspace.admin_request_dismiss",
+    "workspace.admin_request_cancel",
+    "workspace.admin_request_decline",
+    "workspace.admin_request_approve",
     "workspace.metadata_update",
     "workspace.devices",
     "workspace.device_remove",
@@ -574,6 +578,34 @@
     },
     {
       "operation": "workspace.retention_update",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.admin_request_dismiss",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.admin_request_cancel",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.admin_request_decline",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.admin_request_approve",
       "permission": "approve",
       "scope": "profile",
       "mutation": true,

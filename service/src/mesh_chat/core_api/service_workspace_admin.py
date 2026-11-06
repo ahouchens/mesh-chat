@@ -752,3 +752,51 @@ class ServiceWorkspaceAdmin:
             if not isinstance(result, dict):
                 raise ApiFailure("internal")
             return WorkspaceRetention(result.get("retention_days"))
+
+
+    def request_ids(self, profile, workspace_id):
+        self._require_local(profile)
+        with storage_errors():
+            self._workspace(workspace_id)
+            return tuple(item["id"] for item in self._store.list("workspace_admin_request")
+                         if item.get("workspace_id") == workspace_id
+                         and isinstance(item.get("id"), str))
+
+    def decide_admin_request(self, profile, workspace_id, request_id, approve, operation_id):
+        self._require_local(profile)
+        with storage_errors():
+            workspace = self._workspace(workspace_id)
+            if workspace.get("local_role") not in {"owner", "admin"}:
+                raise ApiFailure("forbidden")
+            try:
+                outcome = self._service.decide_workspace_admin_request(
+                    workspace_id, request_id, approve, operation_id)
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            if not isinstance(outcome, dict):
+                raise ApiFailure("internal")
+            return "approved" if approve else "declined"
+
+    def cancel_admin_request(self, profile, workspace_id, request_id, operation_id):
+        self._require_local(profile)
+        with storage_errors():
+            try:
+                outcome = self._service.cancel_workspace_admin_request(
+                    workspace_id, request_id, operation_id)
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            if not isinstance(outcome, dict):
+                raise ApiFailure("internal")
+            return "cancelled"
+
+    def dismiss_admin_request(self, profile, workspace_id, request_id, operation_id):
+        self._require_local(profile)
+        with storage_errors():
+            try:
+                outcome = self._service.dismiss_workspace_admin_request(
+                    workspace_id, request_id, operation_id)
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            if not isinstance(outcome, dict):
+                raise ApiFailure("internal")
+            return "dismissed"

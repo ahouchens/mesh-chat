@@ -735,6 +735,7 @@ export type WorkspaceAdminRequestState =
 
 export interface WorkspaceAdminRequest {
   id: string;
+  core_handle?: string;
   workspace_id: string;
   direction: "incoming" | "outgoing";
   request_kind: "invitation" | "member_removal" | "role_change";

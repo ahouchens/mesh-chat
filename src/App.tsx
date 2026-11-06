@@ -74,6 +74,7 @@ import {
   coreApiWorkspaceDeviceLinkDecision,
   coreApiRequestDeviceRemoval,
   coreApiWorkspaceMetadata,
+  coreApiWorkspaceAdminRequest,
   coreApiWorkspaceRetention,
   coreApiDecideDeviceRemoval,
   coreApiCreateWorkspaceDeviceLink,
@@ -6292,6 +6293,25 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     setWorkspaceActionBusy(true); setWorkspaceActionError("");
     try {
       let handled = false;
+      if ((command === "approve_workspace_admin_request" || command === "decline_workspace_admin_request"
+           || command === "cancel_workspace_admin_request" || command === "dismiss_workspace_admin_request")
+          && selectedWorkspace.core_handle && typeof payload.request_id === "string") {
+        const request = workspaceAdminRequests.find((item) => item.id === payload.request_id);
+        if (request?.core_handle) {
+          const action = command.startsWith("approve") ? "approve"
+            : command.startsWith("decline") ? "decline"
+            : command.startsWith("cancel") ? "cancel" : "dismiss";
+          try {
+            await coreApiWorkspaceAdminRequest(
+              selectedWorkspace.core_handle, request.core_handle,
+              action as "approve" | "decline" | "cancel" | "dismiss", newOperationId());
+            await refresh(true);
+            return;
+          } catch (reason) {
+            if (!String(reason).includes("core_api_unavailable")) throw reason;
+          }
+        }
+      }
       if (command === "update_workspace_metadata" && selectedWorkspace.core_handle
           && typeof payload.name === "string" && typeof payload.description === "string") {
         try {

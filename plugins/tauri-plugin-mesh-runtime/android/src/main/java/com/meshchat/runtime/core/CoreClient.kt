@@ -289,6 +289,17 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         )
     }
 
+    fun workspaceAdminRequest(profile: String, workspace: String, requestId: String,
+                              action: String, idempotencyKey: String): JSONObject =
+        request(when (action) {
+            "approve" -> "workspace.admin_request_approve"
+            "decline" -> "workspace.admin_request_decline"
+            "cancel" -> "workspace.admin_request_cancel"
+            "dismiss" -> "workspace.admin_request_dismiss"
+            else -> throw CoreException("invalid_request")
+        }, JSONObject().put("profile", profile)
+            .put("workspace", workspace).put("request", requestId), idempotencyKey)
+
     fun workspaceMetadata(profile: String, workspace: String, name: String,
                            description: String, idempotencyKey: String): JSONObject =
         request("workspace.metadata_update", JSONObject().put("profile", profile)

@@ -424,6 +424,20 @@ export async function coreApiCreateWorkspaceDeviceLink(
   };
 }
 
+export async function coreApiWorkspaceAdminRequest(
+  workspace: string,
+  request: string,
+  action: "approve" | "decline" | "cancel" | "dismiss",
+  idempotencyKey: string,
+): Promise<unknown> {
+  const profile = await coreApiProfile();
+  return coreApiRequest(
+    "workspace.admin_request_" + action,
+    { profile: profile.profile, workspace, request },
+    idempotencyKey,
+  );
+}
+
 export async function coreApiWorkspaceMetadata(
   workspace: string,
   name: string,
