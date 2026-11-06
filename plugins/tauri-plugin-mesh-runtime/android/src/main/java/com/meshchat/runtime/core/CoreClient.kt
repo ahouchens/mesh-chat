@@ -289,6 +289,19 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         )
     }
 
+    fun workspaceClose(profile: String, workspace: String, idempotencyKey: String): JSONObject =
+        dispatch("workspace.close", JSONObject().put("profile", profile)
+            .put("workspace", workspace), idempotencyKey)
+
+    fun workspaceLeave(profile: String, workspace: String, idempotencyKey: String): JSONObject =
+        dispatch("workspace.leave", JSONObject().put("profile", profile)
+            .put("workspace", workspace), idempotencyKey)
+
+    fun workspaceRemoveData(profile: String, workspace: String, confirmation: String,
+                            idempotencyKey: String): JSONObject =
+        dispatch("workspace.remove_data", JSONObject().put("profile", profile)
+            .put("workspace", workspace).put("confirmation", confirmation), idempotencyKey)
+
     fun workspaceAdminRequest(profile: String, workspace: String, requestId: String,
                               action: String, idempotencyKey: String): JSONObject {
         val operation = when (action) {

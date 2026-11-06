@@ -517,6 +517,20 @@ export class CoreClient {
     );
   }
 
+  async workspaceClose(profile: string, workspace: string, idempotencyKey: string): Promise<unknown> {
+    return this.request("workspace.close", { profile, workspace }, { idempotencyKey });
+  }
+
+  async workspaceLeave(profile: string, workspace: string, idempotencyKey: string): Promise<unknown> {
+    return this.request("workspace.leave", { profile, workspace }, { idempotencyKey });
+  }
+
+  async workspaceRemoveData(profile: string, workspace: string, confirmation: string,
+                            idempotencyKey: string): Promise<unknown> {
+    return this.request("workspace.remove_data",
+      { profile, workspace, confirmation }, { idempotencyKey });
+  }
+
   async workspaceAdminRequest(profile: string, workspace: string, request: string,
                               action: "approve" | "decline" | "cancel" | "dismiss",
                               idempotencyKey: string): Promise<unknown> {

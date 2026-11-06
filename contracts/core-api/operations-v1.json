@@ -76,6 +76,9 @@
     "workspace.metadata_update",
     "workspace.devices",
     "workspace.device_remove",
+    "workspace.remove_data",
+    "workspace.leave",
+    "workspace.close",
     "diagnostics.query"
   ],
   "operations": [
@@ -627,6 +630,27 @@
     },
     {
       "operation": "workspace.device_remove",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.remove_data",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.leave",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.close",
       "permission": "approve",
       "scope": "profile",
       "mutation": true,

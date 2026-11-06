@@ -424,6 +424,20 @@ export async function coreApiCreateWorkspaceDeviceLink(
   };
 }
 
+export async function coreApiWorkspaceLifecycle(
+  workspace: string,
+  action: "close" | "leave" | "remove",
+  idempotencyKey: string,
+  confirmation?: string,
+): Promise<unknown> {
+  const profile = await coreApiProfile();
+  const operation = action === "close" ? "workspace.close"
+    : action === "leave" ? "workspace.leave" : "workspace.remove_data";
+  const params: Record<string, unknown> = { profile: profile.profile, workspace };
+  if (action === "remove") params.confirmation = confirmation ?? "";
+  return coreApiRequest(operation, params, idempotencyKey);
+}
+
 export async function coreApiWorkspaceAdminRequest(
   workspace: string,
   request: string,

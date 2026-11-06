@@ -246,6 +246,22 @@ class CoreClient:
         "dismiss": "workspace.admin_request_dismiss",
     }
 
+    def workspace_close(self, handle, workspace, key):
+        return self.request("workspace.close",
+                            {"profile": handle, "workspace": workspace},
+                            idempotency_key=key)
+
+    def workspace_leave(self, handle, workspace, key):
+        return self.request("workspace.leave",
+                            {"profile": handle, "workspace": workspace},
+                            idempotency_key=key)
+
+    def workspace_remove_data(self, handle, workspace, confirmation, key):
+        return self.request("workspace.remove_data",
+                            {"profile": handle, "workspace": workspace,
+                             "confirmation": confirmation},
+                            idempotency_key=key)
+
     def workspace_admin_request(self, handle, workspace, request, action, key):
         return self.request(self.ADMIN_REQUEST_OPERATIONS[action],
                             {"profile": handle, "workspace": workspace, "request": request},

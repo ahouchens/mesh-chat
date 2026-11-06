@@ -637,3 +637,11 @@ def workspace_admin_request_view(profile, workspace, request, state):
             or state not in {"approved", "declined", "cancelled", "dismissed"}):
         raise ValueError("Invalid workspace admin request observation")
     return {"profile": profile, "workspace": workspace, "request": request, "state": state}
+
+
+def workspace_lifecycle_view(profile, workspace, state):
+    if (any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
+            for item in (profile, workspace))
+            or state not in {"closed", "left", "removed"}):
+        raise ValueError("Invalid workspace lifecycle observation")
+    return {"profile": profile, "workspace": workspace, "state": state}

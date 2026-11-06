@@ -75,6 +75,7 @@ import {
   coreApiRequestDeviceRemoval,
   coreApiWorkspaceMetadata,
   coreApiWorkspaceAdminRequest,
+  coreApiWorkspaceLifecycle,
   coreApiWorkspaceRetention,
   coreApiDecideDeviceRemoval,
   coreApiCreateWorkspaceDeviceLink,
@@ -6950,7 +6951,24 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     if (!selectedWorkspace || workspaceActionBusy) return;
     setWorkspaceActionBusy(true); setWorkspaceActionError("");
     try {
-      await serviceCommand(command, { operation_id: newOperationId(), workspace_id: selectedWorkspace.id, ...(confirmation ? { confirmation } : {}) });
+      let handled = false;
+      if (selectedWorkspace.core_handle) {
+        try {
+          await coreApiWorkspaceLifecycle(
+            selectedWorkspace.core_handle,
+            command === "close_workspace" ? "close"
+              : command === "leave_workspace" ? "leave" : "remove",
+            newOperationId(),
+            confirmation,
+          );
+          handled = true;
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+        }
+      }
+      if (!handled) {
+        await serviceCommand(command, { operation_id: newOperationId(), workspace_id: selectedWorkspace.id, ...(confirmation ? { confirmation } : {}) });
+      }
       const removed = command === "remove_workspace_data";
       if (removed) { setActiveSpaceId("personal"); setWorkspaceSettingsSection(null); }
       await refresh(true);

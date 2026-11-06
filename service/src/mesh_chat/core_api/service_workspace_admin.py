@@ -800,3 +800,36 @@ class ServiceWorkspaceAdmin:
             if not isinstance(outcome, dict):
                 raise ApiFailure("internal")
             return "dismissed"
+
+
+    def close_workspace(self, profile, workspace_id, operation_id):
+        self._require_local(profile)
+        with storage_errors():
+            workspace = self._workspace(workspace_id)
+            if workspace.get("local_role") != "owner":
+                raise ApiFailure("forbidden")
+            try:
+                self._service.close_workspace(workspace_id, operation_id)
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            return "closed"
+
+    def leave_workspace(self, profile, workspace_id, operation_id):
+        self._require_local(profile)
+        with storage_errors():
+            try:
+                self._service.leave_workspace(workspace_id, operation_id)
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            return "left"
+
+    def remove_workspace_data(self, profile, workspace_id, confirmation, operation_id):
+        self._require_local(profile)
+        if not isinstance(confirmation, str) or not confirmation:
+            raise ApiFailure("invalid_request")
+        with storage_errors():
+            try:
+                self._service.remove_workspace_data(workspace_id, confirmation, operation_id)
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            return "removed"
