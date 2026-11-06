@@ -777,6 +777,7 @@ export type WorkspaceAuthorityTransitionState =
 
 export interface WorkspaceAuthorityTransition {
   id: string;
+  core_handle?: string;
   workspace_id: string;
   direction: "incoming" | "outgoing";
   transition_kind: "same_owner_rotation" | "ownership_transfer";

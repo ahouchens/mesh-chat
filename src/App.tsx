@@ -77,6 +77,7 @@ import {
   coreApiWorkspaceAdminRequest,
   coreApiWorkspaceLifecycle,
   coreApiReportAuthorityLoss,
+  coreApiWorkspaceAuthority,
   coreApiWorkspaceRetention,
   coreApiDecideDeviceRemoval,
   coreApiCreateWorkspaceDeviceLink,
@@ -6307,6 +6308,23 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
             await coreApiWorkspaceAdminRequest(
               selectedWorkspace.core_handle, request.core_handle,
               action as "approve" | "decline" | "cancel" | "dismiss", newOperationId());
+            await refresh(true);
+            return;
+          } catch (reason) {
+            if (!String(reason).includes("core_api_unavailable")) throw reason;
+          }
+        }
+      }
+      if ((command === "accept_workspace_authority_transition"
+           || command === "finalize_workspace_authority_transition")
+          && selectedWorkspace.core_handle && typeof payload.transition_id === "string") {
+        const transition = workspaceAuthorityTransitions.find((item) => item.id === payload.transition_id);
+        if (transition?.core_handle) {
+          try {
+            await coreApiWorkspaceAuthority(
+              selectedWorkspace.core_handle, transition.core_handle,
+              command === "accept_workspace_authority_transition" ? "accept" : "finalize",
+              newOperationId());
             await refresh(true);
             return;
           } catch (reason) {

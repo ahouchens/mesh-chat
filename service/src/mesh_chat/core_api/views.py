@@ -653,3 +653,12 @@ def workspace_authority_loss_view(profile, workspace, state):
             or state != "lost"):
         raise ValueError("Invalid workspace authority loss observation")
     return {"profile": profile, "workspace": workspace, "state": "lost"}
+
+
+def workspace_authority_view(profile, workspace, transition, state):
+    if (any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
+            for item in (profile, workspace, transition))
+            or state not in {"accepted", "finalized"}):
+        raise ValueError("Invalid workspace authority observation")
+    return {"profile": profile, "workspace": workspace, "transition": transition,
+            "state": state}

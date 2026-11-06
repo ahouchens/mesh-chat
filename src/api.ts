@@ -424,6 +424,20 @@ export async function coreApiCreateWorkspaceDeviceLink(
   };
 }
 
+export async function coreApiWorkspaceAuthority(
+  workspace: string,
+  transition: string,
+  action: "accept" | "finalize",
+  idempotencyKey: string,
+): Promise<unknown> {
+  const profile = await coreApiProfile();
+  return coreApiRequest(
+    action === "accept" ? "workspace.authority_accept" : "workspace.authority_finalize",
+    { profile: profile.profile, workspace, transition },
+    idempotencyKey,
+  );
+}
+
 export async function coreApiReportAuthorityLoss(
   workspace: string,
   idempotencyKey: string,

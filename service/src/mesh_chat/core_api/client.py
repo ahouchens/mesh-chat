@@ -246,6 +246,16 @@ class CoreClient:
         "dismiss": "workspace.admin_request_dismiss",
     }
 
+    def workspace_authority_accept(self, handle, workspace, transition, key):
+        return self.request("workspace.authority_accept",
+                            {"profile": handle, "workspace": workspace,
+                             "transition": transition}, idempotency_key=key)
+
+    def workspace_authority_finalize(self, handle, workspace, transition, key):
+        return self.request("workspace.authority_finalize",
+                            {"profile": handle, "workspace": workspace,
+                             "transition": transition}, idempotency_key=key)
+
     def workspace_report_authority_loss(self, handle, workspace, key):
         return self.request("workspace.authority_loss_report",
                             {"profile": handle, "workspace": workspace},

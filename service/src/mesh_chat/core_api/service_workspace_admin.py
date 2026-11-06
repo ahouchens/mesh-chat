@@ -843,3 +843,32 @@ class ServiceWorkspaceAdmin:
             except ValidationError as error:
                 raise ApiFailure("invalid_request") from error
             return "lost"
+
+
+    def authority_transition_ids(self, profile, workspace_id):
+        self._require_local(profile)
+        with storage_errors():
+            self._workspace(workspace_id)
+            return tuple(item["id"] for item in self._store.list("workspace_authority_transition")
+                         if item.get("workspace_id") == workspace_id
+                         and isinstance(item.get("id"), str))
+
+    def accept_authority_transition(self, profile, workspace_id, transition_id, operation_id):
+        self._require_local(profile)
+        with storage_errors():
+            try:
+                self._service.accept_workspace_authority_transition(
+                    workspace_id, transition_id, operation_id)
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            return "accepted"
+
+    def finalize_authority_transition(self, profile, workspace_id, transition_id, operation_id):
+        self._require_local(profile)
+        with storage_errors():
+            try:
+                self._service.finalize_workspace_authority_transition(
+                    workspace_id, transition_id, operation_id)
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            return "finalized"

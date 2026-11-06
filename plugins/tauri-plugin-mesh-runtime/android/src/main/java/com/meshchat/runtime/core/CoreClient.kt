@@ -289,6 +289,16 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         )
     }
 
+    fun workspaceAuthorityAccept(profile: String, workspace: String, transition: String,
+                                 idempotencyKey: String): JSONObject =
+        dispatch("workspace.authority_accept", JSONObject().put("profile", profile)
+            .put("workspace", workspace).put("transition", transition), idempotencyKey)
+
+    fun workspaceAuthorityFinalize(profile: String, workspace: String, transition: String,
+                                   idempotencyKey: String): JSONObject =
+        dispatch("workspace.authority_finalize", JSONObject().put("profile", profile)
+            .put("workspace", workspace).put("transition", transition), idempotencyKey)
+
     fun workspaceReportAuthorityLoss(profile: String, workspace: String,
                                      idempotencyKey: String): JSONObject =
         dispatch("workspace.authority_loss_report", JSONObject().put("profile", profile)

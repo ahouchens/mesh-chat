@@ -78,6 +78,8 @@
     "workspace.device_remove",
     "workspace.remove_data",
     "workspace.authority_loss_report",
+    "workspace.authority_finalize",
+    "workspace.authority_accept",
     "workspace.leave",
     "workspace.close",
     "diagnostics.query"
@@ -645,6 +647,20 @@
     },
     {
       "operation": "workspace.authority_loss_report",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.authority_finalize",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.authority_accept",
       "permission": "approve",
       "scope": "profile",
       "mutation": true,

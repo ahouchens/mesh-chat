@@ -16,7 +16,7 @@ import uuid
 from typing import Protocol
 
 from .views import (call_ice_view, call_settings_view, device_removal_view, draft_view,
-    workspace_admin_request_view, workspace_authority_loss_view, workspace_lifecycle_view,
+    workspace_admin_request_view, workspace_authority_loss_view, workspace_authority_view, workspace_lifecycle_view,
     workspace_metadata_view, workspace_retention_view,
     group_invitation_decision_view,
     group_list_view, group_membership_view,
@@ -51,7 +51,7 @@ from .requests import (
     WORKSPACE_CHANNEL_MEMBERS_UPDATE_OPERATIONS, WORKSPACE_CHANNEL_UPDATE_OPERATIONS,
     WORKSPACE_CHANNEL_TRANSFER_ACCEPT_OPERATIONS, WORKSPACE_CHANNEL_TRANSFER_OFFER_OPERATIONS,
     WORKSPACE_POLICY_UPDATE_OPERATIONS, WORKSPACE_METADATA_OPERATIONS,
-    WORKSPACE_RETENTION_OPERATIONS, WORKSPACE_ADMIN_REQUEST_OPERATIONS, WORKSPACE_LIFECYCLE_OPERATIONS, WORKSPACE_AUTHORITY_LOSS_OPERATIONS, WORKSPACE_DEVICES_OPERATIONS,
+    WORKSPACE_RETENTION_OPERATIONS, WORKSPACE_ADMIN_REQUEST_OPERATIONS, WORKSPACE_LIFECYCLE_OPERATIONS, WORKSPACE_AUTHORITY_LOSS_OPERATIONS, WORKSPACE_AUTHORITY_OPERATIONS, WORKSPACE_DEVICES_OPERATIONS,
     WORKSPACE_DEVICE_REMOVE_OPERATIONS,
     WORKSPACE_DEVICE_REMOVAL_REQUEST_OPERATIONS,
     WORKSPACE_DEVICE_REMOVAL_DECIDE_OPERATIONS,
@@ -166,6 +166,8 @@ PERMISSION_BY_OPERATION = {
     "workspace.leave": "send",
     "workspace.remove_data": "approve",
     "workspace.authority_loss_report": "approve",
+    "workspace.authority_accept": "approve",
+    "workspace.authority_finalize": "approve",
     "workspace.query": "read",
 }
 
@@ -290,6 +292,7 @@ class CoreSession:
             (WORKSPACE_ADMIN_REQUEST_OPERATIONS, self._workspace_admin),
             (WORKSPACE_LIFECYCLE_OPERATIONS, self._workspace_admin),
             (WORKSPACE_AUTHORITY_LOSS_OPERATIONS, self._workspace_admin),
+            (WORKSPACE_AUTHORITY_OPERATIONS, self._workspace_admin),
             (WORKSPACE_DEVICES_OPERATIONS, self._workspace_admin),
             (WORKSPACE_DEVICE_REMOVE_OPERATIONS, self._workspace_admin),
             (DIAGNOSTIC_OPERATIONS, self._diagnostics),
@@ -399,6 +402,7 @@ class CoreSession:
                           ("workspace_channels", "channel"),
                           ("workspace_device_transitions", "device_link"),
                           ("workspace_admin_requests", "workspace_admin_request"),
+                          ("workspace_authority_transitions", "authority_transition"),
                           ("workspaces", "workspace")):
             values = result.get(key)
             if isinstance(values, list):
@@ -576,6 +580,24 @@ class CoreSession:
         return self._observe(grant, profile, operation, params)
 
     def _workspace_operation(self, grant, profiles, operation, params, key):
+        if operation in WORKSPACE_AUTHORITY_OPERATIONS:
+            target, inside = self._workspace_scope(grant, profiles, params)
+            operation_id = self._required_operation_id(grant, target, key)
+            transition_id = next(
+                (item for item in self._workspace_admin.authority_transition_ids(target, inside)
+                 if self._handle(grant, "authority_transition", target, item)
+                 == params["transition"]),
+                None)
+            if transition_id is None:
+                raise ApiFailure("forbidden")
+            if operation == "workspace.authority_accept":
+                state = self._workspace_admin.accept_authority_transition(
+                    target, inside, transition_id, operation_id)
+            else:
+                state = self._workspace_admin.finalize_authority_transition(
+                    target, inside, transition_id, operation_id)
+            return workspace_authority_view(
+                params["profile"], params["workspace"], params["transition"], state)
         if operation in WORKSPACE_AUTHORITY_LOSS_OPERATIONS:
             target, inside = self._workspace_scope(grant, profiles, params)
             operation_id = self._required_operation_id(grant, target, key)

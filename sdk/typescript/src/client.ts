@@ -517,6 +517,18 @@ export class CoreClient {
     );
   }
 
+  async workspaceAuthorityAccept(profile: string, workspace: string, transition: string,
+                                 idempotencyKey: string): Promise<unknown> {
+    return this.request("workspace.authority_accept",
+      { profile, workspace, transition }, { idempotencyKey });
+  }
+
+  async workspaceAuthorityFinalize(profile: string, workspace: string, transition: string,
+                                   idempotencyKey: string): Promise<unknown> {
+    return this.request("workspace.authority_finalize",
+      { profile, workspace, transition }, { idempotencyKey });
+  }
+
   async workspaceReportAuthorityLoss(profile: string, workspace: string,
                                      idempotencyKey: string): Promise<unknown> {
     return this.request("workspace.authority_loss_report",
