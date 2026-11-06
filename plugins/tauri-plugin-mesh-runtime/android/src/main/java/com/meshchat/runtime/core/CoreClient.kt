@@ -329,6 +329,27 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         dispatch("workspace.remove_data", JSONObject().put("profile", profile)
             .put("workspace", workspace).put("confirmation", confirmation), idempotencyKey)
 
+    fun workspaceAdminRequestSubmit(profile: String, workspace: String, requestKind: String,
+                                     targetMember: String?, requestedRole: String?,
+                                     note: String, idempotencyKey: String): JSONObject {
+        val params = JSONObject().put("profile", profile).put("workspace", workspace)
+            .put("request_kind", requestKind)
+        if (targetMember != null) params.put("target_member", targetMember)
+        if (requestedRole != null) params.put("requested_role", requestedRole)
+        if (note.isNotEmpty()) params.put("note", note)
+        return dispatch("workspace.admin_request_submit", params, idempotencyKey)
+    }
+
+    fun workspaceDisplayNameRequest(profile: String, workspace: String, displayName: String,
+                                    idempotencyKey: String): JSONObject =
+        dispatch("workspace.display_name_request", JSONObject().put("profile", profile)
+            .put("workspace", workspace).put("display_name", displayName), idempotencyKey)
+
+    fun workspaceReadHintSync(profile: String, workspace: String, enabled: Boolean,
+                              idempotencyKey: String): JSONObject =
+        dispatch("workspace.read_hint_sync", JSONObject().put("profile", profile)
+            .put("workspace", workspace).put("enabled", enabled), idempotencyKey)
+
     fun workspaceAdminRequest(profile: String, workspace: String, requestId: String,
                               action: String, idempotencyKey: String): JSONObject {
         val operation = when (action) {

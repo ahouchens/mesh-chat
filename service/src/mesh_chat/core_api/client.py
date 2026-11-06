@@ -290,6 +290,24 @@ class CoreClient:
                              "confirmation": confirmation},
                             idempotency_key=key)
 
+    def workspace_admin_request_submit(self, handle, workspace, request_kind,
+                                       target_member, requested_role, note, key):
+        params = {"profile": handle, "workspace": workspace, "request_kind": request_kind}
+        if target_member is not None: params["target_member"] = target_member
+        if requested_role is not None: params["requested_role"] = requested_role
+        if note: params["note"] = note
+        return self.request("workspace.admin_request_submit", params, idempotency_key=key)
+
+    def workspace_display_name_request(self, handle, workspace, display_name, key):
+        return self.request("workspace.display_name_request",
+                            {"profile": handle, "workspace": workspace,
+                             "display_name": display_name}, idempotency_key=key)
+
+    def workspace_read_hint_sync(self, handle, workspace, enabled, key):
+        return self.request("workspace.read_hint_sync",
+                            {"profile": handle, "workspace": workspace,
+                             "enabled": enabled}, idempotency_key=key)
+
     def workspace_admin_request(self, handle, workspace, request, action, key):
         return self.request(self.ADMIN_REQUEST_OPERATIONS[action],
                             {"profile": handle, "workspace": workspace, "request": request},

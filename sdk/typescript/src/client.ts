@@ -565,6 +565,30 @@ export class CoreClient {
       { profile, workspace, confirmation }, { idempotencyKey });
   }
 
+  async workspaceAdminRequestSubmit(profile: string, workspace: string,
+                                     requestKind: "invitation" | "member_removal" | "role_change",
+                                     targetMember: string | null,
+                                     requestedRole: "admin" | "member" | null,
+                                     note: string, idempotencyKey: string): Promise<unknown> {
+    const params: Record<string, unknown> = { profile, workspace, request_kind: requestKind };
+    if (targetMember) params.target_member = targetMember;
+    if (requestedRole) params.requested_role = requestedRole;
+    if (note) params.note = note;
+    return this.request("workspace.admin_request_submit", params, { idempotencyKey });
+  }
+
+  async workspaceDisplayNameRequest(profile: string, workspace: string, displayName: string,
+                                    idempotencyKey: string): Promise<unknown> {
+    return this.request("workspace.display_name_request",
+      { profile, workspace, display_name: displayName }, { idempotencyKey });
+  }
+
+  async workspaceReadHintSync(profile: string, workspace: string, enabled: boolean,
+                              idempotencyKey: string): Promise<unknown> {
+    return this.request("workspace.read_hint_sync",
+      { profile, workspace, enabled }, { idempotencyKey });
+  }
+
   async workspaceAdminRequest(profile: string, workspace: string, request: string,
                               action: "approve" | "decline" | "cancel" | "dismiss",
                               idempotencyKey: string): Promise<unknown> {

@@ -82,6 +82,9 @@
     "workspace.authority_finalize",
     "workspace.authority_accept",
     "workspace.authority_offer",
+    "workspace.read_hint_sync",
+    "workspace.display_name_request",
+    "workspace.admin_request_submit",
     "workspace.leave",
     "workspace.close",
     "diagnostics.query"
@@ -678,6 +681,27 @@
     {
       "operation": "workspace.authority_offer",
       "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.read_hint_sync",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.display_name_request",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.admin_request_submit",
+      "permission": "send",
       "scope": "profile",
       "mutation": true,
       "idempotency": "caller_profile_operation_key"

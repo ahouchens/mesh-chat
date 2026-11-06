@@ -678,3 +678,11 @@ def call_media_view(profile, call, value):
             or not isinstance(value.media, dict)):
         raise ValueError("Invalid call media observation")
     return {"profile": profile, "call": call, "media": value.media}
+
+
+def workspace_edge_view(profile, workspace, state):
+    if (any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
+            for item in (profile, workspace))
+            or state not in {"submitted", "requested", "updated"}):
+        raise ValueError("Invalid workspace edge observation")
+    return {"profile": profile, "workspace": workspace, "state": state}

@@ -58,6 +58,9 @@ WORKSPACE_RETENTION_OPERATIONS = ("workspace.retention_update",)
 WORKSPACE_AUTHORITY_LOSS_OPERATIONS = ("workspace.authority_loss_report",)
 WORKSPACE_AUTHORITY_OPERATIONS = ("workspace.authority_accept", "workspace.authority_finalize")
 WORKSPACE_AUTHORITY_OFFER_OPERATIONS = ("workspace.authority_offer",)
+WORKSPACE_EDGE_OPERATIONS = ("workspace.admin_request_submit",
+                             "workspace.display_name_request",
+                             "workspace.read_hint_sync")
 WORKSPACE_LIFECYCLE_OPERATIONS = ("workspace.close", "workspace.leave",
                                   "workspace.remove_data")
 WORKSPACE_ADMIN_REQUEST_OPERATIONS = ("workspace.admin_request_approve",
@@ -234,6 +237,33 @@ def parse_request(value, operations):
                 or "idempotency_key" not in value
                 or any(not isinstance(item, str) or HANDLE.fullmatch(item) is None
                        for item in params.values())):
+            raise ApiFailure("invalid_request")
+        return operation, params
+    if operation in WORKSPACE_EDGE_OPERATIONS:
+        params = value[params]
+        if operation == "workspace.admin_request_submit":
+            allowed = {"profile", "workspace", "request_kind"}
+            optional = {"target_member", "requested_role", "note"}
+            valid = (isinstance(params, dict) and allowed <= set(params)
+                     and not set(params) - allowed - optional
+                     and isinstance(params.get("request_kind"), str)
+                     and params["request_kind"] in {"invitation", "member_removal", "role_change"}
+                     and isinstance(params.get("note", ""), str)
+                     and len(params.get("note", "")) <= 500
+                     and (params.get("requested_role") in {None, "admin", "member"}))
+        elif operation == "workspace.display_name_request":
+            valid = (isinstance(params, dict) and set(params) == {"profile", "workspace", "display_name"}
+                     and isinstance(params["display_name"], str)
+                     and 1 <= len(params["display_name"].strip()) <= 64)
+        else:
+            valid = (isinstance(params, dict) and set(params) == {"profile", "workspace", "enabled"}
+                     and type(params["enabled"]) is bool)
+        if not valid or any(not isinstance(params.get(key), str)
+                            or HANDLE.fullmatch(params[key]) is None
+                            for key in ("profile", "workspace")):
+            raise ApiFailure("invalid_request")
+        if "target_member" in params and (not isinstance(params["target_member"], str)
+                                          or HANDLE.fullmatch(params["target_member"]) is None):
             raise ApiFailure("invalid_request")
         return operation, params
     if operation in WORKSPACE_AUTHORITY_OFFER_OPERATIONS:
@@ -746,6 +776,7 @@ COMPONENT_OPERATIONS = (
     + WORKSPACE_AUTHORITY_LOSS_OPERATIONS
     + WORKSPACE_AUTHORITY_OPERATIONS
     + WORKSPACE_AUTHORITY_OFFER_OPERATIONS
+    + WORKSPACE_EDGE_OPERATIONS
     + WORKSPACE_DEVICES_OPERATIONS
     + WORKSPACE_DEVICE_REMOVE_OPERATIONS
     + WORKSPACE_DEVICE_REMOVAL_DECIDE_OPERATIONS

@@ -887,3 +887,42 @@ class ServiceWorkspaceAdmin:
             if not isinstance(outcome, dict):
                 raise ApiFailure("internal")
             return "offered"
+
+
+    def submit_admin_request(self, profile, workspace_id, request_kind, target_member_id,
+                             requested_role, note, operation_id):
+        self._require_local(profile)
+        with storage_errors():
+            try:
+                outcome = self._service.submit_workspace_admin_request(
+                    workspace_id, request_kind, operation_id, target_member_id,
+                    requested_role, note)
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            if not isinstance(outcome, dict):
+                raise ApiFailure("internal")
+            return "submitted"
+
+    def request_display_name(self, profile, workspace_id, display_name, operation_id):
+        self._require_local(profile)
+        with storage_errors():
+            try:
+                outcome = self._service.request_workspace_display_name(
+                    workspace_id, display_name, operation_id)
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            if not isinstance(outcome, dict):
+                raise ApiFailure("internal")
+            return "requested"
+
+    def set_read_hint_sync(self, profile, workspace_id, enabled, operation_id):
+        self._require_local(profile)
+        with storage_errors():
+            try:
+                outcome = self._service.set_workspace_read_hint_sync(
+                    workspace_id, enabled, operation_id)
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            if not isinstance(outcome, dict):
+                raise ApiFailure("internal")
+            return "updated"

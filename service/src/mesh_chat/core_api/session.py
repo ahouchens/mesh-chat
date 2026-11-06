@@ -17,6 +17,7 @@ from typing import Protocol
 
 from .views import (call_ice_view, call_media_view, call_settings_view, device_removal_view, draft_view,
     workspace_admin_request_view, workspace_authority_loss_view, workspace_authority_offer_view,
+    workspace_edge_view,
     workspace_authority_view, workspace_lifecycle_view,
     workspace_metadata_view, workspace_retention_view,
     group_invitation_decision_view,
@@ -52,7 +53,7 @@ from .requests import (
     WORKSPACE_CHANNEL_MEMBERS_UPDATE_OPERATIONS, WORKSPACE_CHANNEL_UPDATE_OPERATIONS,
     WORKSPACE_CHANNEL_TRANSFER_ACCEPT_OPERATIONS, WORKSPACE_CHANNEL_TRANSFER_OFFER_OPERATIONS,
     WORKSPACE_POLICY_UPDATE_OPERATIONS, WORKSPACE_METADATA_OPERATIONS,
-    WORKSPACE_RETENTION_OPERATIONS, WORKSPACE_ADMIN_REQUEST_OPERATIONS, WORKSPACE_LIFECYCLE_OPERATIONS, WORKSPACE_AUTHORITY_LOSS_OPERATIONS, WORKSPACE_AUTHORITY_OPERATIONS, WORKSPACE_AUTHORITY_OFFER_OPERATIONS, WORKSPACE_DEVICES_OPERATIONS,
+    WORKSPACE_RETENTION_OPERATIONS, WORKSPACE_ADMIN_REQUEST_OPERATIONS, WORKSPACE_LIFECYCLE_OPERATIONS, WORKSPACE_AUTHORITY_LOSS_OPERATIONS, WORKSPACE_AUTHORITY_OPERATIONS, WORKSPACE_AUTHORITY_OFFER_OPERATIONS, WORKSPACE_EDGE_OPERATIONS, WORKSPACE_DEVICES_OPERATIONS,
     WORKSPACE_DEVICE_REMOVE_OPERATIONS,
     WORKSPACE_DEVICE_REMOVAL_REQUEST_OPERATIONS,
     WORKSPACE_DEVICE_REMOVAL_DECIDE_OPERATIONS,
@@ -171,6 +172,9 @@ PERMISSION_BY_OPERATION = {
     "workspace.authority_accept": "approve",
     "workspace.authority_finalize": "approve",
     "workspace.authority_offer": "approve",
+    "workspace.admin_request_submit": "send",
+    "workspace.display_name_request": "send",
+    "workspace.read_hint_sync": "send",
     "workspace.query": "read",
 }
 
@@ -297,6 +301,7 @@ class CoreSession:
             (WORKSPACE_AUTHORITY_LOSS_OPERATIONS, self._workspace_admin),
             (WORKSPACE_AUTHORITY_OPERATIONS, self._workspace_admin),
             (WORKSPACE_AUTHORITY_OFFER_OPERATIONS, self._workspace_admin),
+            (WORKSPACE_EDGE_OPERATIONS, self._workspace_admin),
             (WORKSPACE_DEVICES_OPERATIONS, self._workspace_admin),
             (WORKSPACE_DEVICE_REMOVE_OPERATIONS, self._workspace_admin),
             (DIAGNOSTIC_OPERATIONS, self._diagnostics),
@@ -594,6 +599,28 @@ class CoreSession:
         return self._observe(grant, profile, operation, params)
 
     def _workspace_operation(self, grant, profiles, operation, params, key):
+        if operation in WORKSPACE_EDGE_OPERATIONS:
+            target, inside = self._workspace_scope(grant, profiles, params)
+            operation_id = self._required_operation_id(grant, target, key)
+            if operation == "workspace.admin_request_submit":
+                member_id = None
+                if "target_member" in params:
+                    member_id = next(
+                        (item.member for item in self._workspace_admin.members(target, inside)
+                         if self._handle(grant, "member", target, item.member)
+                         == params["target_member"]), None)
+                    if member_id is None:
+                        raise ApiFailure("forbidden")
+                state = self._workspace_admin.submit_admin_request(
+                    target, inside, params["request_kind"], member_id,
+                    params.get("requested_role"), params.get("note", ""), operation_id)
+            elif operation == "workspace.display_name_request":
+                state = self._workspace_admin.request_display_name(
+                    target, inside, params["display_name"], operation_id)
+            else:
+                state = self._workspace_admin.set_read_hint_sync(
+                    target, inside, params["enabled"], operation_id)
+            return workspace_edge_view(params["profile"], params["workspace"], state)
         if operation in WORKSPACE_AUTHORITY_OFFER_OPERATIONS:
             target, inside = self._workspace_scope(grant, profiles, params)
             operation_id = self._required_operation_id(grant, target, key)

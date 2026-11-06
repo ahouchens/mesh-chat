@@ -433,6 +433,40 @@ export async function coreApiCreateWorkspaceDeviceLink(
   };
 }
 
+export async function coreApiWorkspaceAdminSubmit(
+  workspace: string,
+  requestKind: "invitation" | "member_removal" | "role_change",
+  targetMember: string | null,
+  requestedRole: "admin" | "member" | null,
+  note: string,
+  idempotencyKey: string,
+): Promise<unknown> {
+  const profile = await coreApiProfile();
+  const params: Record<string, unknown> = {
+    profile: profile.profile, workspace, request_kind: requestKind,
+  };
+  if (targetMember) params.target_member = targetMember;
+  if (requestedRole) params.requested_role = requestedRole;
+  if (note) params.note = note;
+  return coreApiRequest("workspace.admin_request_submit", params, idempotencyKey);
+}
+
+export async function coreApiWorkspaceDisplayNameRequest(
+  workspace: string, displayName: string, idempotencyKey: string,
+): Promise<unknown> {
+  const profile = await coreApiProfile();
+  return coreApiRequest("workspace.display_name_request",
+    { profile: profile.profile, workspace, display_name: displayName }, idempotencyKey);
+}
+
+export async function coreApiWorkspaceReadHintSync(
+  workspace: string, enabled: boolean, idempotencyKey: string,
+): Promise<unknown> {
+  const profile = await coreApiProfile();
+  return coreApiRequest("workspace.read_hint_sync",
+    { profile: profile.profile, workspace, enabled }, idempotencyKey);
+}
+
 export async function coreApiWorkspaceAuthorityOffer(
   workspace: string,
   transitionKind: "ownership_transfer" | "same_owner_rotation",

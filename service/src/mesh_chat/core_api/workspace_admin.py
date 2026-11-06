@@ -196,6 +196,16 @@ class WorkspaceAdmin(Protocol):
                                    member_id: str, device_id: str, outgoing_owner_role: str,
                                    operation_id: str) -> str: ...
 
+    def submit_admin_request(self, profile: str, workspace: str, request_kind: str,
+                             target_member_id: str | None, requested_role: str | None,
+                             note: str, operation_id: str) -> str: ...
+
+    def request_display_name(self, profile: str, workspace: str, display_name: str,
+                             operation_id: str) -> str: ...
+
+    def set_read_hint_sync(self, profile: str, workspace: str, enabled: bool,
+                           operation_id: str) -> str: ...
+
     def authority_transition_ids(self, profile: str, workspace: str) -> tuple[str, ...]: ...
 
     def accept_authority_transition(self, profile: str, workspace: str, transition: str,

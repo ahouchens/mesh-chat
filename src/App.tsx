@@ -80,6 +80,9 @@ import {
   coreApiReportAuthorityLoss,
   coreApiWorkspaceAuthority,
   coreApiWorkspaceAuthorityOffer,
+  coreApiWorkspaceAdminSubmit,
+  coreApiWorkspaceDisplayNameRequest,
+  coreApiWorkspaceReadHintSync,
   coreApiWorkspaceRetention,
   coreApiDecideDeviceRemoval,
   coreApiCreateWorkspaceDeviceLink,
@@ -6330,6 +6333,48 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
           } catch (reason) {
             if (!String(reason).includes("core_api_unavailable")) throw reason;
           }
+        }
+      }
+      if (command === "submit_workspace_admin_request" && selectedWorkspace.core_handle
+          && (payload.request_kind === "invitation" || payload.request_kind === "member_removal"
+              || payload.request_kind === "role_change")) {
+        const member = typeof payload.target_member_id === "string"
+          ? selectedWorkspace.members.find((item) => item.id === payload.target_member_id)
+          : null;
+        try {
+          await coreApiWorkspaceAdminSubmit(
+            selectedWorkspace.core_handle, payload.request_kind,
+            member?.core_handle ?? null,
+            payload.requested_role === "admin" || payload.requested_role === "member"
+              ? payload.requested_role : null,
+            typeof payload.note === "string" ? payload.note : "",
+            newOperationId());
+          await refresh(true);
+          return;
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+        }
+      }
+      if (command === "request_workspace_display_name" && selectedWorkspace.core_handle
+          && typeof payload.display_name === "string") {
+        try {
+          await coreApiWorkspaceDisplayNameRequest(
+            selectedWorkspace.core_handle, payload.display_name, newOperationId());
+          await refresh(true);
+          return;
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+        }
+      }
+      if (command === "set_workspace_read_hint_sync" && selectedWorkspace.core_handle
+          && typeof payload.enabled === "boolean") {
+        try {
+          await coreApiWorkspaceReadHintSync(
+            selectedWorkspace.core_handle, payload.enabled, newOperationId());
+          await refresh(true);
+          return;
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
         }
       }
       if (command === "offer_workspace_authority_transition" && selectedWorkspace.core_handle
