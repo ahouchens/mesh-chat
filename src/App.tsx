@@ -81,6 +81,7 @@ import {
   coreApiWorkspaceAuthority,
   coreApiWorkspaceAuthorityOffer,
   coreApiWorkspaceAdminSubmit,
+  coreApiWorkspaceHistory,
   coreApiWorkspaceAccessRecommendation,
   coreApiWorkspaceSnapshot,
   coreApiTimelineMutation,
@@ -461,6 +462,24 @@ async function fetchWorkspaceAccessRecommendation(
   if (workspace.core_handle) {
     try {
       return await coreApiWorkspaceAccessRecommendation(workspace.core_handle, action as never, params, key);
+    } catch (reason) {
+      if (!String(reason).includes("core_api_unavailable")) throw reason;
+    }
+  }
+  return serviceCommand<Record<string, unknown>>(fallbackCommand,
+    { workspace_id: workspace.id, ...params, ...(key ? { operation_id: key } : {}) });
+}
+
+async function fetchWorkspaceHistory(
+  workspace: { id: string; core_handle?: string },
+  action: string,
+  params: Record<string, unknown>,
+  fallbackCommand: string,
+  key?: string,
+): Promise<Record<string, unknown>> {
+  if (workspace.core_handle) {
+    try {
+      return await coreApiWorkspaceHistory(workspace.core_handle, action as never, params, key);
     } catch (reason) {
       if (!String(reason).includes("core_api_unavailable")) throw reason;
     }
@@ -4705,7 +4724,8 @@ export function WorkspaceHistorySettingsContent({ workspace, conversationId, con
     if (!conversationId) return;
     try {
       setHistoryError("");
-      setHistory(await serviceCommand<WorkspaceHistoryStatus>("get_workspace_history_status", { workspace_id: workspace.id, conversation_id: conversationId }));
+      setHistory(await fetchWorkspaceHistory(workspace, "status",
+        { conversation: conversationId }, "get_workspace_history_status") as unknown as WorkspaceHistoryStatus);
     } catch (reason) { setHistoryError(errorMessage(reason)); }
   }, [conversationId, workspace.id]);
   useEffect(() => { void loadHistory(); }, [loadHistory]);
@@ -4826,12 +4846,11 @@ function WorkspaceMessageCard({
     setRevisionLoading(true);
     setRevisionError("");
     try {
-      const next = await serviceCommand<WorkspaceRevisionPage>("list_workspace_message_revisions", {
-        workspace_id: workspace.id,
+      const next = await fetchWorkspaceHistory(workspace, "revisions", {
         event_id: message.id,
         cursor: append ? revisionPage?.next_cursor ?? null : null,
         limit: 50,
-      });
+      }, "list_workspace_message_revisions") as unknown as WorkspaceRevisionPage;
       setRevisionPage((current) => append && current
         ? { ...next, revisions: [...current.revisions, ...next.revisions] }
         : next);
@@ -4909,12 +4928,11 @@ function WorkspaceTombstoneDialog({ workspace, conversationId, onClose }: { work
     setLoading(true);
     setError("");
     try {
-      const next = await serviceCommand<WorkspaceTombstonePage>("list_workspace_tombstones", {
-        workspace_id: workspace.id,
-        conversation_id: conversationId,
+      const next = await fetchWorkspaceHistory(workspace, "tombstones", {
+        conversation: conversationId,
         cursor: append ? page?.next_cursor ?? null : null,
         limit: 50,
-      });
+      }, "list_workspace_tombstones") as unknown as WorkspaceTombstonePage;
       setPage((current) => append && current
         ? { ...next, tombstones: [...current.tombstones, ...next.tombstones] }
         : next);
@@ -6703,11 +6721,9 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     if (!selectedWorkspace || workspaceActionBusy) return null;
     setWorkspaceActionBusy(true); setWorkspaceActionError("");
     try {
-      const result = await serviceCommand<WorkspaceRetentionPruneResult>("prune_workspace_history", {
-        operation_id: newOperationId(),
-        workspace_id: selectedWorkspace.id,
+      const result = await fetchWorkspaceHistory(selectedWorkspace, "prune", {
         max_events: 500,
-      });
+      }, "prune_workspace_history", newOperationId()) as unknown as WorkspaceRetentionPruneResult;
       await refresh(true);
       if (result.pruned_this_batch) {
         setWorkspacePage(null);
@@ -7035,7 +7051,8 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     if (!selectedWorkspace || !selectedWorkspaceDirect || workspaceActionBusy) return;
     setWorkspaceActionBusy(true); setWorkspaceError("");
     try {
-      await serviceCommand("hide_workspace_direct", { operation_id: newOperationId(), workspace_id: selectedWorkspace.id, conversation_id: selectedWorkspaceDirect.id });
+      await fetchWorkspaceHistory(selectedWorkspace, "hide_direct",
+        { conversation: selectedWorkspaceDirect.id }, "hide_workspace_direct", newOperationId());
       setWorkspaceSelectedDirectId(null);
       await refresh(true);
     } catch (reason) { setWorkspaceError(errorMessage(reason)); }
@@ -7117,7 +7134,8 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     if (!selectedWorkspace) return;
     setWorkspaceError("");
     try {
-      await serviceCommand("hide_workspace_message", { operation_id: newOperationId(), workspace_id: selectedWorkspace.id, event_id: eventId });
+      await fetchWorkspaceHistory(selectedWorkspace, "hide_message",
+        { event_id: eventId }, "hide_workspace_message", newOperationId());
       if (workspaceThreadRootId === eventId) {
         setWorkspaceThreadRootId(null);
         setWorkspaceThreadPage(null);

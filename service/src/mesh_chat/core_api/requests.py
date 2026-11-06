@@ -59,6 +59,7 @@ WORKSPACE_AUTHORITY_LOSS_OPERATIONS = ("workspace.authority_loss_report",)
 WORKSPACE_AUTHORITY_OPERATIONS = ("workspace.authority_accept", "workspace.authority_finalize")
 WORKSPACE_AUTHORITY_OFFER_OPERATIONS = ("workspace.authority_offer",)
 WORKSPACE_ACCESS_OPERATIONS = ("workspace.access_recommendation",)
+WORKSPACE_HISTORY_OPERATIONS = ("workspace.history",)
 WORKSPACE_SNAPSHOT_OPERATIONS = ("workspace.snapshot",)
 WORKSPACE_TIMELINE_OPERATIONS = ("workspace.timeline_query",
                                 "workspace.timeline_mutation")
@@ -247,6 +248,33 @@ def parse_request(value, operations):
                 or any(not isinstance(item, str) or HANDLE.fullmatch(item) is None
                        for item in params.values())):
             raise ApiFailure("invalid_request")
+        return operation, params
+    if operation in WORKSPACE_HISTORY_OPERATIONS:
+        params = value[params]
+        action = params.get(action) if isinstance(params, dict) else None
+        required = {profile, workspace, action}
+        if action == status:
+            required |= {conversation}
+        elif action == prune:
+            required |= {max_events}
+        elif action == revisions:
+            required |= {event_id, cursor, limit}
+        elif action == tombstones:
+            required |= {conversation, cursor, limit}
+        elif action == hide_message:
+            required |= {event_id}
+        elif action == hide_direct:
+            required |= {conversation}
+        if (not isinstance(params, dict) or action not in {status, prune, revisions,
+                                                          tombstones, hide_message, hide_direct}
+                or set(params) != required):
+            raise ApiFailure(invalid_request)
+        if any(not isinstance(params[key], str) or HANDLE.fullmatch(params[key]) is None
+               for key in (profile, workspace)):
+            raise ApiFailure(invalid_request)
+        if action == prune and (type(params[max_events]) is not int
+                                  or not 1 <= params[max_events] <= 5000):
+            raise ApiFailure(invalid_request)
         return operation, params
     if operation in WORKSPACE_ACCESS_OPERATIONS:
         params = value[params]
@@ -905,6 +933,7 @@ COMPONENT_OPERATIONS = (
     + WORKSPACE_TIMELINE_OPERATIONS
     + WORKSPACE_SNAPSHOT_OPERATIONS
     + WORKSPACE_ACCESS_OPERATIONS
+    + WORKSPACE_HISTORY_OPERATIONS
     + WORKSPACE_DEVICES_OPERATIONS
     + WORKSPACE_DEVICE_REMOVE_OPERATIONS
     + WORKSPACE_DEVICE_REMOVAL_DECIDE_OPERATIONS

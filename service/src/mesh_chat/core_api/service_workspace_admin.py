@@ -1032,3 +1032,32 @@ class ServiceWorkspaceAdmin:
             except ValidationError as error:
                 raise ApiFailure("invalid_request") from error
             raise ApiFailure("invalid_request")
+
+
+    def history(self, profile, workspace_id, action, params, operation_id):
+        self._require_local(profile)
+        with storage_errors():
+            try:
+                if action == "status":
+                    return dict(self._service.get_workspace_history_status(
+                        workspace_id, params["conversation"]))
+                if action == "prune":
+                    return dict(self._service.prune_workspace_history(
+                        workspace_id, operation_id, params.get("max_events", 200)))
+                if action == "revisions":
+                    return dict(self._service.list_workspace_message_revisions(
+                        workspace_id, params["event_id"], params.get("cursor"),
+                        params.get("limit", 50)))
+                if action == "tombstones":
+                    return dict(self._service.list_workspace_tombstones(
+                        workspace_id, params["conversation"], params.get("cursor"),
+                        params.get("limit", 50)))
+                if action == "hide_message":
+                    return dict(self._service.hide_workspace_message(
+                        workspace_id, params["event_id"], operation_id))
+                if action == "hide_direct":
+                    return dict(self._service.hide_workspace_direct(
+                        workspace_id, params["conversation"], operation_id))
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            raise ApiFailure("invalid_request")

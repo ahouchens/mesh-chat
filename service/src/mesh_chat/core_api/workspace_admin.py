@@ -196,6 +196,9 @@ class WorkspaceAdmin(Protocol):
                                    member_id: str, device_id: str, outgoing_owner_role: str,
                                    operation_id: str) -> str: ...
 
+    def history(self, profile: str, workspace: str, action: str,
+                params: dict, operation_id: str | None) -> dict: ...
+
     def access_recommendation(self, profile: str, workspace: str, action: str,
                               params: dict, operation_id: str | None) -> dict: ...
 
