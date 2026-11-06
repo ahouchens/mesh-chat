@@ -343,6 +343,27 @@ export async function coreApiWorkspaceJoinDecision(
   );
 }
 
+export async function coreApiWorkspacePolicy(
+  workspace: string,
+  channelCreation: string,
+  posting: string,
+  invitationRequests: string,
+  idempotencyKey: string,
+): Promise<unknown> {
+  const profile = await coreApiProfile();
+  return coreApiRequest(
+    "workspace.policy_update",
+    {
+      profile: profile.profile,
+      workspace,
+      channel_creation: channelCreation,
+      posting,
+      invitation_requests: invitationRequests,
+    },
+    idempotencyKey,
+  );
+}
+
 export async function coreApiWorkspaceMemberRole(
   workspace: string,
   member: string,

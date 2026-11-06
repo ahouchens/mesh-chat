@@ -66,6 +66,7 @@ import {
   coreApiGroupInvitation,
   coreApiWorkspaceJoinDecision,
   coreApiWorkspaceMemberRole,
+  coreApiWorkspacePolicy,
   coreApiLeaveGroup,
   coreApiRemoveGroupMember,
   coreApiSendGroupMessage,
@@ -6263,7 +6264,25 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     setWorkspaceActionBusy(true); setWorkspaceActionError("");
     try {
       let handled = false;
-      if (command === "change_workspace_role" && selectedWorkspace.core_handle
+      if (command === "update_workspace_policies" && selectedWorkspace.core_handle
+          && typeof payload.channel_creation === "string"
+          && typeof payload.posting === "string") {
+        try {
+          await coreApiWorkspacePolicy(
+            selectedWorkspace.core_handle,
+            payload.channel_creation,
+            payload.posting,
+            typeof payload.invitation_requests === "string"
+              ? payload.invitation_requests
+              : selectedWorkspace.policies.invitation_requests,
+            newOperationId(),
+          );
+          handled = true;
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+        }
+      }
+      if (!handled && command === "change_workspace_role" && selectedWorkspace.core_handle
           && typeof payload.member_id === "string") {
         const member = selectedWorkspace.members.find((item) => item.id === payload.member_id);
         if (member?.core_handle && (payload.role === "member" || payload.role === "admin")) {
