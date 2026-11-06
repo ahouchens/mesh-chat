@@ -71,10 +71,10 @@ class CoreClient:
             if "result" not in response:
                 raise CoreClientError("protocol", request_id)
             return response["result"]
-        error = response.get("error")
-        if not isinstance(error, dict) or not isinstance(error.get("code"), str):
+        failure = response.get("error")
+        if not isinstance(failure, dict) or not isinstance(failure.get("code"), str):
             raise CoreClientError("protocol", request_id)
-        raise CoreClientError(error["code"], request_id, error.get("retry_after_ms"))
+        raise CoreClientError(failure["code"], request_id, failure.get("retry_after_ms"))
 
     def application_command(self, command, payload):
         return self.request("application.command", {"command": command, "payload": payload})

@@ -1325,6 +1325,8 @@ M5 - supported reusable core
 - [x] Workspace private-channel rosters and management transfers use typed channel-member/transfer operations with snapshot handles.
 - [x] Workspace channel edits and archives use typed workspace.channel_update/workspace.channel_archive with snapshot channel handles.
 - [x] Workspace channel creation uses typed workspace.channel_create plus a typed topic update, mapping selected members to handles.
+- [x] Workspace timeline, search, mention, read, notification, history, access-recommendation and connection/onboarding actions use typed facade use cases.
+- [x] Application runtime background/notification state uses a typed port.
 - [x] Workspace admin-request submission, display-name requests and read-hint sync use typed facade operations.
 - [x] Workspace authority successor offers use a typed facade operation with member/device handles.
 - [x] Workspace authority accept/finalize use typed facade operations with snapshot transition handles.

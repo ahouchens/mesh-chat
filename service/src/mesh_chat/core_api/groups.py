@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -31,9 +32,9 @@ class GroupInvitationObservation:
 
 
 class Groups(Protocol):
-    def list(self, profile: str) -> list[GroupObservation]: ...
+    def list(self, profile: str) -> Sequence[GroupObservation]: ...
 
-    def create(self, profile: str, title: str, member_ids: list[str],
+    def create(self, profile: str, title: str, member_ids: Sequence[str],
                posting_policy: str) -> GroupObservation: ...
 
     def send(self, profile: str, group_id: str, text: str) -> GroupMessageObservation: ...
@@ -48,7 +49,7 @@ class Groups(Protocol):
     def retry_invitation(self, profile: str, group_id: str,
                          contact_id: str) -> GroupMembershipObservation: ...
 
-    def invitations(self, profile: str) -> list[GroupInvitationObservation]: ...
+    def invitations(self, profile: str) -> Sequence[GroupInvitationObservation]: ...
 
     def accept_invitation(self, profile: str,
                           invitation_id: str) -> GroupMembershipObservation: ...
