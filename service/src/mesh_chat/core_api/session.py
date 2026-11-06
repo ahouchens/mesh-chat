@@ -276,6 +276,8 @@ class CoreSession:
             (WORKSPACE_CHANNEL_TRANSFER_OFFER_OPERATIONS, self._workspace_admin),
             (WORKSPACE_CHANNEL_TRANSFER_ACCEPT_OPERATIONS, self._workspace_admin),
             (WORKSPACE_POLICY_UPDATE_OPERATIONS, self._workspace_admin),
+            (WORKSPACE_METADATA_OPERATIONS, self._workspace_admin),
+            (WORKSPACE_RETENTION_OPERATIONS, self._workspace_admin),
             (WORKSPACE_DEVICES_OPERATIONS, self._workspace_admin),
             (WORKSPACE_DEVICE_REMOVE_OPERATIONS, self._workspace_admin),
             (DIAGNOSTIC_OPERATIONS, self._diagnostics),
