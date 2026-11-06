@@ -285,6 +285,7 @@ export interface Workspace {
 
 export interface WorkspaceChannel {
   id: string;
+  core_handle?: string;
   workspace_id: string;
   name: string;
   name_key: string;

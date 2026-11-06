@@ -67,6 +67,7 @@ import {
   coreApiWorkspaceJoinDecision,
   coreApiWorkspaceMemberRole,
   coreApiWorkspacePolicy,
+  coreApiCreateWorkspaceChannel,
   coreApiLeaveGroup,
   coreApiRemoveGroupMember,
   coreApiSendGroupMessage,
@@ -6362,6 +6363,34 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     if (!selectedWorkspace || workspaceActionBusy) return;
     setWorkspaceActionBusy(true); setWorkspaceActionError("");
     try {
+      if (command === "create_workspace_channel" && selectedWorkspace.core_handle
+          && typeof payload.name === "string") {
+        const name = payload.name;
+        const topic = typeof payload.topic === "string" ? payload.topic : "";
+        const visibility = payload.visibility === "private" ? "private" : "public";
+        const selected = Array.isArray(payload.member_ids) ? payload.member_ids : [];
+        const members = selected.flatMap((id) => {
+          const member = selectedWorkspace.members.find((item) => item.id === id);
+          return member?.core_handle ? [member.core_handle] : [];
+        });
+        try {
+          await coreApiCreateWorkspaceChannel(
+            selectedWorkspace.core_handle, name, topic, visibility, members, newOperationId());
+          const refreshed = await refresh(true);
+          const created = (refreshed.workspace_channels ?? []).find((channel) => channel.name === name);
+          if (created) setWorkspaceSelectedChannelId(created.id);
+          setWorkspaceSelectedDirectId(null);
+          setWorkspaceMentionsOpen(false);
+          setWorkspaceThreadsOpen(false);
+          setWorkspaceThreadRootId(null);
+          setWorkspaceCreateChannelOpen(false);
+          setWorkspaceBrowseOpen(false);
+          setMobileSidebarOpen(false);
+          return;
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+        }
+      }
       const result = await serviceCommand<WorkspaceChannel | { channel_id?: string }>(command, {
         operation_id: newOperationId(),
         workspace_id: selectedWorkspace.id,

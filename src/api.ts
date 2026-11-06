@@ -343,6 +343,34 @@ export async function coreApiWorkspaceJoinDecision(
   );
 }
 
+export async function coreApiCreateWorkspaceChannel(
+  workspace: string,
+  name: string,
+  topic: string,
+  visibility: "public" | "private",
+  members: string[],
+  idempotencyKey: string,
+): Promise<{ channel: string; name: string }> {
+  const profile = await coreApiProfile();
+  const params: Record<string, unknown> = {
+    profile: profile.profile,
+    workspace,
+    name,
+    visibility,
+  };
+  if (visibility === "private" && members.length) params.members = members;
+  const created = await coreApiRequest<{ channel: string; name: string }>(
+    "workspace.channel_create", params, idempotencyKey);
+  if (topic) {
+    await coreApiRequest(
+      "workspace.channel_update",
+      { profile: profile.profile, workspace, channel: created.channel, name, topic },
+      idempotencyKey + ":topic",
+    );
+  }
+  return created;
+}
+
 export async function coreApiWorkspacePolicy(
   workspace: string,
   channelCreation: string,
