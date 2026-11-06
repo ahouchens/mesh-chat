@@ -1325,6 +1325,7 @@ M5 - supported reusable core
 - [x] Workspace private-channel rosters and management transfers use typed channel-member/transfer operations with snapshot handles.
 - [x] Workspace channel edits and archives use typed workspace.channel_update/workspace.channel_archive with snapshot channel handles.
 - [x] Workspace channel creation uses typed workspace.channel_create plus a typed topic update, mapping selected members to handles.
+- [x] Workspace authority accept/finalize use typed facade operations with snapshot transition handles.
 - [x] Workspace authority-loss reporting uses a typed facade operation.
 - [x] Workspace close, leave and remove-data use typed facade operations with idempotency keys.
 - [x] Workspace admin-request approve/decline/cancel/dismiss use typed facade operations with snapshot request handles.
