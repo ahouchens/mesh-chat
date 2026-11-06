@@ -72,6 +72,7 @@ import {
   coreApiUpdateChannelMembers,
   coreApiWorkspaceDeviceLinkDecision,
   coreApiCreateWorkspaceDeviceLink,
+  coreApiSubmitDeviceLink,
   coreApiOfferChannelTransfer,
   coreApiAcceptChannelTransfer,
   coreApiLeaveGroup,
@@ -3836,10 +3837,20 @@ function JoinWorkspaceDialog({ initialValue = "", promptId, promptWorkspaceName,
       if (joinAttempt.current?.command !== command || joinAttempt.current.document !== operationDocument) {
         joinAttempt.current = { command, document: operationDocument, operationId: newOperationId() };
       }
-      const workspace = await serviceCommand<Workspace>(command, {
-        operation_id: joinAttempt.current.operationId,
-        ...(devicePreview ? { device_link: document } : promptId ? { prompt_id: promptId } : { invitation: document, ...(preview?.i2p_access_point ? { i2p_consent: i2pConsent } : {}) }),
-      });
+      let workspace: Workspace | null = null;
+      if (devicePreview) {
+        try {
+          workspace = await coreApiSubmitDeviceLink(document, joinAttempt.current.operationId);
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+        }
+      }
+      if (!workspace) {
+        workspace = await serviceCommand<Workspace>(command, {
+          operation_id: joinAttempt.current.operationId,
+          ...(devicePreview ? { device_link: document } : promptId ? { prompt_id: promptId } : { invitation: document, ...(preview?.i2p_access_point ? { i2p_consent: i2pConsent } : {}) }),
+        });
+      }
       if (workspace.connection_results?.length && !workspace.connection_results.some((item) => item.result === "connected")) {
         setConnectionResults(workspace.connection_results);
         setJoinedWorkspace(workspace);

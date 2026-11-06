@@ -371,6 +371,22 @@ export async function coreApiCreateWorkspaceChannel(
   return created;
 }
 
+export async function coreApiSubmitDeviceLink(
+  document: string,
+  idempotencyKey: string,
+): Promise<NonNullable<Snapshot["workspaces"]>[number]> {
+  const profile = await coreApiProfile();
+  const submitted = await coreApiRequest<{ workspace: string; name: string }>(
+    "workspace.device_link_submit",
+    { profile: profile.profile, document },
+    idempotencyKey,
+  );
+  const snapshot = await serviceCommand<Snapshot>("snapshot");
+  const workspace = (snapshot.workspaces ?? []).find((item) => item.name === submitted.name);
+  if (!workspace) throw new Error("workspace_not_found");
+  return workspace;
+}
+
 export async function coreApiCreateWorkspaceDeviceLink(
   workspace: string,
   idempotencyKey: string,
