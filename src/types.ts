@@ -697,6 +697,7 @@ export interface WorkspaceDeviceLinkFormats {
 
 export interface WorkspaceDeviceTransition {
   id: string;
+  core_handle?: string;
   workspace_id: string;
   direction: "incoming" | "outgoing";
   transition_kind: "link" | "removal";

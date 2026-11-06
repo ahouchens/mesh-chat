@@ -371,6 +371,20 @@ export async function coreApiCreateWorkspaceChannel(
   return created;
 }
 
+export async function coreApiWorkspaceDeviceLinkDecision(
+  workspace: string,
+  request: string,
+  approve: boolean,
+  idempotencyKey: string,
+): Promise<unknown> {
+  const profile = await coreApiProfile();
+  return coreApiRequest(
+    approve ? "workspace.device_link_approve" : "workspace.device_link_decline",
+    { profile: profile.profile, workspace, request },
+    idempotencyKey,
+  );
+}
+
 export async function coreApiUpdateChannelMembers(
   workspace: string,
   channel: string,

@@ -371,6 +371,7 @@ class CoreSession:
                           ("group_invitations", "group_invitation"),
                           ("workspace_join_requests", "workspace_join_request"),
                           ("workspace_channels", "channel"),
+                          ("workspace_device_transitions", "device_link"),
                           ("workspaces", "workspace")):
             values = result.get(key)
             if isinstance(values, list):

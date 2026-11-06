@@ -70,6 +70,7 @@ import {
   coreApiCreateWorkspaceChannel,
   coreApiUpdateWorkspaceChannel,
   coreApiUpdateChannelMembers,
+  coreApiWorkspaceDeviceLinkDecision,
   coreApiOfferChannelTransfer,
   coreApiAcceptChannelTransfer,
   coreApiLeaveGroup,
@@ -6269,6 +6270,21 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     setWorkspaceActionBusy(true); setWorkspaceActionError("");
     try {
       let handled = false;
+      if ((command === "approve_workspace_device_link" || command === "decline_workspace_device_link")
+          && selectedWorkspace.core_handle && typeof payload.link_id === "string") {
+        const transition = workspaceDeviceTransitions.find((item) => item.id === payload.link_id);
+        if (transition?.core_handle) {
+          try {
+            await coreApiWorkspaceDeviceLinkDecision(
+              selectedWorkspace.core_handle, transition.core_handle,
+              command === "approve_workspace_device_link", newOperationId());
+            await refresh(true);
+            return;
+          } catch (reason) {
+            if (!String(reason).includes("core_api_unavailable")) throw reason;
+          }
+        }
+      }
       if (command === "update_workspace_policies" && selectedWorkspace.core_handle
           && typeof payload.channel_creation === "string"
           && typeof payload.posting === "string") {
