@@ -68,6 +68,7 @@ import {
   coreApiWorkspaceMemberRole,
   coreApiWorkspacePolicy,
   coreApiCreateWorkspaceChannel,
+  coreApiUpdateWorkspaceChannel,
   coreApiLeaveGroup,
   coreApiRemoveGroupMember,
   coreApiSendGroupMessage,
@@ -6363,6 +6364,23 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     if (!selectedWorkspace || workspaceActionBusy) return;
     setWorkspaceActionBusy(true); setWorkspaceActionError("");
     try {
+      if (command === "update_workspace_channel" && selectedWorkspace.core_handle
+          && typeof payload.channel_id === "string") {
+        const channel = selectedWorkspaceChannels.find((item) => item.id === payload.channel_id);
+        if (channel?.core_handle && typeof payload.name === "string"
+            && typeof payload.topic === "string") {
+          try {
+            await coreApiUpdateWorkspaceChannel(
+              selectedWorkspace.core_handle, channel.core_handle, payload.name,
+              payload.topic, payload.archived === true, newOperationId());
+            if (payload.archived === true) setWorkspaceManageChannelOpen(false);
+            await refresh(true);
+            return;
+          } catch (reason) {
+            if (!String(reason).includes("core_api_unavailable")) throw reason;
+          }
+        }
+      }
       if (command === "create_workspace_channel" && selectedWorkspace.core_handle
           && typeof payload.name === "string") {
         const name = payload.name;

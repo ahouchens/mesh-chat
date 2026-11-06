@@ -371,6 +371,29 @@ export async function coreApiCreateWorkspaceChannel(
   return created;
 }
 
+export async function coreApiUpdateWorkspaceChannel(
+  workspace: string,
+  channel: string,
+  name: string,
+  topic: string,
+  archived: boolean,
+  idempotencyKey: string,
+): Promise<unknown> {
+  const profile = await coreApiProfile();
+  if (archived) {
+    return coreApiRequest(
+      "workspace.channel_archive",
+      { profile: profile.profile, workspace, channel },
+      idempotencyKey,
+    );
+  }
+  return coreApiRequest(
+    "workspace.channel_update",
+    { profile: profile.profile, workspace, channel, name, topic },
+    idempotencyKey,
+  );
+}
+
 export async function coreApiWorkspacePolicy(
   workspace: string,
   channelCreation: string,
