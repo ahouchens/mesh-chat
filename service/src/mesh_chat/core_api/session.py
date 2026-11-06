@@ -16,7 +16,7 @@ import uuid
 from typing import Protocol
 
 from .views import (call_ice_view, call_settings_view, device_removal_view, draft_view,
-    workspace_admin_request_view, workspace_lifecycle_view,
+    workspace_admin_request_view, workspace_authority_loss_view, workspace_lifecycle_view,
     workspace_metadata_view, workspace_retention_view,
     group_invitation_decision_view,
     group_list_view, group_membership_view,
@@ -51,7 +51,7 @@ from .requests import (
     WORKSPACE_CHANNEL_MEMBERS_UPDATE_OPERATIONS, WORKSPACE_CHANNEL_UPDATE_OPERATIONS,
     WORKSPACE_CHANNEL_TRANSFER_ACCEPT_OPERATIONS, WORKSPACE_CHANNEL_TRANSFER_OFFER_OPERATIONS,
     WORKSPACE_POLICY_UPDATE_OPERATIONS, WORKSPACE_METADATA_OPERATIONS,
-    WORKSPACE_RETENTION_OPERATIONS, WORKSPACE_ADMIN_REQUEST_OPERATIONS, WORKSPACE_LIFECYCLE_OPERATIONS, WORKSPACE_DEVICES_OPERATIONS,
+    WORKSPACE_RETENTION_OPERATIONS, WORKSPACE_ADMIN_REQUEST_OPERATIONS, WORKSPACE_LIFECYCLE_OPERATIONS, WORKSPACE_AUTHORITY_LOSS_OPERATIONS, WORKSPACE_DEVICES_OPERATIONS,
     WORKSPACE_DEVICE_REMOVE_OPERATIONS,
     WORKSPACE_DEVICE_REMOVAL_REQUEST_OPERATIONS,
     WORKSPACE_DEVICE_REMOVAL_DECIDE_OPERATIONS,
@@ -165,6 +165,7 @@ PERMISSION_BY_OPERATION = {
     "workspace.close": "approve",
     "workspace.leave": "send",
     "workspace.remove_data": "approve",
+    "workspace.authority_loss_report": "approve",
     "workspace.query": "read",
 }
 
@@ -288,6 +289,7 @@ class CoreSession:
             (WORKSPACE_RETENTION_OPERATIONS, self._workspace_admin),
             (WORKSPACE_ADMIN_REQUEST_OPERATIONS, self._workspace_admin),
             (WORKSPACE_LIFECYCLE_OPERATIONS, self._workspace_admin),
+            (WORKSPACE_AUTHORITY_LOSS_OPERATIONS, self._workspace_admin),
             (WORKSPACE_DEVICES_OPERATIONS, self._workspace_admin),
             (WORKSPACE_DEVICE_REMOVE_OPERATIONS, self._workspace_admin),
             (DIAGNOSTIC_OPERATIONS, self._diagnostics),
@@ -574,6 +576,11 @@ class CoreSession:
         return self._observe(grant, profile, operation, params)
 
     def _workspace_operation(self, grant, profiles, operation, params, key):
+        if operation in WORKSPACE_AUTHORITY_LOSS_OPERATIONS:
+            target, inside = self._workspace_scope(grant, profiles, params)
+            operation_id = self._required_operation_id(grant, target, key)
+            state = self._workspace_admin.report_authority_loss(target, inside, operation_id)
+            return workspace_authority_loss_view(params["profile"], params["workspace"], state)
         if operation in WORKSPACE_LIFECYCLE_OPERATIONS:
             target, inside = self._workspace_scope(grant, profiles, params)
             operation_id = self._required_operation_id(grant, target, key)

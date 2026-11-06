@@ -517,6 +517,12 @@ export class CoreClient {
     );
   }
 
+  async workspaceReportAuthorityLoss(profile: string, workspace: string,
+                                     idempotencyKey: string): Promise<unknown> {
+    return this.request("workspace.authority_loss_report",
+      { profile, workspace }, { idempotencyKey });
+  }
+
   async workspaceClose(profile: string, workspace: string, idempotencyKey: string): Promise<unknown> {
     return this.request("workspace.close", { profile, workspace }, { idempotencyKey });
   }

@@ -246,6 +246,11 @@ class CoreClient:
         "dismiss": "workspace.admin_request_dismiss",
     }
 
+    def workspace_report_authority_loss(self, handle, workspace, key):
+        return self.request("workspace.authority_loss_report",
+                            {"profile": handle, "workspace": workspace},
+                            idempotency_key=key)
+
     def workspace_close(self, handle, workspace, key):
         return self.request("workspace.close",
                             {"profile": handle, "workspace": workspace},

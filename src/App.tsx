@@ -76,6 +76,7 @@ import {
   coreApiWorkspaceMetadata,
   coreApiWorkspaceAdminRequest,
   coreApiWorkspaceLifecycle,
+  coreApiReportAuthorityLoss,
   coreApiWorkspaceRetention,
   coreApiDecideDeviceRemoval,
   coreApiCreateWorkspaceDeviceLink,
@@ -6311,6 +6312,15 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
           } catch (reason) {
             if (!String(reason).includes("core_api_unavailable")) throw reason;
           }
+        }
+      }
+      if (command === "report_workspace_authority_loss" && selectedWorkspace.core_handle) {
+        try {
+          await coreApiReportAuthorityLoss(selectedWorkspace.core_handle, newOperationId());
+          await refresh(true);
+          return;
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
         }
       }
       if (command === "update_workspace_metadata" && selectedWorkspace.core_handle

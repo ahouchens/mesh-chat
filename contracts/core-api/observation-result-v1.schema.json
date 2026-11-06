@@ -76,7 +76,7 @@
           "type": "array",
           "uniqueItems": true,
           "minItems": 3,
-          "maxItems": 78,
+          "maxItems": 79,
           "items": {
             "enum": [
               "application.snapshot",
@@ -151,6 +151,7 @@
               "workspace.devices",
               "workspace.device_remove",
               "workspace.remove_data",
+              "workspace.authority_loss_report",
               "workspace.leave",
               "workspace.close",
               "workspace.device_removal_decline",

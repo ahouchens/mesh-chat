@@ -54,6 +54,7 @@ WORKSPACE_CHANNEL_TRANSFER_ACCEPT_OPERATIONS = ("workspace.channel_transfer_acce
 WORKSPACE_POLICY_UPDATE_OPERATIONS = ("workspace.policy_update",)
 WORKSPACE_METADATA_OPERATIONS = ("workspace.metadata_update",)
 WORKSPACE_RETENTION_OPERATIONS = ("workspace.retention_update",)
+WORKSPACE_AUTHORITY_LOSS_OPERATIONS = ("workspace.authority_loss_report",)
 WORKSPACE_LIFECYCLE_OPERATIONS = ("workspace.close", "workspace.leave",
                                   "workspace.remove_data")
 WORKSPACE_ADMIN_REQUEST_OPERATIONS = ("workspace.admin_request_approve",
@@ -232,8 +233,15 @@ def parse_request(value, operations):
                        for item in params.values())):
             raise ApiFailure("invalid_request")
         return operation, params
+    if operation in WORKSPACE_AUTHORITY_LOSS_OPERATIONS:
+        params = value[params]
+        if (not isinstance(params, dict) or set(params) != {profile, workspace}
+                or any(not isinstance(params[key], str) or HANDLE.fullmatch(params[key]) is None
+                       for key in (profile, workspace))):
+            raise ApiFailure(invalid_request)
+        return operation, params
     if operation in WORKSPACE_LIFECYCLE_OPERATIONS:
-        params = value["params"]
+        params = value[params]
         expected = ({"profile", "workspace", "confirmation"}
                     if operation == "workspace.remove_data" else {"profile", "workspace"})
         if (not isinstance(params, dict) or set(params) != expected
@@ -708,6 +716,7 @@ COMPONENT_OPERATIONS = (
     + WORKSPACE_RETENTION_OPERATIONS
     + WORKSPACE_ADMIN_REQUEST_OPERATIONS
     + WORKSPACE_LIFECYCLE_OPERATIONS
+    + WORKSPACE_AUTHORITY_LOSS_OPERATIONS
     + WORKSPACE_DEVICES_OPERATIONS
     + WORKSPACE_DEVICE_REMOVE_OPERATIONS
     + WORKSPACE_DEVICE_REMOVAL_DECIDE_OPERATIONS

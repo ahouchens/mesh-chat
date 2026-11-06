@@ -833,3 +833,13 @@ class ServiceWorkspaceAdmin:
             except ValidationError as error:
                 raise ApiFailure("invalid_request") from error
             return "removed"
+
+
+    def report_authority_loss(self, profile, workspace_id, operation_id):
+        self._require_local(profile)
+        with storage_errors():
+            try:
+                self._service.report_workspace_authority_loss(workspace_id, operation_id)
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            return "lost"

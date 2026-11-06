@@ -102,6 +102,7 @@ def test_each_designed_operation_has_an_executable_request_vector_and_permission
         "workspace.close": {"workspace": handle},
         "workspace.leave": {"workspace": handle},
         "workspace.remove_data": {"workspace": handle, "confirmation": "DELETE"},
+        "workspace.authority_loss_report": {"workspace": handle},
         "workspace.device_removal_request": {"workspace": handle, "device": handle},
         "workspace.device_removal_approve": {"workspace": handle, "request": handle},
         "workspace.device_removal_decline": {"workspace": handle, "request": handle},
