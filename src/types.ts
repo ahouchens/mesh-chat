@@ -150,6 +150,7 @@ export interface GroupDraft {
 
 export interface GroupInvitation {
   id: string;
+  core_handle?: string;
   group_id: string;
   title: string;
   owner_display_name: string;

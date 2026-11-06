@@ -329,6 +329,17 @@ export async function coreApiSendGroupMessage(group: string, text: string): Prom
   });
 }
 
+export async function coreApiGroupInvitation(
+  invitation: string,
+  accept: boolean,
+): Promise<unknown> {
+  const profile = await coreApiProfile();
+  return coreApiRequest(accept ? "group.invitation_accept" : "group.invitation_decline", {
+    profile: profile.profile,
+    invitation,
+  });
+}
+
 export async function coreApiLeaveGroup(group: string): Promise<unknown> {
   const profile = await coreApiProfile();
   return coreApiRequest("group.leave", { profile: profile.profile, group });

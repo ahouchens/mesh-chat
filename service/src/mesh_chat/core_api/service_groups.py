@@ -2,7 +2,8 @@
 
 from ..errors import ValidationError
 from .errors import ApiFailure
-from .groups import GroupMembershipObservation, GroupMessageObservation, GroupObservation
+from .groups import (GroupInvitationObservation, GroupMembershipObservation,
+                     GroupMessageObservation, GroupObservation)
 from .service_messages import storage_errors
 
 
@@ -84,3 +85,32 @@ class ServiceGroups:
             except ValidationError as error:
                 raise ApiFailure("invalid_request") from error
             return GroupMembershipObservation("removed")
+
+
+    def invitations(self, profile):
+        self._require_local(profile)
+        with storage_errors():
+            snapshot = self._service.group_snapshot()
+            return [GroupInvitationObservation(item["id"], item["group_id"], item["title"])
+                    for item in snapshot.get("invitations", [])
+                    if isinstance(item, dict) and isinstance(item.get("id"), str)
+                    and isinstance(item.get("group_id"), str)
+                    and isinstance(item.get("title"), str)]
+
+    def accept_invitation(self, profile, invitation_id):
+        self._require_local(profile)
+        with storage_errors():
+            try:
+                self._service.accept_group_invitation(invitation_id)
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            return GroupMembershipObservation("accepted")
+
+    def decline_invitation(self, profile, invitation_id):
+        self._require_local(profile)
+        with storage_errors():
+            try:
+                self._service.decline_group_invitation(invitation_id)
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            return GroupMembershipObservation("declined")

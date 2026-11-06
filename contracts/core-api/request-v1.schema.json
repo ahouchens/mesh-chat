@@ -1584,6 +1584,46 @@
     {
       "type": "object",
       "properties": {
+        "api_version": {"const": 1},
+        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"},
+        "operation": {"const": "group.invitation_accept"},
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {"$ref": "#/$defs/handle"},
+            "invitation": {"$ref": "#/$defs/handle"}
+          },
+          "required": ["profile", "invitation"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["api_version", "request_id", "operation", "params"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "api_version": {"const": 1},
+        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"},
+        "operation": {"const": "group.invitation_decline"},
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {"$ref": "#/$defs/handle"},
+            "invitation": {"$ref": "#/$defs/handle"}
+          },
+          "required": ["profile", "invitation"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["api_version", "request_id", "operation", "params"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
         "api_version": {
           "const": 1
         },

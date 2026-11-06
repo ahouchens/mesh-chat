@@ -23,6 +23,13 @@ class GroupMembershipObservation:
     state: str
 
 
+@dataclass(frozen=True)
+class GroupInvitationObservation:
+    invitation_id: str
+    group_id: str
+    title: str
+
+
 class Groups(Protocol):
     def list(self, profile: str) -> list[GroupObservation]: ...
 
@@ -37,3 +44,11 @@ class Groups(Protocol):
 
     def remove(self, profile: str, group_id: str,
                contact_id: str) -> GroupMembershipObservation: ...
+
+    def invitations(self, profile: str) -> list[GroupInvitationObservation]: ...
+
+    def accept_invitation(self, profile: str,
+                          invitation_id: str) -> GroupMembershipObservation: ...
+
+    def decline_invitation(self, profile: str,
+                           invitation_id: str) -> GroupMembershipObservation: ...

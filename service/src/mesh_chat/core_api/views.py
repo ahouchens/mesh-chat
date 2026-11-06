@@ -587,3 +587,11 @@ def group_membership_view(profile, group, value):
             or value.state not in {"left", "closed", "removed"}):
         raise ValueError("Invalid group membership observation")
     return {"profile": profile, "group": group, "state": value.state}
+
+
+def group_invitation_decision_view(profile, invitation, value):
+    if (any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
+            for item in (profile, invitation))
+            or value.state not in {"accepted", "declined"}):
+        raise ValueError("Invalid group invitation decision")
+    return {"profile": profile, "invitation": invitation, "state": value.state}

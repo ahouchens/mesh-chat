@@ -32,6 +32,8 @@
     "group.create",
     "group.message_enqueue",
     "group.member_remove",
+    "group.invitation_decline",
+    "group.invitation_accept",
     "group.close",
     "group.leave",
     "peer.pairing_accept",
@@ -351,6 +353,20 @@
     },
     {
       "operation": "group.member_remove",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "repeatable"
+    },
+    {
+      "operation": "group.invitation_decline",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "repeatable"
+    },
+    {
+      "operation": "group.invitation_accept",
       "permission": "send",
       "scope": "profile",
       "mutation": true,

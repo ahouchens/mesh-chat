@@ -136,6 +136,11 @@ class CoreClient:
             "profile": handle, "title": title, "posting_policy": posting_policy,
             "members": members})
 
+    def group_invitation(self, handle, invitation, accept):
+        return self.request(
+            "group.invitation_accept" if accept else "group.invitation_decline",
+            {"profile": handle, "invitation": invitation})
+
     def leave_group(self, handle, group):
         return self.request("group.leave", {"profile": handle, "group": group})
 

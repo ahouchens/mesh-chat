@@ -126,6 +126,8 @@ def test_each_designed_operation_has_an_executable_request_vector_and_permission
         "group.leave": {"group": handle},
         "group.close": {"group": handle},
         "group.member_remove": {"group": handle, "member": handle},
+        "group.invitation_accept": {"invitation": handle},
+        "group.invitation_decline": {"invitation": handle},
         "group.create": {"title": "Team", "posting_policy": "members",
                           "members": [handle]},
 

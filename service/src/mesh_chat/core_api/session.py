@@ -15,7 +15,8 @@ from threading import RLock
 import uuid
 from typing import Protocol
 
-from .views import (call_settings_view, draft_view, group_list_view, group_membership_view,
+from .views import (call_settings_view, draft_view, group_invitation_decision_view,
+    group_list_view, group_membership_view,
     group_message_sent_view, group_view, network_settings_view, reaction_view,
     peer_delete_view, peer_trust_view,
     acceptance_view, acknowledgment_view, connection_view, event_view, intent_view, message_view,
@@ -112,6 +113,8 @@ PERMISSION_BY_OPERATION = {
     "group.leave": "send",
     "group.close": "send",
     "group.member_remove": "send",
+    "group.invitation_accept": "send",
+    "group.invitation_decline": "send",
     "profile.query": "observe",
     "application.snapshot": "approve",
     "application.command": "approve",
@@ -364,7 +367,9 @@ class CoreSession:
             return snapshot
         profile = grant.profiles[0]
         result = dict(snapshot)
-        for key, kind in (("contacts", "peer"), ("groups", "group"), ("workspaces", "workspace")):
+        for key, kind in (("contacts", "peer"), ("groups", "group"),
+                          ("group_invitations", "group_invitation"),
+                          ("workspaces", "workspace")):
             values = result.get(key)
             if isinstance(values, list):
                 result[key] = [self._snapshot_handle(grant, kind, profile, item)
@@ -429,6 +434,20 @@ class CoreSession:
         if operation in INTENT_OPERATIONS:
             return self._intent_operation(grant, profile, operation, params)
         if operation in GROUP_OPERATIONS:
+            if operation in {"group.invitation_accept", "group.invitation_decline"}:
+                invitation_id = next(
+                    (item.invitation_id for item in self._groups.invitations(profile)
+                     if self._handle(grant, "group_invitation", profile, item.invitation_id)
+                     == params["invitation"]),
+                    None)
+                if invitation_id is None:
+                    raise ApiFailure("forbidden")
+                if operation == "group.invitation_accept":
+                    observation = self._groups.accept_invitation(profile, invitation_id)
+                else:
+                    observation = self._groups.decline_invitation(profile, invitation_id)
+                return group_invitation_decision_view(
+                    params["profile"], params["invitation"], observation)
             if operation in {"group.leave", "group.close", "group.member_remove"}:
                 group_id = self._group_identifier(grant, profile, params["group"])
                 if operation == "group.member_remove":

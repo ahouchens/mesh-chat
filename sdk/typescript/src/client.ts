@@ -254,6 +254,12 @@ export class CoreClient {
     return this.request("group.create", { profile, title, posting_policy: postingPolicy, members });
   }
 
+  async groupInvitation(profile: string, invitation: string, accept: boolean): Promise<unknown> {
+    return this.request(accept ? "group.invitation_accept" : "group.invitation_decline", {
+      profile, invitation,
+    });
+  }
+
   async leaveGroup(profile: string, group: string): Promise<unknown> {
     return this.request("group.leave", { profile, group });
   }

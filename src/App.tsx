@@ -63,6 +63,7 @@ import {
   coreApiPeerForDestination,
   coreApiRequest,
   coreApiCloseGroup,
+  coreApiGroupInvitation,
   coreApiLeaveGroup,
   coreApiRemoveGroupMember,
   coreApiSendGroupMessage,
@@ -6106,7 +6107,19 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     setGroupInvitationError("");
     setDismissedGroupInvitations((current) => current.filter((id) => id !== invitation.id));
     try {
-      const result = await serviceCommand<Group | null>(accept ? "accept_group_invitation" : "decline_group_invitation", { invitation_id: invitation.id });
+      let result: Group | null = null;
+      let handled = false;
+      if (invitation.core_handle) {
+        try {
+          await coreApiGroupInvitation(invitation.core_handle, accept);
+          handled = true;
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+        }
+      }
+      if (!handled) {
+        result = await serviceCommand<Group | null>(accept ? "accept_group_invitation" : "decline_group_invitation", { invitation_id: invitation.id });
+      }
       if (accept) selectConversation({ kind: "group", id: result?.id ?? invitation.group_id });
       await refresh(true);
     } catch (reason) {
