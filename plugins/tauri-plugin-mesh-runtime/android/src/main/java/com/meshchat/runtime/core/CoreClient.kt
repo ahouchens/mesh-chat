@@ -290,25 +290,27 @@ class CoreClient private constructor(private val transport: CoreTransport) {
     }
 
     fun workspaceAdminRequest(profile: String, workspace: String, requestId: String,
-                              action: String, idempotencyKey: String): JSONObject =
-        request(when (action) {
+                              action: String, idempotencyKey: String): JSONObject {
+        val operation = when (action) {
             "approve" -> "workspace.admin_request_approve"
             "decline" -> "workspace.admin_request_decline"
             "cancel" -> "workspace.admin_request_cancel"
             "dismiss" -> "workspace.admin_request_dismiss"
             else -> throw CoreException("invalid_request")
-        }, JSONObject().put("profile", profile)
+        }
+        return dispatch(operation, JSONObject().put("profile", profile)
             .put("workspace", workspace).put("request", requestId), idempotencyKey)
+    }
 
     fun workspaceMetadata(profile: String, workspace: String, name: String,
                            description: String, idempotencyKey: String): JSONObject =
-        request("workspace.metadata_update", JSONObject().put("profile", profile)
+        dispatch("workspace.metadata_update", JSONObject().put("profile", profile)
             .put("workspace", workspace).put("name", name).put("description", description),
             idempotencyKey)
 
     fun workspaceRetention(profile: String, workspace: String, retentionDays: Int?,
                            idempotencyKey: String): JSONObject =
-        request("workspace.retention_update", JSONObject().put("profile", profile)
+        dispatch("workspace.retention_update", JSONObject().put("profile", profile)
             .put("workspace", workspace).put("retention_days", retentionDays ?: JSONObject.NULL),
             idempotencyKey)
 
@@ -344,7 +346,7 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         workspace: String,
         device: String,
         idempotencyKey: String,
-    ): JSONObject = request(
+    ): JSONObject = dispatch(
         "workspace.device_removal_request",
         JSONObject().put("profile", profile).put("workspace", workspace).put("device", device),
         idempotencyKey,
@@ -356,7 +358,7 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         requestHandle: String,
         approve: Boolean,
         idempotencyKey: String,
-    ): JSONObject = request(
+    ): JSONObject = dispatch(
         if (approve) "workspace.device_removal_approve"
         else "workspace.device_removal_decline",
         JSONObject().put("profile", profile).put("workspace", workspace)
