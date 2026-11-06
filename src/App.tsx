@@ -69,6 +69,9 @@ import {
   coreApiWorkspacePolicy,
   coreApiCreateWorkspaceChannel,
   coreApiUpdateWorkspaceChannel,
+  coreApiUpdateChannelMembers,
+  coreApiOfferChannelTransfer,
+  coreApiAcceptChannelTransfer,
   coreApiLeaveGroup,
   coreApiRemoveGroupMember,
   coreApiSendGroupMessage,
@@ -6364,6 +6367,56 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     if (!selectedWorkspace || workspaceActionBusy) return;
     setWorkspaceActionBusy(true); setWorkspaceActionError("");
     try {
+      if (command === "update_workspace_private_channel_members" && selectedWorkspace.core_handle
+          && typeof payload.channel_id === "string") {
+        const channel = selectedWorkspaceChannels.find((item) => item.id === payload.channel_id);
+        const selected = Array.isArray(payload.member_ids) ? payload.member_ids : [];
+        const members = selected.flatMap((id) => {
+          const member = selectedWorkspace.members.find((item) => item.id === id);
+          return member?.core_handle ? [member.core_handle] : [];
+        });
+        if (channel?.core_handle) {
+          try {
+            await coreApiUpdateChannelMembers(
+              selectedWorkspace.core_handle, channel.core_handle, members, newOperationId());
+            await refresh(true);
+            return;
+          } catch (reason) {
+            if (!String(reason).includes("core_api_unavailable")) throw reason;
+          }
+        }
+      }
+      if (command === "offer_workspace_channel_transfer" && selectedWorkspace.core_handle
+          && typeof payload.channel_id === "string"
+          && typeof payload.successor_member_id === "string") {
+        const channel = selectedWorkspaceChannels.find((item) => item.id === payload.channel_id);
+        const member = selectedWorkspace.members.find((item) => item.id === payload.successor_member_id);
+        if (channel?.core_handle && member?.core_handle) {
+          try {
+            await coreApiOfferChannelTransfer(
+              selectedWorkspace.core_handle, channel.core_handle, member.core_handle, newOperationId());
+            await refresh(true);
+            return;
+          } catch (reason) {
+            if (!String(reason).includes("core_api_unavailable")) throw reason;
+          }
+        }
+      }
+      if (command === "accept_workspace_channel_transfer" && selectedWorkspace.core_handle
+          && typeof payload.transfer_id === "string") {
+        const transfer = workspaceChannelTransfers.find((item) => item.id === payload.transfer_id);
+        const channel = transfer && selectedWorkspaceChannels.find((item) => item.id === transfer.channel_id);
+        if (channel?.core_handle) {
+          try {
+            await coreApiAcceptChannelTransfer(
+              selectedWorkspace.core_handle, channel.core_handle, newOperationId());
+            await refresh(true);
+            return;
+          } catch (reason) {
+            if (!String(reason).includes("core_api_unavailable")) throw reason;
+          }
+        }
+      }
       if (command === "update_workspace_channel" && selectedWorkspace.core_handle
           && typeof payload.channel_id === "string") {
         const channel = selectedWorkspaceChannels.find((item) => item.id === payload.channel_id);

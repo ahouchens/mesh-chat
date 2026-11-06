@@ -371,6 +371,47 @@ export async function coreApiCreateWorkspaceChannel(
   return created;
 }
 
+export async function coreApiUpdateChannelMembers(
+  workspace: string,
+  channel: string,
+  members: string[],
+  idempotencyKey: string,
+): Promise<unknown> {
+  const profile = await coreApiProfile();
+  return coreApiRequest(
+    "workspace.channel_members_update",
+    { profile: profile.profile, workspace, channel, members },
+    idempotencyKey,
+  );
+}
+
+export async function coreApiOfferChannelTransfer(
+  workspace: string,
+  channel: string,
+  member: string,
+  idempotencyKey: string,
+): Promise<unknown> {
+  const profile = await coreApiProfile();
+  return coreApiRequest(
+    "workspace.channel_transfer_offer",
+    { profile: profile.profile, workspace, channel, member },
+    idempotencyKey,
+  );
+}
+
+export async function coreApiAcceptChannelTransfer(
+  workspace: string,
+  channel: string,
+  idempotencyKey: string,
+): Promise<unknown> {
+  const profile = await coreApiProfile();
+  return coreApiRequest(
+    "workspace.channel_transfer_accept",
+    { profile: profile.profile, workspace, channel },
+    idempotencyKey,
+  );
+}
+
 export async function coreApiUpdateWorkspaceChannel(
   workspace: string,
   channel: string,
