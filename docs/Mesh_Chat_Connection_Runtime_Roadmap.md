@@ -1318,6 +1318,7 @@ M5 - supported reusable core
 - [x] The facade dispatcher resolves profiles, workspace scopes, workspace channels and idempotency keys through helpers; workspace operations are split into query, access-mutation and resource-mutation handlers, leaving _execute a 50-line cross-cutting dispatcher.
 - [x] Reconnect start/stop use typed connection.start/connection.stop with the profile destination, falling back only when Core is unavailable.
 - [x] pplication.snapshot adds caller-scoped core_handle fields to contacts, groups and workspaces, allowing aggregate UI state to drive typed operations without internal IDs.
+- [x] Workspace device-link submission uses typed workspace.device_link_submit and reconciles the joined workspace from a fresh snapshot.
 - [x] Workspace device-link creation uses typed workspace.device_link_create; decisions use typed approve/decline with snapshot handles.
 - [x] Workspace device-link decisions use typed facade operations with snapshot transition handles.
 - [x] Workspace private-channel rosters and management transfers use typed channel-member/transfer operations with snapshot handles.
