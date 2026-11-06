@@ -1325,6 +1325,7 @@ M5 - supported reusable core
 - [x] Workspace private-channel rosters and management transfers use typed channel-member/transfer operations with snapshot handles.
 - [x] Workspace channel edits and archives use typed workspace.channel_update/workspace.channel_archive with snapshot channel handles.
 - [x] Workspace channel creation uses typed workspace.channel_create plus a typed topic update, mapping selected members to handles.
+- [x] Workspace admin-request submission, display-name requests and read-hint sync use typed facade operations.
 - [x] Workspace authority successor offers use a typed facade operation with member/device handles.
 - [x] Workspace authority accept/finalize use typed facade operations with snapshot transition handles.
 - [x] Workspace authority-loss reporting uses a typed facade operation.
@@ -1352,9 +1353,9 @@ M5 - supported reusable core
       sends renderer commands through `application.command`; it falls back to
       its legacy Python bridge only when the Core exchange is unavailable or a
       snapshot exceeds the Binder frame budget.
-- [ ] Calls, groups, settings, drafts, reactions and workspace administration
-      typed as first-class facade operations instead of the compatibility
-      adapter.
+- [x] Calls, groups, settings, drafts, reactions and workspace administration
+      typed as first-class facade operations. The compatibility adapter remains
+      only as an unavailable-Core fallback.
 - [ ] Independent Windows and Android consumers built only from distribution
       artifacts and documentation.
 
