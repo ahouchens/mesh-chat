@@ -249,6 +249,9 @@ class CoreClient:
         "dismiss": "workspace.admin_request_dismiss",
     }
 
+    def workspace_snapshot(self, handle):
+        return self.request("workspace.snapshot", {"profile": handle})
+
     def workspace_timeline_query(self, handle, workspace, view, **params):
         return self.request("workspace.timeline_query",
                             {"profile": handle, "workspace": workspace, "view": view, **params})

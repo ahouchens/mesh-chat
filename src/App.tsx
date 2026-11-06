@@ -81,6 +81,7 @@ import {
   coreApiWorkspaceAuthority,
   coreApiWorkspaceAuthorityOffer,
   coreApiWorkspaceAdminSubmit,
+  coreApiWorkspaceSnapshot,
   coreApiTimelineMutation,
   coreApiTimelineQuery,
   coreApiAdmissionGrantEnd,
@@ -438,6 +439,15 @@ async function mutateWorkspaceTimeline(
     }
   }
   return serviceCommand<Record<string, unknown>>(fallbackCommand, { workspace_id: workspace.id, operation_id: newOperationId(), ...params });
+}
+
+async function loadWorkspaceSnapshot(): Promise<WorkspaceSnapshot> {
+  try {
+    return await coreApiWorkspaceSnapshot() as unknown as WorkspaceSnapshot;
+  } catch (reason) {
+    if (!String(reason).includes("core_api_unavailable")) throw reason;
+  }
+  return serviceCommand<WorkspaceSnapshot>("workspace_snapshot");
 }
 
 function errorMessage(error: unknown): string {
@@ -7817,7 +7827,7 @@ export default function App() {
         () => requestWorkspaceSnapshot(false),
       );
     }
-    const request = serviceCommand<WorkspaceSnapshot>("workspace_snapshot").then((latest) => {
+    const request = loadWorkspaceSnapshot().then((latest) => {
       setSnapshot((current) => current ? { ...current, ...latest } : current);
       return latest;
     });

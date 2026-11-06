@@ -796,6 +796,13 @@
       "scope": "profile",
       "mutation": true,
       "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.snapshot",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
     }
   ],
   "limits": {

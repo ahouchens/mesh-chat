@@ -292,6 +292,9 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         )
     }
 
+    fun workspaceSnapshot(profile: String): JSONObject =
+        request("workspace.snapshot", JSONObject().put("profile", profile))
+
     fun workspaceTimelineQuery(profile: String, workspace: String, view: String,
                                params: JSONObject = JSONObject()): JSONObject {
         val payload = JSONObject().put("profile", profile).put("workspace", workspace)

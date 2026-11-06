@@ -993,3 +993,12 @@ class ServiceWorkspaceAdmin:
             except ValidationError as error:
                 raise ApiFailure("invalid_request") from error
             return "ended"
+
+
+    def snapshot(self, profile):
+        self._require_local(profile)
+        with storage_errors():
+            value = self._service.workspace_snapshot()
+            if not isinstance(value, dict):
+                raise ApiFailure("internal")
+            return dict(value)

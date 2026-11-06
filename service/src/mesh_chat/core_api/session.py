@@ -53,7 +53,7 @@ from .requests import (
     WORKSPACE_CHANNEL_MEMBERS_UPDATE_OPERATIONS, WORKSPACE_CHANNEL_UPDATE_OPERATIONS,
     WORKSPACE_CHANNEL_TRANSFER_ACCEPT_OPERATIONS, WORKSPACE_CHANNEL_TRANSFER_OFFER_OPERATIONS,
     WORKSPACE_POLICY_UPDATE_OPERATIONS, WORKSPACE_METADATA_OPERATIONS,
-    WORKSPACE_RETENTION_OPERATIONS, WORKSPACE_ADMIN_REQUEST_OPERATIONS, WORKSPACE_LIFECYCLE_OPERATIONS, WORKSPACE_AUTHORITY_LOSS_OPERATIONS, WORKSPACE_AUTHORITY_OPERATIONS, WORKSPACE_AUTHORITY_OFFER_OPERATIONS, WORKSPACE_EDGE_OPERATIONS, WORKSPACE_ADMISSION_OPERATIONS, WORKSPACE_TIMELINE_OPERATIONS, WORKSPACE_DEVICES_OPERATIONS,
+    WORKSPACE_RETENTION_OPERATIONS, WORKSPACE_ADMIN_REQUEST_OPERATIONS, WORKSPACE_LIFECYCLE_OPERATIONS, WORKSPACE_AUTHORITY_LOSS_OPERATIONS, WORKSPACE_AUTHORITY_OPERATIONS, WORKSPACE_AUTHORITY_OFFER_OPERATIONS, WORKSPACE_EDGE_OPERATIONS, WORKSPACE_ADMISSION_OPERATIONS, WORKSPACE_TIMELINE_OPERATIONS, WORKSPACE_SNAPSHOT_OPERATIONS, WORKSPACE_DEVICES_OPERATIONS,
     WORKSPACE_DEVICE_REMOVE_OPERATIONS,
     WORKSPACE_DEVICE_REMOVAL_REQUEST_OPERATIONS,
     WORKSPACE_DEVICE_REMOVAL_DECIDE_OPERATIONS,
@@ -180,6 +180,7 @@ PERMISSION_BY_OPERATION = {
     "workspace.admission_grant_create": "approve",
     "workspace.admission_grant_accept": "approve",
     "workspace.admission_grant_end": "approve",
+    "workspace.snapshot": "read",
     "workspace.timeline_query": "read",
     "workspace.timeline_mutation": "send",
     "workspace.query": "read",
@@ -313,6 +314,7 @@ class CoreSession:
             (WORKSPACE_EDGE_OPERATIONS, self._workspace_admin),
             (WORKSPACE_ADMISSION_OPERATIONS, self._workspace_admin),
             (WORKSPACE_TIMELINE_OPERATIONS, self._workspace_timeline),
+            (WORKSPACE_SNAPSHOT_OPERATIONS, self._workspace_admin),
             (WORKSPACE_DEVICES_OPERATIONS, self._workspace_admin),
             (WORKSPACE_DEVICE_REMOVE_OPERATIONS, self._workspace_admin),
             (DIAGNOSTIC_OPERATIONS, self._diagnostics),
@@ -623,6 +625,9 @@ class CoreSession:
                 target, inside, invitation_id, operation_id)
             return {"profile": params["profile"], "workspace": params["workspace"],
                     "invitation": params["invitation"], "state": state}
+        if operation in WORKSPACE_SNAPSHOT_OPERATIONS:
+            target = self._profile_target(profiles, params)
+            return self._workspace_admin.snapshot(target)
         if operation in WORKSPACE_TIMELINE_OPERATIONS:
             target, inside = self._workspace_scope(grant, profiles, params)
             if operation == "workspace.timeline_query":

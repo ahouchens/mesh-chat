@@ -433,6 +433,11 @@ export async function coreApiCreateWorkspaceDeviceLink(
   };
 }
 
+export async function coreApiWorkspaceSnapshot(): Promise<Record<string, unknown>> {
+  const profile = await coreApiProfile();
+  return coreApiRequest("workspace.snapshot", { profile: profile.profile });
+}
+
 export async function coreApiTimelineQuery(
   workspace: string, view: "threads" | "thread_messages" | "mentions" | "search",
   params: Record<string, unknown> = {},

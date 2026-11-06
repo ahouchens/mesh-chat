@@ -521,6 +521,10 @@ export class CoreClient {
     );
   }
 
+  async workspaceSnapshot(profile: string): Promise<unknown> {
+    return this.request("workspace.snapshot", { profile });
+  }
+
   async workspaceTimelineQuery(profile: string, workspace: string, view: string,
                                params: Record<string, unknown> = {}): Promise<unknown> {
     return this.request("workspace.timeline_query",
