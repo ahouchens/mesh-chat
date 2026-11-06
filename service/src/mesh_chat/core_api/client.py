@@ -249,6 +249,11 @@ class CoreClient:
         "dismiss": "workspace.admin_request_dismiss",
     }
 
+    def workspace_connection(self, handle, action, key=None, **params):
+        return self.request("workspace.connection",
+                            {"profile": handle, "action": action, **params},
+                            idempotency_key=key)
+
     def workspace_history(self, handle, workspace, action, key=None, **params):
         return self.request("workspace.history",
                             {"profile": handle, "workspace": workspace,

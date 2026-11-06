@@ -292,6 +292,16 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         )
     }
 
+    fun workspaceConnection(profile: String, action: String,
+                            params: JSONObject = JSONObject(),
+                            idempotencyKey: String? = null): JSONObject {
+        val payload = JSONObject().put("profile", profile).put("action", action)
+        val keys = params.keys()
+        while (keys.hasNext()) { val key = keys.next(); payload.put(key, params.get(key)) }
+        return if (idempotencyKey == null) request("workspace.connection", payload)
+        else dispatch("workspace.connection", payload, idempotencyKey)
+    }
+
     fun workspaceHistory(profile: String, workspace: String, action: String,
                          params: JSONObject = JSONObject(),
                          idempotencyKey: String? = null): JSONObject {

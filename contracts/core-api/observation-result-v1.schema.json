@@ -76,7 +76,7 @@
           "type": "array",
           "uniqueItems": true,
           "minItems": 3,
-          "maxItems": 96,
+          "maxItems": 97,
           "items": {
             "enum": [
               "application.snapshot",
@@ -133,6 +133,7 @@
               "workspace.snapshot",
               "workspace.access_recommendation",
               "workspace.history",
+              "workspace.connection",
               "workspace.admission_grant_end",
               "workspace.admission_grant_accept",
               "workspace.admission_grant_create",

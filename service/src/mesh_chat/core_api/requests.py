@@ -60,6 +60,7 @@ WORKSPACE_AUTHORITY_OPERATIONS = ("workspace.authority_accept", "workspace.autho
 WORKSPACE_AUTHORITY_OFFER_OPERATIONS = ("workspace.authority_offer",)
 WORKSPACE_ACCESS_OPERATIONS = ("workspace.access_recommendation",)
 WORKSPACE_HISTORY_OPERATIONS = ("workspace.history",)
+WORKSPACE_CONNECTION_OPERATIONS = ("workspace.connection",)
 WORKSPACE_SNAPSHOT_OPERATIONS = ("workspace.snapshot",)
 WORKSPACE_TIMELINE_OPERATIONS = ("workspace.timeline_query",
                                 "workspace.timeline_mutation")
@@ -248,6 +249,32 @@ def parse_request(value, operations):
                 or any(not isinstance(item, str) or HANDLE.fullmatch(item) is None
                        for item in params.values())):
             raise ApiFailure("invalid_request")
+        return operation, params
+    if operation in WORKSPACE_CONNECTION_OPERATIONS:
+        params = value[params]
+        action = params.get(action) if isinstance(params, dict) else None
+        allowed = {
+            reconnect_status: {profile, workspace, action},
+            reconnect_consent: {profile, workspace, action,
+                                  auto_reconnect, allow_direct_ip_disclosure,
+                                  relay_consent_scope},
+            invite_contact: {profile, workspace, action, contact_id},
+            prompt_preview: {profile, action, prompt_id},
+            prompt_submit: {profile, action, prompt_id},
+            prompt_dismiss: {profile, action, prompt_id},
+            device_link_preview: {profile, action, device_link},
+        }
+        if not isinstance(params, dict) or action not in allowed or set(params) != allowed[action]:
+            raise ApiFailure(invalid_request)
+        if not isinstance(params[profile], str) or HANDLE.fullmatch(params[profile]) is None:
+            raise ApiFailure(invalid_request)
+        if workspace in params and (not isinstance(params[workspace], str)
+                                      or HANDLE.fullmatch(params[workspace]) is None):
+            raise ApiFailure(invalid_request)
+        if action == reconnect_consent and (type(params[auto_reconnect]) is not bool
+                                              or type(params[allow_direct_ip_disclosure]) is not bool
+                                              or params[relay_consent_scope] not in {workspace, profile}):
+            raise ApiFailure(invalid_request)
         return operation, params
     if operation in WORKSPACE_HISTORY_OPERATIONS:
         params = value[params]
@@ -934,6 +961,7 @@ COMPONENT_OPERATIONS = (
     + WORKSPACE_SNAPSHOT_OPERATIONS
     + WORKSPACE_ACCESS_OPERATIONS
     + WORKSPACE_HISTORY_OPERATIONS
+    + WORKSPACE_CONNECTION_OPERATIONS
     + WORKSPACE_DEVICES_OPERATIONS
     + WORKSPACE_DEVICE_REMOVE_OPERATIONS
     + WORKSPACE_DEVICE_REMOVAL_DECIDE_OPERATIONS

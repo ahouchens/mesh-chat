@@ -521,6 +521,13 @@ export class CoreClient {
     );
   }
 
+  async workspaceConnection(profile: string, action: string,
+                            params: Record<string, unknown> = {},
+                            idempotencyKey?: string): Promise<unknown> {
+    return this.request("workspace.connection", { profile, action, ...params },
+      idempotencyKey ? { idempotencyKey } : undefined);
+  }
+
   async workspaceHistory(profile: string, workspace: string, action: string,
                          params: Record<string, unknown> = {},
                          idempotencyKey?: string): Promise<unknown> {

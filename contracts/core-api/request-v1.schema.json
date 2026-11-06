@@ -2380,6 +2380,37 @@
     {
       "type": "object",
       "properties": {
+        "api_version": {"const": 1},
+        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"},
+        "operation": {"const": "workspace.connection"},
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {"$ref": "#/$defs/handle"},
+            "workspace": {"$ref": "#/$defs/handle"},
+            "action": {"enum": ["reconnect_status", "reconnect_consent", "invite_contact",
+                                 "prompt_preview", "prompt_submit", "prompt_dismiss",
+                                 "device_link_preview"]},
+            "auto_reconnect": {"type": "boolean"},
+            "allow_direct_ip_disclosure": {"type": "boolean"},
+            "relay_consent_scope": {"enum": ["workspace", "profile"]},
+            "contact_id": {"type": "string", "minLength": 1, "maxLength": 160},
+            "prompt_id": {"type": "string", "minLength": 1, "maxLength": 160},
+            "device_link": {"type": "string", "minLength": 1, "maxLength": 16384}
+          },
+          "required": ["profile", "action"],
+          "additionalProperties": false
+        },
+        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"}
+      },
+      "required": ["api_version", "request_id", "operation", "params"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
         "api_version": {
           "const": 1
         },

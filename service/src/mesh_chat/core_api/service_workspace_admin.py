@@ -1061,3 +1061,34 @@ class ServiceWorkspaceAdmin:
             except ValidationError as error:
                 raise ApiFailure("invalid_request") from error
             raise ApiFailure("invalid_request")
+
+
+    def connection(self, profile, workspace_id, action, params, operation_id):
+        self._require_local(profile)
+        with storage_errors():
+            try:
+                if action == "reconnect_status":
+                    return dict(self._service.workspace_reconnect_status(workspace_id))
+                if action == "reconnect_consent":
+                    return dict(self._service.workspace_reconnect_consent_set(
+                        workspace_id, params["auto_reconnect"],
+                        params["allow_direct_ip_disclosure"],
+                        params.get("relay_consent_scope", "workspace")))
+                if action == "invite_contact":
+                    return dict(self._service.invite_contact_to_workspace(
+                        workspace_id, params["contact_id"]))
+                if action == "prompt_preview":
+                    return dict(self._service.preview_workspace_invitation_prompt(
+                        params["prompt_id"]))
+                if action == "prompt_submit":
+                    return dict(self._service.submit_workspace_invitation_prompt(
+                        params["prompt_id"], operation_id))
+                if action == "prompt_dismiss":
+                    return dict(self._service.dismiss_workspace_invitation_prompt(
+                        params["prompt_id"]))
+                if action == "device_link_preview":
+                    return dict(self._service.preview_workspace_device_link(
+                        params["device_link"]))
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            raise ApiFailure("invalid_request")

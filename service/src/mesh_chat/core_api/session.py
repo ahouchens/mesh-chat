@@ -53,7 +53,7 @@ from .requests import (
     WORKSPACE_CHANNEL_MEMBERS_UPDATE_OPERATIONS, WORKSPACE_CHANNEL_UPDATE_OPERATIONS,
     WORKSPACE_CHANNEL_TRANSFER_ACCEPT_OPERATIONS, WORKSPACE_CHANNEL_TRANSFER_OFFER_OPERATIONS,
     WORKSPACE_POLICY_UPDATE_OPERATIONS, WORKSPACE_METADATA_OPERATIONS,
-    WORKSPACE_RETENTION_OPERATIONS, WORKSPACE_ADMIN_REQUEST_OPERATIONS, WORKSPACE_LIFECYCLE_OPERATIONS, WORKSPACE_AUTHORITY_LOSS_OPERATIONS, WORKSPACE_AUTHORITY_OPERATIONS, WORKSPACE_AUTHORITY_OFFER_OPERATIONS, WORKSPACE_EDGE_OPERATIONS, WORKSPACE_ADMISSION_OPERATIONS, WORKSPACE_TIMELINE_OPERATIONS, WORKSPACE_SNAPSHOT_OPERATIONS, WORKSPACE_ACCESS_OPERATIONS, WORKSPACE_HISTORY_OPERATIONS, WORKSPACE_DEVICES_OPERATIONS,
+    WORKSPACE_RETENTION_OPERATIONS, WORKSPACE_ADMIN_REQUEST_OPERATIONS, WORKSPACE_LIFECYCLE_OPERATIONS, WORKSPACE_AUTHORITY_LOSS_OPERATIONS, WORKSPACE_AUTHORITY_OPERATIONS, WORKSPACE_AUTHORITY_OFFER_OPERATIONS, WORKSPACE_EDGE_OPERATIONS, WORKSPACE_ADMISSION_OPERATIONS, WORKSPACE_TIMELINE_OPERATIONS, WORKSPACE_SNAPSHOT_OPERATIONS, WORKSPACE_ACCESS_OPERATIONS, WORKSPACE_HISTORY_OPERATIONS, WORKSPACE_CONNECTION_OPERATIONS, WORKSPACE_DEVICES_OPERATIONS,
     WORKSPACE_DEVICE_REMOVE_OPERATIONS,
     WORKSPACE_DEVICE_REMOVAL_REQUEST_OPERATIONS,
     WORKSPACE_DEVICE_REMOVAL_DECIDE_OPERATIONS,
@@ -183,6 +183,7 @@ PERMISSION_BY_OPERATION = {
     "workspace.snapshot": "read",
     "workspace.access_recommendation": "send",
     "workspace.history": "send",
+    "workspace.connection": "send",
     "workspace.timeline_query": "read",
     "workspace.timeline_mutation": "send",
     "workspace.query": "read",
@@ -319,6 +320,7 @@ class CoreSession:
             (WORKSPACE_SNAPSHOT_OPERATIONS, self._workspace_admin),
             (WORKSPACE_ACCESS_OPERATIONS, self._workspace_admin),
             (WORKSPACE_HISTORY_OPERATIONS, self._workspace_admin),
+            (WORKSPACE_CONNECTION_OPERATIONS, self._workspace_admin),
             (WORKSPACE_DEVICES_OPERATIONS, self._workspace_admin),
             (WORKSPACE_DEVICE_REMOVE_OPERATIONS, self._workspace_admin),
             (DIAGNOSTIC_OPERATIONS, self._diagnostics),
@@ -629,6 +631,18 @@ class CoreSession:
                 target, inside, invitation_id, operation_id)
             return {"profile": params["profile"], "workspace": params["workspace"],
                     "invitation": params["invitation"], "state": state}
+        if operation in WORKSPACE_CONNECTION_OPERATIONS:
+            target = self._profile_target(profiles, params)
+            inside = (self._workspace_target(grant, target, params[workspace])
+                      if workspace in params else None)
+            operation_id = (self._required_operation_id(grant, target, key)
+                            if params[action] in {prompt_submit} else None)
+            result = self._workspace_admin.connection(
+                target, inside, params[action], params, operation_id)
+            view = {profile: params[profile], result: result}
+            if inside is not None:
+                view[workspace] = params[workspace]
+            return view
         if operation in WORKSPACE_HISTORY_OPERATIONS:
             target, inside = self._workspace_scope(grant, profiles, params)
             operation_id = (self._required_operation_id(grant, target, key)

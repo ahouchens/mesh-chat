@@ -81,6 +81,7 @@ import {
   coreApiWorkspaceAuthority,
   coreApiWorkspaceAuthorityOffer,
   coreApiWorkspaceAdminSubmit,
+  coreApiWorkspaceConnection,
   coreApiWorkspaceHistory,
   coreApiWorkspaceAccessRecommendation,
   coreApiWorkspaceSnapshot,
@@ -486,6 +487,25 @@ async function fetchWorkspaceHistory(
   }
   return serviceCommand<Record<string, unknown>>(fallbackCommand,
     { workspace_id: workspace.id, ...params, ...(key ? { operation_id: key } : {}) });
+}
+
+async function fetchWorkspaceConnection(
+  workspace: { id: string; core_handle?: string } | null,
+  action: string,
+  params: Record<string, unknown>,
+  fallbackCommand: string,
+  key?: string,
+): Promise<Record<string, unknown>> {
+  if (workspace?.core_handle || !workspace) {
+    try {
+      return await coreApiWorkspaceConnection(workspace?.core_handle ?? null, action, params, key);
+    } catch (reason) {
+      if (!String(reason).includes("core_api_unavailable")) throw reason;
+    }
+  }
+  return serviceCommand<Record<string, unknown>>(fallbackCommand,
+    { ...(workspace ? { workspace_id: workspace.id } : {}), ...params,
+      ...(key ? { operation_id: key } : {}) });
 }
 
 function errorMessage(error: unknown): string {
@@ -3910,14 +3930,16 @@ function JoinWorkspaceDialog({ initialValue = "", promptId, promptWorkspaceName,
       }
       const isDeviceLink = classifyInvitationInput(normalized) === "workspace_device";
       if (isDeviceLink) {
-        const checked = await serviceCommand<WorkspaceDeviceLinkPreview>("preview_workspace_device_link", { device_link: normalized });
+        const checked = await fetchWorkspaceConnection(null, "device_link_preview",
+          { device_link: normalized }, "preview_workspace_device_link") as unknown as WorkspaceDeviceLinkPreview;
         if (generation !== reviewGeneration.current) return;
         setDevicePreview(checked);
         setPreview(null);
         setRemoteConsent(false); setI2PConsent(false);
       } else {
         const checked = promptId
-          ? await serviceCommand<WorkspaceInvitationPreview>("preview_workspace_invitation_prompt", { prompt_id: promptId })
+          ? await fetchWorkspaceConnection(null, "prompt_preview", { prompt_id: promptId },
+              "preview_workspace_invitation_prompt") as unknown as WorkspaceInvitationPreview
           : await serviceCommand<WorkspaceInvitationPreview>("preview_workspace_invitation", { invitation: normalized });
         if (generation !== reviewGeneration.current) return;
         setPreview(checked);
@@ -4096,10 +4118,8 @@ function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles,
     const selectedContact = contacts.find((candidate) => candidate.id === contactId);
     setContactBusy(true); setContactFeedback(""); setContactError("");
     try {
-      const result = await serviceCommand<{ sent: boolean; message_state?: string; invitation: WorkspaceInvitationFormats }>("invite_contact_to_workspace", {
-        workspace_id: workspace.id,
-        contact_id: contactId,
-      });
+      const result = await fetchWorkspaceConnection(workspace, "invite_contact",
+        { contact_id: contactId }, "invite_contact_to_workspace") as unknown as { sent: boolean; message_state?: string; invitation: WorkspaceInvitationFormats };
       if (result.invitation) {
         setExisting((current) => [...current, { ...result.invitation, offered_manifest_digest: "", state: "active", created_at: Date.now() / 1000, contact_id: contactId, contact_display_name: selectedContact?.display_name, delivery_state: result.message_state }]);
       }
@@ -4537,7 +4557,8 @@ function WorkspaceReconnectSettings({ workspace, coordinator }: { workspace: Wor
   const [notice, setNotice] = useState("");
   const load = async () => {
     try {
-      const value = await serviceCommand<WorkspaceReconnectStatus>("workspace_reconnect_status", { workspace_id: workspace.id });
+      const value = await fetchWorkspaceConnection(workspace, "reconnect_status", {},
+        "workspace_reconnect_status") as unknown as WorkspaceReconnectStatus;
       if (typeof value?.enabled !== "boolean" || typeof value?.peer_count !== "number") return;
       setStatus(value);
       setAutoReconnect(value.enabled);
@@ -4548,7 +4569,9 @@ function WorkspaceReconnectSettings({ workspace, coordinator }: { workspace: Wor
   const save = async () => {
     setBusy(true); setError(""); setNotice("");
     try {
-      const value = await serviceCommand<WorkspaceReconnectStatus>("workspace_reconnect_consent_set", { workspace_id: workspace.id, auto_reconnect: autoReconnect, allow_direct_ip_disclosure: allowDirect, relay_consent_scope: "workspace" });
+      const value = await fetchWorkspaceConnection(workspace, "reconnect_consent",
+        { auto_reconnect: autoReconnect, allow_direct_ip_disclosure: allowDirect,
+          relay_consent_scope: "workspace" }, "workspace_reconnect_consent_set") as unknown as WorkspaceReconnectStatus;
       setStatus(value);
       setAutoReconnect(value.enabled);
       setAllowDirect(value.allow_direct_ip_disclosure);
@@ -7444,7 +7467,8 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     setContactInviteDismissBusy(promptId);
     setContactInviteDismissError(null);
     try {
-      await serviceCommand("dismiss_workspace_invitation_prompt", { prompt_id: promptId });
+      await fetchWorkspaceConnection(null, "prompt_dismiss", { prompt_id: promptId },
+        "dismiss_workspace_invitation_prompt");
       setDismissedContactInviteIds((current) => new Set(current).add(promptId));
       void refresh(true).catch(() => undefined);
     } catch {
