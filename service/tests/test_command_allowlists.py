@@ -58,7 +58,6 @@ def test_contact_management_and_workspace_search_are_exposed() -> None:
         "delete_contact",
         "unverify_contact",
         "unblock_contact",
-        "search_workspace",
     ):
         assert command in renderer
         assert command in MeshChatService.COMMANDS

@@ -30,12 +30,49 @@ const api = vi.hoisted(() => {
   coreApiAdmissionGrantCreate: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiAdmissionGrantAccept: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiAdmissionGrantEnd: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
-  coreApiTimelineQuery: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
-  coreApiTimelineMutation: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiTimelineQuery: vi.fn(async (_handle: string, view: string, params: Record<string, unknown>): Promise<unknown> => {
+    const command = view === "threads" ? "list_workspace_threads"
+      : view === "thread_messages" ? "list_workspace_thread_messages"
+      : view === "mentions" ? "list_workspace_mentions" : "search_workspace";
+    return serviceCommand(command, { workspace_id: workspace.id, ...params });
+  }),
+  coreApiTimelineMutation: vi.fn(async (_handle: string, action: string, params: Record<string, unknown>, key: string): Promise<unknown> => {
+    const command = action === "thread_reply" ? "send_workspace_thread_reply"
+      : action === "thread_read" ? "mark_workspace_thread_read"
+      : action === "mentions_read" ? "mark_workspace_mentions_read"
+      : "set_workspace_notification_preference";
+    return serviceCommand(command, { workspace_id: workspace.id, operation_id: key, ...params });
+  }),
   coreApiWorkspaceSnapshot: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
-  coreApiWorkspaceAccessRecommendation: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
-  coreApiWorkspaceHistory: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
-  coreApiWorkspaceConnection: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiWorkspaceAccessRecommendation: vi.fn(async (_handle: string, action: string, params: Record<string, unknown>, key?: string): Promise<unknown> => {
+    const command = action === "list" ? "list_workspace_access_recommendations"
+      : action === "create" ? "create_workspace_access_recommendation"
+      : action === "send" ? "send_workspace_access_recommendation"
+      : action === "preview" ? "preview_workspace_access_recommendation"
+      : action === "apply" ? "apply_workspace_access_recommendation"
+      : action === "preview_by_id" ? "preview_workspace_access_recommendation_by_id"
+      : "apply_workspace_access_recommendation_by_id";
+    const raw = action === "preview" || action === "apply";
+    return serviceCommand(command, raw ? params : { workspace_id: workspace.id, ...params, ...(key ? { operation_id: key } : {}) });
+  }),
+  coreApiWorkspaceHistory: vi.fn(async (_handle: string, action: string, params: Record<string, unknown>, key?: string): Promise<unknown> => {
+    const command = action === "status" ? "get_workspace_history_status"
+      : action === "prune" ? "prune_workspace_history"
+      : action === "revisions" ? "list_workspace_message_revisions"
+      : action === "tombstones" ? "list_workspace_tombstones"
+      : "hide_workspace_direct";
+    return serviceCommand(command, { workspace_id: workspace.id, ...params, ...(key ? { operation_id: key } : {}) });
+  }),
+  coreApiWorkspaceConnection: vi.fn(async (handle: string | null, action: string, params: Record<string, unknown>, key?: string): Promise<unknown> => {
+    const command = action === "reconnect_status" ? "workspace_reconnect_status"
+      : action === "reconnect_consent" ? "workspace_reconnect_consent_set"
+      : action === "invite_contact" ? "invite_contact_to_workspace"
+      : action === "prompt_preview" ? "preview_workspace_invitation_prompt"
+      : action === "prompt_submit" ? "submit_workspace_invitation_prompt"
+      : action === "prompt_dismiss" ? "dismiss_workspace_invitation_prompt"
+      : "preview_workspace_device_link";
+    return serviceCommand(command, { ...(handle ? { workspace_id: workspace.id } : {}), ...params, ...(key ? { operation_id: key } : {}) });
+  }),
   coreApiRuntimeQuery: vi.fn(async (action: string): Promise<unknown> =>
     serviceCommand(action === "background" ? "background_status" : "get_notification_state")),
   coreApiRuntimeMutate: vi.fn(async (action: string, params: Record<string, unknown>): Promise<unknown> =>
@@ -268,6 +305,7 @@ const groupInvitation: GroupInvitation = {
 
 const workspace: Workspace = {
   id: "11111111-1111-4111-8111-111111111111",
+  core_handle: "workspace-handle-1111",
   name: "Lakewatcher",
   description: "Field coordination",
   state: "active",

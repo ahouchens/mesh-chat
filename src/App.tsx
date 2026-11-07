@@ -359,18 +359,8 @@ async function fetchWorkspaceTimeline(
   view: "threads" | "thread_messages" | "mentions" | "search",
   params: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-  if (workspace.core_handle) {
-    try {
-      return await coreApiTimelineQuery(workspace.core_handle, view, params);
-    } catch (reason) {
-      if (!String(reason).includes("core_api_unavailable")) throw reason;
-    }
-  }
-  const command = view === "threads" ? "list_workspace_threads"
-    : view === "thread_messages" ? "list_workspace_thread_messages"
-    : view === "mentions" ? "list_workspace_mentions" : "search_workspace";
-  return serviceCommand<Record<string, unknown>>(command,
-    { workspace_id: workspace.id, ...legacyWorkspaceParams(params) });
+  return await coreApiTimelineQuery(
+    workspace.core_handle ?? "", view, legacyWorkspaceParams(params));
 }
 
 async function mutateWorkspaceTimeline(
@@ -379,17 +369,8 @@ async function mutateWorkspaceTimeline(
   params: Record<string, unknown>,
   fallbackCommand: string,
 ): Promise<Record<string, unknown>> {
-  if (workspace.core_handle) {
-    try {
-      return await coreApiTimelineMutation(workspace.core_handle, action, params, newOperationId());
-    } catch (reason) {
-      if (!String(reason).includes("core_api_unavailable")) throw reason;
-    }
-  }
-  if (action === "notification_preference") throw new Error("core_api_unavailable");
-  return serviceCommand<Record<string, unknown>>(fallbackCommand,
-    { workspace_id: workspace.id, operation_id: newOperationId(),
-      ...legacyWorkspaceParams(params) });
+  return await coreApiTimelineMutation(
+    workspace.core_handle ?? "", action, legacyWorkspaceParams(params), newOperationId());
 }
 
 async function loadWorkspaceSnapshot(): Promise<WorkspaceSnapshot> {
@@ -408,19 +389,8 @@ async function fetchWorkspaceAccessRecommendation(
   fallbackCommand: string,
   key?: string,
 ): Promise<Record<string, unknown>> {
-  if (workspace.core_handle) {
-    try {
-      return await coreApiWorkspaceAccessRecommendation(workspace.core_handle, action as never, params, key);
-    } catch (reason) {
-      if (!String(reason).includes("core_api_unavailable")) throw reason;
-    }
-  }
-  if (action === "preview" || action === "apply") {
-    return serviceCommand<Record<string, unknown>>(fallbackCommand, params);
-  }
-  return serviceCommand<Record<string, unknown>>(fallbackCommand,
-    { workspace_id: workspace.id, ...legacyWorkspaceParams(params),
-      ...(key ? { operation_id: key } : {}) });
+  return await coreApiWorkspaceAccessRecommendation(
+    workspace.core_handle ?? "", action as never, legacyWorkspaceParams(params), key);
 }
 
 async function fetchWorkspaceHistory(
@@ -430,17 +400,8 @@ async function fetchWorkspaceHistory(
   fallbackCommand: string,
   key?: string,
 ): Promise<Record<string, unknown>> {
-  if (workspace.core_handle) {
-    try {
-      return await coreApiWorkspaceHistory(workspace.core_handle, action as never, params, key);
-    } catch (reason) {
-      if (!String(reason).includes("core_api_unavailable")) throw reason;
-    }
-  }
-  if (action === "hide_message") throw new Error("core_api_unavailable");
-  return serviceCommand<Record<string, unknown>>(fallbackCommand,
-    { workspace_id: workspace.id, ...legacyWorkspaceParams(params),
-      ...(key ? { operation_id: key } : {}) });
+  return await coreApiWorkspaceHistory(
+    workspace.core_handle ?? "", action as never, legacyWorkspaceParams(params), key);
 }
 
 async function fetchWorkspaceConnection(
@@ -450,16 +411,8 @@ async function fetchWorkspaceConnection(
   fallbackCommand: string,
   key?: string,
 ): Promise<Record<string, unknown>> {
-  if (workspace?.core_handle || !workspace) {
-    try {
-      return await coreApiWorkspaceConnection(workspace?.core_handle ?? null, action, params, key);
-    } catch (reason) {
-      if (!String(reason).includes("core_api_unavailable")) throw reason;
-    }
-  }
-  return serviceCommand<Record<string, unknown>>(fallbackCommand,
-    { ...(workspace ? { workspace_id: workspace.id } : {}),
-      ...legacyWorkspaceParams(params), ...(key ? { operation_id: key } : {}) });
+  return await coreApiWorkspaceConnection(
+    workspace?.core_handle ?? null, action, legacyWorkspaceParams(params), key);
 }
 
 async function fetchBackgroundStatus(): Promise<BackgroundAvailability> {
@@ -1560,10 +1513,8 @@ function Onboarding({
           return;
         }
         if (kind === "workspace_device") {
-          const checked = await serviceCommand<WorkspaceDeviceLinkPreview>(
-            "preview_workspace_device_link",
-            { device_link: normalized },
-          );
+          const checked = await fetchWorkspaceConnection(null, "device_link_preview",
+            { device_link: normalized }, "preview_workspace_device_link") as unknown as WorkspaceDeviceLinkPreview;
           if (generation !== previewGeneration.current) return;
           setWorkspaceContext({
             kind: "device",

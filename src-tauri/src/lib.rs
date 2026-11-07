@@ -762,10 +762,6 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "close_group"
             | "create_workspace"
             | "create_workspace_invitation"
-            | "invite_contact_to_workspace"
-            | "dismiss_workspace_invitation_prompt"
-            | "preview_workspace_invitation_prompt"
-            | "submit_workspace_invitation_prompt"
             | "preview_workspace_invitation"
             | "preview_direct_connection"
             | "prepare_direct_offer"
@@ -791,7 +787,6 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "approve_workspace_join"
             | "decline_workspace_join"
             | "create_workspace_device_link"
-            | "preview_workspace_device_link"
             | "submit_workspace_device_link"
             | "approve_workspace_device_link"
             | "decline_workspace_device_link"
@@ -801,27 +796,16 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "update_workspace_metadata"
             | "update_workspace_policies"
             | "update_workspace_retention"
-            | "prune_workspace_history"
-            | "get_workspace_history_status"
             | "start_workspace_history"
             | "cancel_workspace_history"
             | "remove_workspace_member"
             | "change_workspace_role"
             | "submit_workspace_admin_request"
             | "workspace_connectivity"
-            | "workspace_reconnect_status"
-            | "workspace_reconnect_consent_set"
             | "workspace_helper_status"
             | "workspace_helper_consent_set"
             | "relay_workspace_connection_update"
             | "workspace_request_paths"
-            | "create_workspace_access_recommendation"
-            | "preview_workspace_access_recommendation"
-            | "apply_workspace_access_recommendation"
-            | "send_workspace_access_recommendation"
-            | "list_workspace_access_recommendations"
-            | "preview_workspace_access_recommendation_by_id"
-            | "apply_workspace_access_recommendation_by_id"
             | "approve_workspace_admin_request"
             | "decline_workspace_admin_request"
             | "cancel_workspace_admin_request"
@@ -843,25 +827,16 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "sync_workspace_channels"
             | "send_workspace_message"
             | "open_workspace_direct"
-            | "hide_workspace_direct"
             | "send_workspace_direct_message"
             | "send_workspace_thread_reply"
             | "edit_workspace_message"
             | "delete_workspace_message"
             | "set_workspace_reaction"
-            | "search_workspace"
             | "list_workspace_messages"
             | "list_workspace_direct_messages"
             | "mark_workspace_read"
             | "set_workspace_read_hint_sync"
             | "mark_workspace_direct_read"
-            | "list_workspace_mentions"
-            | "list_workspace_threads"
-            | "list_workspace_thread_messages"
-            | "list_workspace_message_revisions"
-            | "list_workspace_tombstones"
-            | "mark_workspace_mentions_read"
-            | "mark_workspace_thread_read"
             | "set_workspace_channel_mentions_muted"
             | "save_workspace_draft"
             | "save_workspace_direct_draft"
@@ -2340,8 +2315,6 @@ mod tests {
             "workspace_snapshot",
             "create_workspace",
             "create_workspace_invitation",
-            "invite_contact_to_workspace",
-            "dismiss_workspace_invitation_prompt",
             "offer_workspace_authority_transition",
             "accept_workspace_authority_transition",
             "finalize_workspace_authority_transition",
@@ -2352,7 +2325,6 @@ mod tests {
             "approve_workspace_join",
             "decline_workspace_join",
             "create_workspace_device_link",
-            "preview_workspace_device_link",
             "submit_workspace_device_link",
             "approve_workspace_device_link",
             "decline_workspace_device_link",
@@ -2362,27 +2334,16 @@ mod tests {
             "update_workspace_metadata",
             "update_workspace_policies",
             "update_workspace_retention",
-            "prune_workspace_history",
-            "get_workspace_history_status",
             "start_workspace_history",
             "cancel_workspace_history",
             "remove_workspace_member",
             "change_workspace_role",
             "submit_workspace_admin_request",
             "workspace_connectivity",
-            "workspace_reconnect_status",
-            "workspace_reconnect_consent_set",
             "workspace_helper_status",
             "workspace_helper_consent_set",
             "relay_workspace_connection_update",
             "workspace_request_paths",
-            "create_workspace_access_recommendation",
-            "preview_workspace_access_recommendation",
-            "apply_workspace_access_recommendation",
-            "send_workspace_access_recommendation",
-            "list_workspace_access_recommendations",
-            "preview_workspace_access_recommendation_by_id",
-            "apply_workspace_access_recommendation_by_id",
             "approve_workspace_admin_request",
             "decline_workspace_admin_request",
             "cancel_workspace_admin_request",
@@ -2400,25 +2361,16 @@ mod tests {
             "sync_workspace_channels",
             "send_workspace_message",
             "open_workspace_direct",
-            "hide_workspace_direct",
             "send_workspace_direct_message",
             "send_workspace_thread_reply",
             "edit_workspace_message",
             "delete_workspace_message",
             "set_workspace_reaction",
-            "search_workspace",
             "list_workspace_messages",
             "list_workspace_direct_messages",
             "mark_workspace_read",
             "set_workspace_read_hint_sync",
             "mark_workspace_direct_read",
-            "list_workspace_mentions",
-            "list_workspace_threads",
-            "list_workspace_thread_messages",
-            "list_workspace_message_revisions",
-            "list_workspace_tombstones",
-            "mark_workspace_mentions_read",
-            "mark_workspace_thread_read",
             "set_workspace_channel_mentions_muted",
             "save_workspace_draft",
             "save_workspace_direct_draft",
