@@ -6622,6 +6622,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
             return;
           } catch (reason) {
             if (!String(reason).includes("core_api_unavailable")) throw reason;
+            throw new Error("core_api_unavailable");
           }
         }
       }

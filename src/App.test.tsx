@@ -99,7 +99,8 @@ const api = vi.hoisted(() => {
   coreApiUpdateChannelMembers: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiOfferChannelTransfer: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiAcceptChannelTransfer: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
-  coreApiUpdateWorkspaceChannel: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiUpdateWorkspaceChannel: vi.fn(async (_handle: string, channelHandle: string, name: string, topic: string, archived: boolean, key: string): Promise<unknown> =>
+    serviceCommand("update_workspace_channel", { workspace_id: workspace.id, channel_id: channelHandle === "channel-handle-field" ? "55555555-5555-4555-8555-555555555555" : workspaceChannel.id, name, topic, archived, operation_id: key })),
   coreApiCreateWorkspaceChannel: vi.fn(async (..._args: unknown[]): Promise<{ channel: string; name: string }> => { throw new Error("core_api_unavailable"); }),
   coreApiWorkspacePolicy: vi.fn(async (_handle: string, channelCreation: string, posting: string, invitationRequests: string, key: string): Promise<unknown> =>
     serviceCommand("update_workspace_policies", { workspace_id: workspace.id, channel_creation: channelCreation, posting, invitation_requests: invitationRequests, operation_id: key })),
@@ -344,6 +345,7 @@ const workspace: Workspace = {
 
 const workspaceChannel: WorkspaceChannel = {
   id: workspace.general_channel_id!,
+  core_handle: "workspace-channel-handle",
   workspace_id: workspace.id,
   name: "general",
   name_key: "general",
@@ -6460,7 +6462,7 @@ describe("desktop workspaces", () => {
       device: { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", destination_hash: "99".repeat(16), fingerprint: "BBBB CCCC DDDD EEEE" },
     };
     const expanded: Workspace = { ...workspace, members: [...workspace.members, member] };
-    const channel: WorkspaceChannel = { ...workspaceChannel, id: "55555555-5555-4555-8555-555555555555", name: "field-reports", name_key: "field-reports", display_name: "field-reports", short_id: "555555", is_general: false, subscribed: true, topic: "Daily notes" };
+    const channel: WorkspaceChannel = { ...workspaceChannel, id: "55555555-5555-4555-8555-555555555555", core_handle: "channel-handle-field", name: "field-reports", name_key: "field-reports", display_name: "field-reports", short_id: "555555", is_general: false, subscribed: true, topic: "Daily notes" };
     let current: Snapshot = { ...snapshot(), workspaces: [expanded], workspace_channels: [workspaceChannel, channel], workspace_channel_transfers: [], workspace_join_requests: [], workspace_invitations: [], workspace_drafts: [] };
     api.runtimePlatform.mockResolvedValue("desktop");
     api.initializeService.mockResolvedValue(current);

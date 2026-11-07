@@ -804,7 +804,6 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "request_workspace_display_name"
             | "decide_workspace_display_name"
             | "create_workspace_channel"
-            | "update_workspace_channel"
             | "update_workspace_private_channel_members"
             | "leave_workspace_private_channel"
             | "set_workspace_channel_subscription"
@@ -2320,7 +2319,6 @@ mod tests {
             "request_workspace_display_name",
             "decide_workspace_display_name",
             "create_workspace_channel",
-            "update_workspace_channel",
             "update_workspace_private_channel_members",
             "leave_workspace_private_channel",
             "set_workspace_channel_subscription",
