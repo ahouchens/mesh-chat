@@ -465,8 +465,8 @@ async function fetchBackgroundStatus(): Promise<BackgroundAvailability> {
     return await coreApiRuntimeQuery("background") as unknown as BackgroundAvailability;
   } catch (reason) {
     if (!String(reason).includes("core_api_unavailable")) throw reason;
+    throw new Error("core_api_unavailable");
   }
-  return serviceCommand<BackgroundAvailability>("background_status");
 }
 
 async function setBackgroundAvailability(enabled: boolean): Promise<BackgroundAvailability> {
@@ -474,8 +474,8 @@ async function setBackgroundAvailability(enabled: boolean): Promise<BackgroundAv
     return await coreApiRuntimeMutate("background_set", { enabled }, newOperationId()) as unknown as BackgroundAvailability;
   } catch (reason) {
     if (!String(reason).includes("core_api_unavailable")) throw reason;
+    throw new Error("core_api_unavailable");
   }
-  return serviceCommand<BackgroundAvailability>("set_background_availability", { enabled });
 }
 
 async function fetchNotificationState(): Promise<WorkspaceNotificationState> {
@@ -483,8 +483,8 @@ async function fetchNotificationState(): Promise<WorkspaceNotificationState> {
     return await coreApiRuntimeQuery("notifications") as unknown as WorkspaceNotificationState;
   } catch (reason) {
     if (!String(reason).includes("core_api_unavailable")) throw reason;
+    throw new Error("core_api_unavailable");
   }
-  return serviceCommand<WorkspaceNotificationState>("get_notification_state");
 }
 
 async function setNotificationPreviews(hidden: boolean): Promise<WorkspaceNotificationState> {
@@ -492,8 +492,8 @@ async function setNotificationPreviews(hidden: boolean): Promise<WorkspaceNotifi
     return await coreApiRuntimeMutate("notification_previews", { hidden }, newOperationId()) as unknown as WorkspaceNotificationState;
   } catch (reason) {
     if (!String(reason).includes("core_api_unavailable")) throw reason;
+    throw new Error("core_api_unavailable");
   }
-  return serviceCommand<WorkspaceNotificationState>("set_hide_notification_previews", { hidden, operation_id: newOperationId() });
 }
 
 async function openNotificationTarget(notificationId: string): Promise<NotificationOpenTarget> {
@@ -501,8 +501,8 @@ async function openNotificationTarget(notificationId: string): Promise<Notificat
     return await coreApiRuntimeMutate("notification_open", { notification_id: notificationId }, newOperationId()) as unknown as NotificationOpenTarget;
   } catch (reason) {
     if (!String(reason).includes("core_api_unavailable")) throw reason;
+    throw new Error("core_api_unavailable");
   }
-  return serviceCommand<NotificationOpenTarget>("open_notification_target", { notification_id: notificationId });
 }
 
 

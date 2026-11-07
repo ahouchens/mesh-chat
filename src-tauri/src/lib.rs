@@ -870,13 +870,8 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "leave_workspace"
             | "close_workspace"
             | "remove_workspace_data"
-            | "get_notification_state"
-            | "set_hide_notification_previews"
             | "set_workspace_notification_preference"
-            | "open_notification_target"
             | "reconcile_mobile_lifecycle"
-            | "set_background_availability"
-            | "background_status"
     )
 }
 
@@ -2434,13 +2429,8 @@ mod tests {
             "leave_workspace",
             "close_workspace",
             "remove_workspace_data",
-            "get_notification_state",
-            "set_hide_notification_previews",
             "set_workspace_notification_preference",
-            "open_notification_target",
             "reconcile_mobile_lifecycle",
-            "set_background_availability",
-            "background_status",
         ];
         for command in commands {
             assert!(allowed_renderer_command(command), "{command}");

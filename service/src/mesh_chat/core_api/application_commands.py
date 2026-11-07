@@ -198,11 +198,6 @@ APPLICATION_COMMANDS = frozenset({
     "leave_workspace",
     "close_workspace",
     "remove_workspace_data",
-    "get_notification_state",
-    "set_hide_notification_previews",
     "set_workspace_notification_preference",
-    "open_notification_target",
     "reconcile_mobile_lifecycle",
-    "set_background_availability",
-    "background_status",
 })

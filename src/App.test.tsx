@@ -36,8 +36,12 @@ const api = vi.hoisted(() => {
   coreApiWorkspaceAccessRecommendation: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiWorkspaceHistory: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiWorkspaceConnection: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
-  coreApiRuntimeQuery: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
-  coreApiRuntimeMutate: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiRuntimeQuery: vi.fn(async (action: string): Promise<unknown> =>
+    serviceCommand(action === "background" ? "background_status" : "get_notification_state")),
+  coreApiRuntimeMutate: vi.fn(async (action: string, params: Record<string, unknown>): Promise<unknown> =>
+    serviceCommand(action === "background_set" ? "set_background_availability"
+      : action === "notification_previews" ? "set_hide_notification_previews"
+      : "open_notification_target", params)),
   coreApiWorkspaceAdminSubmit: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiWorkspaceDisplayNameRequest: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiWorkspaceReadHintSync: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
