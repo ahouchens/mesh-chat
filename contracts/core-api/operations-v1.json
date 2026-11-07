@@ -101,7 +101,8 @@
     "workspace.snapshot",
     "workspace.timeline_mutation",
     "workspace.timeline_query",
-    "call.control"
+    "call.control",
+    "workspace.channel_recover"
   ],
   "operations": [
     {
