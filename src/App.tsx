@@ -5972,7 +5972,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
           if (!String(reason).includes("core_api_unavailable")) throw reason;
         }
       }
-      if (!sent) await serviceCommand("send_group_message", { group_id: groupId, text });
+      if (!sent) throw new Error("core_api_unavailable");
     } catch (reason) {
       setGroupDrafts((current) => current[groupId] ? current : { ...current, [groupId]: text });
       scheduleDraftWrite(draftKey, {
@@ -6112,7 +6112,6 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     setGroupInvitationError("");
     setDismissedGroupInvitations((current) => current.filter((id) => id !== invitation.id));
     try {
-      let result: Group | null = null;
       let handled = false;
       if (invitation.core_handle) {
         try {
@@ -6122,11 +6121,8 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
           if (!String(reason).includes("core_api_unavailable")) throw reason;
         }
       }
-      if (!handled) {
-        if (!accept) throw new Error("core_api_unavailable");
-        result = await serviceCommand<Group | null>("accept_group_invitation", { invitation_id: invitation.id });
-      }
-      if (accept) selectConversation({ kind: "group", id: result?.id ?? invitation.group_id });
+      if (!handled) throw new Error("core_api_unavailable");
+      if (accept) selectConversation({ kind: "group", id: invitation.group_id });
       await refresh(true);
     } catch (reason) {
       setGroupInvitationError(errorMessage(reason));
@@ -6157,10 +6153,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
           if (!String(reason).includes("core_api_unavailable")) throw reason;
         }
       }
-      if (!handled) {
-        if (command !== "retry_group_invitation") throw new Error("core_api_unavailable");
-        await serviceCommand(command, payload);
-      }
+      if (!handled) throw new Error("core_api_unavailable");
       if (leaveConversation) setSelection(null);
       await refresh(true);
     } catch (reason) {

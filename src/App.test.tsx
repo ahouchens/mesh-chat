@@ -106,12 +106,12 @@ const api = vi.hoisted(() => {
     serviceCommand("update_workspace_policies", { workspace_id: workspace.id, channel_creation: channelCreation, posting, invitation_requests: invitationRequests, operation_id: key })),
   coreApiWorkspaceMemberRole: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiWorkspaceJoinDecision: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
-  coreApiGroupInvitation: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
-  coreApiRetryGroupInvitation: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiGroupInvitation: vi.fn(async (_handle: string, accept: boolean): Promise<unknown> => serviceCommand(accept ? "accept_group_invitation" : "decline_group_invitation", { invitation_id: groupInvitation.id })),
+  coreApiRetryGroupInvitation: vi.fn(async (_handle: string, destinationHash: string): Promise<unknown> => serviceCommand("retry_group_invitation", { group_id: group.id, destination_hash: destinationHash })),
   coreApiLeaveGroup: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiCloseGroup: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiRemoveGroupMember: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
-  coreApiSendGroupMessage: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiSendGroupMessage: vi.fn(async (_handle: string, text: string): Promise<unknown> => serviceCommand("send_group_message", { group_id: group.id, text })),
   coreApiSendMessage: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   endCallAudio: vi.fn(async () => ({ active: false })),
   initializeService: vi.fn(),
@@ -252,6 +252,7 @@ const firstMessage: ChatMessage = {
 
 const group: Group = {
   id: "farm-group",
+  core_handle: "group-handle-farm",
   title: "Farm Operations",
   owner_destination: profile.destination_hash,
   posting_policy: "members",
@@ -299,6 +300,7 @@ const groupMessage: GroupMessage = {
 
 const groupInvitation: GroupInvitation = {
   id: "group-invitation-one",
+  core_handle: "group-invitation-handle",
   group_id: group.id,
   title: group.title,
   owner_display_name: "Taylor",
