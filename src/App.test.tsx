@@ -85,7 +85,9 @@ const api = vi.hoisted(() => {
   coreApiWorkspaceAuthorityOffer: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiWorkspaceAuthority: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiReportAuthorityLoss: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
-  coreApiWorkspaceLifecycle: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiWorkspaceLifecycle: vi.fn(async (_handle: string, action: string, key: string, confirmation?: string): Promise<unknown> =>
+    serviceCommand(action === "close" ? "close_workspace" : action === "leave" ? "leave_workspace" : "remove_workspace_data",
+      { workspace_id: workspace.id, operation_id: key, ...(confirmation ? { confirmation } : {}) })),
   coreApiWorkspaceAdminRequest: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiWorkspaceMetadata: vi.fn(async (_handle: string, name: string, description: string, key: string): Promise<unknown> =>
     serviceCommand("update_workspace_metadata", { workspace_id: workspace.id, name, description, operation_id: key })),

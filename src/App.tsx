@@ -6336,6 +6336,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
           return;
         } catch (reason) {
           if (!String(reason).includes("core_api_unavailable")) throw reason;
+          throw new Error("core_api_unavailable");
         }
       }
       if (command === "offer_workspace_authority_transition" && selectedWorkspace.core_handle
@@ -7034,10 +7035,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
           if (!String(reason).includes("core_api_unavailable")) throw reason;
         }
       }
-      if (!handled) {
-        if (command === "leave_workspace") throw new Error("core_api_unavailable");
-        await serviceCommand(command, { operation_id: newOperationId(), workspace_id: selectedWorkspace.id, ...(confirmation ? { confirmation } : {}) });
-      }
+      if (!handled) throw new Error("core_api_unavailable");
       const removed = command === "remove_workspace_data";
       if (removed) { setActiveSpaceId("personal"); setWorkspaceSettingsSection(null); }
       await refresh(true);
