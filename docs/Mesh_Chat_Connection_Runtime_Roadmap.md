@@ -1327,6 +1327,7 @@ M5 - supported reusable core
 - [x] Workspace channel creation uses typed workspace.channel_create plus a typed topic update, mapping selected members to handles.
 - [x] Workspace timeline, search, mention, read, notification, history, access-recommendation and connection/onboarding actions use typed facade use cases.
 - [x] Application runtime background/notification state uses a typed port.
+- [x] Workspace admission grants are typed-only; their renderer compatibility commands are retired.
 - [x] Workspace admin-request submission, display-name requests and read-hint sync use typed facade operations.
 - [x] Workspace authority successor offers use a typed facade operation with member/device handles.
 - [x] Workspace authority accept/finalize use typed facade operations with snapshot transition handles.
