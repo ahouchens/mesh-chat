@@ -4,8 +4,115 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import packageInfo from "../package.json";
 import type { ChatMessage, Contact, Group, GroupInvitation, GroupMessage, Snapshot, Workspace, WorkspaceAdminRequest, WorkspaceChannel, WorkspaceDirect, WorkspaceJoinRequest, WorkspaceMentionPage, WorkspaceMessage, WorkspaceMessagePage, WorkspaceSearchPage, WorkspaceThreadActivityPage, WorkspaceThreadPage } from "./types";
 
-const api = vi.hoisted(() => ({
+const api = vi.hoisted(() => {
+  const serviceCommand = vi.fn();
+  return {
   beginCallAudio: vi.fn(async () => ({ granted: true })),
+  coreApiAcceptInvitation: vi.fn(async (..._args: unknown[]): Promise<{ profile: string; peer: string; trust: string }> => { throw new Error("core_api_unavailable"); }),
+  coreApiDraftGet: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiDraftSet: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiCreateGroup: vi.fn(async (..._args: unknown[]): Promise<{ group: string; name: string; posting_policy: string }> => { throw new Error("core_api_unavailable"); }),
+  coreApiCreateInvitation: vi.fn(async (..._args: unknown[]): Promise<{ profile: string; link: string; text: string; file: string; expires_at: number }> => { throw new Error("core_api_unavailable"); }),
+  coreApiPeerForDestination: vi.fn(async (): Promise<{ profile: string; peer: string; destination: string }> => { throw new Error("core_api_unavailable"); }),
+  coreApiRequest: vi.fn(async (): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiCallControl: vi.fn(async (action: string, params: Record<string, unknown>): Promise<unknown> => {
+    const command = action === "start" ? "start_call"
+      : action === "answer" ? "answer_call"
+      : action === "restart" ? "restart_call"
+      : action === "answer_restart" ? "answer_call_restart"
+      : "end_call";
+    return serviceCommand(command, params);
+  }),
+  coreApiSubmitDeviceLink: vi.fn(async (..._args: unknown[]): Promise<never> => { throw new Error("core_api_unavailable"); }),
+  coreApiCreateWorkspaceDeviceLink: vi.fn(async (..._args: unknown[]): Promise<{ id: string; workspace_id: string; link: string; text: string; value: string; expires_at: number }> => { throw new Error("core_api_unavailable"); }),
+  coreApiWorkspaceInvitationRevoke: vi.fn(async (_handle: string, invitationHandle: string, key: string): Promise<unknown> => serviceCommand("revoke_workspace_invitation", { workspace_id: workspace.id, invitation_id: invitationHandle, operation_id: key })),
+  coreApiAdmissionGrantList: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiAdmissionGrantCreate: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiAdmissionGrantAccept: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiAdmissionGrantEnd: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiTimelineQuery: vi.fn(async (_handle: string, view: string, params: Record<string, unknown>): Promise<unknown> => {
+    const command = view === "threads" ? "list_workspace_threads"
+      : view === "thread_messages" ? "list_workspace_thread_messages"
+      : view === "mentions" ? "list_workspace_mentions" : "search_workspace";
+    return serviceCommand(command, { workspace_id: workspace.id, ...params });
+  }),
+  coreApiTimelineMutation: vi.fn(async (_handle: string, action: string, params: Record<string, unknown>, key: string): Promise<unknown> => {
+    const command = action === "thread_reply" ? "send_workspace_thread_reply"
+      : action === "thread_read" ? "mark_workspace_thread_read"
+      : action === "mentions_read" ? "mark_workspace_mentions_read"
+      : "set_workspace_notification_preference";
+    return serviceCommand(command, { workspace_id: workspace.id, operation_id: key, ...params });
+  }),
+  coreApiWorkspaceSnapshot: vi.fn(async (): Promise<unknown> => serviceCommand("workspace_snapshot")),
+  coreApiWorkspaceAccessRecommendation: vi.fn(async (_handle: string, action: string, params: Record<string, unknown>, key?: string): Promise<unknown> => {
+    const command = action === "list" ? "list_workspace_access_recommendations"
+      : action === "create" ? "create_workspace_access_recommendation"
+      : action === "send" ? "send_workspace_access_recommendation"
+      : action === "preview" ? "preview_workspace_access_recommendation"
+      : action === "apply" ? "apply_workspace_access_recommendation"
+      : action === "preview_by_id" ? "preview_workspace_access_recommendation_by_id"
+      : "apply_workspace_access_recommendation_by_id";
+    const raw = action === "preview" || action === "apply";
+    return serviceCommand(command, raw ? params : { workspace_id: workspace.id, ...params, ...(key ? { operation_id: key } : {}) });
+  }),
+  coreApiWorkspaceHistory: vi.fn(async (_handle: string, action: string, params: Record<string, unknown>, key?: string): Promise<unknown> => {
+    const command = action === "status" ? "get_workspace_history_status"
+      : action === "prune" ? "prune_workspace_history"
+      : action === "revisions" ? "list_workspace_message_revisions"
+      : action === "tombstones" ? "list_workspace_tombstones"
+      : "hide_workspace_direct";
+    return serviceCommand(command, { workspace_id: workspace.id, ...params, ...(key ? { operation_id: key } : {}) });
+  }),
+  coreApiWorkspaceConnection: vi.fn(async (handle: string | null, action: string, params: Record<string, unknown>, key?: string): Promise<unknown> => {
+    const command = action === "reconnect_status" ? "workspace_reconnect_status"
+      : action === "reconnect_consent" ? "workspace_reconnect_consent_set"
+      : action === "invite_contact" ? "invite_contact_to_workspace"
+      : action === "prompt_preview" ? "preview_workspace_invitation_prompt"
+      : action === "prompt_submit" ? "submit_workspace_invitation_prompt"
+      : action === "prompt_dismiss" ? "dismiss_workspace_invitation_prompt"
+      : "preview_workspace_device_link";
+    return serviceCommand(command, { ...(handle ? { workspace_id: workspace.id } : {}), ...params, ...(key ? { operation_id: key } : {}) });
+  }),
+  coreApiRuntimeQuery: vi.fn(async (action: string): Promise<unknown> =>
+    serviceCommand(action === "background" ? "background_status" : "get_notification_state")),
+  coreApiRuntimeMutate: vi.fn(async (action: string, params: Record<string, unknown>): Promise<unknown> =>
+    serviceCommand(action === "background_set" ? "set_background_availability"
+      : action === "notification_previews" ? "set_hide_notification_previews"
+      : "open_notification_target", params)),
+  coreApiWorkspaceAdminSubmit: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiWorkspaceDisplayNameRequest: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiWorkspaceReadHintSync: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiWorkspaceAuthorityOffer: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiWorkspaceAuthority: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiReportAuthorityLoss: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiWorkspaceLifecycle: vi.fn(async (_handle: string, action: string, key: string, confirmation?: string): Promise<unknown> =>
+    serviceCommand(action === "close" ? "close_workspace" : action === "leave" ? "leave_workspace" : "remove_workspace_data",
+      { workspace_id: workspace.id, operation_id: key, ...(confirmation ? { confirmation } : {}) })),
+  coreApiWorkspaceAdminRequest: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiWorkspaceMetadata: vi.fn(async (_handle: string, name: string, description: string, key: string): Promise<unknown> =>
+    serviceCommand("update_workspace_metadata", { workspace_id: workspace.id, name, description, operation_id: key })),
+  coreApiWorkspaceRetention: vi.fn(async (_handle: string, retentionDays: number | null, key: string): Promise<unknown> =>
+    serviceCommand("update_workspace_retention", { workspace_id: workspace.id, retention_days: retentionDays, operation_id: key })),
+  coreApiRequestDeviceRemoval: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiDecideDeviceRemoval: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiWorkspaceDeviceLinkDecision: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiUpdateChannelMembers: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiOfferChannelTransfer: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiAcceptChannelTransfer: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiUpdateWorkspaceChannel: vi.fn(async (_handle: string, channelHandle: string, name: string, topic: string, archived: boolean, key: string): Promise<unknown> =>
+    serviceCommand("update_workspace_channel", { workspace_id: workspace.id, channel_id: channelHandle === "channel-handle-field" ? "55555555-5555-4555-8555-555555555555" : workspaceChannel.id, name, topic, archived, operation_id: key })),
+  coreApiCreateWorkspaceChannel: vi.fn(async (..._args: unknown[]): Promise<{ channel: string; name: string }> => { throw new Error("core_api_unavailable"); }),
+  coreApiWorkspacePolicy: vi.fn(async (_handle: string, channelCreation: string, posting: string, invitationRequests: string, key: string): Promise<unknown> =>
+    serviceCommand("update_workspace_policies", { workspace_id: workspace.id, channel_creation: channelCreation, posting, invitation_requests: invitationRequests, operation_id: key })),
+  coreApiWorkspaceMemberRole: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiWorkspaceJoinDecision: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiGroupInvitation: vi.fn(async (_handle: string, accept: boolean): Promise<unknown> => serviceCommand(accept ? "accept_group_invitation" : "decline_group_invitation", { invitation_id: groupInvitation.id })),
+  coreApiRetryGroupInvitation: vi.fn(async (_handle: string, destinationHash: string): Promise<unknown> => serviceCommand("retry_group_invitation", { group_id: group.id, destination_hash: destinationHash })),
+  coreApiLeaveGroup: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiCloseGroup: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiRemoveGroupMember: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiSendGroupMessage: vi.fn(async (_handle: string, text: string): Promise<unknown> => serviceCommand("send_group_message", { group_id: group.id, text })),
+  coreApiSendMessage: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   endCallAudio: vi.fn(async () => ({ active: false })),
   initializeService: vi.fn(),
   lockService: vi.fn(),
@@ -22,8 +129,13 @@ const api = vi.hoisted(() => ({
   runtimePlatform: vi.fn(),
   setNativeBackgroundAvailability: vi.fn(async () => ({ enabled: true })),
   setNativeTheme: vi.fn(async () => undefined),
-  serviceCommand: vi.fn(),
-}));
+  serviceCommand,
+  loadCallIceServers: vi.fn(async () => serviceCommand("call_ice_servers")),
+  loadCallSettings: vi.fn(async () => serviceCommand("call_settings")),
+  saveCallSettings: vi.fn(async (settings: Record<string, unknown>) => serviceCommand("update_call_settings", settings)),
+  saveNetworkSettings: vi.fn(async (settings: Record<string, unknown>) => serviceCommand("update_settings", { settings })),
+  };
+});
 
 vi.mock("./api", () => api);
 
@@ -140,6 +252,7 @@ const firstMessage: ChatMessage = {
 
 const group: Group = {
   id: "farm-group",
+  core_handle: "group-handle-farm",
   title: "Farm Operations",
   owner_destination: profile.destination_hash,
   posting_policy: "members",
@@ -187,6 +300,7 @@ const groupMessage: GroupMessage = {
 
 const groupInvitation: GroupInvitation = {
   id: "group-invitation-one",
+  core_handle: "group-invitation-handle",
   group_id: group.id,
   title: group.title,
   owner_display_name: "Taylor",
@@ -199,6 +313,7 @@ const groupInvitation: GroupInvitation = {
 
 const workspace: Workspace = {
   id: "11111111-1111-4111-8111-111111111111",
+  core_handle: "workspace-handle-1111",
   name: "Lakewatcher",
   description: "Field coordination",
   state: "active",
@@ -232,6 +347,7 @@ const workspace: Workspace = {
 
 const workspaceChannel: WorkspaceChannel = {
   id: workspace.general_channel_id!,
+  core_handle: "workspace-channel-handle",
   workspace_id: workspace.id,
   name: "general",
   name_key: "general",
@@ -268,6 +384,13 @@ function deferred<T>() {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  api.coreApiSendMessage.mockImplementation(async () => { throw new Error("core_api_unavailable"); });
+  api.coreApiAcceptInvitation.mockImplementation(async () => { throw new Error("core_api_unavailable"); });
+  api.coreApiDraftGet.mockImplementation(async () => { throw new Error("core_api_unavailable"); });
+  api.coreApiDraftSet.mockImplementation(async () => { throw new Error("core_api_unavailable"); });
+  api.coreApiCreateInvitation.mockImplementation(async () => { throw new Error("core_api_unavailable"); });
+  api.coreApiPeerForDestination.mockImplementation(async () => { throw new Error("core_api_unavailable"); });
+  api.coreApiRequest.mockImplementation(async () => { throw new Error("core_api_unavailable"); });
   vi.unstubAllGlobals();
   window.localStorage.clear();
   document.documentElement.removeAttribute("data-theme");
@@ -1440,6 +1563,32 @@ describe("new chat invitations", () => {
     expect(api.serviceCommand.mock.calls.filter(([command]) => command === "create_invitation")).toHaveLength(2);
   });
 
+  it("creates a personal invitation through the Core facade", async () => {
+    const current = snapshot();
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.coreApiCreateInvitation.mockResolvedValue({
+      profile: "profile-handle",
+      link: "meshchat://invite/example",
+      text: "MESHCHAT1:example",
+      file: "{}",
+      expires_at: 2_000_000_000,
+    });
+    api.serviceCommand.mockImplementation(async (command: string) => command === "snapshot" ? current : {});
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Your private conversations" });
+    fireEvent.click(screen.getAllByRole("button", { name: "Connect" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Invite someone" }));
+    await screen.findByRole("heading", { name: "New chat" });
+    fireEvent.click(screen.getByRole("button", { name: "Prepare direct Internet invitation" }));
+    expect(await screen.findByText("Invitation details to share")).toBeTruthy();
+    expect(api.coreApiCreateInvitation).toHaveBeenCalled();
+    expect(api.serviceCommand).not.toHaveBeenCalledWith("create_invitation", expect.anything());
+  });
+
   it("creates a remote-ready invitation only after selecting an approved profile", async () => {
     const current: Snapshot = { ...snapshot(), remote_profiles: [remoteProfile] };
     api.runtimePlatform.mockResolvedValue("desktop");
@@ -1892,6 +2041,33 @@ describe("incoming connection requests", () => {
     });
     await screen.findByRole("heading", { name: "Taylor" });
     expect(screen.queryByRole("heading", { name: "Connection request" })).toBeNull();
+  });
+
+  it("uses the facade peer handle to accept a contact request", async () => {
+    let current = snapshot([incoming]);
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.coreApiPeerForDestination.mockResolvedValue({
+      profile: "profile-handle", peer: "peer-handle", destination: incoming.destination_hash,
+    });
+    api.coreApiRequest.mockImplementation(async () => {
+      current = snapshot([{ ...incoming, trust: "approved" }]);
+      return { trust: "approved" };
+    });
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      return {};
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Accept and open chat" }));
+    await waitFor(() => expect(api.coreApiRequest).toHaveBeenCalledWith("peer.approve", {
+      profile: "profile-handle", peer: "peer-handle",
+    }));
+    expect(api.serviceCommand).not.toHaveBeenCalledWith("approve_request", expect.anything());
+    await screen.findByRole("heading", { name: "Taylor" });
   });
 
   it("reconciles a timed-out approval that committed in the service", async () => {
@@ -2733,6 +2909,35 @@ describe("contact management", () => {
     expect(await within(dialog).findByRole("button", { name: "Remove verification" })).toBeTruthy();
   });
 
+  it("blocks a contact through the facade peer handle", async () => {
+    let current = snapshot([approved]);
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.coreApiPeerForDestination.mockResolvedValue({
+      profile: "profile-handle", peer: "peer-handle", destination: approved.destination_hash,
+    });
+    api.coreApiRequest.mockImplementation(async () => {
+      current = { ...current, contacts: [{ ...current.contacts[0], trust: "blocked", trust_before_block: "approved" }] };
+      return { trust: "blocked" };
+    });
+    api.serviceCommand.mockImplementation(async (command: string) => command === "snapshot" ? current : {});
+
+    render(<App />);
+    await screen.findByLabelText("Conversation with Taylor");
+    fireEvent.click(screen.getByRole("button", { name: "Contacts" }));
+    const dialog = await screen.findByRole("dialog", { name: "Contacts" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Block" }));
+    fireEvent.click(within(within(dialog).getByRole("alertdialog", { name: "Block contact" }))
+      .getByRole("button", { name: "Block" }));
+    await waitFor(() => expect(api.coreApiRequest).toHaveBeenCalledWith("peer.revoke", {
+      profile: "profile-handle", peer: "peer-handle",
+    }));
+    expect(api.serviceCommand).not.toHaveBeenCalledWith("block_contact", expect.anything());
+    expect(await within(dialog).findByRole("button", { name: "Unblock contact" })).toBeTruthy();
+  });
+
   it("permanently removes a contact after an explicit confirmation", async () => {
     let current = { ...snapshot([approved]), messages: [firstMessage] };
     api.runtimePlatform.mockResolvedValue("desktop");
@@ -3568,6 +3773,25 @@ describe("connected conversation", () => {
     };
   }
 
+  it("loads and saves a direct draft through the facade", async () => {
+    const current = snapshot([approved]);
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.coreApiDraftGet.mockResolvedValue({ text: "Saved facade draft" });
+    api.coreApiDraftSet.mockResolvedValue({ text: "typed draft" });
+    api.serviceCommand.mockImplementation(async (command: string) => command === "snapshot" ? current : {});
+
+    render(<App />);
+    const composer = await screen.findByRole("textbox", { name: "Message Taylor" });
+    await waitFor(() => expect((composer as HTMLTextAreaElement).value).toBe("Saved facade draft"));
+    fireEvent.change(composer, { target: { value: "typed draft" } });
+    await waitFor(() => expect(api.coreApiDraftSet).toHaveBeenCalledWith(
+      approved.destination_hash, "typed draft"), { timeout: 2000 });
+    expect(api.serviceCommand).not.toHaveBeenCalledWith("save_draft", expect.anything());
+  });
+
   it.each([true, false])("sends pending approval only to its verified transport identity (matching: %s)", async (matches) => {
     let current = snapshot([incoming]);
     api.initializeService.mockResolvedValue(current);
@@ -3652,6 +3876,7 @@ describe("connected conversation", () => {
     });
     const start = vi.spyOn(ReconnectCoordinator.prototype, "start");
     const stop = vi.spyOn(ReconnectCoordinator.prototype, "stop");
+    const detach = vi.spyOn(ReconnectCoordinator.prototype, "detach");
     const online = vi.spyOn(ReconnectCoordinator.prototype, "setOnline");
     const wake = vi.spyOn(ReconnectCoordinator.prototype, "wake");
     const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
@@ -3660,7 +3885,7 @@ describe("connected conversation", () => {
       await screen.findByLabelText("Conversation with Taylor");
       const manual = pairingSession(approved.destination_hash);
       act(() => setWebRTCSession(manual));
-      expect(start).toHaveBeenCalledTimes(1);
+      await waitFor(() => expect(start).toHaveBeenCalledTimes(1));
       expect(online).toHaveBeenCalledWith(true);
       act(() => window.dispatchEvent(new Event("offline")));
       expect(online).toHaveBeenLastCalledWith(false);
@@ -3678,7 +3903,8 @@ describe("connected conversation", () => {
       act(() => window.dispatchEvent(new Event("pageshow")));
       expect(wake).toHaveBeenCalledTimes(3);
       view.unmount();
-      expect(stop).toHaveBeenCalledTimes(1);
+      expect(detach).toHaveBeenCalledOnce();
+      expect(stop).not.toHaveBeenCalled();
       expect(getWebRTCSessionCount()).toBe(0);
       expect(manual.pc.close).toHaveBeenCalledTimes(1);
       wake.mockClear();
@@ -3690,6 +3916,7 @@ describe("connected conversation", () => {
     } finally {
       start.mockRestore();
       stop.mockRestore();
+      detach.mockRestore();
       online.mockRestore();
       wake.mockRestore();
       visibility.mockRestore();
@@ -3931,6 +4158,42 @@ describe("connected conversation", () => {
     expect(await within(conversation).findByText(outbound.text)).toBeTruthy();
     expect(screen.getByText("Saved on this device")).toBeTruthy();
     expect(snapshotCalls).toBe(2);
+  });
+
+  it("uses the facade send path and refreshes the authoritative message", async () => {
+    const before = snapshot([approved]);
+    const outbound: ChatMessage = {
+      ...firstMessage,
+      id: "outbound-via-facade",
+      contact_id: approved.id,
+      direction: "outbound",
+      text: "Facade send",
+      state: "queued",
+    };
+    let snapshots = 0;
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(before);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.coreApiSendMessage.mockResolvedValue({ message: "facade-handle" });
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") {
+        snapshots += 1;
+        return snapshots === 1 ? before : { ...before, messages: [outbound] };
+      }
+      return {};
+    });
+
+    render(<App />);
+    const composer = await screen.findByRole("textbox", { name: "Message Taylor" });
+    fireEvent.change(composer, { target: { value: outbound.text } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    await waitFor(() => expect(api.coreApiSendMessage).toHaveBeenCalledWith(
+      approved.destination_hash, outbound.text, expect.any(String)));
+    expect(api.serviceCommand).not.toHaveBeenCalledWith("send_message", expect.anything());
+    const conversation = screen.getByLabelText("Conversation with Taylor");
+    expect(await within(conversation).findByText(outbound.text)).toBeTruthy();
   });
 
   it("shows the durable mobile send result before draft cleanup or snapshot refresh finishes", async () => {
@@ -5663,8 +5926,8 @@ describe("desktop workspaces", () => {
 
   it("manages multiple concurrent workspace invitations independently", async () => {
     const invitations = [
-      { id: "invite-one", workspace_id: workspace.id, offered_manifest_digest: workspace.manifest_hash, state: "active" as const, created_at: 10, expires_at: 2_000_000_000 },
-      { id: "invite-two", workspace_id: workspace.id, offered_manifest_digest: workspace.manifest_hash, state: "active" as const, created_at: 11, expires_at: 2_000_000_100 },
+      { id: "invite-one", core_handle: "invite-one-handle", workspace_id: workspace.id, offered_manifest_digest: workspace.manifest_hash, state: "active" as const, created_at: 10, expires_at: 2_000_000_000 },
+      { id: "invite-two", core_handle: "invite-two-handle", workspace_id: workspace.id, offered_manifest_digest: workspace.manifest_hash, state: "active" as const, created_at: 11, expires_at: 2_000_000_100 },
     ];
     const current: Snapshot = { ...snapshot(), workspaces: [workspace], workspace_channels: [workspaceChannel], workspace_join_requests: [], workspace_invitations: invitations, workspace_drafts: [] };
     api.runtimePlatform.mockResolvedValue("desktop");
@@ -5689,7 +5952,7 @@ describe("desktop workspaces", () => {
     expect(within(dialog).getByText(/Direct participant hosting stays on this owner device/i)).toBeTruthy();
     expect(within(dialog).getAllByText(/expires /i)).toHaveLength(2);
     fireEvent.click(within(dialog).getAllByRole("button", { name: "Revoke" })[0]);
-    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("revoke_workspace_invitation", expect.objectContaining({ workspace_id: workspace.id, invitation_id: "invite-one", operation_id: expect.any(String) })));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("revoke_workspace_invitation", expect.objectContaining({ workspace_id: workspace.id, invitation_id: "invite-one-handle", operation_id: expect.any(String) })));
     expect(within(dialog).getAllByText(/expires /i)).toHaveLength(1);
     fireEvent.click(within(dialog).getByRole("button", { name: "Prepare direct Internet invitation" }));
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("create_workspace_invitation", expect.objectContaining({ workspace_id: workspace.id, operation_id: expect.any(String), connection_mode: "participant" })));
@@ -6201,7 +6464,7 @@ describe("desktop workspaces", () => {
       device: { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", destination_hash: "99".repeat(16), fingerprint: "BBBB CCCC DDDD EEEE" },
     };
     const expanded: Workspace = { ...workspace, members: [...workspace.members, member] };
-    const channel: WorkspaceChannel = { ...workspaceChannel, id: "55555555-5555-4555-8555-555555555555", name: "field-reports", name_key: "field-reports", display_name: "field-reports", short_id: "555555", is_general: false, subscribed: true, topic: "Daily notes" };
+    const channel: WorkspaceChannel = { ...workspaceChannel, id: "55555555-5555-4555-8555-555555555555", core_handle: "channel-handle-field", name: "field-reports", name_key: "field-reports", display_name: "field-reports", short_id: "555555", is_general: false, subscribed: true, topic: "Daily notes" };
     let current: Snapshot = { ...snapshot(), workspaces: [expanded], workspace_channels: [workspaceChannel, channel], workspace_channel_transfers: [], workspace_join_requests: [], workspace_invitations: [], workspace_drafts: [] };
     api.runtimePlatform.mockResolvedValue("desktop");
     api.initializeService.mockResolvedValue(current);

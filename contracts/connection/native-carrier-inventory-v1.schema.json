@@ -1,0 +1,151 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Private native carrier inventory v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "v",
+    "adapter_epoch",
+    "resources"
+  ],
+  "properties": {
+    "v": {
+      "const": 1
+    },
+    "adapter_epoch": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{32}$"
+    },
+    "resources": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "resource",
+          "ice_policy",
+          "pending",
+          "ice_connection_state",
+          "signaling_state",
+          "data_channel_state",
+          "local_type",
+          "remote_type",
+          "local_sdp_sha256",
+          "remote_sdp_sha256",
+          "channels"
+        ],
+        "properties": {
+          "resource": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,128}$"
+          },
+          "ice_policy": {
+            "enum": [
+              "all",
+              "relay"
+            ]
+          },
+          "pending": {
+            "type": "boolean"
+          },
+          "ice_connection_state": {
+            "enum": [
+              "new",
+              "checking",
+              "connected",
+              "completed",
+              "disconnected",
+              "failed",
+              "closed"
+            ]
+          },
+          "signaling_state": {
+            "enum": [
+              "stable",
+              "have-local-offer",
+              "have-remote-offer",
+              "have-local-pranswer",
+              "have-remote-pranswer",
+              "closed"
+            ]
+          },
+          "data_channel_state": {
+            "enum": [
+              "connecting",
+              "open",
+              "closing",
+              "closed"
+            ]
+          },
+          "local_type": {
+            "enum": [
+              null,
+              "offer",
+              "answer"
+            ]
+          },
+          "remote_type": {
+            "enum": [
+              null,
+              "offer",
+              "answer"
+            ]
+          },
+          "local_sdp_sha256": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            ]
+          },
+          "remote_sdp_sha256": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            ]
+          },
+          "channels": {
+            "type": "array",
+            "maxItems": 3,
+            "uniqueItems": true,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "label",
+                "state"
+              ],
+              "properties": {
+                "label": {
+                  "enum": [
+                    "mesh-reticulum",
+                    "meshchat-reconnect",
+                    "mesh-onboarding"
+                  ]
+                },
+                "state": {
+                  "enum": [
+                    "connecting",
+                    "open",
+                    "closing",
+                    "closed"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,61 @@
+name: Connection runtime policy
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: connection-policy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  policy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: |
+            service/requirements.lock
+            service/requirements-dev.lock
+      - run: python -m pip install -r service/requirements-dev.lock
+      - name: Strict policy types
+        working-directory: service
+        run: python -m mypy --config-file mypy-connection.ini
+      - name: Deterministic ownership and private adapter regressions
+        run: >-
+          python scripts/connection_evidence.py --run
+          --junit dist/reports/connection-policy.xml
+          --expected-source "${{ github.sha }}"
+          --output dist/reports/connection-policy.json
+      - name: Validate actual required execution
+        if: always()
+        run: >-
+          python scripts/connection_evidence.py
+          --junit dist/reports/connection-policy.xml
+          --expected-source "${{ github.sha }}"
+          --output dist/reports/connection-policy.json
+      - name: Retain qualification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: connection-policy-${{ github.sha }}
+          path: dist/reports/connection-policy.*
+          if-no-files-found: error
+
+  gate:
+    name: Required connection policy gate
+    if: always()
+    needs: [policy]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject failed, canceled, or skipped qualification
+        env:
+          RESULT: ${{ needs.policy.result }}
+        run: test "$RESULT" = success

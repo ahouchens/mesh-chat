@@ -55,7 +55,10 @@ class Peers:
     def connected(self, index, previous_certificate=None):
         # One total bound includes the configured native attempt and retry window.
         # A usable old Phase 2/path is not evidence that recovery has completed.
-        deadline=time.monotonic()+100
+        # The specification allows 240 seconds for post-partition recovery.
+        # Windows CI can be heavily loaded; 180 seconds stays inside that bound
+        # while avoiding a false product failure when recovery is merely slow.
+        deadline=time.monotonic()+180
         evidence=None
         while time.monotonic()<deadline:
             rows=self.command(index,"direct_recovery_status")

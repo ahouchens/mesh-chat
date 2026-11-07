@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mesh-chat:core-api:workspace-list-result:1",
+  "title": "Experimental workspace list v1",
+  "description": "Caller-scoped workspace handles and public fields only.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "api_version",
+    "request_id",
+    "ok",
+    "result"
+  ],
+  "properties": {
+    "api_version": {
+      "const": 1
+    },
+    "request_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._:-]{1,80}$"
+    },
+    "ok": {
+      "const": true
+    },
+    "result": {
+      "$ref": "#/$defs/list"
+    }
+  },
+  "$defs": {
+    "handle": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{16,128}$"
+    },
+    "list": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "profile",
+        "workspaces"
+      ],
+      "properties": {
+        "profile": {
+          "$ref": "#/$defs/handle"
+        },
+        "workspaces": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/workspace"
+          }
+        }
+      }
+    },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workspace",
+        "name",
+        "role",
+        "state"
+      ],
+      "properties": {
+        "workspace": {
+          "$ref": "#/$defs/handle"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "role": {
+          "enum": [
+            "owner",
+            "admin",
+            "member"
+          ]
+        },
+        "state": {
+          "enum": [
+            "active",
+            "joining",
+            "left",
+            "removed",
+            "revoked",
+            "archived",
+            "linking",
+            "device_removed"
+          ]
+        }
+      }
+    }
+  }
+}

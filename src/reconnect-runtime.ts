@@ -1,4 +1,4 @@
-import { serviceCommand } from "./api";
+import { coreApiPeerForDestination, coreApiRequest, loadCallIceServers, serviceCommand } from "./api";
 import type { CallIceConfiguration } from "./types";
 import {
   ReconnectCoordinator,
@@ -108,6 +108,7 @@ export function createReconnectDeps(
       const previous = new Map(serviceSessions);
       const next = new Map<string, ServiceSession>();
       await Promise.all(payload.profiles.map(async (profile) => {
+        if (profile.policy_owner === "service") return;
         const sessionId = profile.native_session_id;
         if (!sessionId || nativeSessions.has(profile.id)) return;
         if (!current(profile)) {
@@ -162,13 +163,35 @@ export function createReconnectDeps(
       maintainReconnectCapabilities(payload.profiles);
       return payload;
     },
-    start: (contactId) =>
-      serviceCommand("reconnect_start", { contact_id: contactId }),
-    stop: (contactId) =>
-      serviceCommand(
+    start: async (contactId, destination) => {
+      if (destination) {
+        try {
+          const target = await coreApiPeerForDestination(destination);
+          return await coreApiRequest("connection.start", {
+            profile: target.profile, peer: target.peer,
+          });
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+        }
+      }
+      return serviceCommand("reconnect_start", { contact_id: contactId });
+    },
+    stop: async (contactId, destination) => {
+      if (destination) {
+        try {
+          const target = await coreApiPeerForDestination(destination);
+          return await coreApiRequest("connection.stop", {
+            profile: target.profile, peer: target.peer,
+          });
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+        }
+      }
+      return serviceCommand(
         "reconnect_stop",
         contactId ? { contact_id: contactId } : {},
-      ),
+      );
+    },
     requestCreate: (contactId, attemptId) =>
       serviceCommand("reconnect_request_create", {
         contact_id: contactId,
@@ -213,9 +236,7 @@ export function createReconnectDeps(
         ...(attemptId ? { attempt_id: attemptId } : {}),
       }),
     ice: async (profile) => {
-      const configuration = await serviceCommand<CallIceConfiguration>(
-        "call_ice_servers",
-      );
+      const configuration = await loadCallIceServers() as unknown as CallIceConfiguration;
       if (
         !profile.allow_direct_ip_disclosure &&
         configuration.iceTransportPolicy !== "relay"

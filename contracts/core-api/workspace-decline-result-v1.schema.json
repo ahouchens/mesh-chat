@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mesh-chat:core-api:workspace-decline-result:1",
+  "title": "Experimental workspace join decline v1",
+  "description": "Declined join with the workspace's resulting state.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "api_version",
+    "request_id",
+    "ok",
+    "result"
+  ],
+  "properties": {
+    "api_version": {
+      "const": 1
+    },
+    "request_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._:-]{1,80}$"
+    },
+    "ok": {
+      "const": true
+    },
+    "result": {
+      "$ref": "#/$defs/decline"
+    }
+  },
+  "$defs": {
+    "handle": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{16,128}$"
+    },
+    "decline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "profile",
+        "workspace",
+        "decision"
+      ],
+      "properties": {
+        "profile": {
+          "$ref": "#/$defs/handle"
+        },
+        "workspace": {
+          "$ref": "#/$defs/handle"
+        },
+        "decision": {
+          "const": "declined"
+        }
+      }
+    }
+  }
+}

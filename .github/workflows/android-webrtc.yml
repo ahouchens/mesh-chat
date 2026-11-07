@@ -1,21 +1,8 @@
 name: Android WebRTC
 
 on:
+  workflow_call:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - 'plugins/tauri-plugin-mesh-runtime/**'
-      - 'service/**'
-      - 'src/**'
-      - 'src-tauri/**'
-      - 'scripts/build_android.py'
-      - 'scripts/test_android_webrtc.sh'
-      - 'scripts/test_android_signaling.sh'
-      - 'deploy/cloudflare-signal/**'
-      - 'scripts/verify_android_webrtc.py'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - '.github/workflows/android-webrtc.yml'
 
 permissions:
   contents: read
@@ -77,24 +64,40 @@ jobs:
         run: python scripts/verify_android_webrtc.py plugins/tauri-plugin-mesh-runtime/android/webrtc-smoke/build/outputs/apk/release/webrtc-smoke-release.apk
       - name: Build WebRTC instrumentation APK
         working-directory: src-tauri/gen/android
-        run: ./gradlew :webrtc-smoke:assembleReleaseAndroidTest -PmeshWebRtcSmoke=true -PmeshRuntimeAbis=x86_64 --no-configuration-cache
+        run: |
+          node ../../../scripts/build_desktop_transport_fixture.mjs
+          ./gradlew :webrtc-smoke:assembleReleaseAndroidTest -PmeshWebRtcSmoke=true -PmeshRuntimeAbis=x86_64 --no-configuration-cache
+      - name: Free disk for the emulator system image
+        run: |
+          df -h
+          rm -rf "$ANDROID_SDK_ROOT/ndk/28.2.13676358" || true
+          rm -rf "$HOME/.rustup" "$HOME/.npm" || true
+          rm -rf src-tauri/target node_modules src-tauri/gen/android/app/build || true
+          df -h
       - name: Test Chromium interop and Android signalling mailbox recovery
-        timeout-minutes: 35
+        timeout-minutes: 45
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
           arch: x86_64
           target: google_apis
           disable-animations: true
-          script: |
-            bash scripts/test_android_webrtc.sh
-            bash scripts/test_android_signaling.sh
+          script: bash scripts/test_android_qualification.sh
+      - name: Retain required run-bound Android evidence
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-qualification-${{ github.sha }}
+          path: dist/reports/android-qualification.json
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: android-webrtc-debug
           path: |
             dist/mobile/**
+            dist/android-core-consumer/**
+            sdk/kotlin/build/repository/**
             dist/reports/**
             plugins/tauri-plugin-mesh-runtime/android/build/reports/androidTests/**
             plugins/tauri-plugin-mesh-runtime/android/build/outputs/androidTest-results/**

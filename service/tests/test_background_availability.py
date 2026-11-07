@@ -128,6 +128,6 @@ def test_enabled_lifecycle_does_not_retire_native_transports() -> None:
     assert '"background_availability": self.background_availability_status()' in service
 
     rust = (ROOT / "src-tauri" / "src" / "lib.rs").read_text(encoding="utf-8")
-    assert '| "set_background_availability"' in rust
-    assert '| "background_status"' in rust
+    assert '| "set_background_availability"' not in rust
+    assert '\n            | "background_status"\n' not in rust
 

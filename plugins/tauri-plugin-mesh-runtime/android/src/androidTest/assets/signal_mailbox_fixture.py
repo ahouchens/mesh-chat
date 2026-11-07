@@ -217,6 +217,267 @@ class ObservedSupervisor(BackgroundReconnectSupervisor):
             raise
 
 
+def run_shared_runtime_native(root, url):
+    """Production shared policy with real signing/Worker/JNI, synthetic path.
+
+    This is native adapter conformance, not Reticulum/application-receipt proof.
+    The two fixture peers do not initialize process-global Reticulum runtimes.
+    """
+    from mesh_chat.connection.adapters.reconnect import NativePort, ReconnectExecutor, SignalingPort
+    from mesh_chat.connection.model import Execution
+    from mesh_chat.connection.runtime import ConnectionRuntime
+
+    native = Native()
+    peers, runtimes = [], []
+    with WorkerTransport(url) as transport:
+        try:
+            peers.extend(Peer(Path(root) / str(i), secrets.token_bytes(32),
+                              f"shared-{i}-{uuid.uuid4().hex}", native) for i in range(2))
+            contacts = [p.seed_relationship(peers[1-i], None) for i, p in enumerate(peers)]
+            caps = [p.reconnect_consent_set(contacts[i], True, True)["capabilities"]
+                    for i, p in enumerate(peers)]
+            for i, peer in enumerate(peers):
+                peer.reconnect_capabilities_store(caps[1-i])
+                peer.reconnect_start(contacts[i])
+
+            def runtime(peer):
+                def factory(current, profile):
+                    signaling = SignalingPort(peer.reconnect_request_create, peer.reconnect_offer_create,
+                        peer.reconnect_answer_create, peer.verify_reconnect_request,
+                        peer.verify_reconnect_offer, peer.verify_reconnect_answer,
+                        peer.reconnect_publish, peer.reconnect_fetch)
+                    port = NativePort(peer.native_webrtc_offer, peer.native_webrtc_accept,
+                        peer.native_webrtc_apply_answer, peer.native_webrtc_stats,
+                        lambda _: {}, peer.native_webrtc_close)
+                    return ReconnectExecutor(signaling, port, profile=profile, ice=peer.call_ice_servers,
+                        path=lambda _: {"has_path": True, "ready": True}, current=current,
+                        now=time.monotonic, wall_time=time.time)
+                return ConnectionRuntime(uuid.uuid4().hex, factory, profiles=peer.reconnect_profiles,
+                    execution=lambda: Execution.AVAILABLE,
+                    activate=peer.reconnect_start)
+
+            runtimes.extend(runtime(peer) for peer in peers)
+            for owner in runtimes:
+                owner.start()
+
+            def sessions():
+                return [state.carrier.resource.resource_id for owner in runtimes
+                        for state in owner.owner.snapshots() if state.carrier]
+
+            def connected():
+                values = sessions()
+                return len(values) == 2 and all(native.stats(s).get("attached") for s in values)
+
+            def traffic():
+                values = sessions()
+                before = [native.stats(s).get("received_packets", 0) for s in values]
+                assert all(native.send(s) for s in values)
+                wait_until(lambda: all(native.stats(s).get("received_packets", 0) > before[i]
+                                      for i, s in enumerate(values)), "Shared-runtime native traffic missing", 10)
+
+            wait_until(connected, "Shared-runtime native negotiation failed")
+            traffic()
+            original = set(sessions())
+            # Lifecycle transitions do not replace a healthy service-owned carrier.
+            for peer in peers:
+                peer.lifecycle = "foreground"
+            time.sleep(1)
+            assert original == set(sessions())
+            traffic()
+            # Native carrier loss is recovered by the same owner in foreground.
+            for session in original:
+                native.close(session)
+            wait_until(lambda: connected() and original.isdisjoint(sessions()),
+                       "Shared owner did not recover in foreground")
+            traffic()
+            last = sessions()
+            for owner in runtimes:
+                owner.stop()
+                owner.wait()
+            assert all(not native.stats(s).get("attached") for s in last)
+            return True
+        finally:
+            for owner in runtimes:
+                owner.stop()
+                owner.wait()
+            for peer in peers:
+                peer.store.close()
+
+def verify_native_startup_retention(service, owner, native, local_id, remote_id):
+    """Delay attachment at its port; real JNI packets must survive until RNS registration."""
+    import base64
+    from dataclasses import replace
+    from mesh_chat.service import WebRTCInterface
+
+    port = owner.executor.native
+    attach_entered, allow_attach = threading.Event(), threading.Event()
+    retained, delivered = threading.Event(), threading.Event()
+    marker = b"mesh-startup-" + uuid.uuid4().bytes
+    encoded = base64.b64encode(marker).decode("ascii")
+    physical = service._native_resources.require(local_id)
+    original_retain = service._native_startup_packets.retain
+    original_incoming = WebRTCInterface.process_incoming
+
+    def delayed_attach(session):
+        attach_entered.set()
+        assert allow_attach.wait(15), "Test did not release bridge attachment"
+        return port.attach(session)
+
+    def observe_retention(resource, data):
+        accepted = original_retain(resource, data)
+        if accepted and resource == physical and data == encoded:
+            retained.set()
+        return accepted
+
+    def observe_delivery(interface, packet):
+        if packet == marker:
+            delivered.set()
+        return original_incoming(interface, packet)
+
+    owner.executor.native = replace(port, attach=delayed_attach)
+    service._native_startup_packets.retain = observe_retention
+    WebRTCInterface.process_incoming = observe_delivery
+    try:
+        with service._dispatch_lock:
+            bridge = service._native_webrtc_sessions[local_id]
+            RNS.Transport.interfaces.remove(service._webrtc_bridges[bridge])
+            assert not service.native_webrtc_stats(local_id)["attached"]
+        assert attach_entered.wait(10), "Owner did not attempt bridge repair"
+        assert native.host.send(remote_id, marker), "Native startup packet send failed"
+        assert retained.wait(5), "JNI startup packet was not retained"
+        assert not delivered.is_set(), "Packet reached RNS before authorized bridge attachment"
+        allow_attach.set()
+        assert delivered.wait(5), "Retained packet did not reach the replacement RNS interface"
+        assert service._native_resources.require(local_id) == physical
+    finally:
+        allow_attach.set()
+        owner.executor.native = port
+        service._native_startup_packets.retain = original_retain
+        WebRTCInterface.process_incoming = original_incoming
+
+
+def initialize_shared_native(root, key):
+    from mesh_chat import mobile_bridge
+
+    return mobile_bridge.initialize(json.dumps({"profile_dir": root, "vault_key": key,
+        "display_name": "Synthetic Android mailbox", "platform": "android"}),
+        connection_policy="shared-native")
+
+
+def run_manual_native_adoption(automatic=True):
+    """Actual service/composition, signed control and JNI; synthetic path only.
+
+    Approval is seeded. This proves ownership transfer and packet traffic,
+    not invitation UI, a remote Reticulum path or authenticated LXMF receipts.
+    The trusted mobile bootstrap constructs and starts the shared owner.
+    """
+    from mesh_chat import mobile_bridge
+    from mesh_chat.reconnect import create_connection_capabilities
+    from mesh_chat.webrtc_onboarding import create_onboarding_offer
+
+    service = mobile_bridge._service
+    assert service is not None and service.network is not None
+    assert service._connection_policy == "shared-native"
+    owner = service._connection_runtime
+    assert owner is not None and owner._thread.is_alive()
+    assert owner._failure is None
+    assert service._background_reconnect_supervisor is None
+    assert not service._native_webrtc_live
+    # Only remote Reticulum path readiness is synthetic in this scenario.
+    owner.executor.path = lambda _: {"has_path": True, "ready": True}
+    service._call_settings.signal_mailbox_url = None
+    service._call_settings.turn_broker_url = None
+    service._call_settings.stun_urls = []
+    native = Native()
+    identity = RNS.Identity()
+    contact_id = "manual-" + uuid.uuid4().hex
+    destination = RNS.Destination.hash(identity, "lxmf", "delivery").hex()
+    service.store.put("contact", contact_id, {"id": contact_id, "trust": "approved",
+        "destination_hash": destination, "display_name": "Synthetic manual peer"})
+    remote_id, local_id = "remote-" + uuid.uuid4().hex, "local-" + uuid.uuid4().hex
+    ice = {"iceServers": [], "iceTransportPolicy": "all"}
+    channels = [{"label": "mesh-reticulum", "binary": True, "ordered": True},
+                {"label": "mesh-onboarding", "binary": False, "ordered": True}]
+    try:
+        offer = native.invoke("createOffer", remote_id, json.dumps(ice), json.dumps(channels))
+        document = create_onboarding_offer(identity, session_id=uuid.uuid4().hex,
+            sdp=offer["sdp"], dtls_fingerprint=offer["fingerprint"])
+        answer = service.native_webrtc_accept(local_id, offer["sdp"], ice, channels)
+        local_physical = service._native_resources.require(local_id)
+        service.native_webrtc_bind_onboarding(local_id, document)
+        native.invoke("applyAnswer", remote_id, answer["sdp"])
+        wait_until(lambda: all(native.stats(s).get("attached") for s in (local_physical, remote_id)),
+                   "Manual native channels did not open")
+        service.reconnect_consent_set(contact_id, automatic, True)
+        capabilities = create_connection_capabilities(identity,
+            peer_destination=service._require_profile()["destination_hash"],
+            device_id="manual-" + uuid.uuid4().hex, transports=["webrtc"],
+            auto_reconnect=automatic, allow_direct_ip_disclosure=True,
+            persistent=True, encrypted=True)
+        control = json.dumps({"type": "connection_capabilities", "document": capabilities})
+        wait_until(lambda: bool(native.host.sendControl(remote_id, "mesh-onboarding", control)),
+                   "Manual control channel did not open", 15)
+        wait_until(lambda: service._native_webrtc_controls.get(local_id, {}).get("profile_id"),
+                   "Signed native capabilities were not bound to a profile", 15)
+        profile_id = service._native_webrtc_controls[local_id]["profile_id"]
+        if automatic:
+            service.reconnect_start(contact_id)
+        wait_until(lambda: owner.snapshots().get(profile_id, {}).get("messaging_ready"),
+                   "Shared owner did not adopt the manual native carrier", 30)
+        assert service._connection_runtime is owner and owner._failure is None
+        assert service._background_reconnect_supervisor is None
+        states = owner.owner.snapshots()
+        observed = [(state.key.profile_id, state.key.remote_device, state.desired.value,
+                     None if state.carrier is None else state.carrier.resource.resource_id)
+                    for state in states]
+        carried = [(state, state.carrier.resource.resource_id) for state in states if state.carrier is not None]
+        # Trusted startup registers this profile before its signed remote device is
+        # known, so one bounded stopped tombstone for the earlier key is expected.
+        # Only the exact adopted allocation may be carried, by exactly one actor.
+        assert [resource for _, resource in carried] == [local_physical], observed
+        assert all(state.desired.value == "stopped" for state in states if state.carrier is None), observed
+        adopted_state = carried[0][0]
+        if not automatic:
+            profile = service._reconnect_profile(profile_id)
+            assert not profile["auto_reconnect"] and not profile["remote_auto_reconnect"]
+            assert not adopted_state.authority.signaling_available
+        assert service._execute("native_webrtc_close", {"session_id": local_id}) == {"state": "managed"}
+        before = {s: native.stats(s).get("received_packets", 0) for s in (local_physical, remote_id)}
+        assert native.send(local_physical) and native.send(remote_id)
+        wait_until(lambda: all(native.stats(s).get("received_packets", 0) > before[s]
+                              for s in before), "Adopted native carrier did not pass traffic", 10)
+        first_bridge = service._native_webrtc_sessions[local_id]
+        service.webrtc_detach_native(local_id)
+        wait_until(lambda: service._native_webrtc_sessions.get(local_id) not in (None, first_bridge),
+                   "Shared owner did not restore the native bridge", 15)
+        wait_until(lambda: owner.snapshots()[profile_id]["messaging_ready"],
+                   "Restored bridge did not regain path readiness", 10)
+        assert service._native_resources.require(local_id) == local_physical
+        assert native.send(local_physical) and native.send(remote_id)
+        verify_native_startup_retention(service, owner, native, local_id, remote_id)
+        wait_until(lambda: owner.snapshots()[profile_id]["messaging_ready"],
+                   "Re-registered bridge did not regain path readiness", 10)
+        assert service._native_resources.require(local_id) == local_physical
+        service.reconnect_stop(contact_id)
+        wait_until(lambda: local_id not in service._native_webrtc_live,
+                   "Stop did not retire the adopted native carrier", 10)
+        service.native_webrtc_offer(local_id, ice, channels)
+        replacement = service._native_resources.require(local_id)
+        assert replacement != local_physical
+        # Inject a delayed terminal callback from the retired real JNI peer.
+        service._handle_native_webrtc_event("closed", local_physical)
+        assert service._native_resources.require(local_id) == replacement
+        assert local_id in service._native_webrtc_live
+        assert native.invoke("stats", replacement)["ice_connection_state"] != "closed"
+        return True
+    finally:
+        if owner is not None:
+            owner.stop()
+            owner.wait()
+        service.native_webrtc_close(local_id)
+        native.close(remote_id)
+
+
 def run_recovery(root, url, workspace=False, native=None, platform="android"):
     native = native or Native()
     workspace_id = str(uuid.uuid4()) if workspace else None

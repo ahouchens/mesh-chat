@@ -49,6 +49,7 @@ describe("Android service events with the real DataChannel bridge", () => {
     let finishAttach!: (result: { bridge_id: string; max_packet: number; state: string }) => void;
     const attachment = new Promise((resolve) => { finishAttach = resolve; });
     native.invoke.mockImplementation(async (command: string, args?: { command: string }) => {
+      if (command === "core_api_request") throw new Error("core_api_unavailable");
       if (command === "runtime_platform") return "android";
       if (command === "poll_mobile_events") return queue.splice(0);
       if (command === "service_command") {
@@ -97,6 +98,7 @@ describe("Android service events with the real DataChannel bridge", () => {
     async (order) => {
       const queue: ServiceEvent[] = [];
       native.invoke.mockImplementation(async (command: string, args?: { command: string }) => {
+        if (command === "core_api_request") throw new Error("core_api_unavailable");
         if (command === "runtime_platform") return "android";
         // Android's poll is destructive: each batch can only be read once.
         if (command === "poll_mobile_events") return queue.splice(0);

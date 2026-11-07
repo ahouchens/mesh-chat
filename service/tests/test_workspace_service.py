@@ -927,6 +927,64 @@ def test_direct_workspace_binding_runtime_lease_lifecycle(tmp_path, terminal):
         member.close()
 
 
+@pytest.mark.parametrize("action", ["remove", "leave", "close", "receive"])
+@pytest.mark.parametrize("fail_write", [False, True])
+def test_shared_connection_authority_is_fenced_before_workspace_commit(tmp_path, monkeypatch, action, fail_write):
+    from mesh_chat.connection.model import Execution
+    from mesh_chat.connection.runtime import ConnectionRuntime
+
+    owner, _, _, member, _, _, workspace, _, _ = _joined_pair(tmp_path, base=96000)
+    service = member if action in {"leave", "receive"} else owner
+    profile = {"id": "workspace-test-peer", "scope_kind": "workspace", "workspace_id": workspace["id"],
+               "contact_id": "peer", "local_device_id": "local", "remote_device_id": "remote",
+               "active": True, "effective": {"ready": True}}
+    runtime = ConnectionRuntime("workspace-test", lambda *_: SimpleNamespace(),
+        profiles=lambda: {"profiles": [profile]}, execution=lambda: Execution.AVAILABLE, activate=lambda _: None)
+    service._connection_runtime = runtime
+    runtime.synchronize()
+    write_method = "put_and_delete" if action == "receive" else "commit_operation"
+    original = getattr(service.store, write_method)
+    writes = []
+
+    def commit(*args, **kwargs):
+        assert runtime.snapshots()[profile["id"]]["desired"] == "stopped"
+        writes.append(True)
+        if fail_write:
+            raise OSError("simulated workspace transaction failure")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(service.store, write_method, commit)
+    try:
+        def mutate():
+            if action == "remove":
+                remote = member._require_workspace(workspace["id"])
+                return owner.remove_workspace_member(workspace["id"], remote["local_member_id"], _op(96010))
+            if action == "leave":
+                return member.leave_workspace(workspace["id"], _op(96010))
+            if action == "receive":
+                remote = member._require_workspace(workspace["id"])
+                owner.remove_workspace_member(workspace["id"], remote["local_member_id"], _op(96010))
+                manifest = owner._workspace_current_manifest(owner._require_workspace(workspace["id"]))
+                return member._receive_workspace_manifest(WorkspaceWirePayload(
+                    kind="workspace_manifest_root", logical_id=_op(96011), workspace_id=workspace["id"],
+                    expires_at=int(time.time()) + 60, document=manifest.serialized))
+            return owner.close_workspace(workspace["id"], _op(96010))
+        if fail_write:
+            with pytest.raises(OSError, match="transaction failure"):
+                mutate()
+            monkeypatch.setattr(service.store, write_method, original)
+            # A later unread-count update cannot restore failed revocation.
+            service._workspace_changed(workspace["id"])
+            runtime.synchronize()
+            assert runtime.snapshots()[profile["id"]]["desired"] == "stopped"
+        else:
+            mutate()
+        assert writes
+    finally:
+        owner.close()
+        member.close()
+
+
 def test_direct_join_binding_requires_saved_pending_join(tmp_path, monkeypatch):
     from dataclasses import replace
     from mesh_chat.errors import InvitationExpired

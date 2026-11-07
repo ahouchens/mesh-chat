@@ -1,0 +1,126 @@
+# Acceptance reconciliation: specification invariants and scenarios
+
+Executed automated evidence for the current commit is recorded in the
+[qualification ledger](Mesh_Chat_Connection_Qualification_Ledger.md);
+it separates automated runs from physical and packaged limits.
+
+
+This page reconciles [the specification](Mesh_Chat_Connection_Runtime_Spec.md)
+with executed evidence. It is deliberately conservative: a requirement is only
+marked at the level the evidence actually reaches, and physical-only acceptance
+is marked unavailable rather than inferred from emulation or CI.
+
+## Environment limits
+
+These constraints cap the evidence above and are recorded again in the
+[qualification ledger](Mesh_Chat_Connection_Qualification_Ledger.md):
+
+- No physical Android or Windows device and no isolated physical test network is
+  available; Android evidence is API 35 emulator evidence only.
+- Packaged Windows evidence runs WebView2 and frozen peers on one Windows host;
+  it is not Windows-and-Android interoperability.
+- Packaged component smokes exist (TypeScript tarball, Python wheel, an
+  installed-wheel Windows pipe consumer in consumer and owner scopes, and two
+  packaged native WebRTC messaging sidecars). The Kotlin AAR and independent
+  Android APK compile; four cross-UID consumer cases passed on the API 35
+  emulator at `461c2e9` (see ledger). Full independent messaging consumers
+  remain open; the specification does not require a graphical UI.
+- No SDK or package is published, so no supported version-pair matrix exists.
+- Branch-build release qualification executed and passed; no tagged release or
+  publication was performed.
+- The native Windows data-channel host is implemented behind trusted mode and
+  packaged, but durable service messaging, Windows-Android/WebView interop,
+  TURN/forced relay, GUI media coexistence and physical acceptance remain
+  unqualified.
+
+## Status vocabulary
+
+| Status | Meaning |
+| --- | --- |
+| `local` | Deterministic or in-process tests exercise the production policy, facade or adapter boundary on the recorded source. |
+| `component` | A native, emulator or packaged component run in CI proves the behavior for the recorded source and artifacts. |
+| `workflow` | The required qualification matrix and final gate executed for the exact source. |
+| `partial` | Evidence covers a named part of the requirement; the remainder is listed. |
+| `open` | No executing evidence. |
+| `unavailable` | Requires physical devices or an isolated physical network, neither of which exists in this environment. |
+
+Component evidence never implies a supported release, and emulator evidence is
+never described as physical-device qualification.
+
+## Invariants
+
+| ID | Status | Evidence and remaining gap |
+| --- | --- | --- |
+| INV01 | `local` | Supervisor fairness, single-owner and single-negotiation tests; the shared composition constructs exactly one owner at trusted startup. |
+| INV02 | `local` | Stale epoch, generation, operation and timer regressions in the policy suite; runtime reconciliation tests pin bounded tombstones. |
+| INV03 | `component` | Late-allocation disposal by exact handle is tested locally; Android JNI instrumentation and packaged Windows checks exercise native disposal. |
+| INV04 | `local` | Stop, lock, revocation, quarantine and incompatible-authority regressions in the reducer, runtime and intent transactions. |
+| INV05 | `local` | Reconnect cannot create trust, membership or disclosure; separate consent and workspace-authority suites. |
+| INV06 | `component` | Manual-carrier adoption requires signed SDP, capabilities, device binding and privacy authority; native adoption scenarios exercise it on Android. |
+| INV07 | `local` | Readiness requires an authorized bridge plus current route/path evidence; path loss invalidates readiness without retiring a healthy carrier. |
+| INV08 | `component` | Bridge repair and mailbox-outage separation are covered locally; packaged Windows crash recovery reuses the surviving carrier. |
+| INV09 | `component` | Stale cleanup and replacement retirement fences; packaged scenarios prove exact carrier reuse after restart. |
+| INV10 | `component` | Durable outbox and logical IDs are covered locally; packaged crash/restart delivers without a duplicate visible message. |
+| INV11 | `component` | Only an authenticated application receipt establishes delivery; packaged peers assert receipts. |
+| INV12 | `partial` | Policy, effect-runner, JNI ingress, startup-packet and Windows endpoint bounds are tested, including concurrent-client and idle-session limits. Other legacy queues have not been re-qualified as part of this work. |
+| INV13 | `local` | Every phase has a deadline, cancellation path and classified exit in the reducer corpus; cleanup reservations survive late completion. |
+| INV14 | `local` | Fair scheduling and capacity tests, including the property corpus. |
+| INV15 | `component` | Committed Stop fences immediately; packaged lifecycle proves the reopened profile keeps its identity and committed preference. |
+| INV16 | `partial` | The shared composition has one owner across foreground/background. Full platform lifecycle parity for every mode remains open. |
+| INV17 | `partial` | Shared-policy UI detach cannot retire a transferred carrier; media-call teardown parity across all modes is not re-qualified. |
+| INV18 | `local` | Deterministic traces, replay and the seeded simulator corpus. |
+| INV19 | `local` | Failed persistence keeps the in-memory denial and never reports durable success; intent-batch and authority-write regressions. |
+| INV20 | `partial` | The gate rejects failed, canceled, skipped or missing required evidence; publication re-hashes staged assets against that manifest. A branch-build release qualification executed and passed on setup/MSI/APK artifacts; no tag has exercised publication. |
+| INV21 | `partial` | The facade enforces caller, profile, permission and private-event boundaries in tests. The Windows named-pipe endpoint adds OS access control, executable allowlisting and an installed-wheel consumer in consumer/owner scopes; the Android Binder endpoint carries a signature permission, caller-derived grant and required gate suites, and its standalone APK now enqueues and reads a message against a host-owned approved contact, queries it after a host-process restart, rejects a changed payload for the repeated key with no duplicate, and the installed-wheel Windows consumer performs the same enqueue/query round trip plus repeated-key handle reuse, changed-payload conflict and unknown-peer rejection over the named pipe, and queries the saved handle after a host restart on the same vault. Full transport delivery, receipt, pairing and partition qualification of the independent messaging consumer remains open. |
+| INV22 | `partial` | Clients carry no peer policy. Named-pipe and Binder host components exist; exclusive vault ownership is enforced by the runtime. Full packaged multi-client attachment, owner stop and lifecycle qualification remain open. |
+| INV23 | `local` | Durable enqueue receipts, conflicting payload rejection and stable logical IDs across restart; acknowledgments never change peer delivery state. |
+| INV24 | `local` | Explicit `resync_required` for gaps, expiry and authority change; the client consumer clears its position and resnapshots. Long-term retention is not promised. |
+| INV25 | `partial` | A declared compatibility file fixes the public API, IPC, peer-wire and client namespaces, and the Python, TypeScript and Kotlin component versions are bound to it by test. Every client refuses an unsupported major before side effects, and the aggregator checks the contract. The TypeScript package shape is pinned to the declaration and ships only dist, but no published package matrix or upgrade fixtures exist. |
+| INV26 | `partial` | Installed-wheel and TypeScript tarball component smokes exist. Independent Android AAR/APK Binder qualification passed four cases at `461c2e9`; full distribution-only Windows and Android messaging consumers, upgrade fixtures and support promises remain open. |
+
+## Required scenarios
+
+| ID | Status | Evidence and remaining gap |
+| --- | --- | --- |
+| SC01 | `component` | Packaged Windows peers exchange messages and authenticated receipts in both roles; no physical cross-device run. |
+| SC02 | `local` | Simultaneous start, duplicate signaling and role collisions are covered by the reducer/supervisor corpus. |
+| SC03 | `local` | Old answers, late native callbacks and expired timers cannot advance state; exact orphan cleanup is asserted. |
+| SC04 | `partial` | Partitions are simulated deterministically; native five- and thirty-second packet partitions recovered with receipts under 30 and 240 seconds. The required 30-second partition under the specified 150 ms RTT impairment is not measured on the exact headless transports. |
+| SC05 | `partial` | Loss and delayed control are simulated; native duplicate-packet and packet-partition component checks now carry durable message traffic, but no run applies the specified 150 ms RTT impairment profile. |
+| SC06 | `local` | Mailbox failure keeps a healthy carrier and reports degraded future reconnect separately. |
+| SC07 | `local` | Carrier failure with a healthy mailbox schedules a permitted new negotiation. |
+| SC08 | `component` | Packaged Windows kills the service and reclaims the same carrier binding without new negotiation. |
+| SC09 | `component` | Process and adapter restart produce a fresh epoch; packaged tests reopen the profile and preserve preferences. |
+| SC10 | `component` | Stop, lock, revocation and quarantine during native creation are fenced locally; Android instrumentation covers cancelled gathering. The 294-case reducer corpus covers interruption and late completion at all 14 phases, including replacement resource protection. Packaged phase-by-phase parity remains open. |
+| SC11 | `partial` | Execution-state changes are policy inputs with one owner; full Android background/foreground parity is open. |
+| SC12 | `partial` | Direct Fabric suites exercise real controlled paths and NAT filters, but selected-path and negative-control evidence is not bound to policy traffic. |
+| SC13 | `local` | Multiple contacts, scopes and devices are covered for fairness and isolation; no cross-device packaged run. |
+| SC14 | `local` | Delayed attachment and missing path are bounded with truthful readiness. |
+| SC15 | `component` | Lost receipts, duplicate packets and restart preserve one visible message per logical ID in packaged runs. |
+| SC16 | `partial` | Policy and JNI queues enforce budgets and quarantine; a packaged saturation run is absent. |
+| SC17 | `partial` | Packaged pairing cancellation and unapproved-restart checks exist, and native handshakes now retire exactly at offer, acceptance and answer phases. Full legacy media-call and pairing-closure re-qualification against the shared policy remains open. |
+| SC18 | `partial` | Signed fixtures and existing peers still interoperate; no explicit wire-version matrix. |
+| SC19 | `local` | Persistence failure during intent or adoption bookkeeping is tested for safe in-memory behavior. |
+| SC20 | `workflow` | The final gate fails on missing, skipped, canceled or stale required evidence for the exact source. |
+| SC21 | `open` | Independent packaged consumers can be built and exercised in CI/emulation, and two independent Reticulum processes now exchange durable messages/receipts over the native DataChannel under the legacy bridge policy. Full cross-platform messaging/receipts on production headless transports remain implementation and qualification work; physical hardware is not a prerequisite for this automated scenario. |
+| SC22 | `component` | Wrong caller, profile/scope and private-control attempts are rejected before effects in facade tests. |
+| SC23 | `local` | Lost reply, timeout and duplicate request after restart resolve by idempotency key; conflicting payloads fail. |
+| SC24 | `local` | Bounded replay, explicit gaps, cursor expiry and consumer deduplication are covered by facade and client tests. |
+| SC25 | `open` | Component clients declare versions that are checked against the compatibility declaration, but no supported SDK/API/package version pairs are published to validate or reject. |
+| SC26 | `partial` | Detach does not stop the runtime; the owner can now request a stop that sets the shutdown event and closes the host stream after the reply, but process exit and packaged multi-client evidence remain unqualified. The Windows endpoint serves a bounded number of concurrent local clients. |
+
+## Completion boundaries
+
+| Boundary | Status | Note |
+| --- | --- | --- |
+| Shared policy complete | `partial` | One owner drives the experimental Android and desktop compositions, but manual-pairing parity, Windows-and-Android interoperability and legacy-loop removal are open. |
+| Headless messaging complete | `partial` | Android native transport and packaged Windows WebView2 scenarios qualify components; the production native Windows DataChannel adapter does not exist. |
+| External integration complete (M5) | `partial` | Authenticated host components and experimental clients exist. Supported packages, complete independent messaging consumers, UI migration and compatibility/upgrade qualification remain open. |
+| Release gating complete | `partial` | Publication already requires exact-artifact aggregation. Branch-build qualification passed; tagged publication and the supported-pair matrix remain open. |
+
+## Physical checklist
+
+Unavailable in this environment: Wi-Fi/cellular switching, screen-off/Doze,
+real process death by OS policy, Stop/lock on physical devices and end-to-end
+receipts on physical hardware. No emulator, packaged or CI result on this branch
+is presented as that evidence.

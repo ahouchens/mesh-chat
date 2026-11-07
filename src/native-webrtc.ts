@@ -97,7 +97,7 @@ function nativeIce(ice: CallIceConfiguration): NativeIceConfiguration {
   };
 }
 
-/** Android only: create an offer from the native peer, outside the WebView. */
+/** Create an offer through the service's registered platform transport. */
 export function nativeWebRTCOffer(
   sessionId: string,
   ice: CallIceConfiguration,
@@ -112,7 +112,7 @@ export function nativeWebRTCOffer(
   });
 }
 
-/** Android only: accept a remote offer and produce the native answer SDP. */
+/** Accept an offer through the service's registered platform transport. */
 export function nativeWebRTCAccept(
   sessionId: string,
   offerSdp: string,
@@ -159,4 +159,10 @@ export function nativeWebRTCClose(sessionId: string): Promise<unknown> {
 
 export function isNativeWebRTCPlatform(userAgent = navigator.userAgent): boolean {
   return /\bAndroid\b/i.test(userAgent);
+}
+
+/** Host-provided routing hint; it grants no authority to private host commands. */
+export function usesServiceWebRTCTransport(userAgent = navigator.userAgent): boolean {
+  return isNativeWebRTCPlatform(userAgent) || (typeof window !== "undefined" &&
+    (window as unknown as { __MESH_SERVICE_TRANSPORT__?: boolean }).__MESH_SERVICE_TRANSPORT__ === true);
 }

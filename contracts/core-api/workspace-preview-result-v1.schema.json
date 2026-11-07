@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mesh-chat:core-api:workspace-preview-result:1",
+  "title": "Experimental workspace invitation preview v1",
+  "description": "Safe preview fields only; internal workspace ids and authority material stay private.",
+  "type": "object", "additionalProperties": false,
+  "required": ["api_version", "request_id", "ok", "result"],
+  "properties": {
+    "api_version": {"const": 1},
+    "request_id": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,80}$"},
+    "ok": {"const": true},
+    "result": {"$ref": "#/$defs/preview"}
+  },
+  "$defs": {
+    "handle": {"type": "string", "pattern": "^[A-Za-z0-9_-]{16,128}$"},
+    "preview": {
+      "type": "object", "additionalProperties": false,
+      "required": ["profile", "name", "description", "member_count", "retention_days",
+                   "expires_at", "requires_i2p_consent"],
+      "properties": {
+        "profile": {"$ref": "#/$defs/handle"},
+        "name": {"type": "string", "minLength": 1, "maxLength": 128},
+        "description": {"type": "string", "maxLength": 1024},
+        "member_count": {"type": "integer", "minimum": 1, "maximum": 8},
+        "retention_days": {"type": "integer", "minimum": 1, "maximum": 3650},
+        "expires_at": {"type": "number", "minimum": 0, "maximum": 9007199254740991},
+        "requires_i2p_consent": {"type": "boolean"}
+      }
+    }
+  }
+}

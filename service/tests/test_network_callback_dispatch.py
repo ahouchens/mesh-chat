@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import pytest
 import queue
 import time
 from collections import deque
@@ -414,7 +415,8 @@ def test_service_close_keeps_vault_open_for_active_packet_authority() -> None:
     assert closed.wait(2) and retired.is_set()
 
 
-def test_service_close_keeps_vault_open_for_inflight_recovery_worker():
+@pytest.mark.parametrize("worker_kind", ["recovery", "pending_contact"])
+def test_service_close_keeps_vault_open_for_inflight_recovery_worker(worker_kind):
     from mesh_chat.direct_recovery import DirectRecovery
     service = MeshChatService.__new__(MeshChatService)
     service._direct_native = service._direct_setup = None
@@ -435,7 +437,13 @@ def test_service_close_keeps_vault_open_for_inflight_recovery_worker():
         assert release.wait(3)
         assert not closed.is_set()
     worker=threading.Thread(target=work)
-    service._direct_recovery._workers.add(worker)
+    if worker_kind == "recovery":
+        service._direct_recovery._workers.add(worker)
+    else:
+        def wait(timeout=None):
+            worker.join(timeout)
+            return not worker.is_alive()
+        service._pending_contact_carriers = {"session": SimpleNamespace(close=lambda: None, wait=wait)}
     worker.start()
     try:
         assert entered.wait(2)

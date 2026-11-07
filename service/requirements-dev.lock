@@ -1,4 +1,16 @@
 -r requirements.lock
+attrs==26.1.0
+jsonschema==4.26.0
+jsonschema-specifications==2025.9.1
+referencing==0.37.0
+rpds-py==2026.9.1
+ast-serialize==0.13.1
+hypothesis==6.170.13
+librt==0.16.0
+mypy==2.4.1
+mypy_extensions==1.1.0
+pathspec==1.1.1
+sortedcontainers==2.4.0
 altgraph==0.17.5
 coverage==7.16.2
 iniconfig==2.3.0
@@ -14,3 +26,4 @@ pyinstaller-hooks-contrib==2026.8
 pywin32-ctypes==0.2.3; sys_platform == "win32"
 setuptools==80.9.0
 wheel==0.45.1
+pyyaml==6.0.3

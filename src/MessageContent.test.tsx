@@ -7,7 +7,13 @@ import config from "../src-tauri/tauri.conf.json";
 const native = vi.hoisted(() => ({ active: false, invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => native.active, invoke: native.invoke }));
 afterEach(() => { cleanup(); vi.useRealTimers(); native.active = false; native.invoke.mockReset(); });
-beforeEach(() => { native.invoke.mockResolvedValue({ status: "unavailable" }); });
+function nativeResult(value: unknown) {
+  native.invoke.mockImplementation(async (command: string) => {
+    if (command === "core_api_request") throw new Error("core_api_unavailable");
+    return value;
+  });
+}
+beforeEach(() => { nativeResult({ status: "unavailable" }); });
 
 describe("message links", () => {
   it("preserves surrounding punctuation, balanced parentheses and line breaks", () => {
@@ -47,7 +53,7 @@ describe("message links", () => {
 
 describe("preview lifecycle", () => {
   it("loads a native card only after consent and retains it when the player fails", async () => {
-    native.invoke.mockResolvedValue({ status: "ready", title: "A short film", author: "Studio", text: "", image: "data:image/jpeg;base64,/9j/" });
+    nativeResult({ status: "ready", title: "A short film", author: "Studio", text: "", image: "data:image/jpeg;base64,/9j/" });
     render(<MessageContent text="https://youtu.be/aqz-KE-bpKQ" />);
     expect(native.invoke).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Load preview" }));
@@ -67,7 +73,7 @@ describe("preview lifecycle", () => {
     expect(screen.getByText("A short film")).toBeTruthy();
   });
   it("renders post content as text and rejects remote image URLs", async () => {
-    native.invoke.mockResolvedValue({ status: "ready", title: "", author: "Author", text: '<img src=x onerror="bad()">', image: "https://evil.test/tracking" });
+    nativeResult({ status: "ready", title: "", author: "Author", text: '<img src=x onerror="bad()">', image: "https://evil.test/tracking" });
     render(<MessageContent text="https://x.com/jack/status/20" />);
     fireEvent.click(screen.getByRole("button", { name: "Load preview" }));
     expect(await screen.findByText('<img src=x onerror="bad()">')).toBeTruthy();
@@ -82,26 +88,31 @@ describe("preview lifecycle", () => {
   });
   it("discards late metadata after closing or editing a message", async () => {
     let finish!: (value: unknown) => void;
-    native.invoke.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    native.invoke.mockImplementation((command: string) => command === "core_api_request"
+      ? Promise.reject(new Error("core_api_unavailable"))
+      : new Promise((resolve) => { finish = resolve; }));
     const view = render(<MessageContent text="https://x.com/jack/status/20" />);
     fireEvent.click(screen.getByRole("button", { name: "Load preview" }));
+    await act(async () => { await Promise.resolve(); });
     fireEvent.click(screen.getByRole("button", { name: "Close X preview" }));
     await act(async () => finish({ status: "ready", title: "Late post", author: "", text: "", image: null }));
     expect(screen.queryByText("Late post")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Load preview" }));
+    await act(async () => { await Promise.resolve(); });
     view.rerender(<MessageContent text="https://x.com/jack/status/21" />);
     await act(async () => finish({ status: "ready", title: "Wrong post", author: "", text: "", image: null }));
     expect(screen.queryByText("Wrong post")).toBeNull();
   });
   it("stops polling when a preview is closed", async () => {
     vi.useFakeTimers();
-    native.invoke.mockResolvedValue({ status: "loading" });
+    nativeResult({ status: "loading" });
     render(<MessageContent text="https://x.com/jack/status/20" />);
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Load preview" })));
-    expect(native.invoke).toHaveBeenCalledTimes(1);
+    const legacyCalls = () => native.invoke.mock.calls.filter(([command]) => command === "service_command");
+    expect(legacyCalls()).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "Close X preview" }));
     await act(async () => vi.advanceTimersByTimeAsync(16000));
-    expect(native.invoke).toHaveBeenCalledTimes(1);
+    expect(legacyCalls()).toHaveLength(1);
   });
   it("allows only provider frames while keeping third-party scripts outside the app", () => {
     expect(config.app.security.csp).toContain("frame-src https://www.youtube-nocookie.com https://platform.twitter.com;");

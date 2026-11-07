@@ -28,6 +28,7 @@ export interface Profile {
 
 export interface Contact {
   id: string;
+  core_handle?: string;
   display_name: string;
   public_identity: string;
   identity_hash: string;
@@ -93,6 +94,7 @@ export interface GroupMember {
 
 export interface Group {
   id: string;
+  core_handle?: string;
   title: string;
   owner_destination: string;
   posting_policy: GroupPostingPolicy;
@@ -148,6 +150,7 @@ export interface GroupDraft {
 
 export interface GroupInvitation {
   id: string;
+  core_handle?: string;
   group_id: string;
   title: string;
   owner_display_name: string;
@@ -211,17 +214,20 @@ export type WorkspaceState =
 
 export interface WorkspaceMember {
   id: string;
+  core_handle?: string;
   display_name: string;
   role: WorkspaceRole;
   status: "joining" | "active" | "left" | "removed";
   short_id: string;
   device: {
     id: string;
+    core_handle?: string;
     destination_hash: string;
     fingerprint: string;
   };
   devices?: Array<{
     id: string;
+    core_handle?: string;
     destination_hash: string;
     fingerprint: string;
   }>;
@@ -229,6 +235,7 @@ export interface WorkspaceMember {
 
 export interface Workspace {
   id: string;
+  core_handle?: string;
   name: string;
   description: string;
   state: WorkspaceState;
@@ -280,6 +287,7 @@ export interface Workspace {
 
 export interface WorkspaceChannel {
   id: string;
+  core_handle?: string;
   workspace_id: string;
   name: string;
   name_key: string;
@@ -590,6 +598,7 @@ export interface WorkspaceSearchPage {
 
 export interface WorkspaceJoinRequest {
   id: string;
+  core_handle?: string;
   workspace_id: string;
   member_id: string;
   display_name: string;
@@ -601,8 +610,21 @@ export interface WorkspaceJoinRequest {
   created_at: number;
 }
 
+export interface AdmissionGrant {
+  id: string;
+  admission_grant?: string;
+  state: string;
+  admin_member_id: string;
+  admin_device_id: string;
+  max_admissions: number;
+  use_count: number;
+  expires_at: number;
+  accepted: boolean;
+}
+
 export interface WorkspaceInvitation {
   id: string;
+  core_handle?: string;
   workspace_id: string;
   offered_manifest_digest: string;
   state: "active";
@@ -654,6 +676,7 @@ export interface WorkspaceInvitationPreview {
 
 export interface WorkspaceInvitationFormats {
   id: string;
+  core_handle?: string;
   workspace_id: string;
   link: string;
   text: string;
@@ -690,6 +713,7 @@ export interface WorkspaceDeviceLinkFormats {
 
 export interface WorkspaceDeviceTransition {
   id: string;
+  core_handle?: string;
   workspace_id: string;
   direction: "incoming" | "outgoing";
   transition_kind: "link" | "removal";
@@ -726,6 +750,7 @@ export type WorkspaceAdminRequestState =
 
 export interface WorkspaceAdminRequest {
   id: string;
+  core_handle?: string;
   workspace_id: string;
   direction: "incoming" | "outgoing";
   request_kind: "invitation" | "member_removal" | "role_change";
@@ -767,6 +792,7 @@ export type WorkspaceAuthorityTransitionState =
 
 export interface WorkspaceAuthorityTransition {
   id: string;
+  core_handle?: string;
   workspace_id: string;
   direction: "incoming" | "outgoing";
   transition_kind: "same_owner_rotation" | "ownership_transfer";

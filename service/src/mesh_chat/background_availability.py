@@ -128,6 +128,9 @@ class BackgroundAvailabilityMixin:
             return None
 
     def _sync_background_reconnect(self) -> None:
+        if getattr(self, "_connection_policy", "legacy") == "shared-native":
+            # Foreground/background are observations of the same policy owner.
+            return
         supervisor = getattr(self, "_background_reconnect_supervisor", None)
         if not self._background_availability_enabled():
             if supervisor is not None:

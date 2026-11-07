@@ -23,6 +23,7 @@ from .errors import (
     WorkspaceAlreadyKnown,
     WorkspaceLimitReached,
 )
+from .workspace_authority import WorkspaceAuthorityStore
 from .invitations import canonical_bytes
 from .i2p_invitation import (
     create_i2p_invitation,
@@ -392,6 +393,12 @@ class WorkspaceServiceMixin:
     settings: Any
     _identity: RNS.Identity | None
 
+    @property
+    def _workspace_store(self):
+        if getattr(self, "_connection_runtime", None) is None:
+            return self.store
+        return WorkspaceAuthorityStore(self.store, self._connection_authority_update)
+
     def _workspace_changed(
         self,
         workspace_id: str,
@@ -409,7 +416,7 @@ class WorkspaceServiceMixin:
             thread_unread = self._workspace_thread_unread_count(workspace)
             if int(workspace.get("thread_unread_count", -1)) != thread_unread:
                 workspace["thread_unread_count"] = thread_unread
-            self.store.put(
+            self._workspace_store.put(
                 "workspace", self._workspace_record_id(workspace_id), workspace
             )
             catalog = self.store.get(
@@ -439,7 +446,7 @@ class WorkspaceServiceMixin:
         generation = int(lifecycle.get("invalidation_generation", 0)) + 1
         lifecycle["invalidation_generation"] = generation
         lifecycle["updated_at"] = time.time()
-        self.store.put(
+        self._workspace_store.put(
             "workspace_lifecycle_state", self._workspace_lifecycle_id(), lifecycle
         )
         self.emit(
@@ -851,6 +858,7 @@ class WorkspaceServiceMixin:
                             "id": item.get("id"),
                             "members": item.get("member_ids", []),
                             "name": item.get("name"),
+                            "posting": item.get("posting"),
                             "state": item.get("state"),
                             "topic": item.get("topic"),
                             "visibility": item.get("visibility"),
@@ -929,7 +937,7 @@ class WorkspaceServiceMixin:
     ) -> None:
         records = self._workspace_search_directory_records(workspace, channels)
         if records:
-            self.store.put_many(records)
+            self._workspace_store.put_many(records)
 
     def _workspace_event_tombstone_id(self, workspace_id: str, event_id: str) -> str:
         return self.store.opaque_id(
@@ -1564,7 +1572,7 @@ class WorkspaceServiceMixin:
             queue["entries"] = []
             queue["updated_at"] = time.time()
             records.append(("workspace_notification_queue", queue_id, queue))
-        self.store.put_and_delete(records, deletions)
+        self._workspace_store.put_and_delete(records, deletions)
         return self.notification_state()
 
     def set_hide_notification_previews(
@@ -1583,7 +1591,7 @@ class WorkspaceServiceMixin:
         settings["updated_at"] = time.time()
         outcome = self.notification_state()
         outcome["hide_previews"] = hidden
-        return self.store.commit_operation(
+        return self._workspace_store.commit_operation(
             operation_id,
             digest,
             outcome,
@@ -1641,7 +1649,7 @@ class WorkspaceServiceMixin:
             "conversation_id": conversation_id,
             "mode": mode,
         }
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id,
             digest,
             outcome,
@@ -1658,7 +1666,7 @@ class WorkspaceServiceMixin:
         lifecycle = dict(self._workspace_lifecycle_state())
         lifecycle["invalidation_overflow"] = True
         lifecycle["updated_at"] = time.time()
-        self.store.put(
+        self._workspace_store.put(
             "workspace_lifecycle_state", self._workspace_lifecycle_id(), lifecycle
         )
 
@@ -1685,7 +1693,7 @@ class WorkspaceServiceMixin:
         queue["entries"] = []
         queue["updated_at"] = now
         records.append(("workspace_notification_queue", queue_id, queue))
-        self.store.put_and_delete(records, deletions)
+        self._workspace_store.put_and_delete(records, deletions)
 
     def mobile_lifecycle_transition(self, state: Any, reason: Any = None) -> dict[str, Any]:
         if state not in {"foreground", "background", "background_available", "suspended"} or not (
@@ -1705,7 +1713,7 @@ class WorkspaceServiceMixin:
         lifecycle["state"] = state
         lifecycle["last_reason"] = reason or state
         lifecycle["updated_at"] = time.time()
-        self.store.put(
+        self._workspace_store.put(
             "workspace_lifecycle_state", self._workspace_lifecycle_id(), lifecycle
         )
         if state == "suspended":
@@ -1717,7 +1725,7 @@ class WorkspaceServiceMixin:
             self._direct_packets.retire_all()
         if state == "foreground":
             lifecycle["state"] = "reconciling"
-            self.store.put(
+            self._workspace_store.put(
                 "workspace_lifecycle_state", self._workspace_lifecycle_id(), lifecycle
             )
             reconcile_remote = getattr(self, "reconcile_remote_profiles", None)
@@ -1749,7 +1757,7 @@ class WorkspaceServiceMixin:
             )
             lifecycle["invalidation_overflow"] = False
             lifecycle["updated_at"] = time.time()
-            self.store.put(
+            self._workspace_store.put(
                 "workspace_lifecycle_state", self._workspace_lifecycle_id(), lifecycle
             )
         return self.notification_state()
@@ -1810,7 +1818,7 @@ class WorkspaceServiceMixin:
         queue["entries"] = retained
         queue["updated_at"] = time.time()
         records.append(("workspace_notification_queue", queue_id, queue))
-        self.store.put_and_delete(records, deletions)
+        self._workspace_store.put_and_delete(records, deletions)
         return {"items": items}
 
     def acknowledge_native_notification(
@@ -1848,7 +1856,7 @@ class WorkspaceServiceMixin:
                 records.append(("workspace_notification_ledger", notification_id, ledger))
         queue["updated_at"] = time.time()
         records.append(("workspace_notification_queue", queue_id, queue))
-        self.store.put_and_delete(records, deletions)
+        self._workspace_store.put_and_delete(records, deletions)
         return {"acknowledged": True, "outcome": outcome}
 
     def open_notification_target(self, notification_id: Any) -> dict[str, Any]:
@@ -2694,7 +2702,7 @@ class WorkspaceServiceMixin:
         if incomplete and workspace.get("state") == "active":
             workspace["state"] = "incomplete_sync"
         workspace["updated_at"] = time.time()
-        self.store.put("workspace", self._workspace_record_id(workspace_id), workspace)
+        self._workspace_store.put("workspace", self._workspace_record_id(workspace_id), workspace)
         self._workspace_changed(workspace_id, resource_kind="sync_state")
 
     def _clear_workspace_sync_issue_if_resolved(self, workspace_id: str) -> None:
@@ -2716,7 +2724,7 @@ class WorkspaceServiceMixin:
             return
         workspace.pop("sync_issue", None)
         workspace["updated_at"] = time.time()
-        self.store.put("workspace", self._workspace_record_id(workspace_id), workspace)
+        self._workspace_store.put("workspace", self._workspace_record_id(workspace_id), workspace)
         self._workspace_changed(workspace_id, resource_kind="sync_state")
 
     def _workspace_channel_by_digest(
@@ -2977,7 +2985,7 @@ class WorkspaceServiceMixin:
             return
         workspace["channel_discovery"] = "incomplete"
         workspace["updated_at"] = time.time()
-        self.store.put("workspace", self._workspace_record_id(workspace_id), workspace)
+        self._workspace_store.put("workspace", self._workspace_record_id(workspace_id), workspace)
 
     def _recompute_workspace_channel_discovery(self, workspace_id: str) -> None:
         workspace = self._require_workspace(workspace_id)
@@ -3013,7 +3021,7 @@ class WorkspaceServiceMixin:
             return
         workspace["channel_discovery"] = state
         workspace["updated_at"] = time.time()
-        self.store.put("workspace", self._workspace_record_id(workspace_id), workspace)
+        self._workspace_store.put("workspace", self._workspace_record_id(workspace_id), workspace)
         self._workspace_changed(workspace_id, resource_kind="channel_discovery")
 
     @staticmethod
@@ -3288,6 +3296,8 @@ class WorkspaceServiceMixin:
             "manager_member_id": channel.manager_member_id,
             "manager_device_id": channel.manager_device_id,
             "member_ids": list(channel.member_ids),
+            "posting": (channel.posting.value
+                        if channel.posting is not None else None),
             "version": channel.version,
             "head_hash": channel.digest,
             "manifest_digest": channel.manifest_digest,
@@ -4433,12 +4443,15 @@ class WorkspaceServiceMixin:
 
     @staticmethod
     def _posting_allowed(
-        manifest: VerifiedWorkspaceManifest, member: Any
+        manifest: VerifiedWorkspaceManifest, member: Any,
+        channel: VerifiedWorkspaceChannel | None = None,
     ) -> bool:
+        policy = (channel.posting if channel is not None and channel.posting is not None
+                  else manifest.posting)
         return (
             member.status == "active"
             and (
-                manifest.posting == WorkspacePostingPolicy.ALL_MEMBERS
+                policy == WorkspacePostingPolicy.ALL_MEMBERS
                 or member.role in {WorkspaceRole.OWNER, WorkspaceRole.ADMIN}
             )
         )
@@ -4554,7 +4567,7 @@ class WorkspaceServiceMixin:
             "workspace-subscription", workspace["id"], channel.channel_id
         )
         outcome = self._public_workspace(workspace)
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id,
             digest,
             outcome,
@@ -4808,7 +4821,7 @@ class WorkspaceServiceMixin:
                 dict(remote_record), "pending_invitation", invitation_id
             )
         record["connection_mode"] = outcome.get("connection_mode")
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id,
             digest,
             outcome,
@@ -4877,7 +4890,7 @@ class WorkspaceServiceMixin:
             invitation_record["contact_id"] = contact_id
             invitation_record["contact_display_name"] = contact["display_name"]
             invitation_record["delivery_message_id"] = message["id"]
-            self.store.put(
+            self._workspace_store.put(
                 "workspace_invitation", invitation["id"], invitation_record
             )
         return {
@@ -4962,7 +4975,7 @@ class WorkspaceServiceMixin:
                 email_record["state"] = "revoked"
                 email_record["updated_at"] = time.time()
         outcome = {"id": invitation_id, "workspace_id": workspace_id, "state": "revoked"}
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id,
             digest,
             outcome,
@@ -5408,7 +5421,7 @@ class WorkspaceServiceMixin:
         owner = self._saved_workspace_join_owner(workspace, invite)
         # Preserve the exact signed request, delivery timing, and receipt. A new
         # UI operation records its result without creating another member/device.
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id, digest, self._public_workspace(workspace), []
         )
         committed.update(self._prepare_workspace_join_route(invite.workspace_id))
@@ -5624,7 +5637,7 @@ class WorkspaceServiceMixin:
                 callback_response["workspace_id"] = invite.workspace_id
                 callback_response["updated_at"] = time.time()
                 records.append(("connection_response", email.digest, callback_response))
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id, digest, outcome, records
         )
         network = getattr(self, "network", None)
@@ -5662,7 +5675,7 @@ class WorkspaceServiceMixin:
                     scope_kind="workspace", scope_id=workspace_id,
                 )
             workspace.pop("join_connection_invitation", None)
-            self.store.put("workspace", record_id, workspace)
+            self._workspace_store.put("workspace", record_id, workspace)
             return outcome
         except MeshChatError:
             # Leave the sealed intent for the ordinary bounded outbox retry;
@@ -5713,7 +5726,7 @@ class WorkspaceServiceMixin:
                 receipt["state"] = DeliveryState.QUEUED.value
                 receipt["next_attempt_at"] = now
                 receipt.pop("native_message_id", None)
-                self.store.put_many([
+                self._workspace_store.put_many([
                     ("workspace_delivery", receipt_id, receipt),
                     *self._due_records(add=[receipt]),
                 ])
@@ -5762,7 +5775,7 @@ class WorkspaceServiceMixin:
             "state": "pending",
             "created_at": float(join.created_at),
         }
-        self.store.put_many([
+        self._workspace_store.put_many([
             ("workspace_join_request", request_id, record),
             ("workspace_delivery", receipt["id"], receipt),
             *self._due_records(add=[receipt]),
@@ -5791,7 +5804,7 @@ class WorkspaceServiceMixin:
         workspace["join_receipt"] = wire.document
         workspace["updated_at"] = time.time()
         delivery["state"] = DeliveryState.DELIVERED.value
-        self.store.put_many([
+        self._workspace_store.put_many([
             ("workspace", workspace_id, workspace),
             ("workspace_delivery", delivery_id, delivery),
             *self._due_records(remove=[delivery_id]),
@@ -5901,7 +5914,7 @@ class WorkspaceServiceMixin:
             document=raw,
             priority=0,
         )
-        self.store.put_many(
+        self._workspace_store.put_many(
             [
                 ("workspace_admission_grant", checked.digest, record),
                 ("workspace_delivery", delivery["id"], delivery),
@@ -5961,7 +5974,7 @@ class WorkspaceServiceMixin:
                 priority=0,
             )
             deliveries.append(delivery)
-        self.store.put_many(
+        self._workspace_store.put_many(
             [
                 ("workspace_admission_grant", grant_id, record),
                 *[
@@ -6083,7 +6096,7 @@ class WorkspaceServiceMixin:
             [("workspace_delivery", delivery["id"], delivery) for delivery in deliveries]
         )
         records.extend(self._due_records(add=deliveries))
-        self.store.put_many(records)
+        self._workspace_store.put_many(records)
         self._workspace_changed(workspace["id"], resource_kind="admission_grant")
         return self._public_workspace_admission_grant(record, include_offer=True)
 
@@ -6112,7 +6125,7 @@ class WorkspaceServiceMixin:
             return
         record["state"] = "revoked"
         record["revoked_at"] = time.time()
-        self.store.put("workspace_admission_grant", record["id"], record)
+        self._workspace_store.put("workspace_admission_grant", record["id"], record)
         self._workspace_changed(wire.workspace_id, resource_kind="admission_grant")
 
     @staticmethod
@@ -6170,7 +6183,7 @@ class WorkspaceServiceMixin:
             "expires_at": checked.expires_at,
             "use_count": 0,
         }
-        self.store.put("workspace_admission_grant", checked.digest, record)
+        self._workspace_store.put("workspace_admission_grant", checked.digest, record)
         self._workspace_changed(wire.workspace_id, resource_kind="admission_grant")
 
     def _receive_workspace_admission_acceptance(
@@ -6200,7 +6213,7 @@ class WorkspaceServiceMixin:
         was_accepted = record.get("state") == "accepted"
         record["acceptance"] = wire.document
         record["state"] = "accepted"
-        self.store.put("workspace_admission_grant", record["id"], record)
+        self._workspace_store.put("workspace_admission_grant", record["id"], record)
         self._workspace_changed(wire.workspace_id, resource_kind="admission_grant")
         if not was_accepted:
             self._forward_workspace_admission_requests(record)
@@ -6252,7 +6265,7 @@ class WorkspaceServiceMixin:
                 )
             )
         if deliveries:
-            self.store.put_many(
+            self._workspace_store.put_many(
                 [
                     *[
                         ("workspace_delivery", delivery["id"], delivery)
@@ -6318,7 +6331,7 @@ class WorkspaceServiceMixin:
         forwarded_request["invitation_id"] = invitation_id
         forwarded_request.pop("receipt_delivery_id", None)
         forwarded_request.pop("join_attempt_id", None)
-        self.store.put_many(
+        self._workspace_store.put_many(
             [
                 ("workspace_join_request", request_id, forwarded_request),
                 ("workspace_invitation", invitation_id, forwarded_invitation),
@@ -6555,7 +6568,7 @@ class WorkspaceServiceMixin:
             ],
             *self._due_records(add=[*manifest_deliveries, *channel_deliveries]),
         ]
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id, digest, outcome, records
         )
         self.stop_participant_host_for_scope(
@@ -6653,7 +6666,7 @@ class WorkspaceServiceMixin:
                 ("email_invitation", callback_id, callback_record)
             )
         outcome = {"request_id": request_id, "state": "declined"}
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id,
             digest,
             outcome,
@@ -6754,7 +6767,7 @@ class WorkspaceServiceMixin:
             "updated_at": time.time(),
         }
         outcome = {"id": offer.link_id, "workspace_id": workspace_id, **formats}
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id,
             digest,
             outcome,
@@ -6939,7 +6952,7 @@ class WorkspaceServiceMixin:
             ("workspace_delivery", delivery["id"], delivery),
             *self._due_records(add=[delivery]),
         ]
-        committed = self.store.commit_operation(operation_id, digest, outcome, records)
+        committed = self._workspace_store.commit_operation(operation_id, digest, outcome, records)
         network = getattr(self, "network", None)
         if network is not None:
             network.remember_contact(
@@ -7063,7 +7076,7 @@ class WorkspaceServiceMixin:
                 "expires_at": float(expires_at),
                 "updated_at": time.time(),
             }
-            self.store.put_many(
+            self._workspace_store.put_many(
                 [
                     (
                         "workspace_device_transition",
@@ -7188,7 +7201,7 @@ class WorkspaceServiceMixin:
                     *self._due_records(add=[delivery]),
                 ]
             )
-        committed = self.store.commit_operation(operation_id, digest, outcome, records)
+        committed = self._workspace_store.commit_operation(operation_id, digest, outcome, records)
         self._workspace_changed(workspace_id, resource_kind="device_transition")
         return committed
 
@@ -7242,7 +7255,7 @@ class WorkspaceServiceMixin:
             record["state"] = "declined"
             record["updated_at"] = time.time()
             outcome = {"id": transition_id, "state": "declined"}
-            committed = self.store.commit_operation(
+            committed = self._workspace_store.commit_operation(
                 operation_id,
                 digest,
                 outcome,
@@ -7409,7 +7422,7 @@ class WorkspaceServiceMixin:
             *[("workspace_delivery", item["id"], item) for item in deliveries],
             *self._due_records(add=deliveries, remove=cancelled_ids),
         ]
-        committed = self.store.commit_operation(operation_id, digest, outcome, records)
+        committed = self._workspace_store.commit_operation(operation_id, digest, outcome, records)
         network = getattr(self, "network", None)
         if network is not None:
             if cancelled_ids:
@@ -8617,7 +8630,7 @@ class WorkspaceServiceMixin:
             public["reactions"] = self._workspace_public_reactions(
                 workspace_id, target_event_id, reaction_overlay
             )
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id, digest, public, records
         )
         self._workspace_changed(
@@ -8710,13 +8723,13 @@ class WorkspaceServiceMixin:
         local_member = find_member(manifest, workspace["local_member_id"])
         if local_member is None or local_member.status != "active":
             raise ContactNotApproved("Local member is not active")
-        if not self._posting_allowed(manifest, local_member):
-            raise ContactNotApproved(
-                "Workspace posting is restricted to owners and administrators"
-            )
         channel = self._workspace_channel_by_digest(channel_record["head_hash"])
         if channel is None:
             raise ValidationError("Workspace channel control is unavailable")
+        if not self._posting_allowed(manifest, local_member, channel):
+            raise ContactNotApproved(
+                "Workspace posting is restricted to owners and administrators"
+            )
         if (
             channel.visibility == "private"
             and workspace["local_member_id"] not in channel.member_ids
@@ -8807,7 +8820,7 @@ class WorkspaceServiceMixin:
             for kind, record_id, value in records
         ]
         outcome = self._public_workspace_message(message)
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id, digest, outcome, records
         )
         self._workspace_changed(
@@ -8903,7 +8916,7 @@ class WorkspaceServiceMixin:
         direct["updated_at"] = now
         records.insert(0, ("workspace_direct", record_id, direct))
         outcome = self._public_workspace_direct(direct)
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id, digest, outcome, records
         )
         self._workspace_changed(
@@ -8935,7 +8948,7 @@ class WorkspaceServiceMixin:
             "conversation_id": conversation_id,
             "hidden": True,
         }
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id,
             digest,
             outcome,
@@ -9116,7 +9129,7 @@ class WorkspaceServiceMixin:
             )
         )
         outcome = self._public_workspace_message(message)
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id, digest, outcome, records
         )
         self._workspace_changed(
@@ -9194,13 +9207,13 @@ class WorkspaceServiceMixin:
             ):
                 raise ContactNotApproved("Workspace thread participants are not active")
         else:
-            if not self._posting_allowed(manifest, local_member):
-                raise ContactNotApproved(
-                    "Workspace posting is restricted to owners and administrators"
-                )
             channel = self._workspace_channel_by_digest(conversation["head_hash"])
             if channel is None:
                 raise ValidationError("Workspace channel control is unavailable")
+            if not self._posting_allowed(manifest, local_member, channel):
+                raise ContactNotApproved(
+                    "Workspace posting is restricted to owners and administrators"
+                )
             audience = (
                 tuple(channel.member_ids) if channel.visibility == "private" else ()
             )
@@ -9291,7 +9304,7 @@ class WorkspaceServiceMixin:
             for kind, record_id, value in records
         ]
         outcome = self._public_workspace_message(message)
-        committed = self.store.commit_operation(operation_id, digest, outcome, records)
+        committed = self._workspace_store.commit_operation(operation_id, digest, outcome, records)
         self._workspace_changed(
             workspace_id,
             conversation_id=conversation_id,
@@ -9338,7 +9351,7 @@ class WorkspaceServiceMixin:
                 wire.workspace_id, "queue_pressure", incomplete=True
             )
             return
-        self.store.put(
+        self._workspace_store.put(
             "workspace_pending_event",
             pending_id,
             {
@@ -9504,7 +9517,7 @@ class WorkspaceServiceMixin:
                     return True
                 workspace["state"] = "forked"
                 workspace["security_error"] = "event_id_equivocation"
-                self.store.put(
+                self._workspace_store.put(
                     "workspace", self._workspace_record_id(workspace["id"]), workspace
                 )
                 self._workspace_changed(event.workspace_id, resource_kind="security")
@@ -9520,7 +9533,7 @@ class WorkspaceServiceMixin:
                     return True
                 workspace["state"] = "forked"
                 workspace["security_error"] = "pruned_event_id_equivocation"
-                self.store.put(
+                self._workspace_store.put(
                     "workspace", self._workspace_record_id(workspace["id"]), workspace
                 )
                 self._workspace_changed(event.workspace_id, resource_kind="security")
@@ -9558,17 +9571,22 @@ class WorkspaceServiceMixin:
                         gaps.append(gap)
                         gaps.sort()
                         head["gaps"] = gaps
-                        self.store.put("workspace_stream_coverage", head_id, head)
+                        self._workspace_store.put("workspace_stream_coverage", head_id, head)
                     return False
+            channel = (
+                self._workspace_channel_by_digest(event.channel_digest)
+                if event.event_type == "message" and event.channel_digest is not None
+                else None
+            )
             author = find_member(manifest, event.author_member_id)
             if (
                 author is None
                 or author.status != "active"
                 or (
                     event.event_type == "message"
-                    and
-                    event.channel_digest is not None
-                    and not self._posting_allowed(manifest, author)
+                    and event.channel_digest is not None
+                    and (channel is None
+                         or not self._posting_allowed(manifest, author, channel))
                 )
             ):
                 return False
@@ -9584,7 +9602,7 @@ class WorkspaceServiceMixin:
                     return True
                 workspace["state"] = "forked"
                 workspace["security_error"] = "event_sequence_equivocation"
-                self.store.put(
+                self._workspace_store.put(
                     "workspace", self._workspace_record_id(workspace["id"]), workspace
                 )
                 self._workspace_changed(event.workspace_id, resource_kind="security")
@@ -9811,7 +9829,7 @@ class WorkspaceServiceMixin:
                     historical=historical,
                 )
             )
-            self.store.put_many(records)
+            self._workspace_store.put_many(records)
             if drain_pending:
                 self._drain_workspace_pending_events(event.workspace_id)
             self._workspace_changed(
@@ -9850,7 +9868,7 @@ class WorkspaceServiceMixin:
                 wire.workspace_id, "queue_pressure", incomplete=True
             )
             return
-        self.store.put(
+        self._workspace_store.put(
             "workspace_pending_control",
             record_id,
             {
@@ -9889,7 +9907,7 @@ class WorkspaceServiceMixin:
             if existing.get("digest") != incoming.digest:
                 workspace["state"] = "forked"
                 workspace["security_error"] = "manifest_fork"
-                self.store.put(
+                self._workspace_store.put(
                     "workspace", self._workspace_record_id(wire.workspace_id), workspace
                 )
                 self._workspace_changed(wire.workspace_id, resource_kind="security")
@@ -9951,7 +9969,7 @@ class WorkspaceServiceMixin:
                 records.append(
                     ("workspace_invitation", invitation["id"], invitation)
                 )
-        self.store.put_many(records)
+        self._workspace_store.put_many(records)
         self._workspace_changed(wire.workspace_id, resource_kind="manifest")
         return True
 
@@ -10060,7 +10078,7 @@ class WorkspaceServiceMixin:
                 if existing_same_epoch.get("digest") != incoming.digest:
                     workspace["state"] = "forked"
                     workspace["security_error"] = "manifest_fork"
-                    self.store.put(
+                    self._workspace_store.put(
                         "workspace", self._workspace_record_id(wire.workspace_id), workspace
                     )
                     self._workspace_changed(wire.workspace_id, resource_kind="security")
@@ -10097,7 +10115,7 @@ class WorkspaceServiceMixin:
                         )
                         return False
                     verify_workspace_manifest_transition(wire.document, predecessor)
-                self.store.put_many([
+                self._workspace_store.put_many([
                     (
                         "workspace_manifest",
                         self._workspace_manifest_record_id(incoming.digest),
@@ -10219,7 +10237,7 @@ class WorkspaceServiceMixin:
                             ):
                                 workspace["state"] = "forked"
                                 workspace["security_error"] = "manifest_fork"
-                                self.store.put(
+                                self._workspace_store.put(
                                     "workspace",
                                     self._workspace_record_id(workspace["id"]),
                                     workspace,
@@ -10252,7 +10270,7 @@ class WorkspaceServiceMixin:
                 if len(chain) >= MAX_AUTHORITY_TRANSITIONS:
                     workspace["state"] = "forked"
                     workspace["security_error"] = "authority_chain_limit"
-                    self.store.put(
+                    self._workspace_store.put(
                         "workspace", self._workspace_record_id(workspace["id"]), workspace
                     )
                     return False
@@ -10395,7 +10413,7 @@ class WorkspaceServiceMixin:
                 )
                 cancelled_records.extend(device_cancelled_records)
                 cancelled_ids.update(device_cancelled_ids)
-            self.store.put_many(
+            self._workspace_store.put_many(
                 [
                     ("workspace", self._workspace_record_id(workspace["id"]), workspace),
                     (
@@ -10480,7 +10498,7 @@ class WorkspaceServiceMixin:
                     }:
                         workspace["state"] = "forked"
                         workspace["security_error"] = "general_channel_conflict"
-                        self.store.put(
+                        self._workspace_store.put(
                             "workspace",
                             self._workspace_record_id(workspace["id"]),
                             workspace,
@@ -10546,7 +10564,7 @@ class WorkspaceServiceMixin:
                 subscribed = is_general
                 workspace["channel_discovery"] = "incomplete"
                 workspace["updated_at"] = time.time()
-                self.store.put_many(
+                self._workspace_store.put_many(
                     [
                         (
                             "workspace",
@@ -10677,7 +10695,7 @@ class WorkspaceServiceMixin:
                         )
                     existing_channel["state"] = "forked"
                     existing_channel["security_error"] = "channel_control_conflict"
-                    self.store.put(
+                    self._workspace_store.put(
                         "workspace_channel",
                         self._workspace_channel_record_id(channel.channel_id),
                         existing_channel,
@@ -10706,7 +10724,7 @@ class WorkspaceServiceMixin:
                 updated["updated_at"] = time.time()
                 workspace["channel_discovery"] = "incomplete"
                 workspace["updated_at"] = time.time()
-                self.store.put_many(
+                self._workspace_store.put_many(
                     [
                         (
                             "workspace",
@@ -10795,6 +10813,7 @@ class WorkspaceServiceMixin:
                 member_ids=remaining,
                 version=channel.version + 1,
                 previous_hash=channel.digest,
+                posting=channel.posting,
             )
             next_channel = verify_workspace_channel_manifest_transition(
                 raw, channel, manifest=manifest
@@ -10831,7 +10850,7 @@ class WorkspaceServiceMixin:
                     wire.workspace_id, channel.channel_id, {request.member_id}
                 )
             )
-            self.store.put_many(
+            self._workspace_store.put_many(
                 [
                     (
                         "workspace_channel",
@@ -10971,7 +10990,7 @@ class WorkspaceServiceMixin:
                         workspace.get("retention_generation", 1)
                     ),
                 }
-                self.store.put_many(
+                self._workspace_store.put_many(
                     [
                         ("workspace_channel", record_id, channel_record),
                         (
@@ -11054,7 +11073,7 @@ class WorkspaceServiceMixin:
                         if valid_fork:
                             existing["state"] = "forked"
                             existing["security_error"] = "channel_control_conflict"
-                            self.store.put("workspace_channel", record_id, existing)
+                            self._workspace_store.put("workspace_channel", record_id, existing)
                             self._workspace_changed(
                                 wire.workspace_id,
                                 conversation_id=incoming.channel_id,
@@ -11089,7 +11108,7 @@ class WorkspaceServiceMixin:
                     existing.get("created_at", incoming.created_at)
                 )
                 updated["updated_at"] = time.time()
-                self.store.put_many(
+                self._workspace_store.put_many(
                     [
                         ("workspace_channel", record_id, updated),
                         (
@@ -11165,7 +11184,7 @@ class WorkspaceServiceMixin:
                     wire.workspace_id, "queue_pressure", incomplete=True
                 )
                 return False
-            self.store.put(
+            self._workspace_store.put(
                 "workspace_channel_transfer",
                 record_id,
                 {
@@ -11264,7 +11283,7 @@ class WorkspaceServiceMixin:
                     if existing_result not in {None, wire.document}:
                         workspace["state"] = "forked"
                         workspace["security_error"] = "authority_general_conflict"
-                        self.store.put(
+                        self._workspace_store.put(
                             "workspace",
                             self._workspace_record_id(wire.workspace_id),
                             workspace,
@@ -11276,7 +11295,7 @@ class WorkspaceServiceMixin:
                     authority_record["general_result"] = wire.document
                     authority_record["general_result_digest"] = incoming.digest
                     authority_record["updated_at"] = time.time()
-                    self.store.put(
+                    self._workspace_store.put(
                         "workspace_authority_transition",
                         authority_record["id"],
                         authority_record,
@@ -11307,7 +11326,7 @@ class WorkspaceServiceMixin:
                     return True
                 existing["state"] = "forked"
                 existing["security_error"] = "channel_control_conflict"
-                self.store.put(
+                self._workspace_store.put(
                     "workspace_channel",
                     self._workspace_channel_record_id(incoming.channel_id),
                     existing,
@@ -11365,7 +11384,7 @@ class WorkspaceServiceMixin:
                     records.append(
                         ("workspace_channel_transfer", transfer_id, transfer)
                     )
-            self.store.put_many(records)
+            self._workspace_store.put_many(records)
             self._drain_workspace_pending_events(wire.workspace_id)
             self._workspace_changed(
                 wire.workspace_id,
@@ -11435,7 +11454,7 @@ class WorkspaceServiceMixin:
             ):
                 self._mark_workspace_channel_discovery_incomplete(wire.workspace_id)
                 return False
-            self.store.put(
+            self._workspace_store.put(
                 "workspace_channel_discovery",
                 discovery_id,
                 {
@@ -11507,7 +11526,7 @@ class WorkspaceServiceMixin:
                     )
                 )
             if deliveries:
-                self.store.put_many(
+                self._workspace_store.put_many(
                     [
                         *[
                             ("workspace_delivery", delivery["id"], delivery)
@@ -11586,7 +11605,7 @@ class WorkspaceServiceMixin:
                     [(fetch.member_id, requester[1])],
                 )
             )
-            self.store.put_many(
+            self._workspace_store.put_many(
                 [
                     *[
                         ("workspace_delivery", delivery["id"], delivery)
@@ -11629,7 +11648,7 @@ class WorkspaceServiceMixin:
             made_progress = False
             for pending in list(pending_controls):
                 if float(pending.get("expires_at", 0)) <= time.time():
-                    self.store.delete("workspace_pending_control", pending["id"])
+                    self._workspace_store.delete("workspace_pending_control", pending["id"])
                     pending_controls.remove(pending)
                     made_progress = True
                     continue
@@ -11662,7 +11681,7 @@ class WorkspaceServiceMixin:
                 else:
                     applied = False
                 if applied:
-                    self.store.delete("workspace_pending_control", pending["id"])
+                    self._workspace_store.delete("workspace_pending_control", pending["id"])
                     pending_controls.remove(pending)
                     made_progress = True
             if not made_progress:
@@ -11674,7 +11693,7 @@ class WorkspaceServiceMixin:
             if pending.get("workspace_id") != workspace_id:
                 continue
             if float(pending.get("expires_at", 0)) <= time.time():
-                self.store.delete("workspace_pending_event", pending["id"])
+                self._workspace_store.delete("workspace_pending_event", pending["id"])
                 continue
             wire = WorkspaceWirePayload(
                 kind="workspace_event",
@@ -11688,7 +11707,7 @@ class WorkspaceServiceMixin:
                 drain_pending=False,
                 historical=bool(pending.get("historical", False)),
             ):
-                self.store.delete("workspace_pending_event", pending["id"])
+                self._workspace_store.delete("workspace_pending_event", pending["id"])
         self._clear_workspace_sync_issue_if_resolved(workspace_id)
 
     def _advance_workspace_search_rebuild(
@@ -11701,7 +11720,7 @@ class WorkspaceServiceMixin:
         state = self.store.get("workspace_search_state", state_id)
         if state is None:
             state = self._workspace_search_base_state(workspace)
-            self.store.put("workspace_search_state", state_id, state)
+            self._workspace_store.put("workspace_search_state", state_id, state)
         if state.get("status") != "rebuilding":
             if state.get("status") == "ready":
                 retention = self.store.get(
@@ -11716,7 +11735,7 @@ class WorkspaceServiceMixin:
                     state["target_events"] = retained_count
                     state["indexed_events"] = retained_count
                     state["updated_at"] = time.time()
-                    self.store.put("workspace_search_state", state_id, state)
+                    self._workspace_store.put("workspace_search_state", state_id, state)
             return state
         if (
             isinstance(max_events, bool)
@@ -11800,7 +11819,7 @@ class WorkspaceServiceMixin:
             state["status"] = "ready"
             state["indexed_events"] = int(state.get("target_events", 0))
             state.pop("incomplete_reason", None)
-        self.store.put_many(
+        self._workspace_store.put_many(
             (kind, record_id, value)
             for (kind, record_id), value in staged.items()
         )
@@ -12581,7 +12600,7 @@ class WorkspaceServiceMixin:
         workspace["read_hint_sync"] = enabled
         workspace["updated_at"] = time.time()
         outcome = {"workspace_id": workspace_id, "enabled": enabled}
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id,
             digest,
             outcome,
@@ -12698,7 +12717,7 @@ class WorkspaceServiceMixin:
         hint_deliveries = self._workspace_read_hint_deliveries(
             workspace, channel_id, index, high_water
         )
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id,
             digest,
             outcome,
@@ -12792,7 +12811,7 @@ class WorkspaceServiceMixin:
                 return True
             conversation["unread_count"] = 0
             conversation["updated_at"] = time.time()
-            self.store.put_many(
+            self._workspace_store.put_many(
                 [
                     (
                         "workspace_channel" if kind == "channel" else "workspace_direct",
@@ -13162,7 +13181,7 @@ class WorkspaceServiceMixin:
             "high_water": high_water,
             "unread_count": 0,
         }
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id, digest, outcome, records
         )
         self._workspace_changed(
@@ -13362,7 +13381,7 @@ class WorkspaceServiceMixin:
                 workspace, high_water
             ),
         }
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id,
             digest,
             outcome,
@@ -13428,7 +13447,7 @@ class WorkspaceServiceMixin:
         }
         if previous.get("mode") in NOTIFICATION_MODES:
             preference_record["mode"] = previous["mode"]
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id,
             digest,
             outcome,
@@ -13521,7 +13540,7 @@ class WorkspaceServiceMixin:
             if summary is not None:
                 summary["unread_count"] = 0
                 records.append(("workspace_thread", summary_id, summary))
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id,
             digest,
             outcome,
@@ -13574,7 +13593,7 @@ class WorkspaceServiceMixin:
         empty = text == "" and not mentions
         records = [] if empty else [("workspace_draft", record_id, outcome)]
         deletions = [("workspace_draft", record_id)] if empty else []
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id, digest, outcome, records, deletions
         )
         self._workspace_changed(
@@ -13636,7 +13655,7 @@ class WorkspaceServiceMixin:
             "root_author_member_id": root_event.get("author_member_id"),
         }
         empty = text == "" and not mentions
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id,
             digest,
             outcome,
@@ -13792,7 +13811,7 @@ class WorkspaceServiceMixin:
                 "display_name": channel.name,
             }
         )
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id,
             digest,
             public,
@@ -13860,6 +13879,7 @@ class WorkspaceServiceMixin:
         topic: Any,
         archived: Any,
         operation_id: Any,
+        posting: Any = None,
     ) -> dict[str, Any]:
         payload = {
             "workspace_id": workspace_id,
@@ -13867,6 +13887,7 @@ class WorkspaceServiceMixin:
             "name": name,
             "topic": topic,
             "archived": archived,
+            "posting": posting,
         }
         operation_id, digest, replay = self._workspace_operation(
             "update_workspace_channel", operation_id, payload
@@ -13889,6 +13910,15 @@ class WorkspaceServiceMixin:
         previous = self._workspace_channel_by_digest(stored_channel["head_hash"])
         if previous is None:
             raise ValidationError("Workspace channel control is unavailable")
+        if posting is None:
+            channel_posting = previous.posting
+        elif posting == "inherit":
+            channel_posting = None
+        else:
+            try:
+                channel_posting = WorkspacePostingPolicy(posting)
+            except (TypeError, ValueError) as exc:
+                raise ValidationError("Workspace channel posting policy is invalid") from exc
         manifest = self._workspace_current_manifest(workspace)
         identity = self._identity
         if identity is None:
@@ -13907,6 +13937,7 @@ class WorkspaceServiceMixin:
                 version=previous.version + 1,
                 previous_hash=previous.digest,
                 archived=archived,
+                posting=channel_posting,
             )
             channel = verify_workspace_channel_manifest_transition(
                 raw, previous, manifest=manifest
@@ -13925,6 +13956,7 @@ class WorkspaceServiceMixin:
                 version=previous.version + 1,
                 previous_hash=previous.digest,
                 archived=archived,
+                posting=channel_posting,
             )
             channel = verify_workspace_channel_record_transition(
                 raw, previous, manifest=manifest
@@ -13952,7 +13984,7 @@ class WorkspaceServiceMixin:
             )
         workspace["updated_at"] = time.time()
         public = self._public_workspace_channel(updated)
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id,
             digest,
             public,
@@ -14091,6 +14123,7 @@ class WorkspaceServiceMixin:
             version=previous.version + 1,
             previous_hash=previous.digest,
             removal_checkpoint_digests=sorted(set(removal_checkpoints))[:32],
+            posting=previous.posting,
         )
         channel = verify_workspace_channel_manifest_transition(
             raw, previous, manifest=manifest
@@ -14129,7 +14162,7 @@ class WorkspaceServiceMixin:
             else ([], set())
         )
         outcome = self._public_workspace_channel(updated)
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id,
             digest,
             outcome,
@@ -14201,7 +14234,7 @@ class WorkspaceServiceMixin:
         stored["state"] = "leaving"
         stored["updated_at"] = time.time()
         outcome = self._public_workspace_channel(stored)
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id,
             digest,
             outcome,
@@ -14253,7 +14286,7 @@ class WorkspaceServiceMixin:
             "subscribed": subscribed,
             "high_water": high_water,
         }
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id,
             digest,
             result,
@@ -14370,7 +14403,7 @@ class WorkspaceServiceMixin:
             ),
         )
         outcome = {key: value for key, value in record.items() if key != "document"}
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id,
             digest,
             outcome,
@@ -14448,7 +14481,7 @@ class WorkspaceServiceMixin:
                 "converged" if not deliveries else "incomplete"
             )
         outcome = self._public_workspace_channel(updated)
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id,
             digest,
             outcome,
@@ -14545,7 +14578,7 @@ class WorkspaceServiceMixin:
                 "converged" if not deliveries else "incomplete"
             )
         outcome = self._public_workspace_channel(updated)
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id,
             digest,
             outcome,
@@ -14613,7 +14646,7 @@ class WorkspaceServiceMixin:
             "state": workspace["channel_discovery"],
             "peer_count": len({member_id for member_id, _device in recipients}),
         }
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id,
             digest,
             outcome,
@@ -14700,7 +14733,7 @@ class WorkspaceServiceMixin:
             workspace_id, "", None
         )
         outcome = self._public_workspace(workspace)
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id,
             digest,
             outcome,
@@ -14793,7 +14826,7 @@ class WorkspaceServiceMixin:
             "updated_at": time.time(),
         }
         outcome = self._public_workspace(workspace)
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id,
             digest,
             outcome,
@@ -15289,7 +15322,7 @@ class WorkspaceServiceMixin:
         outcome, records, deletions = self._workspace_retention_batch_plan(
             workspace, max_events
         )
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id,
             digest,
             outcome,
@@ -15356,7 +15389,7 @@ class WorkspaceServiceMixin:
             workspace_id, "", None
         )
         outcome = self._public_workspace(workspace)
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id,
             digest,
             outcome,
@@ -15450,7 +15483,7 @@ class WorkspaceServiceMixin:
             workspace_id, "", member_id
         )
         outcome = self._public_workspace(workspace)
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id,
             digest,
             outcome,
@@ -15557,7 +15590,7 @@ class WorkspaceServiceMixin:
             workspace_id, "", member_id
         )
         outcome = self._public_workspace(workspace)
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id,
             digest,
             outcome,
@@ -15728,7 +15761,7 @@ class WorkspaceServiceMixin:
             "updated_at": now,
         }
         outcome = self._public_workspace_authority_transition(record, workspace)
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id,
             operation_digest,
             outcome,
@@ -15808,7 +15841,7 @@ class WorkspaceServiceMixin:
             "updated_at": time.time(),
         })
         outcome = self._public_workspace_authority_transition(record, workspace)
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id,
             operation_digest,
             outcome,
@@ -15967,7 +16000,7 @@ class WorkspaceServiceMixin:
         records.extend(("workspace_delivery", item["id"], item) for item in deliveries)
         records.extend(self._due_records(add=deliveries))
         outcome = self._public_workspace_authority_transition(record, workspace)
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id, operation_digest, outcome, records
         )
         self._workspace_changed(workspace_id, resource_kind="authority")
@@ -15985,7 +16018,7 @@ class WorkspaceServiceMixin:
             ):
                 record["state"] = "expired"
                 record["updated_at"] = now
-                self.store.put("workspace_authority_transition", record["id"], record)
+                self._workspace_store.put("workspace_authority_transition", record["id"], record)
             transitions.append(self._public_workspace_authority_transition(record, workspace))
         transitions.sort(key=lambda item: (item.get("created_at", 0), item["id"]), reverse=True)
         return {"transitions": transitions}
@@ -16016,7 +16049,7 @@ class WorkspaceServiceMixin:
         )
         workspace["updated_at"] = time.time()
         outcome = self._public_workspace(workspace)
-        return self.store.commit_operation(
+        return self._workspace_store.commit_operation(
             operation_id,
             operation_digest,
             outcome,
@@ -16114,7 +16147,7 @@ class WorkspaceServiceMixin:
                     changed.append(("workspace_admin_request", record_id, record))
             records.append(record)
         if changed:
-            self.store.put_many(changed)
+            self._workspace_store.put_many(changed)
         return records
 
     def submit_workspace_admin_request(
@@ -16218,7 +16251,7 @@ class WorkspaceServiceMixin:
             workspace_id, request.replay_key
         )
         outcome = self._public_workspace_admin_request(record, workspace)
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id,
             digest,
             outcome,
@@ -16387,7 +16420,7 @@ class WorkspaceServiceMixin:
         if request.expires_at < int(time.time()):
             record["state"] = "expired"
             record["updated_at"] = time.time()
-            return self.store.commit_operation(
+            return self._workspace_store.commit_operation(
                 operation_id, digest,
                 self._public_workspace_admin_request(record, workspace),
                 [("workspace_admin_request", request_id, record)],
@@ -16395,7 +16428,7 @@ class WorkspaceServiceMixin:
         if current.digest != request.base_manifest_digest:
             record["state"] = "stale"
             record["updated_at"] = time.time()
-            return self.store.commit_operation(
+            return self._workspace_store.commit_operation(
                 operation_id, digest,
                 self._public_workspace_admin_request(record, workspace),
                 [("workspace_admin_request", request_id, record)],
@@ -16548,7 +16581,7 @@ class WorkspaceServiceMixin:
         record["updated_at"] = time.time()
         all_deliveries = [*decision_deliveries, *manifest_deliveries]
         outcome = self._public_workspace_admin_request(record, workspace)
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id,
             digest,
             outcome,
@@ -16609,7 +16642,7 @@ class WorkspaceServiceMixin:
         record["state"] = "cancelled"
         record["updated_at"] = time.time()
         outcome = self._public_workspace_admin_request(record, workspace)
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id,
             digest,
             outcome,
@@ -16646,7 +16679,7 @@ class WorkspaceServiceMixin:
         record["dismissed"] = True
         record["updated_at"] = time.time()
         outcome = self._public_workspace_admin_request(record, workspace)
-        return self.store.commit_operation(
+        return self._workspace_store.commit_operation(
             operation_id,
             digest,
             outcome,
@@ -16681,7 +16714,7 @@ class WorkspaceServiceMixin:
                     if existing.get("offer_digest") != offer.digest:
                         workspace["state"] = "forked"
                         workspace["security_error"] = "authority_offer_conflict"
-                        self.store.put("workspace", self._workspace_record_id(wire.workspace_id), workspace)
+                        self._workspace_store.put("workspace", self._workspace_record_id(wire.workspace_id), workspace)
                         self._workspace_changed(wire.workspace_id, resource_kind="security")
                         return False
                     return True
@@ -16719,9 +16752,9 @@ class WorkspaceServiceMixin:
                 if replay is not None and replay.get("digest") != offer.digest:
                     workspace["state"] = "forked"
                     workspace["security_error"] = "authority_replay_conflict"
-                    self.store.put("workspace", self._workspace_record_id(wire.workspace_id), workspace)
+                    self._workspace_store.put("workspace", self._workspace_record_id(wire.workspace_id), workspace)
                     return False
-                self.store.put_many([
+                self._workspace_store.put_many([
                     ("workspace_authority_transition", record_id, record),
                     ("workspace_authority_replay", replay_id, {"workspace_id": wire.workspace_id, "digest": offer.digest, "expires_at": offer.expires_at}),
                 ])
@@ -16765,12 +16798,12 @@ class WorkspaceServiceMixin:
                 if record.get("offer_digest") != offer.digest:
                     workspace["state"] = "forked"
                     workspace["security_error"] = "authority_acceptance_conflict"
-                    self.store.put("workspace", self._workspace_record_id(wire.workspace_id), workspace)
+                    self._workspace_store.put("workspace", self._workspace_record_id(wire.workspace_id), workspace)
                     return False
             if record.get("acceptance_digest") not in {None, acceptance.digest}:
                 workspace["state"] = "forked"
                 workspace["security_error"] = "authority_acceptance_conflict"
-                self.store.put("workspace", self._workspace_record_id(wire.workspace_id), workspace)
+                self._workspace_store.put("workspace", self._workspace_record_id(wire.workspace_id), workspace)
                 return False
             record.update({
                 "state": "accepted_waiting_finalization",
@@ -16786,9 +16819,9 @@ class WorkspaceServiceMixin:
             if replay is not None and replay.get("digest") != acceptance.digest:
                 workspace["state"] = "forked"
                 workspace["security_error"] = "authority_replay_conflict"
-                self.store.put("workspace", self._workspace_record_id(wire.workspace_id), workspace)
+                self._workspace_store.put("workspace", self._workspace_record_id(wire.workspace_id), workspace)
                 return False
-            self.store.put_many([
+            self._workspace_store.put_many([
                 ("workspace_authority_transition", record_id, record),
                 ("workspace_authority_replay", replay_id, {"workspace_id": wire.workspace_id, "digest": acceptance.digest, "expires_at": offer.expires_at}),
             ])
@@ -16826,7 +16859,7 @@ class WorkspaceServiceMixin:
                 if existing is not None:
                     if existing.get("request_digest") != request.digest:
                         workspace["security_error"] = "admin_request_conflict"
-                        self.store.put("workspace", self._workspace_record_id(wire.workspace_id), workspace)
+                        self._workspace_store.put("workspace", self._workspace_record_id(wire.workspace_id), workspace)
                     return existing.get("request_digest") == request.digest
                 replay_id = self._workspace_admin_replay_id(
                     wire.workspace_id, request.replay_key
@@ -16835,7 +16868,7 @@ class WorkspaceServiceMixin:
                 if replay is not None:
                     if replay.get("request_digest") != request.digest:
                         workspace["security_error"] = "admin_request_replay_conflict"
-                        self.store.put("workspace", self._workspace_record_id(wire.workspace_id), workspace)
+                        self._workspace_store.put("workspace", self._workspace_record_id(wire.workspace_id), workspace)
                     return replay.get("request_digest") == request.digest
                 profile_index, _ = self._workspace_admin_index(wire.workspace_id)
                 all_records = self._workspace_admin_records(wire.workspace_id)
@@ -16880,7 +16913,7 @@ class WorkspaceServiceMixin:
                 replay_expires_at = float(
                     request.expires_at + ADMIN_REPLAY_RETENTION_SECONDS
                 )
-                self.store.put_many([
+                self._workspace_store.put_many([
                     ("workspace_admin_request", record_id, record),
                     (
                         "workspace_admin_replay",
@@ -16935,7 +16968,7 @@ class WorkspaceServiceMixin:
                         "workspace_id": wire.workspace_id,
                         "expires_at": float(wire.expires_at),
                     })
-                    self.store.put_many([
+                    self._workspace_store.put_many([
                         ("workspace_admin_inert_decision", inert_id, {
                             "workspace_id": wire.workspace_id,
                             "protocol_request_id": protocol_request_id,
@@ -16961,7 +16994,7 @@ class WorkspaceServiceMixin:
                     record["state"] = "failed"
                     record["failure"] = "conflicting_authority_results"
                     workspace["security_error"] = "admin_decision_conflict"
-                    self.store.put_many([
+                    self._workspace_store.put_many([
                         ("workspace", self._workspace_record_id(wire.workspace_id), workspace),
                         ("workspace_admin_request", record_id, record),
                     ])
@@ -17002,7 +17035,7 @@ class WorkspaceServiceMixin:
             record["result_digest"] = decision.result_digest
             record["result_document"] = decision.result_document
             record["updated_at"] = time.time()
-            self.store.put_many([
+            self._workspace_store.put_many([
                 ("workspace_admin_request", record_id, record),
                 (
                     "workspace_admin_decision",
@@ -17084,7 +17117,7 @@ class WorkspaceServiceMixin:
         outcome = {
             key: value for key, value in record.items() if key != "document"
         }
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id,
             digest,
             outcome,
@@ -17131,7 +17164,7 @@ class WorkspaceServiceMixin:
             )
             if self.store.get("workspace_display_name_request", request_id):
                 return
-            self.store.put(
+            self._workspace_store.put(
                 "workspace_display_name_request",
                 request_id,
                 {
@@ -17198,7 +17231,7 @@ class WorkspaceServiceMixin:
                 return
             record["state"] = "approved" if decision.approved else "declined"
             record["updated_at"] = time.time()
-            self.store.put(
+            self._workspace_store.put(
                 "workspace_display_name_request", request_id, record
             )
             self._workspace_changed(
@@ -17278,7 +17311,7 @@ class WorkspaceServiceMixin:
             record["state"] = "declined"
             record["updated_at"] = time.time()
             outcome = {"id": request_id, "state": "declined"}
-            committed = self.store.commit_operation(
+            committed = self._workspace_store.commit_operation(
                 operation_id,
                 digest,
                 outcome,
@@ -17340,7 +17373,7 @@ class WorkspaceServiceMixin:
             "state": "approved",
             "workspace": self._public_workspace(workspace),
         }
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id,
             digest,
             outcome,
@@ -17399,7 +17432,7 @@ class WorkspaceServiceMixin:
         workspace["state"] = "leaving"
         workspace["updated_at"] = time.time()
         outcome = self._public_workspace(workspace)
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id,
             digest,
             outcome,
@@ -17462,7 +17495,7 @@ class WorkspaceServiceMixin:
                     workspace["id"], request.member_id
                 )
             )
-            self.store.put_many(
+            self._workspace_store.put_many(
                 [
                     ("workspace", self._workspace_record_id(workspace["id"]), workspace),
                     (
@@ -17581,7 +17614,7 @@ class WorkspaceServiceMixin:
             *[("workspace_delivery", item["id"], item) for item in deliveries],
             *self._due_records(add=deliveries),
         ]
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id, digest, outcome, records
         )
         for _kind, invitation_id, _record in invalidated_records:
@@ -17810,7 +17843,7 @@ class WorkspaceServiceMixin:
                 "workspace_history_scheduler", scheduler_id, scheduler
             ))
         outcome = {"workspace_id": workspace_id, "removed": True}
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id,
             digest,
             outcome,
@@ -17833,7 +17866,7 @@ class WorkspaceServiceMixin:
         self._release_callback_hosts("workspace_device", workspace_id)
         for record_id, _record in list(self.store.items("route_generation")):
             if workspace_id in record_id:
-                self.store.delete("route_generation", record_id)
+                self._workspace_store.delete("route_generation", record_id)
         self._workspace_changed(workspace_id, resource_kind="local_removal")
         return committed
 
@@ -17883,7 +17916,7 @@ class WorkspaceServiceMixin:
                         message,
                     )
                 )
-            self.store.put_many(records)
+            self._workspace_store.put_many(records)
             self._workspace_changed(
                 delivery["workspace_id"],
                 conversation_id=(
@@ -17899,7 +17932,7 @@ class WorkspaceServiceMixin:
             invitation = self.store.get("workspace_invitation", request["invitation_id"]) if request else None
             if request is None or request.get("state") != "pending" or invitation is None or invitation.get("state") != "active":
                 delivery["state"] = DeliveryState.CANCELLED.value
-                self.store.put_many([
+                self._workspace_store.put_many([
                     ("workspace_delivery", delivery_id, delivery),
                     *self._due_records(remove=[delivery_id]),
                 ])
@@ -17908,7 +17941,7 @@ class WorkspaceServiceMixin:
             workspace = self.store.get("workspace", self._workspace_record_id(delivery["workspace_id"]))
             if workspace is None or workspace.get("state") != "joining":
                 delivery["state"] = DeliveryState.CANCELLED.value
-                self.store.put_many([
+                self._workspace_store.put_many([
                     ("workspace_delivery", delivery_id, delivery),
                     *self._due_records(remove=[delivery_id]),
                 ])
@@ -17924,7 +17957,7 @@ class WorkspaceServiceMixin:
         except Exception:
             delivery["state"] = DeliveryState.FAILED.value
             delivery["failure_code"] = "identity_binding_invalid"
-            self.store.put_many(
+            self._workspace_store.put_many(
                 [
                     ("workspace_delivery", delivery_id, delivery),
                     *self._due_records(remove=[delivery_id]),
@@ -17950,7 +17983,7 @@ class WorkspaceServiceMixin:
         if not network.recipient_ready(destination):
             delivery["state"] = DeliveryState.WAITING_FOR_KEYS.value
             delivery["next_attempt_at"] = now + WORKSPACE_RETRY_BASE_SECONDS
-            self.store.put_many(
+            self._workspace_store.put_many(
                 [
                     ("workspace_delivery", delivery_id, delivery),
                     *self._due_records(add=[delivery]),
@@ -17967,7 +18000,7 @@ class WorkspaceServiceMixin:
         delivery["last_attempt_at"] = now
         delivery["next_attempt_at"] = now + delay
         delivery["state"] = DeliveryState.SENDING.value
-        self.store.put_many(
+        self._workspace_store.put_many(
             [
                 ("workspace_delivery", delivery_id, delivery),
                 *self._due_records(add=[delivery]),
@@ -17993,7 +18026,7 @@ class WorkspaceServiceMixin:
             current = self.store.get("workspace_delivery", delivery_id)
             if current is not None and current.get("state") not in FINAL_DELIVERY_STATES:
                 current["native_message_id"] = native_id
-                self.store.put("workspace_delivery", delivery_id, current)
+                self._workspace_store.put("workspace_delivery", delivery_id, current)
         except MeshChatError as exc:
             current = self.store.get("workspace_delivery", delivery_id)
             if current is None or current.get("state") in FINAL_DELIVERY_STATES:
@@ -18004,7 +18037,7 @@ class WorkspaceServiceMixin:
                 else DeliveryState.QUEUED.value
             )
             current["failure_code"] = "transport_unavailable"
-            self.store.put_many(
+            self._workspace_store.put_many(
                 [
                     ("workspace_delivery", delivery_id, current),
                     *self._due_records(add=[current]),
@@ -18016,7 +18049,7 @@ class WorkspaceServiceMixin:
                 return
             current["state"] = DeliveryState.QUEUED.value
             current["failure_code"] = "transport_error"
-            self.store.put_many(
+            self._workspace_store.put_many(
                 [
                     ("workspace_delivery", delivery_id, current),
                     *self._due_records(add=[current]),
@@ -18123,7 +18156,7 @@ class WorkspaceServiceMixin:
             ))
         if not records and not deletions:
             return
-        self.store.put_and_delete(records, deletions)
+        self._workspace_store.put_and_delete(records, deletions)
         for invitation_id in expired_invitation_ids:
             self.stop_participant_host_for_scope("workspace", invitation_id)
             self.release_remote_scope("pending_invitation", invitation_id)
@@ -18190,7 +18223,7 @@ class WorkspaceServiceMixin:
             outcome, records, deletions = self._workspace_retention_batch_plan(
                 workspace, RETENTION_PRUNE_BATCH_DEFAULT
             )
-            self.store.put_and_delete(
+            self._workspace_store.put_and_delete(
                 records,
                 deletions,
                 redact_command_cache=bool(deletions),
@@ -18399,7 +18432,7 @@ class WorkspaceServiceMixin:
             "cancelled", "dismissed", "failed", "peer_limited", "expired"
         }:
             outcome = self._public_workspace_history_job(existing)
-            return self.store.commit_operation(operation_id, digest, outcome, [])
+            return self._workspace_store.commit_operation(operation_id, digest, outcome, [])
         scheduler_id = self._workspace_history_scheduler_id()
         scheduler = self.store.get("workspace_history_scheduler", scheduler_id) or {
             "job_ids": []
@@ -18520,7 +18553,7 @@ class WorkspaceServiceMixin:
         workspace["history_job_ids"] = workspace_job_ids
         workspace["updated_at"] = time.time()
         outcome = self._public_workspace_history_job(job)
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id,
             digest,
             outcome,
@@ -18576,7 +18609,7 @@ class WorkspaceServiceMixin:
                     *self._due_records(remove=[delivery_id]),
                 ])
         outcome = self._public_workspace_history_job(job)
-        committed = self.store.commit_operation(operation_id, digest, outcome, records)
+        committed = self._workspace_store.commit_operation(operation_id, digest, outcome, records)
         self._workspace_changed(workspace["id"], conversation_id=checked_conversation, resource_kind="history")
         return committed
 
@@ -19074,7 +19107,7 @@ class WorkspaceServiceMixin:
                         "consumed": False,
                     },
                 ))
-            self.store.put_many(records)
+            self._workspace_store.put_many(records)
             return True
         except (MeshChatError, json.JSONDecodeError, KeyError, TypeError, ValueError):
             return False
@@ -19133,7 +19166,7 @@ class WorkspaceServiceMixin:
                         "checkpoint_digest": checkpoint.digest,
                     },
                 ))
-            self.store.put_many(records)
+            self._workspace_store.put_many(records)
             return True
         except (MeshChatError, json.JSONDecodeError, KeyError, TypeError, ValueError):
             return False
@@ -19159,11 +19192,11 @@ class WorkspaceServiceMixin:
             if epoch_record is not None and epoch_record.get("digest") != manifest.digest:
                 workspace["state"] = "forked"
                 workspace["security_error"] = "manifest_fork"
-                self.store.put(
+                self._workspace_store.put(
                     "workspace", self._workspace_record_id(workspace["id"]), workspace
                 )
                 return False
-            self.store.put_many([
+            self._workspace_store.put_many([
                 ("workspace_manifest", self._workspace_manifest_record_id(manifest.digest), self._manifest_record(manifest)),
                 self._manifest_epoch_record(manifest),
             ])
@@ -19219,13 +19252,13 @@ class WorkspaceServiceMixin:
             if channel_summary is not None:
                 channel_summary["state"] = "forked"
                 channel_summary["security_error"] = "channel_control_conflict"
-                self.store.put(
+                self._workspace_store.put(
                     "workspace_channel",
                     self._workspace_channel_record_id(channel.channel_id),
                     channel_summary,
                 )
             return False
-        self.store.put_many([
+        self._workspace_store.put_many([
             ("workspace_channel_control", self._workspace_channel_control_id(channel.digest), self._workspace_channel_control_record(channel, document_type=kind)),
             self._workspace_channel_version_record(channel),
         ])
@@ -19380,7 +19413,7 @@ class WorkspaceServiceMixin:
             ):
                 return False
             job["status"] = "verifying"
-            self.store.put("workspace_history_job", job["id"], job)
+            self._workspace_store.put("workspace_history_job", job["id"], job)
             for kind, raw in response.controls:
                 if not self._accept_workspace_history_control(workspace, kind, raw):
                     job["missing_prerequisites"] = int(job.get("missing_prerequisites", 0)) + 1
@@ -19594,7 +19627,7 @@ class WorkspaceServiceMixin:
                 records.extend(self._queue_workspace_history_continuation(
                     workspace, job, None, next_peer=True
                 ))
-            self.store.put_many(records)
+            self._workspace_store.put_many(records)
             self._workspace_changed(
                 workspace["id"], conversation_id=job["conversation_id"],
                 resource_kind="history",
@@ -19624,14 +19657,14 @@ class WorkspaceServiceMixin:
             if workspace is None or workspace.get("state") not in {"active", "incomplete_sync"}:
                 job["status"] = "authorization_changed"
                 job["updated_at"] = now
-                self.store.put("workspace_history_job", job_id, job)
+                self._workspace_store.put("workspace_history_job", job_id, job)
                 continue
             job["status"] = "expired"
             job["failure"] = "stale_request"
             records = self._queue_workspace_history_continuation(
                 workspace, job, None, next_peer=True
             )
-            self.store.put_many(records)
+            self._workspace_store.put_many(records)
             self._workspace_changed(
                 workspace["id"], conversation_id=job.get("conversation_id"),
                 resource_kind="history",
@@ -19722,7 +19755,7 @@ class WorkspaceServiceMixin:
                 records.append(
                     ("workspace_message_state", message_record_id, message)
                 )
-        self.store.put_many(records)
+        self._workspace_store.put_many(records)
         self._workspace_changed(
             delivery["workspace_id"],
             conversation_id=conversation_id,
@@ -19889,7 +19922,7 @@ class WorkspaceServiceMixin:
         if self.store.get("workspace_access_recommendation", record_id) is not None:
             return
         now = time.time()
-        self.store.put(
+        self._workspace_store.put(
             "workspace_access_recommendation",
             record_id,
             {
@@ -19965,7 +19998,7 @@ class WorkspaceServiceMixin:
             "sent_devices": len(deliveries),
             "expires_at": checked.expires_at,
         }
-        committed = self.store.commit_operation(
+        committed = self._workspace_store.commit_operation(
             operation_id,
             digest,
             outcome,
@@ -20054,7 +20087,7 @@ class WorkspaceServiceMixin:
         )
         record["state"] = "applied"
         record["updated_at"] = time.time()
-        self.store.put(
+        self._workspace_store.put(
             "workspace_access_recommendation", record["id"], record
         )
         self._workspace_changed(
@@ -20115,7 +20148,7 @@ class WorkspaceServiceMixin:
             workspace_id=workspace["id"], recipient_member_id=contact["peer_member_id"],
             recipient_device=device, kind="workspace_reconnect_capability", document=wrapper, priority=0)
         profile["capability_delivery_pending"] = False
-        self.store.put_many([("reconnect_profile", profile["id"], profile),
+        self._workspace_store.put_many([("reconnect_profile", profile["id"], profile),
                              ("workspace_delivery", delivery["id"], delivery),
                              *self._due_records(add=[delivery])])
 
@@ -20225,7 +20258,7 @@ class WorkspaceServiceMixin:
                     priority=0,
                 )
             )
-        self.store.put_many(
+        self._workspace_store.put_many(
             [
                 *records,
                 *[
@@ -20304,7 +20337,8 @@ class WorkspaceServiceMixin:
         profile["peer_display_name"] = member.display_name
         profile["peer_destination"] = device.destination_hash.hex()
         profile["updated_at"] = time.time()
-        self.store.put("reconnect_profile", profile["id"], profile)
+        with self._connection_authority_update(profile["id"]):
+            self._workspace_store.put("reconnect_profile", profile["id"], profile)
         self._workspace_changed(
             workspace["id"], resource_kind="reconnect_capability"
         )
@@ -20326,7 +20360,7 @@ class WorkspaceServiceMixin:
             raise ValidationError("Connection helper consent must be boolean")
         workspace["allow_connection_helper"] = enabled
         workspace["updated_at"] = time.time()
-        self.store.put(
+        self._workspace_store.put(
             "workspace", self._workspace_record_id(workspace["id"]), workspace
         )
         self._workspace_changed(
@@ -20410,7 +20444,7 @@ class WorkspaceServiceMixin:
             document=wrapper,
             priority=0,
         )
-        self.store.put_many(
+        self._workspace_store.put_many(
             [
                 ("workspace_delivery", delivery["id"], delivery),
                 *self._due_records(add=[delivery]),
@@ -20514,7 +20548,7 @@ class WorkspaceServiceMixin:
             document=wire.document,
             priority=0,
         )
-        self.store.put_many(
+        self._workspace_store.put_many(
             [
                 ("workspace_delivery", delivery["id"], delivery),
                 *self._due_records(add=[delivery]),
@@ -20898,7 +20932,7 @@ class WorkspaceServiceMixin:
                     delivery["state"] = DeliveryState.QUEUED.value
                     delivery["next_attempt_at"] = now
                     delivery.pop("native_message_id", None)
-                    self.store.put_many([
+                    self._workspace_store.put_many([
                         ("workspace", self._workspace_record_id(item["id"]), item),
                         ("workspace_delivery", delivery_id, delivery),
                         *self._due_records(add=[delivery]),
@@ -20915,7 +20949,7 @@ class WorkspaceServiceMixin:
                 item["thread_unread_count"] = 0
                 changed = True
             if changed:
-                self.store.put(
+                self._workspace_store.put(
                     "workspace", self._workspace_record_id(item["id"]), item
                 )
         workspaces_by_id = {

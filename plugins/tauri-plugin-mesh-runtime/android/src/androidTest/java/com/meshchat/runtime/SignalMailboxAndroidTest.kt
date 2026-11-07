@@ -1,6 +1,8 @@
 package com.meshchat.runtime
 
 import android.content.Context
+import android.content.ComponentName
+import android.app.ActivityManager
 import android.os.Process
 import android.util.Base64
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -121,6 +123,36 @@ class SignalMailboxAndroidTest {
         assertEquals("True", fixture().callAttr("encrypted_round_trip", workerUrl()).toString())
     }
 
+    @Test(timeout = 120_000)
+    fun contactBootstrapUsesIsolatedProcessAndRejectsOrdinaryChat() = contactBootstrap(false)
+
+    @Test(timeout = 240_000)
+    fun contactBootstrapUsesNativeDataChannelsAndIsolatedProcess() = contactBootstrap(true)
+
+    private fun contactBootstrap(native: Boolean) {
+        val info = context.packageManager.getServiceInfo(ComponentName(context, BootstrapService::class.java), 0)
+        assertFalse("Bootstrap service must remain private", info.exported)
+        assertEquals(context.packageName + ":mesh_bootstrap", info.processName)
+        val py = python()
+        BootstrapClient.configure(context)
+        val module = py.getModule("types").callAttr("ModuleType", "android_contact_bootstrap_fixture")
+        val source = instrumentation.context.assets.open("contact_bootstrap_fixture.py")
+            .bufferedReader().use { it.readText() }
+        py.builtins.callAttr("exec", source, module.get("__dict__"))
+        if (native) NativeWebRtcHost.initialize(context)
+        try {
+            assertEquals("True", module.callAttr(if (native) "run_native" else "run",
+                context.cacheDir.absolutePath).toString())
+        } finally {
+            if (native) NativeWebRtcHost.closeAll()
+        }
+        val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        val deadline = android.os.SystemClock.elapsedRealtime() + 5_000
+        fun alive() = manager.runningAppProcesses.orEmpty().any { it.processName == info.processName }
+        while (alive() && android.os.SystemClock.elapsedRealtime() < deadline) Thread.sleep(50)
+        assertFalse("Retired bootstrap process survived cleanup", alive())
+    }
+
     @Test(timeout = 450_000)
     fun personalMailboxRecoversAfterLossRestartAndLifecycleChanges() = recovery(false)
 
@@ -134,6 +166,43 @@ class SignalMailboxAndroidTest {
             val directory = context.filesDir.resolve("mailbox-ci/${UUID.randomUUID()}").absolutePath
             assertEquals("True", fixture().callAttr("run_recovery", directory, workerUrl(), workspace).toString())
         } finally {
+            NativeWebRtcHost.closeAll()
+        }
+    }
+
+    @Test(timeout = 450_000)
+    fun sharedRuntimeOwnsNativeRecoveryAcrossLifecycle() {
+        python()
+        NativeWebRtcHost.initialize(context)
+        try {
+            val directory = context.filesDir.resolve("mailbox-ci/${UUID.randomUUID()}").absolutePath
+            assertEquals("True", fixture().callAttr("run_shared_runtime_native", directory, workerUrl()).toString())
+        } finally {
+            NativeWebRtcHost.closeAll()
+        }
+    }
+
+    @Test(timeout = 240_000)
+    fun sharedRuntimeAdoptsVerifiedManualNativeCarrierWithoutMailbox() {
+        manualNativeAdoption(true)
+    }
+
+    @Test(timeout = 240_000)
+    fun sharedRuntimeAdoptsManualCarrierWithAutomaticReconnectDisabled() {
+        manualNativeAdoption(false)
+    }
+
+    private fun manualNativeAdoption(automatic: Boolean) {
+        python()
+        NativeWebRtcHost.initialize(context)
+        val key = Base64.encodeToString(ByteArray(32).also { SecureRandom().nextBytes(it) }, Base64.NO_WRAP)
+        try {
+            val directory = context.filesDir.resolve("manual-adoption-ci/${UUID.randomUUID()}").absolutePath
+            val initialized = JSONObject(fixture().callAttr("initialize_shared_native", directory, key).toString())
+            assertTrue("Android shared runtime initialization failed", initialized.optBoolean("ok"))
+            assertEquals("True", fixture().callAttr("run_manual_native_adoption", automatic).toString())
+        } finally {
+            shutdown()
             NativeWebRtcHost.closeAll()
         }
     }

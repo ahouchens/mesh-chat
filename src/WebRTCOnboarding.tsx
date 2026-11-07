@@ -2,9 +2,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { Check, Copy, Phone, RefreshCw, X } from "lucide-react";
 
-import { desktopServiceHealth, serviceCommand, onServiceEvent, type ServiceEvent } from "./api";
+import { coreApiCreateInvitation, desktopServiceHealth, loadCallIceServers,
+  loadCallSettings, saveCallSettings, coreApiCallControl, serviceCommand, onServiceEvent, type ServiceEvent } from "./api";
 import { attachWebRTCBridge, isWindowsWebRTCPlatform, shouldAutoCloseWebRTCOnboarding, webRTCWindowsChecklist, type WebRTCBridge } from "./webrtc-onboarding";
-import { isNativeWebRTCPlatform, nativeWebRTCAccept, nativeWebRTCApplyAnswer, nativeWebRTCClose, nativeWebRTCControl, nativeWebRTCOffer, nativeWebRTCStats, type NativeChannelSpec } from "./native-webrtc";
+import { usesServiceWebRTCTransport, nativeWebRTCAccept, nativeWebRTCApplyAnswer, nativeWebRTCClose, nativeWebRTCControl, nativeWebRTCOffer, nativeWebRTCStats, type NativeChannelSpec } from "./native-webrtc";
 import { rememberWebRTCDiagnostics } from "./webrtc-diagnostics";
 import { startPeerTrace, type PeerTrace } from "./webrtc-trace";
 import { getWebRTCSessionByKey, removeWebRTCSession, setWebRTCSession, updateWebRTCSessionApprovalPending, updateWebRTCSessionContact, type WebRTCSessionPath } from "./webrtc-session";
@@ -172,6 +173,18 @@ async function sha256Hex(value: string): Promise<string> {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+function operationId(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`;
+}
+
+async function signalPublish(document: string, role: "offer" | "answer"): Promise<{ session_id: string }> {
+  return await coreApiCallControl("signal_publish", { document, role }, operationId()) as unknown as { session_id: string };
+}
+
+async function signalFetch(session: string, role: "offer" | "answer"): Promise<{ document: string }> {
+  return await coreApiCallControl("signal_fetch", { session, role }, operationId()) as unknown as { document: string };
+}
+
 export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFallback, workspaces = [], initialPairingCode = "" }: {
   onClose: () => void;
   onChanged: () => Promise<void>;
@@ -210,7 +223,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
   phaseRef.current = phase;
   useEffect(() => () => { answerFetchRef.current += 1; }, []);
   const windowsPlatform = isWindowsWebRTCPlatform(typeof navigator === "undefined" ? "" : navigator.userAgent);
-  const nativeMode = isNativeWebRTCPlatform(typeof navigator === "undefined" ? "" : navigator.userAgent);
+  const nativeMode = usesServiceWebRTCTransport(typeof navigator === "undefined" ? "" : navigator.userAgent);
   const nativeSessionRef = useRef<string | null>(null);
   const handleControlMessageRef = useRef<((raw: string) => Promise<void>) | null>(null);
   const sendInvitationRef = useRef<(() => Promise<void>) | null>(null);
@@ -267,7 +280,10 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       if (nativeSessionRef.current !== sessionId) throw new Error("Native WebRTC pairing was cancelled.");
       try {
         const stats = await nativeWebRTCStats(sessionId);
-        if (stats.attached && nativeSessionRef.current === sessionId) return;
+        // Pairing control can be open while approval still forbids a packet bridge.
+        // Older hosts only reported attachment; current hosts report channel state.
+        const open = stats.data_channel_state === "open" || (stats.data_channel_state === undefined && stats.attached);
+        if (open && nativeSessionRef.current === sessionId) return;
       } catch {
         // Native session or Python bridge is still starting.
       }
@@ -407,8 +423,8 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
   }, [nativeMode]);
 
   useEffect(() => {
-    void serviceCommand<CallSettings>("call_settings")
-      .then(setRelaySettings)
+    void loadCallSettings()
+      .then((value) => setRelaySettings(value as unknown as CallSettings))
       .catch(() => undefined);
   }, []);
 
@@ -471,7 +487,13 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
     setOnboarding("sending");
     setOnboardingError("");
     try {
-      const created = await serviceCommand<InvitationFormats>("create_invitation", { connection_mode: "webrtc" });
+      let created: InvitationFormats;
+      try {
+        created = await coreApiCreateInvitation({ connection_mode: "webrtc" });
+      } catch (reason) {
+        if (!String(reason).includes("core_api_unavailable")) throw reason;
+        created = await serviceCommand<InvitationFormats>("create_invitation", { connection_mode: "webrtc" });
+      }
       if (attemptRef.current !== attempt) return;
       let workspaceDocument: string | undefined;
       if (selectedWorkspaceId) {
@@ -689,7 +711,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
     setAnswerInput(""); setAnswerDocument(""); setAnswerPreview(null);
     setDiagnostics("");
     try {
-      const ice = await serviceCommand<CallIceConfiguration>("call_ice_servers");
+      const ice = await loadCallIceServers() as unknown as CallIceConfiguration;
       if (attemptRef.current !== attempt) return;
       iceSummaryRef.current = summarizeIce(ice);
       if (nativeMode) {
@@ -707,7 +729,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         setOfferDocument(result.document);
         if (relaySettings?.signal_mailbox_url) {
           try {
-            const published = await serviceCommand<{ session_id: string }>("signal_publish", { document: result.document, role: "offer" });
+            const published = await signalPublish(result.document, "offer");
             if (attemptRef.current !== attempt) return;
             setMailboxCode(published.session_id);
             savePairingResume(published.session_id, "offer");
@@ -751,7 +773,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       setOfferDocument(result.document);
       if (relaySettings?.signal_mailbox_url) {
         try {
-          const published = await serviceCommand<{ session_id: string }>("signal_publish", { document: result.document, role: "offer" });
+          const published = await signalPublish(result.document, "offer");
           if (pcRef.current !== pc) return;
           setMailboxCode(published.session_id);
           savePairingResume(published.session_id, "offer");
@@ -899,7 +921,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       let rawOffer = normalizeWebRTCOfferInput(offerInput);
       if (!rawOffer.includes("\"type\"")) {
         operation = "signal_fetch";
-        const fetched = await serviceCommand<{ document: string }>("signal_fetch", { session_id: rawOffer, role: "offer" });
+        const fetched = await signalFetch(rawOffer, "offer");
         if (attemptRef.current !== attempt) return;
         rawOffer = fetched.document;
         setOfferInput(rawOffer);
@@ -922,7 +944,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       peerDestinationRef.current = preview.signer_destination;
       setOfferPreview(preview);
       operation = "call_ice_servers";
-      const ice = await serviceCommand<CallIceConfiguration>("call_ice_servers");
+      const ice = await loadCallIceServers() as unknown as CallIceConfiguration;
       if (attemptRef.current !== attempt) return;
       iceSummaryRef.current = summarizeIce(ice);
       if (nativeMode) {
@@ -948,7 +970,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         setAnswerPreview({ ...preview, sdp, dtls_fingerprint: native.fingerprint || fingerprint(sdp), document: result.document });
         if (relaySettings?.signal_mailbox_url) {
           try {
-            const published = await serviceCommand<{ session_id: string }>("signal_publish", { document: result.document, role: "answer" });
+            const published = await signalPublish(result.document, "answer");
             if (attemptRef.current !== attempt) return;
             setMailboxCode(published.session_id);
             savePairingResume(published.session_id, "answer");
@@ -1030,7 +1052,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       setAnswerDocument(result.document);
       if (relaySettings?.signal_mailbox_url) {
         try {
-          const published = await serviceCommand<{ session_id: string }>("signal_publish", { document: result.document, role: "answer" });
+          const published = await signalPublish(result.document, "answer");
           if (pcRef.current !== pc) return;
           setMailboxCode(published.session_id);
           savePairingResume(published.session_id, "answer");
@@ -1106,7 +1128,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
     answerFetchBusyRef.current = true;
     setFetchingAnswer(true);
     try {
-      const fetched = await serviceCommand<{ document: string }>("signal_fetch", { session_id: session, role: "answer" });
+      const fetched = await signalFetch(session, "answer");
       if (!current()) return;
       setAnswerInput(fetched.document);
     } catch (reason) {
@@ -1142,7 +1164,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
     setRelayBusy(true);
     setRelayError("");
     try {
-      const updated = await serviceCommand<CallSettings>("update_call_settings", {
+      const updated = await saveCallSettings({
         stun_urls: relaySettings.stun_urls,
         turn_url: relaySettings.turn_url ?? null,
         turn_username: relaySettings.turn_username ?? null,
@@ -1151,7 +1173,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         turn_broker_consent: true,
         signal_mailbox_url: relaySettings.signal_mailbox_url ?? null,
         relay_only: relaySettings.relay_only,
-      });
+      }) as unknown as CallSettings;
       setRelaySettings(updated);
     } catch (reason) {
       setRelayError(errorMessage(reason));
@@ -1166,7 +1188,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
     setRelayBusy(true);
     setRelayError("");
     try {
-      const updated = await serviceCommand<CallSettings>("update_call_settings", {
+      const updated = await saveCallSettings({
         stun_urls: relaySettings.stun_urls,
         turn_url: relaySettings.turn_url ?? null,
         turn_username: relaySettings.turn_username ?? null,
@@ -1176,7 +1198,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         signal_mailbox_url: relaySettings.signal_mailbox_default_url,
         relay_only: relaySettings.relay_only,
         store_call_signaling: relaySettings.store_call_signaling ?? true,
-      });
+      }) as unknown as CallSettings;
       if (attemptRef.current !== attempt) return;
       setRelaySettings(updated);
       setError("");
