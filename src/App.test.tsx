@@ -81,7 +81,8 @@ const api = vi.hoisted(() => {
     serviceCommand(action === "background_set" ? "set_background_availability"
       : action === "notification_previews" ? "set_hide_notification_previews"
       : "open_notification_target", params)),
-  coreApiWorkspaceAdminSubmit: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiWorkspaceAdminSubmit: vi.fn(async (_handle: string, kind: string, memberHandle: string | null, role: string | null, _note: string, key: string): Promise<unknown> =>
+    serviceCommand("submit_workspace_admin_request", { workspace_id: workspace.id, request_kind: kind, ...(memberHandle ? { target_member_id: memberHandle } : {}), ...(role ? { requested_role: role } : {}), note: _note, operation_id: key })),
   coreApiWorkspaceDisplayNameRequest: vi.fn(async (_handle: string, displayName: string, key: string): Promise<unknown> => serviceCommand("request_workspace_display_name", { workspace_id: workspace.id, display_name: displayName, operation_id: key })),
   coreApiWorkspaceReadHintSync: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiWorkspaceAuthorityOffer: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
@@ -106,6 +107,12 @@ const api = vi.hoisted(() => {
   coreApiUpdateWorkspaceChannel: vi.fn(async (_handle: string, channelHandle: string, name: string, topic: string, archived: boolean, key: string): Promise<unknown> =>
     serviceCommand("update_workspace_channel", { workspace_id: workspace.id, channel_id: channelHandle === "channel-handle-field" ? "55555555-5555-4555-8555-555555555555" : workspaceChannel.id, name, topic, archived, operation_id: key })),
   coreApiCreateWorkspaceChannel: vi.fn(async (..._args: unknown[]): Promise<{ channel: string; name: string }> => { throw new Error("core_api_unavailable"); }),
+  coreApiWorkspaceChannelState: vi.fn(async (_handle: string, action: string, params: Record<string, unknown>, key: string): Promise<unknown> => {
+    const command = action === "subscribe" ? "set_workspace_channel_subscription"
+      : action === "mute" ? "set_workspace_channel_mentions_muted"
+      : action === "leave" ? "leave_workspace_private_channel" : "sync_workspace_channels";
+    return serviceCommand(command, { workspace_id: workspace.id, ...(params.channel ? { channel_id: params.channel === "workspace-channel-handle" ? workspaceChannel.id : params.channel } : {}), ...(typeof params.subscribed === "boolean" ? { subscribed: params.subscribed } : {}), ...(typeof params.muted === "boolean" ? { muted: params.muted } : {}), operation_id: key });
+  }),
   coreApiRecoverWorkspaceChannel: vi.fn(async (_handle: string, channelHandle: string, key: string): Promise<unknown> =>
     serviceCommand("recover_workspace_channel", { workspace_id: workspace.id, channel_id: channelHandle === "channel-handle-field" ? "55555555-5555-4555-8555-555555555555" : "55555555-5555-4555-8555-555555555555", operation_id: key })),
   coreApiWorkspacePolicy: vi.fn(async (_handle: string, channelCreation: string, posting: string, invitationRequests: string, key: string): Promise<unknown> =>
@@ -5070,6 +5077,7 @@ describe("desktop workspaces", () => {
   it("shows effective administrator authority and submits owner-reviewed requests", async () => {
     const administrator = {
       id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      core_handle: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       display_name: "Bailey",
       role: "admin" as const,
       status: "active" as const,
@@ -5078,6 +5086,7 @@ describe("desktop workspaces", () => {
     };
     const member = {
       id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      core_handle: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
       display_name: "Casey",
       role: "member" as const,
       status: "active" as const,
@@ -6322,8 +6331,8 @@ describe("desktop workspaces", () => {
     };
     const memberWorkspace: Workspace = { ...workspace, local_role: "member", local_member_id: member.id, local_device_id: member.device.id, channel_discovery: "incomplete", members: [...workspace.members, member] };
     const duplicateChannels: WorkspaceChannel[] = [
-      { ...workspaceChannel, id: "55555555-5555-4555-8555-555555555555", name: "Ops", name_key: "ops", display_name: "Ops · 555555", short_id: "555555", is_general: false, subscribed: false, duplicate_name: true, topic: "North team" },
-      { ...workspaceChannel, id: "66666666-6666-4666-8666-666666666666", name: "ops", name_key: "ops", display_name: "ops · 666666", short_id: "666666", is_general: false, subscribed: false, duplicate_name: true, topic: "South team" },
+      { ...workspaceChannel, id: "55555555-5555-4555-8555-555555555555", core_handle: "55555555-5555-4555-8555-555555555555", name: "Ops", name_key: "ops", display_name: "Ops · 555555", short_id: "555555", is_general: false, subscribed: false, duplicate_name: true, topic: "North team" },
+      { ...workspaceChannel, id: "66666666-6666-4666-8666-666666666666", core_handle: "66666666-6666-4666-8666-666666666666", name: "ops", name_key: "ops", display_name: "ops · 666666", short_id: "666666", is_general: false, subscribed: false, duplicate_name: true, topic: "South team" },
     ];
     const created = { ...duplicateChannels[0], id: "77777777-7777-4777-8777-777777777777", name: "Field notes", name_key: "field notes", display_name: "Field notes", short_id: "777777", duplicate_name: false, subscribed: true };
     const current: Snapshot = { ...snapshot(), workspaces: [memberWorkspace], workspace_channels: [workspaceChannel, ...duplicateChannels], workspace_channel_transfers: [], workspace_join_requests: [], workspace_invitations: [], workspace_drafts: [] };

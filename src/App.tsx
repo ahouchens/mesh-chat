@@ -77,6 +77,7 @@ import {
   coreApiWorkspacePolicy,
   coreApiCreateWorkspaceChannel,
   coreApiRecoverWorkspaceChannel,
+  coreApiWorkspaceChannelState,
   coreApiUpdateWorkspaceChannel,
   coreApiUpdateChannelMembers,
   coreApiWorkspaceDeviceLinkDecision,
@@ -6624,6 +6625,40 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
           return;
         } catch (reason) {
           if (!String(reason).includes("core_api_unavailable")) throw reason;
+        }
+      }
+      if ((command === "set_workspace_channel_subscription"
+           || command === "set_workspace_channel_mentions_muted"
+           || command === "leave_workspace_private_channel")
+          && selectedWorkspace.core_handle && typeof payload.channel_id === "string") {
+        const channel = selectedWorkspaceChannels.find((item) => item.id === payload.channel_id);
+        if (channel?.core_handle) {
+          const action = command === "set_workspace_channel_subscription" ? "subscribe"
+            : command === "set_workspace_channel_mentions_muted" ? "mute" : "leave";
+          try {
+            await coreApiWorkspaceChannelState(
+              selectedWorkspace.core_handle, action,
+              { channel: channel.core_handle,
+                ...(action === "subscribe" ? { subscribed: payload.subscribed === true } : {}),
+                ...(action === "mute" ? { muted: payload.muted === true } : {}) },
+              newOperationId());
+            await refresh(true);
+            return;
+          } catch (reason) {
+            if (!String(reason).includes("core_api_unavailable")) throw reason;
+            throw new Error("core_api_unavailable");
+          }
+        }
+      }
+      if (command === "sync_workspace_channels" && selectedWorkspace.core_handle) {
+        try {
+          await coreApiWorkspaceChannelState(
+            selectedWorkspace.core_handle, "sync", {}, newOperationId());
+          await refresh(true);
+          return;
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+          throw new Error("core_api_unavailable");
         }
       }
       if (command === "recover_workspace_channel" && selectedWorkspace.core_handle

@@ -558,6 +558,12 @@ export class CoreClient {
       { idempotencyKey });
   }
 
+  async workspaceChannelState(profile: string, workspace: string, action: string,
+                              params: Record<string, unknown>, idempotencyKey: string): Promise<unknown> {
+    return this.request("workspace.channel_state",
+      { profile, workspace, action, ...params }, { idempotencyKey });
+  }
+
   async workspaceChannelRecover(profile: string, workspace: string, channel: string,
                                   idempotencyKey: string): Promise<unknown> {
     return this.request("workspace.channel_recover",

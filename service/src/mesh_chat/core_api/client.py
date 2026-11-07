@@ -277,6 +277,11 @@ class CoreClient:
                             {"profile": handle, "action": action, **params},
                             idempotency_key=key)
 
+    def workspace_channel_state(self, handle, workspace, action, key, **params):
+        return self.request("workspace.channel_state",
+                            {"profile": handle, "workspace": workspace,
+                             "action": action, **params}, idempotency_key=key)
+
     def workspace_channel_recover(self, handle, workspace, channel, key):
         return self.request("workspace.channel_recover",
                             {"profile": handle, "workspace": workspace,

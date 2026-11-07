@@ -343,6 +343,15 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         return dispatch("runtime.mutate", payload, idempotencyKey)
     }
 
+    fun workspaceChannelState(profile: String, workspace: String, action: String,
+                              params: JSONObject, idempotencyKey: String): JSONObject {
+        val payload = JSONObject().put("profile", profile).put("workspace", workspace)
+            .put("action", action)
+        val keys = params.keys()
+        while (keys.hasNext()) { val key = keys.next(); payload.put(key, params.get(key)) }
+        return dispatch("workspace.channel_state", payload, idempotencyKey)
+    }
+
     fun workspaceChannelRecover(profile: String, workspace: String, channel: String,
                                   idempotencyKey: String): JSONObject =
         dispatch("workspace.channel_recover", JSONObject().put("profile", profile)

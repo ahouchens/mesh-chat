@@ -102,7 +102,8 @@
     "workspace.timeline_mutation",
     "workspace.timeline_query",
     "call.control",
-    "workspace.channel_recover"
+    "workspace.channel_recover",
+    "workspace.channel_state"
   ],
   "operations": [
     {
@@ -857,6 +858,13 @@
     {
       "operation": "workspace.channel_recover",
       "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.channel_state",
+      "permission": "send",
       "scope": "profile",
       "mutation": true,
       "idempotency": "caller_profile_operation_key"

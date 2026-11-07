@@ -782,7 +782,6 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "cancel_workspace_history"
             | "remove_workspace_member"
             | "change_workspace_role"
-            | "submit_workspace_admin_request"
             | "workspace_connectivity"
             | "workspace_helper_status"
             | "workspace_helper_consent_set"
@@ -792,9 +791,6 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "decide_workspace_display_name"
             | "create_workspace_channel"
             | "update_workspace_private_channel_members"
-            | "leave_workspace_private_channel"
-            | "set_workspace_channel_subscription"
-            | "sync_workspace_channels"
             | "send_workspace_message"
             | "open_workspace_direct"
             | "send_workspace_direct_message"
@@ -804,7 +800,6 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "set_workspace_reaction"
             | "list_workspace_messages"
             | "list_workspace_direct_messages"
-            | "set_workspace_channel_mentions_muted"
             | "save_workspace_draft"
             | "save_workspace_direct_draft"
             | "save_workspace_thread_draft"
@@ -2287,7 +2282,6 @@ mod tests {
             "cancel_workspace_history",
             "remove_workspace_member",
             "change_workspace_role",
-            "submit_workspace_admin_request",
             "workspace_connectivity",
             "workspace_helper_status",
             "workspace_helper_consent_set",
@@ -2296,9 +2290,6 @@ mod tests {
             "decide_workspace_display_name",
             "create_workspace_channel",
             "update_workspace_private_channel_members",
-            "leave_workspace_private_channel",
-            "set_workspace_channel_subscription",
-            "sync_workspace_channels",
             "send_workspace_message",
             "open_workspace_direct",
             "send_workspace_direct_message",
@@ -2308,7 +2299,6 @@ mod tests {
             "set_workspace_reaction",
             "list_workspace_messages",
             "list_workspace_direct_messages",
-            "set_workspace_channel_mentions_muted",
             "save_workspace_draft",
             "save_workspace_direct_draft",
             "save_workspace_thread_draft",

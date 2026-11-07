@@ -1102,3 +1102,27 @@ class ServiceWorkspaceAdmin:
             except ValidationError as error:
                 raise ApiFailure("invalid_request") from error
             raise ApiFailure("invalid_request")
+
+
+    def channel_state(self, profile, workspace_id, action, channel_id, params, operation_id):
+        self._require_local(profile)
+        with storage_errors():
+            try:
+                if action == "subscribe":
+                    self._service.set_workspace_channel_subscription(
+                        workspace_id, channel_id, params["subscribed"], operation_id)
+                    return "updated"
+                if action == "mute":
+                    self._service.set_workspace_channel_mentions_muted(
+                        workspace_id, channel_id, params["muted"], operation_id)
+                    return "updated"
+                if action == "leave":
+                    self._service.leave_workspace_private_channel(
+                        workspace_id, channel_id, operation_id)
+                    return "left"
+                if action == "sync":
+                    self._service.sync_workspace_channels(workspace_id, operation_id)
+                    return "synced"
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            raise ApiFailure("invalid_request")

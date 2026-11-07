@@ -696,3 +696,16 @@ def workspace_channel_recover_view(profile, workspace, channel, value):
         raise ValueError("Invalid channel recovery state")
     return {"profile": profile, "workspace": workspace, "channel": channel,
             "state": "recovered"}
+
+
+def workspace_channel_state_view(profile, workspace, channel, state):
+    if (any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
+            for item in (profile, workspace))
+            or (channel is not None and (not isinstance(channel, str)
+                or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", channel) is None))
+            or state not in {"updated", "left", "synced"}):
+        raise ValueError("Invalid channel state observation")
+    result = {"profile": profile, "workspace": workspace, "state": state}
+    if channel is not None:
+        result["channel"] = channel
+    return result

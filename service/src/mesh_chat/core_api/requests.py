@@ -46,6 +46,7 @@ WORKSPACE_CHANNEL_MEMBERS_UPDATE_OPERATIONS = ("workspace.channel_members_update
 WORKSPACE_CHANNEL_UPDATE_OPERATIONS = ("workspace.channel_update",)
 WORKSPACE_CHANNEL_ARCHIVE_OPERATIONS = ("workspace.channel_archive",)
 WORKSPACE_CHANNEL_RECOVER_OPERATIONS = ("workspace.channel_recover",)
+WORKSPACE_CHANNEL_STATE_OPERATIONS = ("workspace.channel_state",)
 WORKSPACE_DEVICE_LINK_CREATE_OPERATIONS = ("workspace.device_link_create",)
 WORKSPACE_DEVICE_LINK_PREVIEW_OPERATIONS = ("workspace.device_link_preview",)
 WORKSPACE_DEVICE_LINK_SUBMIT_OPERATIONS = ("workspace.device_link_submit",)
@@ -616,6 +617,31 @@ def parse_request(value, operations):
                        for item in params.values())):
             raise ApiFailure("invalid_request")
         return operation, params
+    if operation in WORKSPACE_CHANNEL_STATE_OPERATIONS:
+        params = value["params"]
+        action = params.get("action") if isinstance(params, dict) else None
+        if action not in {"subscribe", "mute", "leave", "sync"}:
+            raise ApiFailure("invalid_request")
+        allowed = {"profile", "workspace", "action"}
+        if action != "sync":
+            allowed.add("channel")
+        if action == "subscribe":
+            allowed.add("subscribed")
+        elif action == "mute":
+            allowed.add("muted")
+        if not isinstance(params, dict) or set(params) != allowed:
+            raise ApiFailure("invalid_request")
+        if any(not isinstance(params[key], str) or HANDLE.fullmatch(params[key]) is None
+               for key in ("profile", "workspace")):
+            raise ApiFailure("invalid_request")
+        if "channel" in params and (not isinstance(params["channel"], str)
+                                     or HANDLE.fullmatch(params["channel"]) is None):
+            raise ApiFailure("invalid_request")
+        if action == "subscribe" and type(params["subscribed"]) is not bool:
+            raise ApiFailure("invalid_request")
+        if action == "mute" and type(params["muted"]) is not bool:
+            raise ApiFailure("invalid_request")
+        return operation, params
     if operation in WORKSPACE_CHANNEL_RECOVER_OPERATIONS:
         params = value["params"]
         if (not isinstance(params, dict) or set(params) != {"profile", "workspace", "channel"}
@@ -1002,6 +1028,7 @@ COMPONENT_OPERATIONS = (
     + WORKSPACE_CHANNEL_UPDATE_OPERATIONS
     + WORKSPACE_CHANNEL_ARCHIVE_OPERATIONS
     + WORKSPACE_CHANNEL_RECOVER_OPERATIONS
+    + WORKSPACE_CHANNEL_STATE_OPERATIONS
     + WORKSPACE_DEVICE_LINK_CREATE_OPERATIONS
     + WORKSPACE_DEVICE_LINK_PREVIEW_OPERATIONS
     + WORKSPACE_DEVICE_LINK_SUBMIT_OPERATIONS
