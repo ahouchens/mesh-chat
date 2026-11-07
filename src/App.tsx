@@ -334,16 +334,9 @@ function legacyWorkspaceParams(params: Record<string, unknown>): Record<string, 
 async function callControl(
   action: string,
   params: Record<string, unknown>,
-  fallbackCommand: string,
+  _legacyCommand: string,
 ): Promise<Record<string, unknown>> {
-  if (typeof coreApiCallControl === "function") {
-    try {
-      return await coreApiCallControl(action, params, newOperationId());
-    } catch (reason) {
-      if (!String(reason).includes("core_api_unavailable")) throw reason;
-    }
-  }
-  return serviceCommand<Record<string, unknown>>(fallbackCommand, params);
+  return await coreApiCallControl(action, params, newOperationId());
 }
 
 async function fetchCallMedia(

@@ -15,7 +15,14 @@ const api = vi.hoisted(() => {
   coreApiCreateInvitation: vi.fn(async (..._args: unknown[]): Promise<{ profile: string; link: string; text: string; file: string; expires_at: number }> => { throw new Error("core_api_unavailable"); }),
   coreApiPeerForDestination: vi.fn(async (): Promise<{ profile: string; peer: string; destination: string }> => { throw new Error("core_api_unavailable"); }),
   coreApiRequest: vi.fn(async (): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
-  coreApiCallControl: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiCallControl: vi.fn(async (action: string, params: Record<string, unknown>): Promise<unknown> => {
+    const command = action === "start" ? "start_call"
+      : action === "answer" ? "answer_call"
+      : action === "restart" ? "restart_call"
+      : action === "answer_restart" ? "answer_call_restart"
+      : "end_call";
+    return serviceCommand(command, params);
+  }),
   coreApiSubmitDeviceLink: vi.fn(async (..._args: unknown[]): Promise<never> => { throw new Error("core_api_unavailable"); }),
   coreApiCreateWorkspaceDeviceLink: vi.fn(async (..._args: unknown[]): Promise<{ id: string; workspace_id: string; link: string; text: string; value: string; expires_at: number }> => { throw new Error("core_api_unavailable"); }),
   coreApiWorkspaceInvitationRevoke: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),

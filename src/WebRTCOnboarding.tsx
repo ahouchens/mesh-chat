@@ -3,7 +3,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { Check, Copy, Phone, RefreshCw, X } from "lucide-react";
 
 import { coreApiCreateInvitation, desktopServiceHealth, loadCallIceServers,
-  loadCallSettings, saveCallSettings, serviceCommand, onServiceEvent, type ServiceEvent } from "./api";
+  loadCallSettings, saveCallSettings, coreApiCallControl, serviceCommand, onServiceEvent, type ServiceEvent } from "./api";
 import { attachWebRTCBridge, isWindowsWebRTCPlatform, shouldAutoCloseWebRTCOnboarding, webRTCWindowsChecklist, type WebRTCBridge } from "./webrtc-onboarding";
 import { usesServiceWebRTCTransport, nativeWebRTCAccept, nativeWebRTCApplyAnswer, nativeWebRTCClose, nativeWebRTCControl, nativeWebRTCOffer, nativeWebRTCStats, type NativeChannelSpec } from "./native-webrtc";
 import { rememberWebRTCDiagnostics } from "./webrtc-diagnostics";
@@ -171,6 +171,18 @@ function sessionCode(document: string): string {
 async function sha256Hex(value: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function operationId(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`;
+}
+
+async function signalPublish(document: string, role: "offer" | "answer"): Promise<{ session_id: string }> {
+  return await coreApiCallControl("signal_publish", { document, role }, operationId()) as unknown as { session_id: string };
+}
+
+async function signalFetch(session: string, role: "offer" | "answer"): Promise<{ document: string }> {
+  return await coreApiCallControl("signal_fetch", { session, role }, operationId()) as unknown as { document: string };
 }
 
 export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFallback, workspaces = [], initialPairingCode = "" }: {
@@ -717,7 +729,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         setOfferDocument(result.document);
         if (relaySettings?.signal_mailbox_url) {
           try {
-            const published = await serviceCommand<{ session_id: string }>("signal_publish", { document: result.document, role: "offer" });
+            const published = await signalPublish(result.document, "offer");
             if (attemptRef.current !== attempt) return;
             setMailboxCode(published.session_id);
             savePairingResume(published.session_id, "offer");
@@ -761,7 +773,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       setOfferDocument(result.document);
       if (relaySettings?.signal_mailbox_url) {
         try {
-          const published = await serviceCommand<{ session_id: string }>("signal_publish", { document: result.document, role: "offer" });
+          const published = await signalPublish(result.document, "offer");
           if (pcRef.current !== pc) return;
           setMailboxCode(published.session_id);
           savePairingResume(published.session_id, "offer");
@@ -909,7 +921,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       let rawOffer = normalizeWebRTCOfferInput(offerInput);
       if (!rawOffer.includes("\"type\"")) {
         operation = "signal_fetch";
-        const fetched = await serviceCommand<{ document: string }>("signal_fetch", { session_id: rawOffer, role: "offer" });
+        const fetched = await signalFetch(rawOffer, "offer");
         if (attemptRef.current !== attempt) return;
         rawOffer = fetched.document;
         setOfferInput(rawOffer);
@@ -958,7 +970,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         setAnswerPreview({ ...preview, sdp, dtls_fingerprint: native.fingerprint || fingerprint(sdp), document: result.document });
         if (relaySettings?.signal_mailbox_url) {
           try {
-            const published = await serviceCommand<{ session_id: string }>("signal_publish", { document: result.document, role: "answer" });
+            const published = await signalPublish(result.document, "answer");
             if (attemptRef.current !== attempt) return;
             setMailboxCode(published.session_id);
             savePairingResume(published.session_id, "answer");
@@ -1040,7 +1052,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       setAnswerDocument(result.document);
       if (relaySettings?.signal_mailbox_url) {
         try {
-          const published = await serviceCommand<{ session_id: string }>("signal_publish", { document: result.document, role: "answer" });
+          const published = await signalPublish(result.document, "answer");
           if (pcRef.current !== pc) return;
           setMailboxCode(published.session_id);
           savePairingResume(published.session_id, "answer");
@@ -1116,7 +1128,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
     answerFetchBusyRef.current = true;
     setFetchingAnswer(true);
     try {
-      const fetched = await serviceCommand<{ document: string }>("signal_fetch", { session_id: session, role: "answer" });
+      const fetched = await signalFetch(session, "answer");
       if (!current()) return;
       setAnswerInput(fetched.document);
     } catch (reason) {

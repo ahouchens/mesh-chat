@@ -16,6 +16,10 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("./api", () => ({
   serviceCommand: mocks.serviceCommand,
+  coreApiCallControl: async (action: string, params: Record<string, unknown>) =>
+    mocks.serviceCommand(action, action === "signal_fetch"
+      ? { session_id: params.session, role: params.role }
+      : params),
   loadCallIceServers: async () => mocks.serviceCommand("call_ice_servers"),
   loadCallSettings: async () => mocks.serviceCommand("call_settings"),
   saveCallSettings: async (settings: Record<string, unknown>) => mocks.serviceCommand("update_call_settings", settings),

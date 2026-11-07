@@ -3834,56 +3834,17 @@ class MeshChatService(
                 value, allowed={"contact_id", "text"}, required={"contact_id", "text"}
             )
             return self.send_message(body["contact_id"], body["text"])
-        if command == "start_call":
-            body = _payload(
-                value,
-                allowed={"contact_id", "media", "sdp", "dtls_fingerprint"},
-                required={"contact_id", "media", "sdp", "dtls_fingerprint"},
-            )
-            return self.start_call(
-                body["contact_id"], body["media"], body["sdp"], body["dtls_fingerprint"]
-            )
-        if command == "answer_call":
-            body = _payload(
-                value,
-                allowed={"call_id", "sdp", "dtls_fingerprint"},
-                required={"call_id", "sdp", "dtls_fingerprint"},
-            )
-            return self.answer_call(
-                body["call_id"], body["sdp"], body["dtls_fingerprint"]
-            )
         if command == "add_call_candidate":
             body = _payload(
                 value, allowed={"call_id", "candidate"}, required={"call_id", "candidate"}
             )
             return self.add_call_candidate(body["call_id"], body["candidate"])
-        if command == "end_call":
-            body = _payload(
-                value, allowed={"call_id", "reason"}, required={"call_id"}
-            )
-            return self.end_call(body["call_id"], body.get("reason", "completed"))
         if command == "call_media":
             body = _payload(value, allowed={"call_id"}, required={"call_id"})
             return self.call_media(body["call_id"])
         if command == "native_ringing_calls":
             _payload(value, allowed=set())
             return self.native_ringing_calls()
-        if command == "restart_call":
-            body = _payload(
-                value,
-                allowed={"call_id", "sdp", "dtls_fingerprint"},
-                required={"call_id", "sdp", "dtls_fingerprint"},
-            )
-            return self.restart_call(body["call_id"], body["sdp"], body["dtls_fingerprint"])
-        if command == "answer_call_restart":
-            body = _payload(
-                value,
-                allowed={"call_id", "sdp", "dtls_fingerprint"},
-                required={"call_id", "sdp", "dtls_fingerprint"},
-            )
-            return self.answer_call_restart(
-                body["call_id"], body["sdp"], body["dtls_fingerprint"]
-            )
         if command == "call_settings":
             _payload(value, allowed=set())
             return self.call_settings()
@@ -3903,27 +3864,6 @@ class MeshChatService(
         if command == "call_ice_servers":
             _payload(value, allowed=set())
             return self.call_ice_servers()
-        if command == "signal_publish":
-            body = _payload(
-                value,
-                allowed={"document", "role", "session_id", "mailbox_token"},
-                required={"document", "role"},
-            )
-            return self.signal_publish(
-                body["document"],
-                body["role"],
-                body.get("session_id"),
-                body.get("mailbox_token"),
-            )
-        if command == "signal_fetch":
-            body = _payload(
-                value,
-                allowed={"session_id", "role", "mailbox_token"},
-                required={"session_id", "role"},
-            )
-            return self.signal_fetch(
-                body["session_id"], body["role"], body.get("mailbox_token")
-            )
         if command == "reconnect_profiles":
             _payload(value, allowed=set())
             return self.reconnect_profiles()
