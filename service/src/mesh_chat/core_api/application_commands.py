@@ -191,13 +191,11 @@ APPLICATION_COMMANDS = frozenset({
     "mark_workspace_mentions_read",
     "mark_workspace_thread_read",
     "set_workspace_channel_mentions_muted",
-    "hide_workspace_message",
     "save_workspace_draft",
     "save_workspace_direct_draft",
     "save_workspace_thread_draft",
     "leave_workspace",
     "close_workspace",
     "remove_workspace_data",
-    "set_workspace_notification_preference",
     "reconcile_mobile_lifecycle",
 })

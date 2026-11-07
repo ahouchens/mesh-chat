@@ -386,6 +386,7 @@ async function mutateWorkspaceTimeline(
       if (!String(reason).includes("core_api_unavailable")) throw reason;
     }
   }
+  if (action === "notification_preference") throw new Error("core_api_unavailable");
   return serviceCommand<Record<string, unknown>>(fallbackCommand,
     { workspace_id: workspace.id, operation_id: newOperationId(),
       ...legacyWorkspaceParams(params) });
@@ -436,6 +437,7 @@ async function fetchWorkspaceHistory(
       if (!String(reason).includes("core_api_unavailable")) throw reason;
     }
   }
+  if (action === "hide_message") throw new Error("core_api_unavailable");
   return serviceCommand<Record<string, unknown>>(fallbackCommand,
     { workspace_id: workspace.id, ...legacyWorkspaceParams(params),
       ...(key ? { operation_id: key } : {}) });
