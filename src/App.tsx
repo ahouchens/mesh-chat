@@ -6123,7 +6123,8 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
         }
       }
       if (!handled) {
-        result = await serviceCommand<Group | null>(accept ? "accept_group_invitation" : "decline_group_invitation", { invitation_id: invitation.id });
+        if (!accept) throw new Error("core_api_unavailable");
+        result = await serviceCommand<Group | null>("accept_group_invitation", { invitation_id: invitation.id });
       }
       if (accept) selectConversation({ kind: "group", id: result?.id ?? invitation.group_id });
       await refresh(true);
@@ -6156,7 +6157,10 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
           if (!String(reason).includes("core_api_unavailable")) throw reason;
         }
       }
-      if (!handled) await serviceCommand(command, payload);
+      if (!handled) {
+        if (command !== "retry_group_invitation") throw new Error("core_api_unavailable");
+        await serviceCommand(command, payload);
+      }
       if (leaveConversation) setSelection(null);
       await refresh(true);
     } catch (reason) {
