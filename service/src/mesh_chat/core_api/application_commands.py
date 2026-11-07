@@ -117,7 +117,6 @@ APPLICATION_COMMANDS = frozenset({
     "workspace_helper_consent_set",
     "relay_workspace_connection_update",
     "workspace_request_paths",
-    "approve_workspace_admin_request",
     "offer_workspace_authority_transition",
     "request_workspace_display_name",
     "decide_workspace_display_name",

@@ -88,7 +88,7 @@ const api = vi.hoisted(() => {
   coreApiWorkspaceLifecycle: vi.fn(async (_handle: string, action: string, key: string, confirmation?: string): Promise<unknown> =>
     serviceCommand(action === "close" ? "close_workspace" : action === "leave" ? "leave_workspace" : "remove_workspace_data",
       { workspace_id: workspace.id, operation_id: key, ...(confirmation ? { confirmation } : {}) })),
-  coreApiWorkspaceAdminRequest: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiWorkspaceAdminRequest: vi.fn(async (_handle: string, requestHandle: string, action: string, key: string): Promise<unknown> => serviceCommand(action === "approve" ? "approve_workspace_admin_request" : action === "decline" ? "decline_workspace_admin_request" : action === "cancel" ? "cancel_workspace_admin_request" : "dismiss_workspace_admin_request", { workspace_id: workspace.id, request_id: requestHandle, operation_id: key })),
   coreApiWorkspaceMetadata: vi.fn(async (_handle: string, name: string, description: string, key: string): Promise<unknown> =>
     serviceCommand("update_workspace_metadata", { workspace_id: workspace.id, name, description, operation_id: key })),
   coreApiWorkspaceRetention: vi.fn(async (_handle: string, retentionDays: number | null, key: string): Promise<unknown> =>
@@ -5124,6 +5124,8 @@ describe("desktop workspaces", () => {
     };
     const request: WorkspaceAdminRequest = {
       id: "request-one",
+      core_handle: "admin-request-handle-one",
+      core_handle: "request-handle-one",
       workspace_id: workspace.id,
       direction: "incoming",
       request_kind: "role_change",
@@ -5159,7 +5161,7 @@ describe("desktop workspaces", () => {
     expect(within(dialog).getByText(/Effective state is unchanged/i)).toBeTruthy();
     expect(within(dialog).getByText(/Change Bailey from member to admin/)).toBeTruthy();
     fireEvent.click(within(dialog).getByRole("button", { name: "Approve" }));
-    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("approve_workspace_admin_request", expect.objectContaining({ workspace_id: workspace.id, request_id: request.id, operation_id: expect.any(String) })));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("approve_workspace_admin_request", expect.objectContaining({ workspace_id: workspace.id, request_id: request.core_handle, operation_id: expect.any(String) })));
   });
 
   it("opens, sends, hides, and reopens a workspace DM without creating a Contact", async () => {
