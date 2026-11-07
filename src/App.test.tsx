@@ -5125,7 +5125,6 @@ describe("desktop workspaces", () => {
     const request: WorkspaceAdminRequest = {
       id: "request-one",
       core_handle: "admin-request-handle-one",
-      core_handle: "request-handle-one",
       workspace_id: workspace.id,
       direction: "incoming",
       request_kind: "role_change",
