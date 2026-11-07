@@ -790,9 +790,6 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "relay_workspace_connection_update"
             | "workspace_request_paths"
             | "approve_workspace_admin_request"
-            | "decline_workspace_admin_request"
-            | "cancel_workspace_admin_request"
-            | "dismiss_workspace_admin_request"
             | "offer_workspace_authority_transition"
             | "request_workspace_display_name"
             | "decide_workspace_display_name"
@@ -2306,9 +2303,6 @@ mod tests {
             "relay_workspace_connection_update",
             "workspace_request_paths",
             "approve_workspace_admin_request",
-            "decline_workspace_admin_request",
-            "cancel_workspace_admin_request",
-            "dismiss_workspace_admin_request",
             "request_workspace_display_name",
             "decide_workspace_display_name",
             "create_workspace_channel",
