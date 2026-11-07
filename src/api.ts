@@ -269,32 +269,17 @@ export async function coreApiCallIceServers(): Promise<Record<string, unknown>> 
 }
 
 export async function loadCallIceServers(): Promise<Record<string, unknown>> {
-  try {
-    return await coreApiCallIceServers();
-  } catch (reason) {
-    if (!String(reason).includes("core_api_unavailable")) throw reason;
-    return serviceCommand("call_ice_servers");
-  }
+  return await coreApiCallIceServers();
 }
 
 export async function loadCallSettings(): Promise<Record<string, unknown>> {
-  try {
-    return await coreApiCallSettings();
-  } catch (reason) {
-    if (!String(reason).includes("core_api_unavailable")) throw reason;
-    return serviceCommand("call_settings");
-  }
+  return await coreApiCallSettings();
 }
 
 export async function saveCallSettings(
   settings: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-  try {
-    return await coreApiUpdateCallSettings(settings);
-  } catch (reason) {
-    if (!String(reason).includes("core_api_unavailable")) throw reason;
-    return serviceCommand("update_call_settings", settings);
-  }
+  return await coreApiUpdateCallSettings(settings);
 }
 
 export async function coreApiNetworkSettings(): Promise<Record<string, unknown>> {

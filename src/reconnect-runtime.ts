@@ -1,4 +1,4 @@
-import { coreApiPeerForDestination, coreApiRequest, serviceCommand } from "./api";
+import { coreApiPeerForDestination, coreApiRequest, loadCallIceServers, serviceCommand } from "./api";
 import type { CallIceConfiguration } from "./types";
 import {
   ReconnectCoordinator,
@@ -236,9 +236,7 @@ export function createReconnectDeps(
         ...(attemptId ? { attempt_id: attemptId } : {}),
       }),
     ice: async (profile) => {
-      const configuration = await serviceCommand<CallIceConfiguration>(
-        "call_ice_servers",
-      );
+      const configuration = await loadCallIceServers() as unknown as CallIceConfiguration;
       if (
         !profile.allow_direct_ip_disclosure &&
         configuration.iceTransportPolicy !== "relay"
