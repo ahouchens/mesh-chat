@@ -678,6 +678,7 @@ fn allowed_renderer_command(command: &str) -> bool {
     matches!(
         command,
         "snapshot"
+            | "workspace_snapshot"
             | "i2p_status"
             | "create_profile"
             | "create_invitation"
