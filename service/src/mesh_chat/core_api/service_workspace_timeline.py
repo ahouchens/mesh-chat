@@ -50,6 +50,10 @@ class ServiceWorkspaceTimeline:
         if action == "mentions_read":
             return self.service.mark_workspace_mentions_read(
                 workspace_id, params["high_water"], operation_id)
+        if action in {"workspace_read", "direct_read"}:
+            channel_id = params["conversation"] if action == "direct_read" else params["channel"]
+            return self.service.mark_workspace_read(
+                workspace_id, channel_id, params["high_water"], operation_id)
         if action == "notification_preference":
             return self.service.set_workspace_notification_preference(
                 workspace_id, params["conversation"], params["mode"], operation_id)

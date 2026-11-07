@@ -135,8 +135,6 @@ APPLICATION_COMMANDS = frozenset({
     "set_workspace_reaction",
     "list_workspace_messages",
     "list_workspace_direct_messages",
-    "mark_workspace_read",
-    "mark_workspace_direct_read",
     "set_workspace_channel_mentions_muted",
     "save_workspace_draft",
     "save_workspace_direct_draft",

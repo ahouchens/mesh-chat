@@ -40,6 +40,8 @@ const api = vi.hoisted(() => {
     const command = action === "thread_reply" ? "send_workspace_thread_reply"
       : action === "thread_read" ? "mark_workspace_thread_read"
       : action === "mentions_read" ? "mark_workspace_mentions_read"
+      : action === "workspace_read" ? "mark_workspace_read"
+      : action === "direct_read" ? "mark_workspace_direct_read"
       : "set_workspace_notification_preference";
     return serviceCommand(command, { workspace_id: workspace.id, operation_id: key, ...params });
   }),

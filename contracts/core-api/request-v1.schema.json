@@ -2283,8 +2283,9 @@
           "properties": {
             "profile": {"$ref": "#/$defs/handle"},
             "workspace": {"$ref": "#/$defs/handle"},
-            "action": {"enum": ["thread_reply", "thread_read", "mentions_read", "notification_preference"]},
+            "action": {"enum": ["thread_reply", "thread_read", "mentions_read", "notification_preference", "workspace_read", "direct_read"]},
             "conversation": {"type": "string", "minLength": 1, "maxLength": 160},
+            "channel": {"type": "string", "minLength": 1, "maxLength": 160},
             "thread_root": {"type": "string", "minLength": 1, "maxLength": 160},
             "text": {"type": "string", "minLength": 1, "maxLength": 4000},
             "event_id": {"type": "string", "minLength": 1, "maxLength": 160},

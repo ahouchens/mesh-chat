@@ -504,7 +504,7 @@ export async function coreApiTimelineQuery(
 
 export async function coreApiTimelineMutation(
   workspace: string,
-  action: "thread_reply" | "thread_read" | "mentions_read" | "notification_preference",
+  action: "thread_reply" | "thread_read" | "mentions_read" | "notification_preference" | "workspace_read" | "direct_read",
   params: Record<string, unknown>,
   idempotencyKey: string,
 ): Promise<Record<string, unknown>> {

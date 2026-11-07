@@ -394,7 +394,7 @@ def parse_request(value, operations):
             return operation, params
         action = params.get("action")
         if action not in {"thread_reply", "thread_read", "mentions_read",
-                          "notification_preference"}:
+                          "notification_preference", "workspace_read", "direct_read"}:
             raise ApiFailure("invalid_request")
         required = {"profile", "workspace", "action"}
         if action == "thread_reply":
@@ -403,6 +403,10 @@ def parse_request(value, operations):
             required |= {"thread_root", "high_water"}
         elif action == "mentions_read":
             required |= {"high_water"}
+        elif action == "workspace_read":
+            required |= {"channel", "high_water"}
+        elif action == "direct_read":
+            required |= {"conversation", "high_water"}
         else:
             required |= {"conversation", "mode"}
         if set(params) != required:

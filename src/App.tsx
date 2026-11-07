@@ -366,7 +366,7 @@ async function fetchWorkspaceTimeline(
 
 async function mutateWorkspaceTimeline(
   workspace: { id: string; core_handle?: string },
-  action: "thread_reply" | "thread_read" | "mentions_read" | "notification_preference",
+  action: "thread_reply" | "thread_read" | "mentions_read" | "notification_preference" | "workspace_read" | "direct_read",
   params: Record<string, unknown>,
   fallbackCommand: string,
 ): Promise<Record<string, unknown>> {
@@ -5480,7 +5480,12 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       if (workspacePageSelection.current !== selectionKey) return;
       setWorkspacePage((current) => append && current ? { ...page, messages: [...page.messages, ...current.messages] } : page);
       if (!append && selectedWorkspaceConversation.unread_count > 0) {
-        await serviceCommand(selectedWorkspaceDirect ? "mark_workspace_direct_read" : "mark_workspace_read", { operation_id: newOperationId(), workspace_id: selectedWorkspace.id, ...(selectedWorkspaceDirect ? { conversation_id: selectedWorkspaceDirect.id } : { channel_id: selectedWorkspaceChannel!.id }), high_water: page.high_water });
+        await mutateWorkspaceTimeline(selectedWorkspace,
+        selectedWorkspaceDirect ? "direct_read" : "workspace_read",
+        selectedWorkspaceDirect
+          ? { conversation: selectedWorkspaceDirect.id, high_water: page.high_water }
+          : { channel: selectedWorkspaceChannel!.id, high_water: page.high_water },
+        selectedWorkspaceDirect ? "mark_workspace_direct_read" : "mark_workspace_read");
       }
     } catch (reason) { setWorkspaceError(errorMessage(reason)); }
     finally { workspacePageInFlight.current = false; setWorkspacePageLoading(false); }
