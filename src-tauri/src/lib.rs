@@ -794,8 +794,6 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "update_workspace_private_channel_members"
             | "leave_workspace_private_channel"
             | "set_workspace_channel_subscription"
-            | "offer_workspace_channel_transfer"
-            | "accept_workspace_channel_transfer"
             | "recover_workspace_channel"
             | "sync_workspace_channels"
             | "send_workspace_message"
@@ -2301,8 +2299,6 @@ mod tests {
             "update_workspace_private_channel_members",
             "leave_workspace_private_channel",
             "set_workspace_channel_subscription",
-            "offer_workspace_channel_transfer",
-            "accept_workspace_channel_transfer",
             "recover_workspace_channel",
             "sync_workspace_channels",
             "send_workspace_message",

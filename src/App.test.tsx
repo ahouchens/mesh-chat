@@ -99,8 +99,10 @@ const api = vi.hoisted(() => {
   coreApiDecideDeviceRemoval: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiWorkspaceDeviceLinkDecision: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiUpdateChannelMembers: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
-  coreApiOfferChannelTransfer: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
-  coreApiAcceptChannelTransfer: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiOfferChannelTransfer: vi.fn(async (_handle: string, channelHandle: string, memberHandle: string, key: string): Promise<unknown> =>
+    serviceCommand("offer_workspace_channel_transfer", { workspace_id: workspace.id, channel_id: channelHandle === "channel-handle-field" ? "55555555-5555-4555-8555-555555555555" : workspaceChannel.id, successor_member_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", operation_id: key })),
+  coreApiAcceptChannelTransfer: vi.fn(async (_handle: string, channelHandle: string, key: string): Promise<unknown> =>
+    serviceCommand("accept_workspace_channel_transfer", { workspace_id: workspace.id, channel_id: channelHandle, transfer_id: "transfer-local", operation_id: key })),
   coreApiUpdateWorkspaceChannel: vi.fn(async (_handle: string, channelHandle: string, name: string, topic: string, archived: boolean, key: string): Promise<unknown> =>
     serviceCommand("update_workspace_channel", { workspace_id: workspace.id, channel_id: channelHandle === "channel-handle-field" ? "55555555-5555-4555-8555-555555555555" : workspaceChannel.id, name, topic, archived, operation_id: key })),
   coreApiCreateWorkspaceChannel: vi.fn(async (..._args: unknown[]): Promise<{ channel: string; name: string }> => { throw new Error("core_api_unavailable"); }),
@@ -5118,6 +5120,7 @@ describe("desktop workspaces", () => {
   it("presents current authority separately from a pending owner review", async () => {
     const member = {
       id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      core_handle: "channel-member-handle",
       display_name: "Bailey",
       role: "member" as const,
       status: "active" as const,
