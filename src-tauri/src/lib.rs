@@ -785,13 +785,7 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "submit_workspace_join"
             | "approve_workspace_join"
             | "decline_workspace_join"
-            | "create_workspace_device_link"
             | "submit_workspace_device_link"
-            | "approve_workspace_device_link"
-            | "decline_workspace_device_link"
-            | "request_workspace_device_removal"
-            | "approve_workspace_device_removal"
-            | "decline_workspace_device_removal"
             | "start_workspace_history"
             | "cancel_workspace_history"
             | "remove_workspace_member"
@@ -2308,13 +2302,7 @@ mod tests {
             "submit_workspace_join",
             "approve_workspace_join",
             "decline_workspace_join",
-            "create_workspace_device_link",
             "submit_workspace_device_link",
-            "approve_workspace_device_link",
-            "decline_workspace_device_link",
-            "request_workspace_device_removal",
-            "approve_workspace_device_removal",
-            "decline_workspace_device_removal",
             "start_workspace_history",
             "cancel_workspace_history",
             "remove_workspace_member",
