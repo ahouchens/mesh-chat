@@ -374,12 +374,7 @@ async function mutateWorkspaceTimeline(
 }
 
 async function loadWorkspaceSnapshot(): Promise<WorkspaceSnapshot> {
-  try {
-    return await coreApiWorkspaceSnapshot() as unknown as WorkspaceSnapshot;
-  } catch (reason) {
-    if (!String(reason).includes("core_api_unavailable")) throw reason;
-  }
-  return serviceCommand<WorkspaceSnapshot>("workspace_snapshot");
+  return await coreApiWorkspaceSnapshot() as unknown as WorkspaceSnapshot;
 }
 
 async function fetchWorkspaceAccessRecommendation(
@@ -3967,7 +3962,7 @@ function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles,
           throw new Error("core_api_unavailable");
         }
       }
-      if (!handled) await serviceCommand("revoke_workspace_invitation", { operation_id: newOperationId(), workspace_id: workspace.id, invitation_id: invitationId });
+      if (!handled) throw new Error("core_api_unavailable");
       if (invitation?.id === invitationId) { setInvitation(null); setShared(false); }
       setExisting((current) => current.filter((item) => item.id !== invitationId)); setCopied(false);
     } catch (reason) { setError(errorMessage(reason)); }
@@ -3993,8 +3988,6 @@ function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles,
     if (invitation?.host_session_id && !shared) {
       if (workspace.core_handle && invitation.core_handle) {
         await coreApiWorkspaceInvitationRevoke(workspace.core_handle, invitation.core_handle, newOperationId()).catch(() => undefined);
-      } else {
-        await serviceCommand("revoke_workspace_invitation", { operation_id: newOperationId(), workspace_id: workspace.id, invitation_id: invitation.id }).catch(() => undefined);
       }
     } else if (manualSetup) {
       await serviceCommand("stop_participant_host", { access_id: manualSetup.setup_id }).catch(() => undefined);

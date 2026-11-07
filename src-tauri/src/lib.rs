@@ -679,7 +679,6 @@ fn allowed_renderer_command(command: &str) -> bool {
         command,
         "snapshot"
             | "i2p_status"
-            | "workspace_snapshot"
             | "create_profile"
             | "create_invitation"
             | "preview_invitation"
@@ -782,7 +781,6 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "connection_diagnostics"
             | "clear_connection_diagnostics"
             | "cancel_direct_setup"
-            | "revoke_workspace_invitation"
             | "submit_workspace_join"
             | "approve_workspace_join"
             | "decline_workspace_join"
@@ -2302,12 +2300,10 @@ mod tests {
             "connection_diagnostics",
             "clear_connection_diagnostics",
             "cancel_direct_setup",
-            "workspace_snapshot",
             "create_workspace",
             "create_workspace_invitation",
             "offer_workspace_authority_transition",
             "preview_workspace_invitation",
-            "revoke_workspace_invitation",
             "submit_workspace_join",
             "approve_workspace_join",
             "decline_workspace_join",

@@ -25,7 +25,7 @@ const api = vi.hoisted(() => {
   }),
   coreApiSubmitDeviceLink: vi.fn(async (..._args: unknown[]): Promise<never> => { throw new Error("core_api_unavailable"); }),
   coreApiCreateWorkspaceDeviceLink: vi.fn(async (..._args: unknown[]): Promise<{ id: string; workspace_id: string; link: string; text: string; value: string; expires_at: number }> => { throw new Error("core_api_unavailable"); }),
-  coreApiWorkspaceInvitationRevoke: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiWorkspaceInvitationRevoke: vi.fn(async (_handle: string, invitationHandle: string, key: string): Promise<unknown> => serviceCommand("revoke_workspace_invitation", { workspace_id: workspace.id, invitation_id: invitationHandle, operation_id: key })),
   coreApiAdmissionGrantList: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiAdmissionGrantCreate: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiAdmissionGrantAccept: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
@@ -43,7 +43,7 @@ const api = vi.hoisted(() => {
       : "set_workspace_notification_preference";
     return serviceCommand(command, { workspace_id: workspace.id, operation_id: key, ...params });
   }),
-  coreApiWorkspaceSnapshot: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiWorkspaceSnapshot: vi.fn(async (): Promise<unknown> => serviceCommand("workspace_snapshot")),
   coreApiWorkspaceAccessRecommendation: vi.fn(async (_handle: string, action: string, params: Record<string, unknown>, key?: string): Promise<unknown> => {
     const command = action === "list" ? "list_workspace_access_recommendations"
       : action === "create" ? "create_workspace_access_recommendation"
@@ -5922,8 +5922,8 @@ describe("desktop workspaces", () => {
 
   it("manages multiple concurrent workspace invitations independently", async () => {
     const invitations = [
-      { id: "invite-one", workspace_id: workspace.id, offered_manifest_digest: workspace.manifest_hash, state: "active" as const, created_at: 10, expires_at: 2_000_000_000 },
-      { id: "invite-two", workspace_id: workspace.id, offered_manifest_digest: workspace.manifest_hash, state: "active" as const, created_at: 11, expires_at: 2_000_000_100 },
+      { id: "invite-one", core_handle: "invite-one-handle", workspace_id: workspace.id, offered_manifest_digest: workspace.manifest_hash, state: "active" as const, created_at: 10, expires_at: 2_000_000_000 },
+      { id: "invite-two", core_handle: "invite-two-handle", workspace_id: workspace.id, offered_manifest_digest: workspace.manifest_hash, state: "active" as const, created_at: 11, expires_at: 2_000_000_100 },
     ];
     const current: Snapshot = { ...snapshot(), workspaces: [workspace], workspace_channels: [workspaceChannel], workspace_join_requests: [], workspace_invitations: invitations, workspace_drafts: [] };
     api.runtimePlatform.mockResolvedValue("desktop");
@@ -5948,7 +5948,7 @@ describe("desktop workspaces", () => {
     expect(within(dialog).getByText(/Direct participant hosting stays on this owner device/i)).toBeTruthy();
     expect(within(dialog).getAllByText(/expires /i)).toHaveLength(2);
     fireEvent.click(within(dialog).getAllByRole("button", { name: "Revoke" })[0]);
-    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("revoke_workspace_invitation", expect.objectContaining({ workspace_id: workspace.id, invitation_id: "invite-one", operation_id: expect.any(String) })));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("revoke_workspace_invitation", expect.objectContaining({ workspace_id: workspace.id, invitation_id: "invite-one-handle", operation_id: expect.any(String) })));
     expect(within(dialog).getAllByText(/expires /i)).toHaveLength(1);
     fireEvent.click(within(dialog).getByRole("button", { name: "Prepare direct Internet invitation" }));
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("create_workspace_invitation", expect.objectContaining({ workspace_id: workspace.id, operation_id: expect.any(String), connection_mode: "participant" })));
