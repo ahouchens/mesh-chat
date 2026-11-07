@@ -122,7 +122,6 @@ APPLICATION_COMMANDS = frozenset({
     "update_workspace_private_channel_members",
     "leave_workspace_private_channel",
     "set_workspace_channel_subscription",
-    "recover_workspace_channel",
     "sync_workspace_channels",
     "send_workspace_message",
     "open_workspace_direct",

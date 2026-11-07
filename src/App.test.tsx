@@ -106,6 +106,8 @@ const api = vi.hoisted(() => {
   coreApiUpdateWorkspaceChannel: vi.fn(async (_handle: string, channelHandle: string, name: string, topic: string, archived: boolean, key: string): Promise<unknown> =>
     serviceCommand("update_workspace_channel", { workspace_id: workspace.id, channel_id: channelHandle === "channel-handle-field" ? "55555555-5555-4555-8555-555555555555" : workspaceChannel.id, name, topic, archived, operation_id: key })),
   coreApiCreateWorkspaceChannel: vi.fn(async (..._args: unknown[]): Promise<{ channel: string; name: string }> => { throw new Error("core_api_unavailable"); }),
+  coreApiRecoverWorkspaceChannel: vi.fn(async (_handle: string, channelHandle: string, key: string): Promise<unknown> =>
+    serviceCommand("recover_workspace_channel", { workspace_id: workspace.id, channel_id: channelHandle === "channel-handle-field" ? "55555555-5555-4555-8555-555555555555" : "55555555-5555-4555-8555-555555555555", operation_id: key })),
   coreApiWorkspacePolicy: vi.fn(async (_handle: string, channelCreation: string, posting: string, invitationRequests: string, key: string): Promise<unknown> =>
     serviceCommand("update_workspace_policies", { workspace_id: workspace.id, channel_creation: channelCreation, posting, invitation_requests: invitationRequests, operation_id: key })),
   coreApiWorkspaceMemberRole: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),

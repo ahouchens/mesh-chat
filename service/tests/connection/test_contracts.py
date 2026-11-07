@@ -115,6 +115,7 @@ def test_each_designed_operation_has_an_executable_request_vector_and_permission
         "workspace.admission_grant_accept": {"workspace": handle, "grant": handle},
         "workspace.admission_grant_end": {"workspace": handle, "grant": handle},
         "workspace.snapshot": {},
+        "workspace.channel_recover": {"workspace": handle, "channel": handle},
         "runtime.query": {"action": "background"},
         "runtime.mutate": {"action": "notification_previews",
           "hidden": True},

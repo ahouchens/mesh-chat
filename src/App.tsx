@@ -76,6 +76,7 @@ import {
   coreApiWorkspaceMemberRole,
   coreApiWorkspacePolicy,
   coreApiCreateWorkspaceChannel,
+  coreApiRecoverWorkspaceChannel,
   coreApiUpdateWorkspaceChannel,
   coreApiUpdateChannelMembers,
   coreApiWorkspaceDeviceLinkDecision,
@@ -6623,6 +6624,21 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
           return;
         } catch (reason) {
           if (!String(reason).includes("core_api_unavailable")) throw reason;
+        }
+      }
+      if (command === "recover_workspace_channel" && selectedWorkspace.core_handle
+          && typeof payload.channel_id === "string") {
+        const channel = selectedWorkspaceChannels.find((item) => item.id === payload.channel_id);
+        if (channel?.core_handle) {
+          try {
+            await coreApiRecoverWorkspaceChannel(
+              selectedWorkspace.core_handle, channel.core_handle, newOperationId());
+            await refresh(true);
+            return;
+          } catch (reason) {
+            if (!String(reason).includes("core_api_unavailable")) throw reason;
+            throw new Error("core_api_unavailable");
+          }
         }
       }
       const result = await serviceCommand<WorkspaceChannel | { channel_id?: string }>(command, {

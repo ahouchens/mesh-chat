@@ -45,6 +45,7 @@ WORKSPACE_CHANNEL_MEMBERS_OPERATIONS = ("workspace.channel_members",)
 WORKSPACE_CHANNEL_MEMBERS_UPDATE_OPERATIONS = ("workspace.channel_members_update",)
 WORKSPACE_CHANNEL_UPDATE_OPERATIONS = ("workspace.channel_update",)
 WORKSPACE_CHANNEL_ARCHIVE_OPERATIONS = ("workspace.channel_archive",)
+WORKSPACE_CHANNEL_RECOVER_OPERATIONS = ("workspace.channel_recover",)
 WORKSPACE_DEVICE_LINK_CREATE_OPERATIONS = ("workspace.device_link_create",)
 WORKSPACE_DEVICE_LINK_PREVIEW_OPERATIONS = ("workspace.device_link_preview",)
 WORKSPACE_DEVICE_LINK_SUBMIT_OPERATIONS = ("workspace.device_link_submit",)
@@ -615,6 +616,13 @@ def parse_request(value, operations):
                        for item in params.values())):
             raise ApiFailure("invalid_request")
         return operation, params
+    if operation in WORKSPACE_CHANNEL_RECOVER_OPERATIONS:
+        params = value["params"]
+        if (not isinstance(params, dict) or set(params) != {"profile", "workspace", "channel"}
+                or any(not isinstance(params[key], str) or HANDLE.fullmatch(params[key]) is None
+                       for key in ("profile", "workspace", "channel"))):
+            raise ApiFailure("invalid_request")
+        return operation, params
     if operation in WORKSPACE_CHANNEL_ARCHIVE_OPERATIONS:
         params = value["params"]
         if (not isinstance(params, dict) or set(params) != {"profile", "workspace", "channel"}
@@ -993,6 +1001,7 @@ COMPONENT_OPERATIONS = (
     + WORKSPACE_CHANNEL_MEMBERS_UPDATE_OPERATIONS
     + WORKSPACE_CHANNEL_UPDATE_OPERATIONS
     + WORKSPACE_CHANNEL_ARCHIVE_OPERATIONS
+    + WORKSPACE_CHANNEL_RECOVER_OPERATIONS
     + WORKSPACE_DEVICE_LINK_CREATE_OPERATIONS
     + WORKSPACE_DEVICE_LINK_PREVIEW_OPERATIONS
     + WORKSPACE_DEVICE_LINK_SUBMIT_OPERATIONS

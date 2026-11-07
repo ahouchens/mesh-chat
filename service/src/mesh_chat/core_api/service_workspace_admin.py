@@ -369,6 +369,16 @@ class ServiceWorkspaceAdmin:
                 raise ApiFailure("internal")
             return ChannelEdit(channel_id, name, topic, visibility, state)
 
+    def recover_channel(self, profile, workspace_id, channel_id, operation_id):
+        self._require_local(profile)
+        with storage_errors():
+            try:
+                self._service.recover_workspace_channel(
+                    workspace_id, channel_id, operation_id)
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            return "recovered"
+
     def device_link_create(self, profile, workspace_id, operation_id):
         self._require_local(profile)
         if not isinstance(operation_id, str) or not operation_id:

@@ -277,6 +277,11 @@ class CoreClient:
                             {"profile": handle, "action": action, **params},
                             idempotency_key=key)
 
+    def workspace_channel_recover(self, handle, workspace, channel, key):
+        return self.request("workspace.channel_recover",
+                            {"profile": handle, "workspace": workspace,
+                             "channel": channel}, idempotency_key=key)
+
     def workspace_snapshot(self, handle):
         return self.request("workspace.snapshot", {"profile": handle})
 
