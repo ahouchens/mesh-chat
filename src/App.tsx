@@ -4442,8 +4442,7 @@ function WorkspaceAdmissionGrants({ workspace }: { workspace: Workspace }) {
         if (!String(reason).includes("core_api_unavailable")) throw reason;
       }
     }
-    const rows = await serviceCommand<Grant[]>("list_workspace_admission_grants", { workspace_id: workspace.id });
-    return Array.isArray(rows) ? rows : [];
+    throw new Error("core_api_unavailable");
   };
   useEffect(() => {
     let active = true;
@@ -4474,7 +4473,7 @@ function WorkspaceAdmissionGrants({ workspace }: { workspace: Workspace }) {
           if (!String(reason).includes("core_api_unavailable")) throw reason;
         }
       }
-      if (!handled) await serviceCommand("create_workspace_admission_grant", { workspace_id: workspace.id, admin_member_id: selectedAdmin.id, admin_device_id: adminDeviceId, max_admissions: 5, lifetime_days: 7, v2_ready: v2Ready });
+      if (!handled) throw new Error("core_api_unavailable");
       await refresh();
     } catch (reason) { setError(errorMessage(reason)); }
     finally { setBusy(false); }
@@ -4492,7 +4491,7 @@ function WorkspaceAdmissionGrants({ workspace }: { workspace: Workspace }) {
           if (!String(reason).includes("core_api_unavailable")) throw reason;
         }
       }
-      if (!handled) await serviceCommand("accept_workspace_admission_grant", { workspace_id: workspace.id, grant_id: grantId });
+      if (!handled) throw new Error("core_api_unavailable");
       await refresh();
     }
     catch (reason) { setError(errorMessage(reason)); }
@@ -4511,7 +4510,7 @@ function WorkspaceAdmissionGrants({ workspace }: { workspace: Workspace }) {
           if (!String(reason).includes("core_api_unavailable")) throw reason;
         }
       }
-      if (!handled) await serviceCommand("end_workspace_admission_grant", { workspace_id: workspace.id, grant_id: grantId });
+      if (!handled) throw new Error("core_api_unavailable");
       await refresh();
     }
     catch (reason) { setError(errorMessage(reason)); }
