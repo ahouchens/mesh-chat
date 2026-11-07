@@ -87,8 +87,10 @@ const api = vi.hoisted(() => {
   coreApiReportAuthorityLoss: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiWorkspaceLifecycle: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiWorkspaceAdminRequest: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
-  coreApiWorkspaceMetadata: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
-  coreApiWorkspaceRetention: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiWorkspaceMetadata: vi.fn(async (_handle: string, name: string, description: string, key: string): Promise<unknown> =>
+    serviceCommand("update_workspace_metadata", { workspace_id: workspace.id, name, description, operation_id: key })),
+  coreApiWorkspaceRetention: vi.fn(async (_handle: string, retentionDays: number | null, key: string): Promise<unknown> =>
+    serviceCommand("update_workspace_retention", { workspace_id: workspace.id, retention_days: retentionDays, operation_id: key })),
   coreApiRequestDeviceRemoval: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiDecideDeviceRemoval: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiWorkspaceDeviceLinkDecision: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
@@ -97,7 +99,8 @@ const api = vi.hoisted(() => {
   coreApiAcceptChannelTransfer: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiUpdateWorkspaceChannel: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiCreateWorkspaceChannel: vi.fn(async (..._args: unknown[]): Promise<{ channel: string; name: string }> => { throw new Error("core_api_unavailable"); }),
-  coreApiWorkspacePolicy: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiWorkspacePolicy: vi.fn(async (_handle: string, channelCreation: string, posting: string, invitationRequests: string, key: string): Promise<unknown> =>
+    serviceCommand("update_workspace_policies", { workspace_id: workspace.id, channel_creation: channelCreation, posting, invitation_requests: invitationRequests, operation_id: key })),
   coreApiWorkspaceMemberRole: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiWorkspaceJoinDecision: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiGroupInvitation: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),

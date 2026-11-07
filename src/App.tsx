@@ -3964,6 +3964,7 @@ function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles,
           handled = true;
         } catch (reason) {
           if (!String(reason).includes("core_api_unavailable")) throw reason;
+          throw new Error("core_api_unavailable");
         }
       }
       if (!handled) await serviceCommand("revoke_workspace_invitation", { operation_id: newOperationId(), workspace_id: workspace.id, invitation_id: invitationId });
@@ -6372,6 +6373,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
             return;
           } catch (reason) {
             if (!String(reason).includes("core_api_unavailable")) throw reason;
+            throw new Error("core_api_unavailable");
           }
         }
       }
@@ -6382,6 +6384,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
           return;
         } catch (reason) {
           if (!String(reason).includes("core_api_unavailable")) throw reason;
+          throw new Error("core_api_unavailable");
         }
       }
       if (command === "update_workspace_metadata" && selectedWorkspace.core_handle
@@ -6393,6 +6396,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
           return;
         } catch (reason) {
           if (!String(reason).includes("core_api_unavailable")) throw reason;
+          throw new Error("core_api_unavailable");
         }
       }
       if (command === "update_workspace_retention" && selectedWorkspace.core_handle
@@ -6404,6 +6408,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
           return;
         } catch (reason) {
           if (!String(reason).includes("core_api_unavailable")) throw reason;
+          throw new Error("core_api_unavailable");
         }
       }
       if (command === "request_workspace_device_removal" && selectedWorkspace.core_handle
@@ -7030,6 +7035,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
         }
       }
       if (!handled) {
+        if (command === "leave_workspace") throw new Error("core_api_unavailable");
         await serviceCommand(command, { operation_id: newOperationId(), workspace_id: selectedWorkspace.id, ...(confirmation ? { confirmation } : {}) });
       }
       const removed = command === "remove_workspace_data";

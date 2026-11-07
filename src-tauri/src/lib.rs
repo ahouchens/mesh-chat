@@ -793,9 +793,6 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "request_workspace_device_removal"
             | "approve_workspace_device_removal"
             | "decline_workspace_device_removal"
-            | "update_workspace_metadata"
-            | "update_workspace_policies"
-            | "update_workspace_retention"
             | "start_workspace_history"
             | "cancel_workspace_history"
             | "remove_workspace_member"
@@ -811,9 +808,6 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "cancel_workspace_admin_request"
             | "dismiss_workspace_admin_request"
             | "offer_workspace_authority_transition"
-            | "accept_workspace_authority_transition"
-            | "finalize_workspace_authority_transition"
-            | "report_workspace_authority_loss"
             | "request_workspace_display_name"
             | "decide_workspace_display_name"
             | "create_workspace_channel"
@@ -841,7 +835,6 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "save_workspace_draft"
             | "save_workspace_direct_draft"
             | "save_workspace_thread_draft"
-            | "leave_workspace"
             | "close_workspace"
             | "remove_workspace_data"
             | "reconcile_mobile_lifecycle"
@@ -2316,9 +2309,6 @@ mod tests {
             "create_workspace",
             "create_workspace_invitation",
             "offer_workspace_authority_transition",
-            "accept_workspace_authority_transition",
-            "finalize_workspace_authority_transition",
-            "report_workspace_authority_loss",
             "preview_workspace_invitation",
             "revoke_workspace_invitation",
             "submit_workspace_join",
@@ -2331,9 +2321,6 @@ mod tests {
             "request_workspace_device_removal",
             "approve_workspace_device_removal",
             "decline_workspace_device_removal",
-            "update_workspace_metadata",
-            "update_workspace_policies",
-            "update_workspace_retention",
             "start_workspace_history",
             "cancel_workspace_history",
             "remove_workspace_member",
@@ -2375,7 +2362,6 @@ mod tests {
             "save_workspace_draft",
             "save_workspace_direct_draft",
             "save_workspace_thread_draft",
-            "leave_workspace",
             "close_workspace",
             "remove_workspace_data",
             "reconcile_mobile_lifecycle",
