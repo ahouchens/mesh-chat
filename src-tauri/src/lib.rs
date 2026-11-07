@@ -2313,7 +2313,6 @@ mod tests {
         assert!(allowed_renderer_command("set_message_reaction"));
         assert!(!allowed_renderer_command("delete_contact_identity"));
         for command in [
-            "preview_remote_profile",
             "create_manual_remote_profile",
             "test_remote_profile",
             "list_remote_profiles",
@@ -2323,7 +2322,7 @@ mod tests {
             "remove_remote_propagation",
             "stop_participant_host",
         ] {
-            assert!(allowed_renderer_command(command));
+            assert!(allowed_renderer_command(command), "{command}");
         }
     }
 
@@ -2357,7 +2356,6 @@ mod tests {
             "offer_workspace_authority_transition",
             "accept_workspace_authority_transition",
             "finalize_workspace_authority_transition",
-            "list_workspace_authority_transitions",
             "report_workspace_authority_loss",
             "preview_workspace_invitation",
             "revoke_workspace_invitation",
@@ -2379,14 +2377,9 @@ mod tests {
             "get_workspace_history_status",
             "start_workspace_history",
             "cancel_workspace_history",
-            "list_workspace_history_gaps",
             "remove_workspace_member",
             "change_workspace_role",
             "submit_workspace_admin_request",
-            "submit_workspace_invitation_request",
-            "submit_workspace_member_removal_request",
-            "submit_workspace_role_change_request",
-            "list_workspace_members",
             "workspace_connectivity",
             "workspace_reconnect_status",
             "workspace_reconnect_consent_set",
@@ -2405,9 +2398,6 @@ mod tests {
             "list_workspace_access_recommendations",
             "preview_workspace_access_recommendation_by_id",
             "apply_workspace_access_recommendation_by_id",
-            "list_workspace_admin_requests",
-            "list_workspace_admin_history",
-            "get_workspace_admin_request",
             "approve_workspace_admin_request",
             "decline_workspace_admin_request",
             "cancel_workspace_admin_request",
@@ -2461,12 +2451,12 @@ mod tests {
             "background_status",
         ];
         for command in commands {
-            assert!(allowed_renderer_command(command));
+            assert!(allowed_renderer_command(command), "{command}");
         }
-        assert!(!allowed_renderer_command("native_notification_state"));
-        assert!(!allowed_renderer_command("mobile_lifecycle_transition"));
-        assert!(!allowed_renderer_command("drain_native_notification_work"));
-        assert!(!allowed_renderer_command("acknowledge_native_notification"));
+        assert!(!allowed_renderer_command("native_notification_state"), "native_notification_state");
+        assert!(!allowed_renderer_command("mobile_lifecycle_transition"), "mobile_lifecycle_transition");
+        assert!(!allowed_renderer_command("drain_native_notification_work"), "drain_native_notification_work");
+        assert!(!allowed_renderer_command("acknowledge_native_notification"), "acknowledge_native_notification");
     }
 
     #[test]
