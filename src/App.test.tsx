@@ -80,7 +80,7 @@ const api = vi.hoisted(() => {
       : action === "notification_previews" ? "set_hide_notification_previews"
       : "open_notification_target", params)),
   coreApiWorkspaceAdminSubmit: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
-  coreApiWorkspaceDisplayNameRequest: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiWorkspaceDisplayNameRequest: vi.fn(async (_handle: string, displayName: string, key: string): Promise<unknown> => serviceCommand("request_workspace_display_name", { workspace_id: workspace.id, display_name: displayName, operation_id: key })),
   coreApiWorkspaceReadHintSync: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiWorkspaceAuthorityOffer: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiWorkspaceAuthority: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),

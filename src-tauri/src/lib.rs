@@ -778,7 +778,6 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "submit_workspace_join"
             | "approve_workspace_join"
             | "decline_workspace_join"
-            | "submit_workspace_device_link"
             | "start_workspace_history"
             | "cancel_workspace_history"
             | "remove_workspace_member"
@@ -790,7 +789,6 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "relay_workspace_connection_update"
             | "workspace_request_paths"
             | "offer_workspace_authority_transition"
-            | "request_workspace_display_name"
             | "decide_workspace_display_name"
             | "create_workspace_channel"
             | "update_workspace_private_channel_members"
@@ -2290,7 +2288,6 @@ mod tests {
             "submit_workspace_join",
             "approve_workspace_join",
             "decline_workspace_join",
-            "submit_workspace_device_link",
             "start_workspace_history",
             "cancel_workspace_history",
             "remove_workspace_member",
@@ -2301,7 +2298,6 @@ mod tests {
             "workspace_helper_consent_set",
             "relay_workspace_connection_update",
             "workspace_request_paths",
-            "request_workspace_display_name",
             "decide_workspace_display_name",
             "create_workspace_channel",
             "update_workspace_private_channel_members",

@@ -3729,6 +3729,7 @@ function JoinWorkspaceDialog({ initialValue = "", promptId, promptWorkspaceName,
         }
       }
       if (!workspace) {
+        if (devicePreview) throw new Error("core_api_unavailable");
         workspace = await serviceCommand<Workspace>(command, {
           operation_id: joinAttempt.current.operationId,
           ...(devicePreview ? { device_link: document } : promptId ? { prompt_id: promptId } : { invitation: document, ...(preview?.i2p_access_point ? { i2p_consent: i2pConsent } : {}) }),
@@ -6280,6 +6281,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
           return;
         } catch (reason) {
           if (!String(reason).includes("core_api_unavailable")) throw reason;
+          throw new Error("core_api_unavailable");
         }
       }
       if (command === "set_workspace_read_hint_sync" && selectedWorkspace.core_handle
