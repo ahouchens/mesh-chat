@@ -562,6 +562,11 @@ export class CoreClient {
     return this.request("peer.decide", { profile, peer, accept });
   }
 
+  async recoveryTransfer(profile: string, action: string,
+                          params: Record<string, unknown>): Promise<unknown> {
+    return this.request("recovery.transfer", { profile, action, ...params });
+  }
+
   async contactInvitation(profile: string, action: string,
                            params: Record<string, unknown>): Promise<unknown> {
     return this.request("contact.invitation", { profile, action, ...params });

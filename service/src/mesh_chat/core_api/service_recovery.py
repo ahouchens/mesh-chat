@@ -18,6 +18,7 @@ from .service_consumer_progress import ServiceConsumerProgress
 
 class ServiceRecovery:
     def __init__(self, service, messages):
+        self._service = service
         self._store = service.store
         self._journal = service._message_journal
         self._messages = messages
@@ -150,3 +151,15 @@ class ServiceRecovery:
                 position = change["sequence"]
             return EventPage(tuple(result), self._cursors.create(scope, authority, "events", position),
                              position < self._journal.head())
+
+
+    def transfer(self, profile, action, params):
+        self._messages._profile(profile)
+        with storage_errors():
+            if action == "export":
+                return dict(self._service._direct_recovery.export(
+                    params["identifier"]))
+            if action == "import":
+                return dict(self._service._direct_recovery.receive(
+                    params["document"], params["workspace_id"]))
+            raise ApiFailure("invalid_request")

@@ -67,8 +67,6 @@ APPLICATION_COMMANDS = frozenset({
     "connect_direct_setup",
     "configure_direct_firewall",
     "direct_recovery_status",
-    "export_recovery_update",
-    "import_recovery_update",
     "pause_direct_recovery",
     "resume_direct_recovery",
     "direct_setup_status",

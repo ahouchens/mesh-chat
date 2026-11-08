@@ -12,6 +12,7 @@ from .diagnostics import MAX_DIAGNOSTICS
 OPERATIONS = ("runtime.capabilities", "profile.query", "connection.snapshot")
 MESSAGE_OPERATIONS = ("peer.query", "message.enqueue", "message.query")
 RECOVERY_OPERATIONS = ("message.list", "events.poll", "events.ack")
+RECOVERY_TRANSFER_OPERATIONS = ("recovery.transfer",)
 RECEIVED_OPERATIONS = ("message.received",)
 INTENT_OPERATIONS = ("connection.start", "connection.stop")
 RELATIONSHIP_OPERATIONS = ("peer.approve", "peer.revoke", "peer.unblock", "peer.delete", "peer.update", "peer.decide")
@@ -378,6 +379,19 @@ def parse_request(value, operations):
                 or not isinstance(params[profile], str)
                 or HANDLE.fullmatch(params[profile]) is None):
             raise ApiFailure(invalid_request)
+        return operation, params
+    if operation in RECOVERY_TRANSFER_OPERATIONS:
+        params = value["params"]
+        action = params.get("action") if isinstance(params, dict) else None
+        required = {"profile", "action"} | ({"identifier"} if action == "export"
+                                              else {"document", "workspace_id"})
+        if (action not in {"export", "import"} or not isinstance(params, dict)
+                or set(params) != required
+                or not isinstance(params["profile"], str)
+                or HANDLE.fullmatch(params["profile"]) is None
+                or any(not isinstance(params[key], str) or not params[key]
+                       for key in required - {"profile", "action"})):
+            raise ApiFailure("invalid_request")
         return operation, params
     if operation in WORKSPACE_TIMELINE_OPERATIONS:
         params = value["params"]
@@ -1216,6 +1230,7 @@ COMPONENT_OPERATIONS = (
     OPERATIONS
     + MESSAGE_OPERATIONS
     + RECOVERY_OPERATIONS
+    + RECOVERY_TRANSFER_OPERATIONS
     + RECEIVED_OPERATIONS
     + INTENT_OPERATIONS
     + RELATIONSHIP_OPERATIONS

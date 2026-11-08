@@ -739,8 +739,6 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "connect_direct_setup"
             | "configure_direct_firewall"
             | "direct_recovery_status"
-            | "export_recovery_update"
-            | "import_recovery_update"
             | "pause_direct_recovery"
             | "resume_direct_recovery"
             | "direct_setup_status"
@@ -2208,8 +2206,6 @@ mod tests {
             "connect_direct_setup",
             "configure_direct_firewall",
             "direct_recovery_status",
-            "export_recovery_update",
-            "import_recovery_update",
             "pause_direct_recovery",
             "resume_direct_recovery",
             "direct_setup_status",

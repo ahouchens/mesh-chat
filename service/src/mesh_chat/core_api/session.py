@@ -44,7 +44,7 @@ from .diagnostics import Diagnostics, MAX_DIAGNOSTICS, MAX_DIAGNOSTIC_BYTES
 from .diagnostic_views import diagnostics_view
 from .requests import (
     CURSOR, DIAGNOSTIC_OPERATIONS, INTENT_OPERATIONS, MESSAGE_OPERATIONS, OPERATIONS,
-    INVITATION_OPERATIONS, PAIRING_OPERATIONS, CONTACT_INVITATION_OPERATIONS, RECEIVED_OPERATIONS, RECOVERY_OPERATIONS,
+    INVITATION_OPERATIONS, PAIRING_OPERATIONS, CONTACT_INVITATION_OPERATIONS, RECEIVED_OPERATIONS, RECOVERY_OPERATIONS, RECOVERY_TRANSFER_OPERATIONS,
     APPLICATION_OPERATIONS, CALL_OPERATIONS, CALL_CONTROL_OPERATIONS, COMPONENT_OPERATIONS, DRAFT_OPERATIONS,
     GROUP_OPERATIONS, GROUP_DRAFT_OPERATIONS, REACTION_OPERATIONS, RELATIONSHIP_OPERATIONS, SETTINGS_OPERATIONS, REQUEST_OPERATIONS, STOP_OPERATIONS,
     WORKSPACE_APPROVE_OPERATIONS, WORKSPACE_DECLINE_OPERATIONS, WORKSPACE_JOIN_OPERATIONS,
@@ -99,6 +99,7 @@ PERMISSION_BY_OPERATION = {
     "events.poll": "read",
     "message.enqueue": "send",
     "message.list": "read",
+    "recovery.transfer": "send",
     "message.query": "read",
     "message.received": "read",
     "peer.approve": "approve",
@@ -290,6 +291,7 @@ class CoreSession:
         for operations, port in (
             (MESSAGE_OPERATIONS, self._messages),
             (RECOVERY_OPERATIONS, self._recovery),
+            (RECOVERY_TRANSFER_OPERATIONS, self._recovery),
             (RECEIVED_OPERATIONS, self._received),
             (INTENT_OPERATIONS, self._intent),
             (RELATIONSHIP_OPERATIONS, self._relationship),
@@ -670,6 +672,11 @@ class CoreSession:
             return self._pairing_request_operation(grant, profile, params)
         if operation in INVITATION_OPERATIONS:
             return self._invitation_operation(grant, profile, params)
+        if operation in RECOVERY_TRANSFER_OPERATIONS:
+            target = profiles.get(params["profile"])
+            if target is None:
+                raise ApiFailure("forbidden")
+            return self._recovery.transfer(target, params["action"], params)
         if operation in RECOVERY_OPERATIONS:
             return self._recover(grant, profile, operation, params, key)
         return self._observe(grant, profile, operation, params)

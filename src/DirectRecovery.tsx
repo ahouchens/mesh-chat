@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { ConnectionDiagnostics } from "./ConnectionDiagnostics";
-import { serviceCommand } from "./api";
+import { coreApiRecoveryTransfer, serviceCommand } from "./api";
 
 type Peer = { relationship_id: string; workspace_id: string; peer_device_id: string; state: string;
   native_engine_healthy: boolean; authenticated_peer_live: boolean; rns_ready: boolean };
@@ -76,7 +76,9 @@ export function DirectRecovery({ workspaceId }: { workspaceId: string }) {
   const action = async (command: string, identifier: string) => {
     setBusy(true); setError(""); setOutput("");
     try {
-      const result = await serviceCommand<{ state: string; text?: string }>(command, { identifier });
+      const result = command === "export_recovery_update"
+        ? await coreApiRecoveryTransfer("export", { identifier }) as { state: string; text?: string }
+        : await serviceCommand<{ state: string; text?: string }>(command, { identifier });
       if (result.text) setOutput(result.text);
       setFeedback(result.state === "preparing" ? "Preparing fresh connection details. Choose Share connection update again when ready. Keep both apps open." : "Connection action saved.");
     } catch { setError("Could not update this connection. Check that the workspace and device are still active."); }
@@ -85,7 +87,7 @@ export function DirectRecovery({ workspaceId }: { workspaceId: string }) {
   const apply = async () => {
     setBusy(true); setError("");
     try {
-      await serviceCommand("import_recovery_update", { document: input.trim(), workspace_id: workspaceId });
+      await coreApiRecoveryTransfer("import", { document: input.trim(), workspace_id: workspaceId });
       setInput(""); setFeedback("Connection update verified. Reconnection keeps your existing membership and queued messages.");
     } catch { setError("This update could not be verified. It may be expired, replayed, or intended for another device."); }
     finally { setBusy(false); }

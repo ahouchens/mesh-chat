@@ -135,6 +135,7 @@ def test_each_designed_operation_has_an_executable_request_vector_and_permission
         "link.preview": {"provider": "youtube", "identifier": "abc"},
         "contact.invitation": {"action": "receive", "document": "doc",
           "peer": "p1"},
+        "recovery.transfer": {"action": "export", "identifier": "r1"},
         "runtime.query": {"action": "background"},
         "runtime.mutate": {"action": "notification_previews",
           "hidden": True},
