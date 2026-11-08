@@ -76,6 +76,7 @@ import {
   coreApiWorkspaceDraftSet,
   coreApiWorkspaceJoinDecision,
   coreApiCreateWorkspaceInvitation,
+  coreApiRemoteProfile,
   coreApiPreviewWorkspaceInvitation,
   coreApiWorkspaceMemberRole,
   coreApiWorkspacePolicy,
@@ -2599,7 +2600,7 @@ function RemoteConnectionsSettings({ initial, onChanged, onEditStateChange }: { 
     if (!label.trim() || !host.trim() || !Number.isInteger(numericPort)) return;
     setBusy("new"); setError("");
     try {
-      await serviceCommand("create_manual_remote_profile", {
+      await coreApiRemoteProfile("create", {
         label: label.trim(),
         endpoints: [{ host: host.trim(), port: numericPort }],
         propagation_node: propagation.trim() || null,

@@ -693,13 +693,8 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "create_route_update"
             | "preview_route_update"
             | "apply_route_update"
-            | "create_manual_remote_profile"
-            | "test_remote_profile"
             | "list_remote_profiles"
-            | "retry_remote_profile"
-            | "remove_remote_profile"
             | "approve_remote_propagation"
-            | "remove_remote_propagation"
             | "check_direct_connection"
             | "prepare_manual_participant_host"
             | "configure_participant_firewall"
@@ -2216,13 +2211,8 @@ mod tests {
         assert!(allowed_renderer_command("set_message_reaction"));
         assert!(!allowed_renderer_command("delete_contact_identity"));
         for command in [
-            "create_manual_remote_profile",
-            "test_remote_profile",
             "list_remote_profiles",
-            "retry_remote_profile",
-            "remove_remote_profile",
             "approve_remote_propagation",
-            "remove_remote_propagation",
             "stop_participant_host",
         ] {
             assert!(allowed_renderer_command(command), "{command}");

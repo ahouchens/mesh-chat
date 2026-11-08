@@ -106,7 +106,8 @@
     "workspace.channel_state",
     "workspace.member_remove",
     "group.draft_set",
-    "workspace.draft_set"
+    "workspace.draft_set",
+    "remote_profile.mutate"
   ],
   "operations": [
     {
@@ -888,6 +889,13 @@
     },
     {
       "operation": "workspace.draft_set",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "remote_profile.mutate",
       "permission": "send",
       "scope": "profile",
       "mutation": true,

@@ -558,6 +558,12 @@ export class CoreClient {
       { idempotencyKey });
   }
 
+  async remoteProfile(profile: string, action: string, params: Record<string, unknown>,
+                      idempotencyKey: string): Promise<unknown> {
+    return this.request("remote_profile.mutate", { profile, action, ...params },
+      { idempotencyKey });
+  }
+
   async workspaceDraftSet(profile: string, workspace: string, conversation: string,
                            text: string, idempotencyKey: string,
                            extra: { threadRoot?: string; mentions?: string[] } = {}): Promise<unknown> {

@@ -343,6 +343,14 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         return dispatch("runtime.mutate", payload, idempotencyKey)
     }
 
+    fun remoteProfile(profile: String, action: String, params: JSONObject,
+                      idempotencyKey: String): JSONObject {
+        val payload = JSONObject().put("profile", profile).put("action", action)
+        val keys = params.keys()
+        while (keys.hasNext()) { val key = keys.next(); payload.put(key, params.get(key)) }
+        return dispatch("remote_profile.mutate", payload, idempotencyKey)
+    }
+
     fun workspaceDraftSet(profile: String, workspace: String, conversation: String,
                           text: String, idempotencyKey: String,
                           threadRoot: String? = null, mentions: List<String>? = null): JSONObject {

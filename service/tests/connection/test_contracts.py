@@ -122,6 +122,7 @@ def test_each_designed_operation_has_an_executable_request_vector_and_permission
         "group.draft_set": {"group": handle, "text": "draft"},
         "workspace.draft_set": {"workspace": handle, "conversation": "c1",
           "text": "draft"},
+        "remote_profile.mutate": {"action": "remove", "remote_profile_id": "r1"},
         "runtime.query": {"action": "background"},
         "runtime.mutate": {"action": "notification_previews",
           "hidden": True},

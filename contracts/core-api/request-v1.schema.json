@@ -2614,6 +2614,37 @@
     {
       "type": "object",
       "properties": {
+        "api_version": {"const": 1},
+        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"},
+        "operation": {"const": "remote_profile.mutate"},
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {"": "#//handle"},
+            "action": {"enum": ["create", "test", "retry", "remove", "remove_propagation"]},
+            "label": {"type": "string", "minLength": 1, "maxLength": 64},
+            "endpoints": {"type": "array", "maxItems": 8, "items": {
+              "type": "object", "properties": {
+                "host": {"type": "string", "minLength": 1, "maxLength": 255},
+                "port": {"type": "integer", "minimum": 1, "maximum": 65535}
+              }, "required": ["host", "port"], "additionalProperties": false}},
+            "propagation_node": {"type": ["string", "null"], "maxLength": 32},
+            "allow_private": {"type": "boolean"},
+            "remote_profile_id": {"type": "string", "minLength": 1, "maxLength": 160}
+          },
+          "required": ["profile", "action"],
+          "additionalProperties": false
+        },
+        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"}
+      },
+      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
         "api_version": {
           "const": 1
         },

@@ -277,6 +277,11 @@ class CoreClient:
                             {"profile": handle, "action": action, **params},
                             idempotency_key=key)
 
+    def remote_profile(self, handle, action, key, **params):
+        return self.request("remote_profile.mutate",
+                            {"profile": handle, "action": action, **params},
+                            idempotency_key=key)
+
     def workspace_draft_set(self, handle, workspace, conversation, text, key,
                              thread_root=None, mentions=None):
         params = {"profile": handle, "workspace": workspace,

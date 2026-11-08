@@ -1155,3 +1155,26 @@ class ServiceWorkspaceAdmin:
             except ValidationError as error:
                 raise ApiFailure("invalid_request") from error
             return "saved"
+
+
+    def remote_profile(self, profile, action, params):
+        self._require_local(profile)
+        with storage_errors():
+            try:
+                if action == "create":
+                    result = self._service.create_manual_remote_profile(
+                        params["label"], params["endpoints"],
+                        params.get("propagation_node"), params.get("allow_private", False))
+                elif action == "test":
+                    result = self._service.test_remote_profile(params["remote_profile_id"])
+                elif action == "retry":
+                    result = self._service.retry_remote_profile(params["remote_profile_id"])
+                elif action == "remove":
+                    result = self._service.remove_remote_profile(params["remote_profile_id"])
+                elif action == "remove_propagation":
+                    result = self._service.remove_remote_propagation(params["remote_profile_id"])
+                else:
+                    raise ApiFailure("invalid_request")
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            return result if isinstance(result, dict) else {}

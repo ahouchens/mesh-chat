@@ -50,6 +50,7 @@ WORKSPACE_CHANNEL_RECOVER_OPERATIONS = ("workspace.channel_recover",)
 WORKSPACE_CHANNEL_STATE_OPERATIONS = ("workspace.channel_state",)
 WORKSPACE_MEMBER_REMOVE_OPERATIONS = ("workspace.member_remove",)
 WORKSPACE_DRAFT_OPERATIONS = ("workspace.draft_set",)
+REMOTE_PROFILE_OPERATIONS = ("remote_profile.mutate",)
 WORKSPACE_DEVICE_LINK_CREATE_OPERATIONS = ("workspace.device_link_create",)
 WORKSPACE_DEVICE_LINK_PREVIEW_OPERATIONS = ("workspace.device_link_preview",)
 WORKSPACE_DEVICE_LINK_SUBMIT_OPERATIONS = ("workspace.device_link_submit",)
@@ -655,6 +656,39 @@ def parse_request(value, operations):
                        for item in params.values())):
             raise ApiFailure("invalid_request")
         return operation, params
+    if operation in REMOTE_PROFILE_OPERATIONS:
+        params = value["params"]
+        action = params.get("action") if isinstance(params, dict) else None
+        if action not in {"create", "test", "retry", "remove", "remove_propagation"}:
+            raise ApiFailure("invalid_request")
+        allowed = {"profile", "action"}
+        if action == "create":
+            allowed |= {"label", "endpoints", "propagation_node", "allow_private"}
+        else:
+            allowed |= {"remote_profile_id"}
+        if not isinstance(params, dict) or set(params) != allowed:
+            raise ApiFailure("invalid_request")
+        if not isinstance(params["profile"], str) or HANDLE.fullmatch(params["profile"]) is None:
+            raise ApiFailure("invalid_request")
+        if action == "create":
+            endpoints = params["endpoints"]
+            if (not isinstance(params["label"], str) or not params["label"].strip()
+                    or not isinstance(endpoints, list) or not 1 <= len(endpoints) <= 8
+                    or any(not isinstance(item, dict)
+                           or set(item) != {"host", "port"}
+                           or not isinstance(item["host"], str)
+                           or not item["host"]
+                           or type(item["port"]) is not int
+                           or not 1 <= item["port"] <= 65535
+                           for item in endpoints)
+                    or (params.get("propagation_node") is not None
+                        and (not isinstance(params["propagation_node"], str)
+                             or len(params["propagation_node"]) > 32))
+                    or type(params.get("allow_private", False)) is not bool):
+                raise ApiFailure("invalid_request")
+        elif not isinstance(params["remote_profile_id"], str) or not params["remote_profile_id"]:
+            raise ApiFailure("invalid_request")
+        return operation, params
     if operation in WORKSPACE_DRAFT_OPERATIONS:
         params = value["params"]
         if (not isinstance(params, dict)
@@ -1105,6 +1139,7 @@ COMPONENT_OPERATIONS = (
     + WORKSPACE_CHANNEL_STATE_OPERATIONS
     + WORKSPACE_MEMBER_REMOVE_OPERATIONS
     + WORKSPACE_DRAFT_OPERATIONS
+    + REMOTE_PROFILE_OPERATIONS
     + WORKSPACE_DEVICE_LINK_CREATE_OPERATIONS
     + WORKSPACE_DEVICE_LINK_PREVIEW_OPERATIONS
     + WORKSPACE_DEVICE_LINK_SUBMIT_OPERATIONS

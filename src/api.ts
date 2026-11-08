@@ -872,6 +872,15 @@ export async function coreApiWorkspaceMemberRole(
   );
 }
 
+export async function coreApiRemoteProfile(
+  action: "create" | "test" | "retry" | "remove" | "remove_propagation",
+  params: Record<string, unknown>, idempotencyKey: string = crypto.randomUUID(),
+): Promise<unknown> {
+  const profile = await coreApiProfile();
+  return coreApiRequest("remote_profile.mutate",
+    { profile: profile.profile, action, ...params }, idempotencyKey);
+}
+
 export async function coreApiWorkspaceDraftSet(
   workspace: string, conversation: string, text: string, idempotencyKey: string,
   extra: { threadRoot?: string; mentions?: string[] } = {},
