@@ -1552,9 +1552,7 @@ function Onboarding({
         setMode("start");
         return;
       }
-      const checked = await serviceCommand<InvitationPreview>("preview_invitation", {
-        invitation: normalized,
-      });
+      const checked = await coreApiPreviewInvitation(normalized) as unknown as InvitationPreview;
       if (generation !== previewGeneration.current) return;
       setPreview(checked);
       setRemoteConsent(false); setI2PConsent(false);

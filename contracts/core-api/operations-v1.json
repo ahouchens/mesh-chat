@@ -1000,7 +1000,7 @@
     },
     {
       "operation": "peer.pairing_preview",
-      "permission": "send",
+      "permission": "pair",
       "scope": "profile",
       "mutation": false,
       "idempotency": "none"

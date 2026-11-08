@@ -104,6 +104,7 @@ PERMISSION_BY_OPERATION = {
     "message.received": "read",
     "peer.approve": "approve",
     "peer.pairing_accept": "pair",
+    "peer.pairing_preview": "pair",
     "peer.pairing_create": "pair",
     "peer.pairing_request": "pair",
     "peer.query": "observe",
