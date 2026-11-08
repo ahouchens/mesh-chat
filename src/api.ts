@@ -314,12 +314,7 @@ export async function loadNetworkSettings(): Promise<Record<string, unknown>> {
 export async function saveNetworkSettings(
   settings: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-  try {
-    return await coreApiUpdateNetworkSettings(settings);
-  } catch (reason) {
-    if (!String(reason).includes("core_api_unavailable")) throw reason;
-    return serviceCommand("update_settings", { settings });
-  }
+  return await coreApiUpdateNetworkSettings(settings);
 }
 
 export async function coreApiCreateGroup(

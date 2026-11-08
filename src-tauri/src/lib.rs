@@ -737,7 +737,6 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "restore_conversation"
             | "connection_help"
             | "search"
-            | "update_settings"
             | "create_workspace"
             | "preview_direct_connection"
             | "prepare_direct_offer"
