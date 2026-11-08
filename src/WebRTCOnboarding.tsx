@@ -1106,7 +1106,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
   const declineContact = async () => {
     setOnboardingBusy(true);
     try {
-      await serviceCommand("decide_contact_invitation", { invitation_id: contactInvitationIdRef.current, accept: false });
+      await coreApiContactInvitation("decide", { invitation: contactInvitationIdRef.current, accept: false });
       await sendControlText(JSON.stringify({ type: "invitation_declined" })).catch(() => undefined);
       setOnboarding("declined");
       await onChanged();

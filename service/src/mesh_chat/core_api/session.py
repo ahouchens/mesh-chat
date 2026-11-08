@@ -111,6 +111,7 @@ PERMISSION_BY_OPERATION = {
     "peer.delete": "approve",
     "peer.update": "send",
     "peer.decide": "approve",
+    "contact.invitation": "send",
     "peer.draft_get": "read",
     "peer.draft_set": "send",
     "call.settings_query": "read",
