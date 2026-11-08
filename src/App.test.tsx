@@ -4954,7 +4954,7 @@ describe("desktop workspaces", () => {
       if (command === "snapshot" || command === "workspace_snapshot") return current;
       if (command === "list_workspace_messages") return { messages: [], next_cursor: null, high_water: 0 } satisfies WorkspaceMessagePage;
       if (command === "approve_workspace_join") {
-        current = { ...current, workspaces: [workspace], workspace_join_requests: [] };
+        current = { ...current, workspaces: [{ ...ownerWorkspace, pending_owner_review_count: 0 }], workspace_join_requests: [] };
       }
       return {};
     });

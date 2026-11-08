@@ -6166,6 +6166,13 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     }
   };
 
+  const applyAdmittedRole = async (workspaceId: string, memberId: string) => {
+    const latest = await refresh(true);
+    const workspace = (latest.workspaces ?? []).find((item) => item.id === workspaceId);
+    const member = workspace?.members.find((item) => item.id === memberId);
+    if (!workspace?.core_handle || !member?.core_handle) throw new Error("core_api_unavailable");
+    await coreApiWorkspaceMemberRole(workspace.core_handle, member.core_handle, "admin", newOperationId());
+  };
   const respondToWorkspaceJoin = async (request: WorkspaceJoinRequest, accept: boolean, role: "member" | "admin" = "member") => {
     if (workspaceActionBusy || !workspaces.some((workspace) => workspace.id === request.workspace_id)) return;
     setWorkspaceActionBusy(true); setWorkspaceActionError(""); setWorkspaceJoinRequestError("");
@@ -6195,7 +6202,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       }
       if (accept && role === "admin") {
         try {
-          await serviceCommand("change_workspace_role", { operation_id: newOperationId(), workspace_id: request.workspace_id, member_id: request.member_id, role: "admin" });
+          await applyAdmittedRole(request.workspace_id, request.member_id);
         } catch (reason) {
           roleWarning = `Member admitted, but the administrator role change failed: ${errorMessage(reason)}`;
         }
@@ -6209,7 +6216,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
         if ((accept && admitted) || (!accept && !stillPending && !admitted)) {
           if (accept && admitted && role === "admin") {
             try {
-              await serviceCommand("change_workspace_role", { operation_id: newOperationId(), workspace_id: request.workspace_id, member_id: request.member_id, role: "admin" });
+              await applyAdmittedRole(request.workspace_id, request.member_id);
             } catch (roleReason) {
               roleWarning = `Member admitted, but the administrator role change failed: ${errorMessage(roleReason)}`;
             }
