@@ -4240,8 +4240,11 @@ export function WorkspaceAccessSettingsContent({ workspace, onSaved }: { workspa
   }, [workspace.id, workspace.state]);
   useEffect(() => {
     if (!owner) return;
-    void serviceCommand<{ profiles: RemoteProfile[] }>("list_remote_profiles")
-      .then((value) => { const available = value.profiles.filter((profile) => profile.expires_at > Date.now() / 1000); setProfiles(available); setProfileId(available[0]?.id ?? ""); })
+    void coreApiRemoteProfiles()
+      .then((value) => {
+        const available = ((value.profiles ?? []) as RemoteProfile[]).filter((profile) => profile.expires_at > Date.now() / 1000);
+        setProfiles(available); setProfileId(available[0]?.id ?? "");
+      })
       .catch((reason) => setError(errorMessage(reason)));
   }, [owner]);
   const create = async () => {
