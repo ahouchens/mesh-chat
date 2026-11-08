@@ -8,7 +8,9 @@ const native = vi.hoisted(() => ({ active: false, invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => native.active, invoke: native.invoke }));
 afterEach(() => { cleanup(); vi.useRealTimers(); native.active = false; native.invoke.mockReset(); });
 function nativeResult(value: unknown) {
-  native.invoke.mockImplementation(async (command: string) => {
+  native.invoke.mockImplementation(async (command: string, args?: { operation?: string }) => {
+    if (command === "core_api_profile") return { profile: "local" };
+    if (command === "core_api_request" && args?.operation === "link.preview") return value;
     if (command === "core_api_request") throw new Error("core_api_unavailable");
     return value;
   });
@@ -61,8 +63,10 @@ describe("preview lifecycle", () => {
     expect(screen.getByText("Studio")).toBeTruthy();
     expect(screen.getByRole("img").getAttribute("src")).toContain("data:image/jpeg");
     expect(document.querySelector("iframe")).toBeNull();
-    expect(native.invoke).toHaveBeenCalledWith("service_command", {
-      command: "link_preview", payload: { provider: "youtube", identifier: "aqz-KE-bpKQ" },
+    expect(native.invoke).toHaveBeenCalledWith("core_api_request", {
+      operation: "link.preview",
+      params: { profile: "local", provider: "youtube", identifier: "aqz-KE-bpKQ" },
+      idempotencyKey: null,
     });
     fireEvent.click(screen.getByRole("button", { name: "Try playing here" }));
     fireEvent.error(screen.getByTitle("YouTube embedded video"));
@@ -108,7 +112,7 @@ describe("preview lifecycle", () => {
     nativeResult({ status: "loading" });
     render(<MessageContent text="https://x.com/jack/status/20" />);
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Load preview" })));
-    const legacyCalls = () => native.invoke.mock.calls.filter(([command]) => command === "service_command");
+    const legacyCalls = () => native.invoke.mock.calls.filter(([command, args]) => command === "core_api_request" && args?.operation === "link.preview");
     expect(legacyCalls()).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "Close X preview" }));
     await act(async () => vi.advanceTimersByTimeAsync(16000));
