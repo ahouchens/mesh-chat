@@ -6162,7 +6162,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
         }
       }
       if (!handled) {
-        await serviceCommand(accept ? "approve_workspace_join" : "decline_workspace_join", { operation_id: newOperationId(), workspace_id: request.workspace_id, request_id: request.id });
+        throw new Error("core_api_unavailable");
       }
       if (accept && role === "admin") {
         try {
@@ -6337,6 +6337,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
             return;
           } catch (reason) {
             if (!String(reason).includes("core_api_unavailable")) throw reason;
+            throw new Error("core_api_unavailable");
           }
         }
       }

@@ -85,7 +85,7 @@ const api = vi.hoisted(() => {
     serviceCommand("submit_workspace_admin_request", { workspace_id: workspace.id, request_kind: kind, ...(memberHandle ? { target_member_id: memberHandle } : {}), ...(role ? { requested_role: role } : {}), note: _note, operation_id: key })),
   coreApiWorkspaceDisplayNameRequest: vi.fn(async (_handle: string, displayName: string, key: string): Promise<unknown> => serviceCommand("request_workspace_display_name", { workspace_id: workspace.id, display_name: displayName, operation_id: key })),
   coreApiWorkspaceReadHintSync: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
-  coreApiWorkspaceAuthorityOffer: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiWorkspaceAuthorityOffer: vi.fn(async (_handle: string, kind: string, memberHandle: string, deviceHandle: string, outgoing: string | null, key: string): Promise<unknown> => serviceCommand("offer_workspace_authority_transition", { workspace_id: workspace.id, transition_kind: kind, successor_member_id: memberHandle, successor_device_id: deviceHandle, ...(outgoing ? { outgoing_owner_role: outgoing } : {}), operation_id: key })),
   coreApiWorkspaceAuthority: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiReportAuthorityLoss: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiWorkspaceLifecycle: vi.fn(async (_handle: string, action: string, key: string, confirmation?: string): Promise<unknown> =>
@@ -119,7 +119,7 @@ const api = vi.hoisted(() => {
   coreApiWorkspacePolicy: vi.fn(async (_handle: string, channelCreation: string, posting: string, invitationRequests: string, key: string): Promise<unknown> =>
     serviceCommand("update_workspace_policies", { workspace_id: workspace.id, channel_creation: channelCreation, posting, invitation_requests: invitationRequests, operation_id: key })),
   coreApiWorkspaceMemberRole: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
-  coreApiWorkspaceJoinDecision: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiWorkspaceJoinDecision: vi.fn(async (_handle: string, requestHandle: string, accept: boolean, key: string): Promise<unknown> => serviceCommand(accept ? "approve_workspace_join" : "decline_workspace_join", { workspace_id: workspace.id, request_id: requestHandle, operation_id: key })),
   coreApiGroupInvitation: vi.fn(async (_handle: string, accept: boolean): Promise<unknown> => serviceCommand(accept ? "accept_group_invitation" : "decline_group_invitation", { invitation_id: groupInvitation.id })),
   coreApiRetryGroupInvitation: vi.fn(async (_handle: string, destinationHash: string): Promise<unknown> => serviceCommand("retry_group_invitation", { group_id: group.id, destination_hash: destinationHash })),
   coreApiLeaveGroup: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
@@ -4878,6 +4878,7 @@ describe("desktop workspaces", () => {
   it("alerts the owner when a workspace join request actually reaches this device", async () => {
     const request: WorkspaceJoinRequest = {
       id: "join-request-one",
+      core_handle: "join-request-handle-one",
       workspace_id: workspace.id,
       member_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       display_name: "Bailey",
@@ -4932,7 +4933,7 @@ describe("desktop workspaces", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Approve as administrator" }));
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith(
       "approve_workspace_join",
-      expect.objectContaining({ workspace_id: workspace.id, request_id: request.id, operation_id: expect.any(String) }),
+      expect.objectContaining({ workspace_id: workspace.id, request_id: request.core_handle, operation_id: expect.any(String) }),
     ));
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith(
       "change_workspace_role",
@@ -5019,12 +5020,13 @@ describe("desktop workspaces", () => {
   it("requires explicit ownership-transfer confirmation and binds the exact successor device", async () => {
     const successor = {
       id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      core_handle: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       display_name: "Bailey",
       role: "member" as const,
       status: "active" as const,
       short_id: "aaaaaa",
-      device: { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", destination_hash: "99".repeat(16), fingerprint: "BBBB CCCC DDDD EEEE" },
-      devices: [{ id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", destination_hash: "99".repeat(16), fingerprint: "BBBB CCCC DDDD EEEE" }],
+      device: { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", core_handle: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", destination_hash: "99".repeat(16), fingerprint: "BBBB CCCC DDDD EEEE" },
+      devices: [{ id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", core_handle: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", destination_hash: "99".repeat(16), fingerprint: "BBBB CCCC DDDD EEEE" }],
     };
     const owner = workspace.members[0];
     const authorityWorkspace: Workspace = {

@@ -776,8 +776,6 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "clear_connection_diagnostics"
             | "cancel_direct_setup"
             | "submit_workspace_join"
-            | "approve_workspace_join"
-            | "decline_workspace_join"
             | "start_workspace_history"
             | "cancel_workspace_history"
             | "change_workspace_role"
@@ -786,7 +784,6 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "workspace_helper_consent_set"
             | "relay_workspace_connection_update"
             | "workspace_request_paths"
-            | "offer_workspace_authority_transition"
             | "decide_workspace_display_name"
             | "send_workspace_message"
             | "open_workspace_direct"
@@ -2270,11 +2267,8 @@ mod tests {
             "cancel_direct_setup",
             "create_workspace",
             "create_workspace_invitation",
-            "offer_workspace_authority_transition",
             "preview_workspace_invitation",
             "submit_workspace_join",
-            "approve_workspace_join",
-            "decline_workspace_join",
             "start_workspace_history",
             "cancel_workspace_history",
             "change_workspace_role",
