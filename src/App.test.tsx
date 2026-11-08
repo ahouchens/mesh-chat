@@ -17,7 +17,7 @@ const api = vi.hoisted(() => {
     return { group: created.id ?? "group", name: created.title ?? name, posting_policy: created.posting_policy ?? policy };
   }),
   coreApiCreateInvitation: vi.fn(async (..._args: unknown[]): Promise<{ profile: string; link: string; text: string; file: string; expires_at: number }> => { throw new Error("core_api_unavailable"); }),
-  coreApiPeerForDestination: vi.fn(async (): Promise<{ profile: string; peer: string; destination: string }> => { throw new Error("core_api_unavailable"); }),
+  coreApiPeerForDestination: vi.fn(async (_destination: string): Promise<{ profile: string; peer: string; destination: string }> => { throw new Error("core_api_unavailable"); }),
   coreApiRequest: vi.fn(async (_operation: string, _params?: Record<string, unknown>): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiCallControl: vi.fn(async (action: string, params: Record<string, unknown>): Promise<unknown> => {
     const command = action === "start" ? "start_call"
