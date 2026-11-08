@@ -107,7 +107,9 @@
     "workspace.member_remove",
     "group.draft_set",
     "workspace.draft_set",
-    "remote_profile.mutate"
+    "remote_profile.mutate",
+    "workspace.display_name_decide",
+    "workspace.direct_open"
   ],
   "operations": [
     {
@@ -896,6 +898,20 @@
     },
     {
       "operation": "remote_profile.mutate",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.display_name_decide",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.direct_open",
       "permission": "send",
       "scope": "profile",
       "mutation": true,

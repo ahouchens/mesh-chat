@@ -1184,3 +1184,27 @@ class ServiceWorkspaceAdmin:
             except ValidationError as error:
                 raise ApiFailure("invalid_request") from error
             return result if isinstance(result, dict) else {}
+
+
+    def decide_display_name(self, profile, workspace_id, request_id, approve, operation_id):
+        self._require_local(profile)
+        with storage_errors():
+            try:
+                self._service.decide_workspace_display_name(
+                    workspace_id, request_id, approve, operation_id)
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            return "approved" if approve else "declined"
+
+
+    def open_direct(self, profile, workspace_id, member_id, operation_id):
+        self._require_local(profile)
+        with storage_errors():
+            try:
+                direct = self._service.open_workspace_direct(
+                    workspace_id, member_id, operation_id)
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            if not isinstance(direct, dict) or not isinstance(direct.get("id"), str):
+                raise ApiFailure("internal")
+            return direct

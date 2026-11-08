@@ -558,6 +558,18 @@ export class CoreClient {
       { idempotencyKey });
   }
 
+  async workspaceDirectOpen(profile: string, workspace: string, member: string,
+                            idempotencyKey: string): Promise<unknown> {
+    return this.request("workspace.direct_open",
+      { profile, workspace, member }, { idempotencyKey });
+  }
+
+  async workspaceDisplayNameDecide(profile: string, workspace: string, request: string,
+                                    approve: boolean, idempotencyKey: string): Promise<unknown> {
+    return this.request("workspace.display_name_decide",
+      { profile, workspace, request, approve }, { idempotencyKey });
+  }
+
   async remoteProfile(profile: string, action: string, params: Record<string, unknown>,
                       idempotencyKey: string): Promise<unknown> {
     return this.request("remote_profile.mutate", { profile, action, ...params },

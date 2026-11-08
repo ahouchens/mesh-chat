@@ -76,7 +76,7 @@
           "type": "array",
           "uniqueItems": true,
           "minItems": 3,
-          "maxItems": 106,
+          "maxItems": 108,
           "items": {
             "enum": [
               "application.snapshot",
@@ -154,6 +154,8 @@
               "group.draft_set",
               "workspace.draft_set",
               "remote_profile.mutate",
+              "workspace.display_name_decide",
+              "workspace.direct_open",
               "workspace.device_link_create",
               "workspace.device_link_preview",
               "workspace.device_link_submit",

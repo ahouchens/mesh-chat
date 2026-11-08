@@ -772,8 +772,6 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "workspace_helper_consent_set"
             | "relay_workspace_connection_update"
             | "workspace_request_paths"
-            | "decide_workspace_display_name"
-            | "open_workspace_direct"
             | "send_workspace_thread_reply"
             | "reconcile_mobile_lifecycle"
     )
@@ -2244,8 +2242,6 @@ mod tests {
             "workspace_helper_consent_set",
             "relay_workspace_connection_update",
             "workspace_request_paths",
-            "decide_workspace_display_name",
-            "open_workspace_direct",
             "send_workspace_thread_reply",
             "reconcile_mobile_lifecycle",
         ];

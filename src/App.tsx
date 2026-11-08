@@ -110,6 +110,8 @@ import {
   coreApiAdmissionGrantList,
   coreApiWorkspaceInvitationRevoke,
   coreApiWorkspaceDisplayNameRequest,
+  coreApiWorkspaceDisplayNameDecision,
+  coreApiOpenWorkspaceDirect,
   coreApiWorkspaceReadHintSync,
   coreApiWorkspaceRetention,
   coreApiDecideDeviceRemoval,
@@ -6331,6 +6333,18 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
           if (!String(reason).includes("core_api_unavailable")) throw reason;
         }
       }
+      if (command === "decide_workspace_display_name" && selectedWorkspace.core_handle
+          && typeof payload.request_id === "string" && typeof payload.approve === "boolean") {
+        try {
+          await coreApiWorkspaceDisplayNameDecision(
+            selectedWorkspace.core_handle, payload.request_id, payload.approve, newOperationId());
+          await refresh(true);
+          return;
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+          throw new Error("core_api_unavailable");
+        }
+      }
       if (command === "request_workspace_display_name" && selectedWorkspace.core_handle
           && typeof payload.display_name === "string") {
         try {
@@ -6915,7 +6929,10 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     if (!selectedWorkspace || workspaceActionBusy) return;
     setWorkspaceActionBusy(true); setWorkspaceActionError("");
     try {
-      const direct = await serviceCommand<WorkspaceDirect>("open_workspace_direct", { operation_id: newOperationId(), workspace_id: selectedWorkspace.id, member_id: memberId });
+      const member = selectedWorkspace.members.find((item) => item.id === memberId);
+      if (!member?.core_handle) throw new Error("core_api_unavailable");
+      const direct = await coreApiOpenWorkspaceDirect(
+        selectedWorkspace.core_handle ?? "", member.core_handle, newOperationId()) as { id: string } as WorkspaceDirect;
       setWorkspaceSelectedDirectId(direct.id);
       setWorkspaceSelectedChannelId(null);
       setWorkspaceMentionsOpen(false);

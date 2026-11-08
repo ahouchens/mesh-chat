@@ -881,6 +881,22 @@ export async function coreApiWorkspaceMemberRole(
   );
 }
 
+export async function coreApiOpenWorkspaceDirect(
+  workspace: string, member: string, idempotencyKey: string,
+): Promise<unknown> {
+  const profile = await coreApiProfile();
+  return coreApiRequest("workspace.direct_open",
+    { profile: profile.profile, workspace, member }, idempotencyKey);
+}
+
+export async function coreApiWorkspaceDisplayNameDecision(
+  workspace: string, request: string, approve: boolean, idempotencyKey: string,
+): Promise<unknown> {
+  const profile = await coreApiProfile();
+  return coreApiRequest("workspace.display_name_decide",
+    { profile: profile.profile, workspace, request, approve }, idempotencyKey);
+}
+
 export async function coreApiRemoteProfile(
   action: "create" | "test" | "retry" | "remove" | "remove_propagation",
   params: Record<string, unknown>, idempotencyKey: string = crypto.randomUUID(),

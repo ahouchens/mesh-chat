@@ -343,6 +343,17 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         return dispatch("runtime.mutate", payload, idempotencyKey)
     }
 
+    fun workspaceDirectOpen(profile: String, workspace: String, member: String,
+                            idempotencyKey: String): JSONObject =
+        dispatch("workspace.direct_open", JSONObject().put("profile", profile)
+            .put("workspace", workspace).put("member", member), idempotencyKey)
+
+    fun workspaceDisplayNameDecide(profile: String, workspace: String, request: String,
+                                   approve: Boolean, idempotencyKey: String): JSONObject =
+        dispatch("workspace.display_name_decide", JSONObject().put("profile", profile)
+            .put("workspace", workspace).put("request", request)
+            .put("approve", approve), idempotencyKey)
+
     fun remoteProfile(profile: String, action: String, params: JSONObject,
                       idempotencyKey: String): JSONObject {
         val payload = JSONObject().put("profile", profile).put("action", action)

@@ -277,6 +277,17 @@ class CoreClient:
                             {"profile": handle, "action": action, **params},
                             idempotency_key=key)
 
+    def workspace_direct_open(self, handle, workspace, member, key):
+        return self.request("workspace.direct_open",
+                            {"profile": handle, "workspace": workspace, "member": member},
+                            idempotency_key=key)
+
+    def workspace_display_name_decide(self, handle, workspace, request, approve, key):
+        return self.request("workspace.display_name_decide",
+                            {"profile": handle, "workspace": workspace,
+                             "request": request, "approve": approve},
+                            idempotency_key=key)
+
     def remote_profile(self, handle, action, key, **params):
         return self.request("remote_profile.mutate",
                             {"profile": handle, "action": action, **params},

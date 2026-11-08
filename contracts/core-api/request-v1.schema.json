@@ -2645,6 +2645,53 @@
     {
       "type": "object",
       "properties": {
+        "api_version": {"const": 1},
+        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"},
+        "operation": {"const": "workspace.display_name_decide"},
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {"": "#//handle"},
+            "workspace": {"": "#//handle"},
+            "request": {"type": "string", "minLength": 1, "maxLength": 160},
+            "approve": {"type": "boolean"}
+          },
+          "required": ["profile", "workspace", "request", "approve"],
+          "additionalProperties": false
+        },
+        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"}
+      },
+      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "api_version": {"const": 1},
+        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"},
+        "operation": {"const": "workspace.direct_open"},
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {"": "#//handle"},
+            "workspace": {"": "#//handle"},
+            "member": {"": "#//handle"}
+          },
+          "required": ["profile", "workspace", "member"],
+          "additionalProperties": false
+        },
+        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"}
+      },
+      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
         "api_version": {
           "const": 1
         },
