@@ -364,7 +364,7 @@ async function fetchCallMedia(
 
 async function fetchWorkspaceTimeline(
   workspace: { id: string; core_handle?: string },
-  view: "threads" | "thread_messages" | "mentions" | "search",
+  view: "threads" | "thread_messages" | "mentions" | "search" | "channel_messages" | "direct_messages",
   params: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
   return await coreApiTimelineQuery(
@@ -373,12 +373,14 @@ async function fetchWorkspaceTimeline(
 
 async function mutateWorkspaceTimeline(
   workspace: { id: string; core_handle?: string },
-  action: "thread_reply" | "thread_read" | "mentions_read" | "notification_preference" | "workspace_read" | "direct_read",
+  action: "thread_reply" | "thread_read" | "mentions_read" | "notification_preference" | "workspace_read" | "direct_read" | "channel_message" | "direct_message",
   params: Record<string, unknown>,
   fallbackCommand: string,
+  operationId?: string,
 ): Promise<Record<string, unknown>> {
   return await coreApiTimelineMutation(
-    workspace.core_handle ?? "", action, legacyWorkspaceParams(params), newOperationId());
+    workspace.core_handle ?? "", action, legacyWorkspaceParams(params),
+    operationId ?? newOperationId());
 }
 
 async function loadWorkspaceSnapshot(): Promise<WorkspaceSnapshot> {
@@ -5472,12 +5474,13 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     workspacePageInFlight.current = true;
     setWorkspacePageLoading(true);
     try {
-      const page = await serviceCommand<WorkspaceMessagePage>(selectedWorkspaceDirect ? "list_workspace_direct_messages" : "list_workspace_messages", {
-        workspace_id: selectedWorkspace.id,
-        ...(selectedWorkspaceDirect ? { conversation_id: selectedWorkspaceDirect.id } : { channel_id: selectedWorkspaceChannel!.id }),
-        cursor: append ? workspacePage?.next_cursor ?? null : null,
-        limit: 50,
-      });
+      const page = await fetchWorkspaceTimeline(
+        selectedWorkspace,
+        selectedWorkspaceDirect ? "direct_messages" : "channel_messages",
+        selectedWorkspaceDirect
+          ? { conversation: selectedWorkspaceDirect.id, cursor: append ? workspacePage?.next_cursor ?? null : null, limit: 50 }
+          : { channel: selectedWorkspaceChannel!.id, cursor: append ? workspacePage?.next_cursor ?? null : null, limit: 50 },
+      ) as unknown as WorkspaceMessagePage;
       if (workspacePageSelection.current !== selectionKey) return;
       setWorkspacePage((current) => append && current ? { ...page, messages: [...page.messages, ...current.messages] } : page);
       if (!append && selectedWorkspaceConversation.unread_count > 0) {
@@ -6805,14 +6808,14 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     await cancelPendingDraftWrite(draftKey);
     let saved: WorkspaceMessage;
     try {
-      saved = await serviceCommand<WorkspaceMessage>(kind === "direct" ? "send_workspace_direct_message" : "send_workspace_message", {
-        operation_id: durable.operationId,
-        event_id: durable.eventId,
-        workspace_id: workspaceId,
-        ...(kind === "direct" ? { conversation_id: conversationId } : { channel_id: conversationId }),
-        text,
-        mention_member_ids: durable.mentionMemberIds,
-      });
+      saved = await mutateWorkspaceTimeline(
+        { id: workspaceId, core_handle: workspaces.find((item) => item.id === workspaceId)?.core_handle },
+        kind === "direct" ? "direct_message" : "channel_message",
+        { conversation: conversationId, text, event_id: durable.eventId,
+          mention_member_ids: durable.mentionMemberIds },
+        kind === "direct" ? "send_workspace_direct_message" : "send_workspace_message",
+        durable.operationId,
+      ) as unknown as WorkspaceMessage;
     } catch (reason) {
       setWorkspaceError(`${errorMessage(reason)} Your text is still in the composer; retrying will reuse the same durable message ID.`);
       workspaceSendInFlight.current = false;

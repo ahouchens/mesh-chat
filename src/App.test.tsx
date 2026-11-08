@@ -35,12 +35,30 @@ const api = vi.hoisted(() => {
   coreApiAdmissionGrantAccept: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiAdmissionGrantEnd: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiTimelineQuery: vi.fn(async (_handle: string, view: string, params: Record<string, unknown>): Promise<unknown> => {
+    if (view === "channel_messages" || view === "direct_messages") {
+      const direct = view === "direct_messages";
+      return serviceCommand(direct ? "list_workspace_direct_messages" : "list_workspace_messages", {
+        workspace_id: workspace.id,
+        ...(direct ? { conversation_id: params.conversation_id ?? params.conversation }
+                   : { channel_id: params.channel }),
+        cursor: params.cursor, limit: params.limit,
+      });
+    }
     const command = view === "threads" ? "list_workspace_threads"
       : view === "thread_messages" ? "list_workspace_thread_messages"
       : view === "mentions" ? "list_workspace_mentions" : "search_workspace";
     return serviceCommand(command, { workspace_id: workspace.id, ...params });
   }),
   coreApiTimelineMutation: vi.fn(async (_handle: string, action: string, params: Record<string, unknown>, key: string): Promise<unknown> => {
+    if (action === "channel_message" || action === "direct_message") {
+      const direct = action === "direct_message";
+      const conversation = params.conversation_id ?? params.conversation;
+      return serviceCommand(direct ? "send_workspace_direct_message" : "send_workspace_message", {
+        workspace_id: workspace.id, operation_id: key, event_id: params.event_id,
+        text: params.text, mention_member_ids: params.mention_member_ids,
+        ...(direct ? { conversation_id: conversation } : { channel_id: conversation }),
+      });
+    }
     const command = action === "thread_reply" ? "send_workspace_thread_reply"
       : action === "thread_read" ? "mark_workspace_thread_read"
       : action === "mentions_read" ? "mark_workspace_mentions_read"

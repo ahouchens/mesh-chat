@@ -2257,7 +2257,7 @@
           "properties": {
             "profile": {"$ref": "#/$defs/handle"},
             "workspace": {"$ref": "#/$defs/handle"},
-            "view": {"enum": ["threads", "thread_messages", "mentions", "search"]},
+            "view": {"enum": ["threads", "thread_messages", "mentions", "search", "channel_messages", "direct_messages"]},
             "cursor": {"type": ["string", "null"], "maxLength": 256},
             "limit": {"type": "integer", "minimum": 1, "maximum": 100},
             "thread_root": {"type": "string", "minLength": 1, "maxLength": 160},
@@ -2283,7 +2283,7 @@
           "properties": {
             "profile": {"$ref": "#/$defs/handle"},
             "workspace": {"$ref": "#/$defs/handle"},
-            "action": {"enum": ["thread_reply", "thread_read", "mentions_read", "notification_preference", "workspace_read", "direct_read"]},
+            "action": {"enum": ["thread_reply", "thread_read", "mentions_read", "notification_preference", "workspace_read", "direct_read", "channel_message", "direct_message"]},
             "conversation": {"type": "string", "minLength": 1, "maxLength": 160},
             "channel": {"type": "string", "minLength": 1, "maxLength": 160},
             "thread_root": {"type": "string", "minLength": 1, "maxLength": 160},

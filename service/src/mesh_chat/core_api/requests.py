@@ -381,10 +381,15 @@ def parse_request(value, operations):
         if operation == "workspace.timeline_query":
             view = params.get("view")
             allowed = {"profile", "workspace", "view", "cursor", "limit",
-                       "thread_root", "query", "scope"}
-            if view not in {"threads", "thread_messages", "mentions", "search"}:
+                       "thread_root", "query", "scope", "channel", "conversation"}
+            if view not in {"threads", "thread_messages", "mentions", "search",
+                            "channel_messages", "direct_messages"}:
                 raise ApiFailure("invalid_request")
             if set(params) - allowed:
+                raise ApiFailure("invalid_request")
+            if view == "channel_messages" and not isinstance(params.get("channel"), str):
+                raise ApiFailure("invalid_request")
+            if view == "direct_messages" and not isinstance(params.get("conversation"), str):
                 raise ApiFailure("invalid_request")
             if view in {"thread_messages"} and not isinstance(params.get("thread_root"), str):
                 raise ApiFailure("invalid_request")
@@ -399,10 +404,13 @@ def parse_request(value, operations):
             return operation, params
         action = params.get("action")
         if action not in {"thread_reply", "thread_read", "mentions_read",
-                          "notification_preference", "workspace_read", "direct_read"}:
+                          "notification_preference", "workspace_read", "direct_read",
+                          "channel_message", "direct_message"}:
             raise ApiFailure("invalid_request")
         required = {"profile", "workspace", "action"}
-        if action == "thread_reply":
+        if action in {"channel_message", "direct_message"}:
+            required |= {"conversation", "text", "event_id"}
+        elif action == "thread_reply":
             required |= {"conversation", "thread_root", "text", "event_id"}
         elif action == "thread_read":
             required |= {"thread_root", "high_water"}
@@ -414,12 +422,23 @@ def parse_request(value, operations):
             required |= {"conversation", "high_water"}
         else:
             required |= {"conversation", "mode"}
-        if set(params) != required:
+        allowed = required | ({"mention_member_ids"}
+                              if action in {"channel_message", "direct_message"} else set())
+        if set(params) != allowed:
             raise ApiFailure("invalid_request")
         for key in required - {"profile", "workspace", "action", "high_water",
                                 "text", "event_id", "mode"}:
             if not isinstance(params[key], str):
                 raise ApiFailure("invalid_request")
+        if action in {"channel_message", "direct_message"} and (
+                not isinstance(params["text"], str)
+                or not params["text"].strip()
+                or len(params["text"].encode("utf-8")) > 16384
+                or ("mention_member_ids" in params
+                    and (not isinstance(params["mention_member_ids"], list)
+                         or any(not isinstance(item, str)
+                                for item in params["mention_member_ids"])))):
+            raise ApiFailure("invalid_request")
         if action == "thread_reply" and (not isinstance(params["text"], str)
                                         or not 1 <= len(params["text"]) <= 4000):
             raise ApiFailure("invalid_request")

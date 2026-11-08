@@ -23,6 +23,14 @@ class ServiceWorkspaceTimeline:
     store: Any
 
     def query(self, profile, workspace_id, view, params):
+        if view == "channel_messages":
+            return self.service.list_workspace_messages(
+                workspace_id, params["channel"], params.get("cursor"),
+                params.get("limit", 50))
+        if view == "direct_messages":
+            return self.service.list_workspace_messages(
+                workspace_id, params["conversation"], params.get("cursor"),
+                params.get("limit", 50))
         if view == "threads":
             return self.service.list_workspace_threads(
                 workspace_id, params.get("cursor"), params.get("limit", 50))
@@ -40,6 +48,14 @@ class ServiceWorkspaceTimeline:
         raise ValueError("unsupported timeline view")
 
     def mutate(self, profile, workspace_id, action, params, operation_id):
+        if action == "channel_message":
+            return self.service.send_workspace_message(
+                workspace_id, params["conversation"], params["text"],
+                params["event_id"], operation_id, params.get("mention_member_ids"))
+        if action == "direct_message":
+            return self.service.send_workspace_direct_message(
+                workspace_id, params["conversation"], params["text"],
+                params["event_id"], operation_id, params.get("mention_member_ids"))
         if action == "thread_reply":
             return self.service.send_workspace_thread_reply(
                 workspace_id, params["conversation"], params["thread_root"],

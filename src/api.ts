@@ -534,7 +534,7 @@ export async function coreApiWorkspaceSnapshot(): Promise<Record<string, unknown
 }
 
 export async function coreApiTimelineQuery(
-  workspace: string, view: "threads" | "thread_messages" | "mentions" | "search",
+  workspace: string, view: "threads" | "thread_messages" | "mentions" | "search" | "channel_messages" | "direct_messages",
   params: Record<string, unknown> = {},
 ): Promise<Record<string, unknown>> {
   const profile = await coreApiProfile();
@@ -545,7 +545,7 @@ export async function coreApiTimelineQuery(
 
 export async function coreApiTimelineMutation(
   workspace: string,
-  action: "thread_reply" | "thread_read" | "mentions_read" | "notification_preference" | "workspace_read" | "direct_read",
+  action: "thread_reply" | "thread_read" | "mentions_read" | "notification_preference" | "workspace_read" | "direct_read" | "channel_message" | "direct_message",
   params: Record<string, unknown>,
   idempotencyKey: string,
 ): Promise<Record<string, unknown>> {

@@ -781,15 +781,11 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "relay_workspace_connection_update"
             | "workspace_request_paths"
             | "decide_workspace_display_name"
-            | "send_workspace_message"
             | "open_workspace_direct"
-            | "send_workspace_direct_message"
             | "send_workspace_thread_reply"
             | "edit_workspace_message"
             | "delete_workspace_message"
             | "set_workspace_reaction"
-            | "list_workspace_messages"
-            | "list_workspace_direct_messages"
             | "reconcile_mobile_lifecycle"
     )
 }
@@ -2269,15 +2265,11 @@ mod tests {
             "relay_workspace_connection_update",
             "workspace_request_paths",
             "decide_workspace_display_name",
-            "send_workspace_message",
             "open_workspace_direct",
-            "send_workspace_direct_message",
             "send_workspace_thread_reply",
             "edit_workspace_message",
             "delete_workspace_message",
             "set_workspace_reaction",
-            "list_workspace_messages",
-            "list_workspace_direct_messages",
             "reconcile_mobile_lifecycle",
         ];
         for command in commands {
