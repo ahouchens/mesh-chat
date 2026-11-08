@@ -1068,6 +1068,12 @@ class ServiceWorkspaceAdmin:
                 if action == "hide_direct":
                     return dict(self._service.hide_workspace_direct(
                         workspace_id, params["conversation"], operation_id))
+                if action == "start":
+                    return dict(self._service.start_workspace_history(
+                        workspace_id, params["conversation"], operation_id))
+                if action == "cancel":
+                    return dict(self._service.cancel_workspace_history(
+                        workspace_id, params["conversation"], operation_id))
             except ValidationError as error:
                 raise ApiFailure("invalid_request") from error
             raise ApiFailure("invalid_request")

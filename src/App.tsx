@@ -4504,7 +4504,7 @@ export function WorkspaceHistorySettingsContent({ workspace, conversationId, con
     if (!conversationId) return;
     setHistoryBusy(true); setHistoryError("");
     try {
-      await serviceCommand(command, { operation_id: newOperationId(), workspace_id: workspace.id, conversation_id: conversationId });
+      await fetchWorkspaceHistory({ id: workspace.id, core_handle: workspace.core_handle }, command === "start_workspace_history" ? "start" : "cancel", { conversation: conversationId }, command, newOperationId());
       await loadHistory();
     } catch (reason) { setHistoryError(errorMessage(reason)); }
     finally { setHistoryBusy(false); }

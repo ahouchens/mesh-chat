@@ -302,7 +302,8 @@ def parse_request(value, operations):
         elif action == hide_direct:
             required |= {conversation}
         if (not isinstance(params, dict) or action not in {status, prune, revisions,
-                                                          tombstones, hide_message, hide_direct}
+                                                          tombstones, hide_message, hide_direct,
+                                                          "start", "cancel"}
                 or set(params) != required):
             raise ApiFailure(invalid_request)
         if any(not isinstance(params[key], str) or HANDLE.fullmatch(params[key]) is None
