@@ -14,7 +14,7 @@ MESSAGE_OPERATIONS = ("peer.query", "message.enqueue", "message.query")
 RECOVERY_OPERATIONS = ("message.list", "events.poll", "events.ack")
 RECEIVED_OPERATIONS = ("message.received",)
 INTENT_OPERATIONS = ("connection.start", "connection.stop")
-RELATIONSHIP_OPERATIONS = ("peer.approve", "peer.revoke", "peer.unblock", "peer.delete")
+RELATIONSHIP_OPERATIONS = ("peer.approve", "peer.revoke", "peer.unblock", "peer.delete", "peer.update")
 DRAFT_OPERATIONS = ("peer.draft_get", "peer.draft_set")
 CALL_CONTROL_OPERATIONS = ("call.control",)
 CALL_OPERATIONS = ("call.settings_query", "call.settings_update", "call.ice_servers",
@@ -1075,6 +1075,18 @@ def parse_request(value, operations):
         return operation, params
     if operation in RELATIONSHIP_OPERATIONS:
         params = value["params"]
+        if operation == "peer.update":
+            action = params.get("action") if isinstance(params, dict) else None
+            expected = {"profile", "peer", "action"}
+            if action == "rename": expected.add("display_name")
+            if (action not in {"rename", "verify", "unverify"}
+                    or not isinstance(params, dict) or set(params) != expected
+                    or any(not isinstance(params[key], str) or HANDLE.fullmatch(params[key]) is None
+                           for key in ("profile", "peer"))
+                    or (action == "rename" and (not isinstance(params["display_name"], str)
+                                                or not 1 <= len(params["display_name"]) <= 80))):
+                raise ApiFailure("invalid_request")
+            return operation, params
         if (not isinstance(params, dict) or set(params) != {"profile", "peer"}
                 or any(not isinstance(item, str) or HANDLE.fullmatch(item) is None
                        for item in params.values())):

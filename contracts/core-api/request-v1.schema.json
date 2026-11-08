@@ -2718,6 +2718,30 @@
     {
       "type": "object",
       "properties": {
+        "api_version": {"const": 1},
+        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"},
+        "operation": {"const": "peer.update"},
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {"": "#//handle"},
+            "peer": {"": "#//handle"},
+            "action": {"enum": ["rename", "verify", "unverify"]},
+            "display_name": {"type": "string", "minLength": 1, "maxLength": 80}
+          },
+          "required": ["profile", "peer", "action"],
+          "additionalProperties": false
+        },
+        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"}
+      },
+      "required": ["api_version", "request_id", "operation", "params"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
         "api_version": {
           "const": 1
         },

@@ -1393,6 +1393,10 @@ class CoreSession:
         if operation == "peer.unblock":
             observation = self._relationship.unblock(profile, contact)
             return peer_trust_view(params["profile"], params["peer"], observation)
+        if operation == "peer.update":
+            observation = self._relationship.update(
+                profile, contact, params["action"], params.get("display_name"))
+            return peer_trust_view(params["profile"], params["peer"], observation)
         action = (self._relationship.approve if operation == "peer.approve"
                   else self._relationship.revoke)
         observation = action(profile, contact)

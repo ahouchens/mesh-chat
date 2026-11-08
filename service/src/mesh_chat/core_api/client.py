@@ -277,6 +277,11 @@ class CoreClient:
                             {"profile": handle, "action": action, **params},
                             idempotency_key=key)
 
+    def peer_update(self, handle, peer, action, display_name=None):
+        params = {"profile": handle, "peer": peer, "action": action}
+        if display_name is not None: params["display_name"] = display_name
+        return self.request("peer.update", params)
+
     def route_update(self, handle, action, key, **params):
         return self.request("route.update",
                             {"profile": handle, "action": action, **params},

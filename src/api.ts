@@ -881,6 +881,17 @@ export async function coreApiWorkspaceMemberRole(
   );
 }
 
+export async function coreApiUpdatePeer(
+  destination: string, action: "rename" | "verify" | "unverify",
+  displayName?: string,
+): Promise<unknown> {
+  const target = await coreApiPeerForDestination(destination);
+  return coreApiRequest("peer.update", {
+    profile: target.profile, peer: target.peer, action,
+    ...(displayName !== undefined ? { display_name: displayName } : {}),
+  });
+}
+
 export async function coreApiRouteUpdate(
   action: "preview" | "apply" | "create", params: Record<string, unknown>,
   idempotencyKey: string = crypto.randomUUID(),

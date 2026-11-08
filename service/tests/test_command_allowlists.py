@@ -51,11 +51,14 @@ def test_every_literal_app_command_is_allowed_by_the_rust_shell() -> None:
     assert missing == set()
 
 
-def test_contact_management_and_workspace_search_are_exposed() -> None:
+def test_contact_management_uses_typed_peer_updates() -> None:
     renderer = _renderer_commands()
     for command in (
         "update_contact",
+        "verify_contact",
         "unverify_contact",
+        "block_contact",
+        "unblock_contact",
+        "delete_contact",
     ):
-        assert command in renderer
-        assert command in MeshChatService.COMMANDS
+        assert command not in renderer

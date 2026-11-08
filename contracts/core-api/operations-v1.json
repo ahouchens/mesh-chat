@@ -110,7 +110,8 @@
     "remote_profile.mutate",
     "workspace.display_name_decide",
     "workspace.direct_open",
-    "route.update"
+    "route.update",
+    "peer.update"
   ],
   "operations": [
     {
@@ -924,6 +925,13 @@
       "scope": "profile",
       "mutation": true,
       "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "peer.update",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "none"
     }
   ],
   "limits": {

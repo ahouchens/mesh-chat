@@ -88,3 +88,20 @@ class ServiceRelationship:
             except ValidationError as error:
                 raise ApiFailure("invalid_request") from error
             return PeerDeletionObservation(True)
+
+
+    def update(self, profile, contact_id, action, display_name):
+        with storage_errors():
+            contact = self._contact(profile, contact_id)
+            try:
+                if action == "rename":
+                    self._service.update_contact(contact_id, display_name)
+                elif action == "verify":
+                    self._service.verify_contact(contact_id)
+                elif action == "unverify":
+                    self._service.unverify_contact(contact_id)
+                else:
+                    raise ApiFailure("invalid_request")
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            return self._observation(contact_id)

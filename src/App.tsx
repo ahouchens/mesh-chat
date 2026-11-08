@@ -113,6 +113,7 @@ import {
   coreApiWorkspaceDisplayNameDecision,
   coreApiOpenWorkspaceDirect,
   coreApiRouteUpdate,
+  coreApiUpdatePeer,
   coreApiWorkspaceReadHintSync,
   coreApiWorkspaceRetention,
   coreApiDecideDeviceRemoval,
@@ -2325,6 +2326,16 @@ function ContactsDialog({
     setError("");
     try {
       let handled = false;
+      if (command === "verify_contact" || command === "unverify_contact") {
+        try {
+          await coreApiUpdatePeer(
+            selected.destination_hash,
+            command === "verify_contact" ? "verify" : "unverify");
+          handled = true;
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+        }
+      }
       if (command === "block_contact" || command === "unblock_contact") {
         try {
           const target = await coreApiPeerForDestination(selected.destination_hash);
@@ -2334,7 +2345,8 @@ function ContactsDialog({
         } catch { /* Fall back only when the facade did not accept the change. */ }
       }
       if (!handled) {
-        if (command === "block_contact" || command === "unblock_contact") {
+        if (command === "block_contact" || command === "unblock_contact"
+            || command === "verify_contact" || command === "unverify_contact") {
           throw new Error("core_api_unavailable");
         }
         await serviceCommand(command, { contact_id: selected.id });
@@ -2352,10 +2364,7 @@ function ContactsDialog({
     setBusy(true);
     setError("");
     try {
-      await serviceCommand("update_contact", {
-        contact_id: selected.id,
-        display_name: name.trim(),
-      });
+      await coreApiUpdatePeer(selected.destination_hash, "rename", name.trim());
       await onChanged();
     } catch (reason) {
       setError(errorMessage(reason));

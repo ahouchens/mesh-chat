@@ -343,6 +343,14 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         return dispatch("runtime.mutate", payload, idempotencyKey)
     }
 
+    fun peerUpdate(profile: String, peer: String, action: String,
+                   displayName: String? = null): JSONObject {
+        val payload = JSONObject().put("profile", profile).put("peer", peer)
+            .put("action", action)
+        if (displayName != null) payload.put("display_name", displayName)
+        return dispatch("peer.update", payload, null)
+    }
+
     fun routeUpdate(profile: String, action: String, params: JSONObject,
                     idempotencyKey: String): JSONObject {
         val payload = JSONObject().put("profile", profile).put("action", action)

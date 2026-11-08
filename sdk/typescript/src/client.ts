@@ -558,6 +558,12 @@ export class CoreClient {
       { idempotencyKey });
   }
 
+  async peerUpdate(profile: string, peer: string, action: string,
+                   displayName?: string): Promise<unknown> {
+    return this.request("peer.update", { profile, peer, action,
+      ...(displayName !== undefined ? { display_name: displayName } : {}) });
+  }
+
   async routeUpdate(profile: string, action: string, params: Record<string, unknown>,
                     idempotencyKey: string): Promise<unknown> {
     return this.request("route.update", { profile, action, ...params },
