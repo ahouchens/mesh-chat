@@ -679,6 +679,7 @@ fn allowed_renderer_command(command: &str) -> bool {
         command,
         "snapshot"
             | "workspace_snapshot"
+            | "change_workspace_role"
             | "i2p_status"
             | "create_profile"
             | "create_invitation"
