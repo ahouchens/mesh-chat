@@ -109,6 +109,7 @@ PERMISSION_BY_OPERATION = {
     "peer.revoke": "approve",
     "peer.unblock": "approve",
     "peer.delete": "approve",
+    "peer.update": "send",
     "peer.draft_get": "read",
     "peer.draft_set": "send",
     "call.settings_query": "read",
