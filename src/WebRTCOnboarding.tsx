@@ -1082,10 +1082,9 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
     setOnboardingError("");
     try {
       if (!contactInvitationIdRef.current) throw new Error("No contact invitation is available.");
-      const accepted = await serviceCommand<{ id?: string; reconnect_capabilities?: string }>(
-        "decide_contact_invitation",
-        { invitation_id: contactInvitationIdRef.current, accept: true },
-      );
+      const accepted = await coreApiContactInvitation(
+        "decide", { invitation: contactInvitationIdRef.current, accept: true },
+      ) as { id?: string; reconnect_capabilities?: string };
       if (accepted.id) updateWebRTCSessionContact(accepted.id, bridgeRef.current ? `onboarding:${bridgeRef.current.bridgeId}` : undefined);
       await sendControlText(JSON.stringify({
         type: "invitation_accepted",
