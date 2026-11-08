@@ -18,7 +18,7 @@ const api = vi.hoisted(() => {
   }),
   coreApiCreateInvitation: vi.fn(async (..._args: unknown[]): Promise<{ profile: string; link: string; text: string; file: string; expires_at: number }> => { throw new Error("core_api_unavailable"); }),
   coreApiPeerForDestination: vi.fn(async (): Promise<{ profile: string; peer: string; destination: string }> => { throw new Error("core_api_unavailable"); }),
-  coreApiRequest: vi.fn(async (): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiRequest: vi.fn(async (_operation: string, _params?: Record<string, unknown>): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiCallControl: vi.fn(async (action: string, params: Record<string, unknown>): Promise<unknown> => {
     const command = action === "start" ? "start_call"
       : action === "answer" ? "answer_call"
@@ -2919,6 +2919,14 @@ describe("contact management", () => {
 
   it("renames, verifies, blocks, and restores a saved contact", async () => {
     let current = snapshot([approved]);
+    api.coreApiPeerForDestination.mockResolvedValue({
+      profile: "profile-handle", peer: "peer-handle", destination: approved.destination_hash,
+    });
+    api.coreApiRequest.mockImplementation(async (operation: string) => {
+      if (operation === "peer.revoke") return api.serviceCommand("block_contact", { contact_id: approved.id });
+      if (operation === "peer.unblock") return api.serviceCommand("unblock_contact", { contact_id: approved.id });
+      throw new Error("core_api_unavailable");
+    });
     api.runtimePlatform.mockResolvedValue("desktop");
     api.initializeService.mockResolvedValue(current);
     api.onInvitation.mockResolvedValue(() => undefined);
@@ -3000,6 +3008,11 @@ describe("contact management", () => {
     api.initializeService.mockResolvedValue(current);
     api.onInvitation.mockResolvedValue(() => undefined);
     api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.coreApiPeerForDestination.mockResolvedValue({ profile: "profile-handle", peer: "peer-handle", destination: approved.destination_hash });
+    api.coreApiRequest.mockImplementation(async (operation: string) => {
+      if (operation === "peer.delete") return api.serviceCommand("delete_contact", { contact_id: approved.id });
+      throw new Error("core_api_unavailable");
+    });
     api.serviceCommand.mockImplementation(async (command: string) => {
       if (command === "snapshot") return current;
       if (command === "delete_contact") {

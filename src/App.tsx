@@ -2334,6 +2334,9 @@ function ContactsDialog({
         } catch { /* Fall back only when the facade did not accept the change. */ }
       }
       if (!handled) {
+        if (command === "block_contact" || command === "unblock_contact") {
+          throw new Error("core_api_unavailable");
+        }
         await serviceCommand(command, { contact_id: selected.id });
       }
       setConfirm(null);
@@ -2379,9 +2382,7 @@ function ContactsDialog({
         await coreApiRequest("peer.delete", { profile: target.profile, peer: target.peer });
         handled = true;
       } catch { /* Fall back only when the facade did not accept the deletion. */ }
-      if (!handled) {
-        await serviceCommand("delete_contact", { contact_id: contactId });
-      }
+      if (!handled) throw new Error("core_api_unavailable");
       setConfirm(null);
       await onDeleted(contactId);
     } catch (reason) {
