@@ -783,9 +783,6 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "decide_workspace_display_name"
             | "open_workspace_direct"
             | "send_workspace_thread_reply"
-            | "edit_workspace_message"
-            | "delete_workspace_message"
-            | "set_workspace_reaction"
             | "reconcile_mobile_lifecycle"
     )
 }
@@ -2267,9 +2264,6 @@ mod tests {
             "decide_workspace_display_name",
             "open_workspace_direct",
             "send_workspace_thread_reply",
-            "edit_workspace_message",
-            "delete_workspace_message",
-            "set_workspace_reaction",
             "reconcile_mobile_lifecycle",
         ];
         for command in commands {

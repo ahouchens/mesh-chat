@@ -405,10 +405,17 @@ def parse_request(value, operations):
         action = params.get("action")
         if action not in {"thread_reply", "thread_read", "mentions_read",
                           "notification_preference", "workspace_read", "direct_read",
-                          "channel_message", "direct_message"}:
+                          "channel_message", "direct_message",
+                          "message_edit", "message_delete", "reaction_set"}:
             raise ApiFailure("invalid_request")
         required = {"profile", "workspace", "action"}
-        if action in {"channel_message", "direct_message"}:
+        if action == "message_edit":
+            required |= {"event_id", "mutation_event_id", "text"}
+        elif action == "message_delete":
+            required |= {"event_id", "mutation_event_id"}
+        elif action == "reaction_set":
+            required |= {"event_id", "mutation_event_id", "emoji", "active"}
+        elif action in {"channel_message", "direct_message"}:
             required |= {"conversation", "text", "event_id"}
         elif action == "thread_reply":
             required |= {"conversation", "thread_root", "text", "event_id"}
@@ -423,13 +430,22 @@ def parse_request(value, operations):
         else:
             required |= {"conversation", "mode"}
         allowed = required | ({"mention_member_ids"}
-                              if action in {"channel_message", "direct_message"} else set())
+                              if action in {"channel_message", "direct_message", "message_edit"}
+                              else set())
         if set(params) != allowed:
             raise ApiFailure("invalid_request")
         for key in required - {"profile", "workspace", "action", "high_water",
-                                "text", "event_id", "mode"}:
+                                "text", "event_id", "mode", "mutation_event_id",
+                                "emoji", "active"}:
             if not isinstance(params[key], str):
                 raise ApiFailure("invalid_request")
+        if action == "reaction_set" and type(params["active"]) is not bool:
+            raise ApiFailure("invalid_request")
+        if action == "message_edit" and (
+                not isinstance(params["text"], str)
+                or not params["text"].strip()
+                or len(params["text"].encode("utf-8")) > 16384):
+            raise ApiFailure("invalid_request")
         if action in {"channel_message", "direct_message"} and (
                 not isinstance(params["text"], str)
                 or not params["text"].strip()

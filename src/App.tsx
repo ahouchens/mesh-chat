@@ -373,7 +373,7 @@ async function fetchWorkspaceTimeline(
 
 async function mutateWorkspaceTimeline(
   workspace: { id: string; core_handle?: string },
-  action: "thread_reply" | "thread_read" | "mentions_read" | "notification_preference" | "workspace_read" | "direct_read" | "channel_message" | "direct_message",
+  action: "thread_reply" | "thread_read" | "mentions_read" | "notification_preference" | "workspace_read" | "direct_read" | "channel_message" | "direct_message" | "message_edit" | "message_delete" | "reaction_set",
   params: Record<string, unknown>,
   fallbackCommand: string,
   operationId?: string,
@@ -7022,13 +7022,18 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     if (!selectedWorkspace) return;
     setWorkspaceError("");
     try {
-      const updated = await serviceCommand<WorkspaceMessage>(command, {
-        operation_id: newOperationId(),
-        mutation_event_id: newOperationId(),
-        workspace_id: selectedWorkspace.id,
-        event_id: eventId,
-        ...(command === "edit_workspace_message" ? { text, mention_member_ids: mentionMemberIds } : {}),
-      });
+      const updated = await mutateWorkspaceTimeline(
+        selectedWorkspace,
+        command === "edit_workspace_message" ? "message_edit" : "message_delete",
+        {
+          event_id: eventId,
+          mutation_event_id: newOperationId(),
+          ...(command === "edit_workspace_message"
+            ? { text, mention_member_ids: mentionMemberIds } : {}),
+        },
+        command,
+        newOperationId(),
+      ) as unknown as WorkspaceMessage;
       setWorkspacePage((current) => current ? {
         ...current,
         messages: current.messages.map((message) => message.id === eventId ? updated : message),
@@ -7050,14 +7055,12 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     setReactionBusy({ kind: "workspace", messageId, emoji: validation.emoji });
     setReactionError("");
     try {
-      const updated = await serviceCommand<WorkspaceMessage>("set_workspace_reaction", {
-        operation_id: newOperationId(),
-        mutation_event_id: newOperationId(),
-        workspace_id: selectedWorkspace.id,
-        event_id: messageId,
-        emoji: validation.emoji,
-        active,
-      });
+      const updated = await mutateWorkspaceTimeline(
+        selectedWorkspace, "reaction_set",
+        { event_id: messageId, emoji: validation.emoji, active,
+          mutation_event_id: newOperationId() },
+        "set_workspace_reaction", newOperationId(),
+      ) as unknown as WorkspaceMessage;
       setWorkspacePage((current) => current ? {
         ...current,
         messages: current.messages.map((message) => message.id === messageId ? updated : message),

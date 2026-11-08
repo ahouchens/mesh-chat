@@ -60,6 +60,19 @@ class ServiceWorkspaceTimeline:
             return self.service.send_workspace_thread_reply(
                 workspace_id, params["conversation"], params["thread_root"],
                 params["text"], params["event_id"], operation_id)
+        if action == "message_edit":
+            return self.service.edit_workspace_message(
+                workspace_id, params["event_id"], params["text"],
+                params["mutation_event_id"], operation_id,
+                params.get("mention_member_ids"))
+        if action == "message_delete":
+            return self.service.delete_workspace_message(
+                workspace_id, params["event_id"], params["mutation_event_id"],
+                operation_id)
+        if action == "reaction_set":
+            return self.service.set_workspace_reaction(
+                workspace_id, params["event_id"], params["emoji"],
+                params["active"], params["mutation_event_id"], operation_id)
         if action == "thread_read":
             return self.service.mark_workspace_thread_read(
                 workspace_id, params["thread_root"], params["high_water"], operation_id)

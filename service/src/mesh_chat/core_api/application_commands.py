@@ -111,8 +111,5 @@ APPLICATION_COMMANDS = frozenset({
     "decide_workspace_display_name",
     "open_workspace_direct",
     "send_workspace_thread_reply",
-    "edit_workspace_message",
-    "delete_workspace_message",
-    "set_workspace_reaction",
     "reconcile_mobile_lifecycle",
 })

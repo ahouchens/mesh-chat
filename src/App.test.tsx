@@ -50,6 +50,16 @@ const api = vi.hoisted(() => {
     return serviceCommand(command, { workspace_id: workspace.id, ...params });
   }),
   coreApiTimelineMutation: vi.fn(async (_handle: string, action: string, params: Record<string, unknown>, key: string): Promise<unknown> => {
+    if (action === "message_edit" || action === "message_delete" || action === "reaction_set") {
+      const command = action === "message_edit" ? "edit_workspace_message"
+        : action === "message_delete" ? "delete_workspace_message" : "set_workspace_reaction";
+      return serviceCommand(command, { workspace_id: workspace.id, operation_id: key,
+        event_id: params.event_id, mutation_event_id: params.mutation_event_id,
+        ...(params.text !== undefined ? { text: params.text } : {}),
+        ...(params.mention_member_ids ? { mention_member_ids: params.mention_member_ids } : {}),
+        ...(params.emoji !== undefined ? { emoji: params.emoji } : {}),
+        ...(params.active !== undefined ? { active: params.active } : {}) });
+    }
     if (action === "channel_message" || action === "direct_message") {
       const direct = action === "direct_message";
       const conversation = params.conversation_id ?? params.conversation;
