@@ -5908,37 +5908,30 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     // order even on Android's single native Python worker.
     await cancelPendingDraftWrite(draftKey);
     let saved: ChatMessage | null = null;
-    let facadeAccepted = false;
     try {
-      await coreApiSendMessage(selectedContact.destination_hash, text, newOperationId());
-      facadeAccepted = true;
+      const accepted = await coreApiSendMessage(
+        selectedContact.destination_hash, text, newOperationId()) as Partial<ChatMessage>;
       const refreshed = await refresh(true);
       saved = refreshed.messages
         .filter((message) => message.contact_id === contactId
           && message.direction === "outbound" && message.text === text)
-        .sort((left, right) => right.created_at - left.created_at)[0] ?? null;
-    } catch {
-      // Fall back only when nothing was accepted by the facade.
-    }
-    if (!facadeAccepted) {
-      try {
-        saved = await serviceCommand<ChatMessage>("send_message", { contact_id: contactId, text });
-      } catch (reason) {
-        setDrafts((current) => current[contactId] ? current : { ...current, [contactId]: text });
-        scheduleDraftWrite(draftKey, {
-          command: "save_draft",
-          payload: { contact_id: contactId, text },
-        });
-        setSendError(`${errorMessage(reason)} Your text is still in the composer. Check the conversation before sending it again.`);
-        directSendInFlight.current = false;
-        setDirectSendBusy(false);
-        return;
-      }
+        .sort((left, right) => right.created_at - left.created_at)[0]
+        ?? (accepted.direction === "outbound" ? accepted as ChatMessage : null);
+    } catch (reason) {
+      setDrafts((current) => current[contactId] ? current : { ...current, [contactId]: text });
+      scheduleDraftWrite(draftKey, {
+        command: "save_draft",
+        payload: { contact_id: contactId, text },
+      });
+      setSendError(`${errorMessage(reason)} Your text is still in the composer. Check the conversation before sending it again.`);
+      directSendInFlight.current = false;
+      setDirectSendBusy(false);
+      return;
     }
     if (saved) {
       const confirmed = saved;
       setLocallySavedMessages((current) => ({ ...current, [confirmed.id]: confirmed }));
-    } else if (facadeAccepted) {
+    } else {
       setSendError("Your message was accepted by the Core API, but the conversation has not refreshed it yet.");
     }
     try {

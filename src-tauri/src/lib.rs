@@ -688,7 +688,6 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "prepare_manual_participant_host"
             | "configure_participant_firewall"
             | "stop_participant_host"
-            | "send_message"
             | "call_media"
             | "reconnect_profiles"
             | "reconnect_consent_set"

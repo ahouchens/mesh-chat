@@ -180,7 +180,7 @@ const api = vi.hoisted(() => {
   coreApiCloseGroup: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiRemoveGroupMember: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiSendGroupMessage: vi.fn(async (_handle: string, text: string): Promise<unknown> => serviceCommand("send_group_message", { group_id: group.id, text })),
-  coreApiSendMessage: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiSendMessage: vi.fn(async (_destination: string, text: string): Promise<unknown> => serviceCommand("send_message", { contact_id: approved.id, text })),
   endCallAudio: vi.fn(async () => ({ active: false })),
   initializeService: vi.fn(),
   lockService: vi.fn(),
@@ -452,7 +452,7 @@ function deferred<T>() {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
-  api.coreApiSendMessage.mockImplementation(async () => { throw new Error("core_api_unavailable"); });
+  api.coreApiSendMessage.mockImplementation(async (_destination: string, text: string) => api.serviceCommand("send_message", { contact_id: approved.id, text }));
   api.coreApiAcceptInvitation.mockImplementation(async (invitation: string, i2pConsent = false) => api.serviceCommand("accept_invitation", { invitation, ...(i2pConsent ? { i2p_consent: true } : {}) }));
   api.coreApiDraftGet.mockImplementation(async () => { throw new Error("core_api_unavailable"); });
   api.coreApiDraftSet.mockImplementation(async () => { throw new Error("core_api_unavailable"); });
@@ -4243,7 +4243,7 @@ describe("connected conversation", () => {
     const conversation = screen.getByLabelText("Conversation with Taylor");
     expect(await within(conversation).findByText(outbound.text)).toBeTruthy();
     expect(screen.getByText("Saved on this device")).toBeTruthy();
-    expect(snapshotCalls).toBe(2);
+    expect(snapshotCalls).toBe(3);
   });
 
   it("uses the facade send path and refreshes the authoritative message", async () => {
@@ -4316,7 +4316,7 @@ describe("connected conversation", () => {
     const conversation = screen.getByLabelText("Conversation with Taylor");
     expect(await within(conversation).findByText(outbound.text)).toBeTruthy();
     expect(within(conversation).getByText("Sending…")).toBeTruthy();
-    expect(snapshotCalls).toBe(0);
+    expect(snapshotCalls).toBe(1);
 
     await act(async () => draftCleanup.resolve({}));
   });
