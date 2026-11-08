@@ -8,7 +8,7 @@ const api = vi.hoisted(() => {
   const serviceCommand = vi.fn();
   return {
   beginCallAudio: vi.fn(async () => ({ granted: true })),
-  coreApiAcceptInvitation: vi.fn(async (..._args: unknown[]): Promise<{ profile: string; peer: string; trust: string }> => { throw new Error("core_api_unavailable"); }),
+  coreApiAcceptInvitation: vi.fn(async (invitation: string, i2pConsent = false): Promise<unknown> => serviceCommand("accept_invitation", { invitation, ...(i2pConsent ? { i2p_consent: true } : {}) })),
   coreApiDraftGet: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiDraftSet: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiCreateGroup: vi.fn(async (name: string, policy: string, destinations: string[]): Promise<{ group: string; name: string; posting_policy: string }> => {
@@ -453,7 +453,7 @@ afterEach(() => {
   cleanup();
   vi.clearAllMocks();
   api.coreApiSendMessage.mockImplementation(async () => { throw new Error("core_api_unavailable"); });
-  api.coreApiAcceptInvitation.mockImplementation(async () => { throw new Error("core_api_unavailable"); });
+  api.coreApiAcceptInvitation.mockImplementation(async (invitation: string, i2pConsent = false) => api.serviceCommand("accept_invitation", { invitation, ...(i2pConsent ? { i2p_consent: true } : {}) }));
   api.coreApiDraftGet.mockImplementation(async () => { throw new Error("core_api_unavailable"); });
   api.coreApiDraftSet.mockImplementation(async () => { throw new Error("core_api_unavailable"); });
   api.coreApiCreateInvitation.mockImplementation(async () => { throw new Error("core_api_unavailable"); });

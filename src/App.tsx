@@ -1597,7 +1597,7 @@ function Onboarding({
             Boolean(preview?.i2p_access_point && i2pConsent));
         } catch (reason) {
           if (!String(reason).includes("core_api_unavailable")) throw reason;
-          await serviceCommand("accept_invitation", { invitation, ...(preview?.i2p_access_point ? { i2p_consent: i2pConsent } : {}) });
+          await coreApiAcceptInvitation(invitation, Boolean(preview?.i2p_access_point && i2pConsent));
         }
         onReady(ready);
       } else {
@@ -1891,14 +1891,8 @@ function NewChatDialog({ initialInvitation, initialTab = "invite", initialConnec
     if (busy || requestQueued) return;
     setBusy(true); setError(""); setCandidateResults([]);
     try {
-      let accepted: Contact;
-      try {
-        await coreApiAcceptInvitation(raw, Boolean(preview?.i2p_access_point && i2pConsent));
-        accepted = {} as Contact;
-      } catch (reason) {
-        if (!String(reason).includes("core_api_unavailable")) throw reason;
-        accepted = await serviceCommand<Contact>("accept_invitation", { invitation: raw, ...(preview?.i2p_access_point ? { i2p_consent: i2pConsent } : {}) });
-      }
+      const accepted = await coreApiAcceptInvitation(
+        raw, Boolean(preview?.i2p_access_point && i2pConsent)) as unknown as Contact;
       await onChanged();
       if (accepted.connection_results?.length && !accepted.connection_results.some((item) => item.result === "connected")) {
         setCandidateResults(accepted.connection_results);

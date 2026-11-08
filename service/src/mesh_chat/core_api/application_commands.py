@@ -11,7 +11,6 @@ APPLICATION_COMMANDS = frozenset({
     "i2p_status",
     "create_profile",
     "create_invitation",
-    "accept_invitation",
     "connect_using_reply",
     "check_direct_connection",
     "prepare_manual_participant_host",

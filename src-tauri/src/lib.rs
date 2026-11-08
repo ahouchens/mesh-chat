@@ -683,7 +683,6 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "i2p_status"
             | "create_profile"
             | "create_invitation"
-            | "accept_invitation"
             | "connect_using_reply"
             | "check_direct_connection"
             | "prepare_manual_participant_host"
