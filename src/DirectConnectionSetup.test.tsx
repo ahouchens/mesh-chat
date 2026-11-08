@@ -1,7 +1,11 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 const api = vi.hoisted(() => ({ serviceCommand: vi.fn() }));
-vi.mock("./api", () => api);
+vi.mock("./api", () => ({
+  ...api,
+  coreApiConnectionDocument: async (_action: string, params: Record<string, unknown>) =>
+    api.serviceCommand("preview_direct_connection", params),
+}));
 vi.mock("./InvitationTransfer", () => ({ InvitationImportActions: () => null, InvitationQrCode: () => <div>Connection QR</div> }));
 import { DirectConnectionSetup } from "./DirectConnectionSetup";
 const base = { setup_id:"saved", workspace_id:"workspace", expires_at:2_000_000_000, candidate_count:1, state:"waiting_for_reply" };

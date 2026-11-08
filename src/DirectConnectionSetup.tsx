@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { serviceCommand } from "./api";
+import { coreApiConnectionDocument, serviceCommand } from "./api";
 import { InvitationImportActions, InvitationQrCode } from "./InvitationTransfer";
 import { ConnectionDiagnostics } from "./ConnectionDiagnostics";
 import { normalizeInvitationInput } from "./invitation-transfer";
@@ -189,7 +189,7 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
     setBusy(true); setError(""); setIncomingOpen(true);
     try {
       const document = await normalizeInvitationInput(input);
-      const checked = await serviceCommand<Preview>("preview_direct_connection", { document });
+      const checked = await coreApiConnectionDocument("preview_direct", { document }) as unknown as Preview;
       setInput(document); setPreview(checked);
     } catch { setError("Could not verify these connection details. They may be incomplete, changed or expired. Ask the sender to refresh the connection details and send the complete message."); }
     finally { setBusy(false); }

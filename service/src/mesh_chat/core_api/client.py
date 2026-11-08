@@ -284,6 +284,10 @@ class CoreClient:
     def remote_profiles(self, handle):
         return self.request("remote_profile.query", {"profile": handle})
 
+    def connection_document(self, handle, action, **params):
+        return self.request("connection.document",
+                            {"profile": handle, "action": action, **params})
+
     def connection_support(self, handle, action, **params):
         return self.request("connection.support",
                             {"profile": handle, "action": action, **params})

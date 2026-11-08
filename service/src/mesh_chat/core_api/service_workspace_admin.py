@@ -1273,3 +1273,19 @@ class ServiceWorkspaceAdmin:
         self._require_local(profile)
         with storage_errors():
             return dict(self._service.list_remote_profiles())
+
+
+    def connection_document(self, profile, action, params):
+        self._require_local(profile)
+        with storage_errors():
+            try:
+                if action == "preview_direct":
+                    return dict(self._service._direct_recovery.preview(params["document"]))
+                if action == "create_reply":
+                    return dict(self._service.create_connection_reply(
+                        params["invitation"], params["purpose"]))
+                if action == "preview_reply":
+                    return dict(self._service.preview_connection_reply(params["response"]))
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            raise ApiFailure("invalid_request")

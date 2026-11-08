@@ -685,8 +685,6 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "create_invitation"
             | "preview_invitation"
             | "accept_invitation"
-            | "create_connection_reply"
-            | "preview_connection_reply"
             | "connect_using_reply"
             | "check_direct_connection"
             | "prepare_manual_participant_host"
@@ -728,7 +726,6 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "save_draft"
             | "search"
             | "create_workspace"
-            | "preview_direct_connection"
             | "prepare_direct_offer"
             | "prepare_direct_answer"
             | "prepare_direct_ready"
@@ -2191,7 +2188,6 @@ mod tests {
     #[test]
     fn renderer_workspace_commands_are_cross_platform_and_native_work_is_private() {
         let commands = [
-            "preview_direct_connection",
             "prepare_direct_offer",
             "prepare_direct_answer",
             "prepare_direct_ready",

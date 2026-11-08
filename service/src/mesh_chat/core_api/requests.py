@@ -60,6 +60,7 @@ ROUTE_UPDATE_OPERATIONS = ("route.update",)
 CONVERSATION_OPERATIONS = ("conversation.mutate",)
 LINK_PREVIEW_OPERATIONS = ("link.preview",)
 CONNECTION_SUPPORT_OPERATIONS = ("connection.support",)
+CONNECTION_DOCUMENT_OPERATIONS = ("connection.document",)
 WORKSPACE_DEVICE_LINK_CREATE_OPERATIONS = ("workspace.device_link_create",)
 WORKSPACE_DEVICE_LINK_PREVIEW_OPERATIONS = ("workspace.device_link_preview",)
 WORKSPACE_DEVICE_LINK_SUBMIT_OPERATIONS = ("workspace.device_link_submit",)
@@ -682,6 +683,21 @@ def parse_request(value, operations):
                        for item in params.values())):
             raise ApiFailure("invalid_request")
         return operation, params
+    if operation in CONNECTION_DOCUMENT_OPERATIONS:
+        params = value["params"]
+        action = params.get("action") if isinstance(params, dict) else None
+        if action == "preview_direct": required = {"profile", "action", "document"}
+        elif action == "create_reply": required = {"profile", "action", "invitation", "purpose"}
+        elif action == "preview_reply": required = {"profile", "action", "response"}
+        else: raise ApiFailure("invalid_request")
+        if (not isinstance(params, dict) or set(params) != required
+                or not isinstance(params["profile"], str)
+                or HANDLE.fullmatch(params["profile"]) is None
+                or (action == "create_reply" and params["purpose"] not in {"personal", "workspace"})
+                or any(not isinstance(params[key], str) or not params[key]
+                       for key in required - {"profile", "action"})):
+            raise ApiFailure("invalid_request")
+        return operation, params
     if operation in CONNECTION_SUPPORT_OPERATIONS:
         params = value["params"]
         action = params.get("action") if isinstance(params, dict) else None
@@ -1297,6 +1313,7 @@ COMPONENT_OPERATIONS = (
     + CONVERSATION_OPERATIONS
     + LINK_PREVIEW_OPERATIONS
     + CONNECTION_SUPPORT_OPERATIONS
+    + CONNECTION_DOCUMENT_OPERATIONS
     + WORKSPACE_DEVICE_LINK_CREATE_OPERATIONS
     + WORKSPACE_DEVICE_LINK_PREVIEW_OPERATIONS
     + WORKSPACE_DEVICE_LINK_SUBMIT_OPERATIONS

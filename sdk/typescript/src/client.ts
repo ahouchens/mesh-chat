@@ -566,6 +566,11 @@ export class CoreClient {
     return this.request("remote_profile.query", { profile });
   }
 
+  async connectionDocument(profile: string, action: string,
+                           params: Record<string, unknown>): Promise<unknown> {
+    return this.request("connection.document", { profile, action, ...params });
+  }
+
   async connectionSupport(profile: string, action: string,
                           params: Record<string, unknown>): Promise<unknown> {
     return this.request("connection.support", { profile, action, ...params });

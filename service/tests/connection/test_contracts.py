@@ -138,6 +138,7 @@ def test_each_designed_operation_has_an_executable_request_vector_and_permission
         "recovery.transfer": {"action": "export", "identifier": "r1"},
         "connection.support": {"action": "diagnostics"},
         "remote_profile.query": {},
+        "connection.document": {"action": "preview_direct", "document": "doc"},
         "runtime.query": {"action": "background"},
         "runtime.mutate": {"action": "notification_previews",
           "hidden": True},

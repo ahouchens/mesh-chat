@@ -119,6 +119,7 @@ import {
   coreApiDecidePeerRequest,
   coreApiContactInvitation,
   coreApiConnectionSupport,
+  coreApiConnectionDocument,
   coreApiWorkspaceReadHintSync,
   coreApiWorkspaceRetention,
   coreApiDecideDeviceRemoval,
@@ -1852,7 +1853,7 @@ function NewChatDialog({ initialInvitation, initialTab = "invite", initialConnec
       }
       const documentKind = connectionDocumentKind(normalized);
       if (documentKind === "reply") {
-        const checked = await serviceCommand<ConnectionReplyPreview>("preview_connection_reply", { response: normalized });
+        const checked = await coreApiConnectionDocument("preview_reply", { response: normalized }) as unknown as ConnectionReplyPreview;
         if (active) setConnectionReplyPreview(checked);
       } else if (documentKind === "route") {
         const checked = await coreApiRouteUpdate("preview", { update: normalized }) as unknown as RouteUpdatePreview;
@@ -1877,7 +1878,7 @@ function NewChatDialog({ initialInvitation, initialTab = "invite", initialConnec
       }
       const documentKind = connectionDocumentKind(normalized);
       if (documentKind === "reply") {
-        setConnectionReplyPreview(await serviceCommand("preview_connection_reply", { response: normalized }));
+        setConnectionReplyPreview(await coreApiConnectionDocument("preview_reply", { response: normalized }) as unknown as ConnectionReplyPreview);
         setPreview(null);
       } else if (documentKind === "route") {
         setRouteUpdatePreview(await coreApiRouteUpdate("preview", { update: normalized }) as unknown as RouteUpdatePreview);
@@ -1918,7 +1919,7 @@ function NewChatDialog({ initialInvitation, initialTab = "invite", initialConnec
         return;
       }
       setReplyDoctor(null);
-      const created = await serviceCommand<ConnectionDocumentFormats>("create_connection_reply", { invitation: raw, purpose: "personal" });
+      const created = await coreApiConnectionDocument("create_reply", { invitation: raw, purpose: "personal" }) as unknown as ConnectionDocumentFormats;
       const previous = replyHostSession.current;
       replyHostSession.current = created.host_session_id ?? null;
       setReplyShared(false); setReplyFormats(created);
@@ -3776,7 +3777,7 @@ function JoinWorkspaceDialog({ initialValue = "", promptId, promptWorkspaceName,
         return;
       }
       setReplyDoctor(null);
-      const created = await serviceCommand<ConnectionDocumentFormats>("create_connection_reply", { invitation: value.trim(), purpose: "workspace" });
+      const created = await coreApiConnectionDocument("create_reply", { invitation: value.trim(), purpose: "workspace" }) as unknown as ConnectionDocumentFormats;
       const previous = replyHostSession.current;
       replyHostSession.current = created.host_session_id ?? null;
       setReplyShared(false); setReplyFormats(created);
