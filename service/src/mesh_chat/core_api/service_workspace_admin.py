@@ -1137,3 +1137,21 @@ class ServiceWorkspaceAdmin:
             except ValidationError as error:
                 raise ApiFailure("invalid_request") from error
             return "removed"
+
+
+    def save_draft(self, profile, workspace_id, conversation_id, text,
+                   operation_id, thread_root, mentions):
+        self._require_local(profile)
+        with storage_errors():
+            try:
+                if thread_root is None:
+                    self._service.save_workspace_draft(
+                        workspace_id, conversation_id, text, operation_id,
+                        mentions or None)
+                else:
+                    self._service.save_workspace_thread_draft(
+                        workspace_id, conversation_id, thread_root, text,
+                        operation_id, mentions or None)
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            return "saved"

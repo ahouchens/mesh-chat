@@ -127,6 +127,9 @@ const api = vi.hoisted(() => {
   coreApiWorkspaceMemberRole: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiWorkspaceJoinDecision: vi.fn(async (_handle: string, requestHandle: string, accept: boolean, key: string): Promise<unknown> => serviceCommand(accept ? "approve_workspace_join" : "decline_workspace_join", { workspace_id: workspace.id, request_id: requestHandle, operation_id: key })),
   coreApiGroupInvitation: vi.fn(async (_handle: string, accept: boolean): Promise<unknown> => serviceCommand(accept ? "accept_group_invitation" : "decline_group_invitation", { invitation_id: groupInvitation.id })),
+  coreApiGroupDraftSet: vi.fn(async (_handle: string, text: string): Promise<unknown> => serviceCommand("save_group_draft", { group_id: group.id, text })),
+  coreApiWorkspaceDraftSet: vi.fn(async (_handle: string, conversation: string, text: string, key: string, extra: { threadRoot?: string; mentions?: string[] } = {}): Promise<unknown> =>
+    serviceCommand(extra.threadRoot ? "save_workspace_thread_draft" : "save_workspace_draft", { workspace_id: workspace.id, channel_id: conversation, conversation_id: conversation, text, operation_id: key, ...(extra.threadRoot ? { thread_root_id: extra.threadRoot } : {}), ...(extra.mentions?.length ? { mention_member_ids: extra.mentions } : {}) })),
   coreApiRetryGroupInvitation: vi.fn(async (_handle: string, destinationHash: string): Promise<unknown> => serviceCommand("retry_group_invitation", { group_id: group.id, destination_hash: destinationHash })),
   coreApiLeaveGroup: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiCloseGroup: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),

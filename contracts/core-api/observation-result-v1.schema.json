@@ -76,7 +76,7 @@
           "type": "array",
           "uniqueItems": true,
           "minItems": 3,
-          "maxItems": 103,
+          "maxItems": 105,
           "items": {
             "enum": [
               "application.snapshot",
@@ -151,6 +151,8 @@
               "workspace.channel_recover",
               "workspace.channel_state",
               "workspace.member_remove",
+              "group.draft_set",
+              "workspace.draft_set",
               "workspace.device_link_create",
               "workspace.device_link_preview",
               "workspace.device_link_submit",

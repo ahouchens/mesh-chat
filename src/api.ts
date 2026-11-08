@@ -872,6 +872,23 @@ export async function coreApiWorkspaceMemberRole(
   );
 }
 
+export async function coreApiWorkspaceDraftSet(
+  workspace: string, conversation: string, text: string, idempotencyKey: string,
+  extra: { threadRoot?: string; mentions?: string[] } = {},
+): Promise<unknown> {
+  const profile = await coreApiProfile();
+  return coreApiRequest("workspace.draft_set", {
+    profile: profile.profile, workspace, conversation, text,
+    ...(extra.threadRoot ? { thread_root: extra.threadRoot } : {}),
+    ...(extra.mentions?.length ? { mention_member_ids: extra.mentions } : {}),
+  }, idempotencyKey);
+}
+
+export async function coreApiGroupDraftSet(group: string, text: string): Promise<unknown> {
+  const profile = await coreApiProfile();
+  return coreApiRequest("group.draft_set", { profile: profile.profile, group, text });
+}
+
 export async function coreApiGroupInvitation(
   invitation: string,
   accept: boolean,

@@ -558,6 +558,19 @@ export class CoreClient {
       { idempotencyKey });
   }
 
+  async workspaceDraftSet(profile: string, workspace: string, conversation: string,
+                           text: string, idempotencyKey: string,
+                           extra: { threadRoot?: string; mentions?: string[] } = {}): Promise<unknown> {
+    return this.request("workspace.draft_set", { profile, workspace, conversation, text,
+      ...(extra.threadRoot ? { thread_root: extra.threadRoot } : {}),
+      ...(extra.mentions?.length ? { mention_member_ids: extra.mentions } : {}) },
+    { idempotencyKey });
+  }
+
+  async groupDraftSet(profile: string, group: string, text: string): Promise<unknown> {
+    return this.request("group.draft_set", { profile, group, text });
+  }
+
   async workspaceMemberRemove(profile: string, workspace: string, member: string,
                                idempotencyKey: string): Promise<unknown> {
     return this.request("workspace.member_remove",

@@ -72,6 +72,8 @@ import {
   coreApiCallMedia,
   coreApiCallControl,
   coreApiGroupInvitation,
+  coreApiGroupDraftSet,
+  coreApiWorkspaceDraftSet,
   coreApiWorkspaceJoinDecision,
   coreApiCreateWorkspaceInvitation,
   coreApiPreviewWorkspaceInvitation,
@@ -5743,6 +5745,30 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
             if (!String(reason).includes("core_api_unavailable")) throw reason;
           }
         }
+      }
+      if ((write.command === "save_workspace_draft"
+           || write.command === "save_workspace_direct_draft"
+           || write.command === "save_workspace_thread_draft")
+          && typeof write.payload.workspace_id === "string") {
+        const workspace = workspaces.find((item) => item.id === write.payload.workspace_id);
+        if (!workspace?.core_handle) throw new Error("core_api_unavailable");
+        await coreApiWorkspaceDraftSet(
+          workspace.core_handle,
+          String(write.payload.channel_id ?? write.payload.conversation_id ?? ""),
+          String(write.payload.text ?? ""),
+          String(write.payload.operation_id ?? newOperationId()),
+          {
+            threadRoot: typeof write.payload.thread_root_id === "string" ? write.payload.thread_root_id : undefined,
+            mentions: Array.isArray(write.payload.mention_member_ids)
+              ? write.payload.mention_member_ids.map(String) : undefined,
+          });
+        return;
+      }
+      if (write.command === "save_group_draft" && typeof write.payload.group_id === "string") {
+        const group = (snapshot.groups ?? []).find((item) => item.id === write.payload.group_id);
+        if (!group?.core_handle) throw new Error("core_api_unavailable");
+        await coreApiGroupDraftSet(group.core_handle, String(write.payload.text ?? ""));
+        return;
       }
       await serviceCommand(write.command, write.payload);
     });

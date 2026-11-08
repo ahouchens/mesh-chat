@@ -126,3 +126,13 @@ class ServiceGroups:
             except ValidationError as error:
                 raise ApiFailure("invalid_request") from error
             return GroupMembershipObservation("declined")
+
+
+    def save_draft(self, profile, group_id, text):
+        self._require_local(profile)
+        with storage_errors():
+            try:
+                self._service.save_group_draft(group_id, text)
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            return "saved"

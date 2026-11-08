@@ -79,7 +79,6 @@ APPLICATION_COMMANDS = frozenset({
     "connection_help",
     "search",
     "update_settings",
-    "save_group_draft",
     "create_workspace",
     "preview_direct_connection",
     "prepare_direct_offer",
@@ -119,8 +118,5 @@ APPLICATION_COMMANDS = frozenset({
     "set_workspace_reaction",
     "list_workspace_messages",
     "list_workspace_direct_messages",
-    "save_workspace_draft",
-    "save_workspace_direct_draft",
-    "save_workspace_thread_draft",
     "reconcile_mobile_lifecycle",
 })

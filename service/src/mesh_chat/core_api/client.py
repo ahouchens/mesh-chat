@@ -277,6 +277,18 @@ class CoreClient:
                             {"profile": handle, "action": action, **params},
                             idempotency_key=key)
 
+    def workspace_draft_set(self, handle, workspace, conversation, text, key,
+                             thread_root=None, mentions=None):
+        params = {"profile": handle, "workspace": workspace,
+                  "conversation": conversation, "text": text}
+        if thread_root is not None: params["thread_root"] = thread_root
+        if mentions: params["mention_member_ids"] = mentions
+        return self.request("workspace.draft_set", params, idempotency_key=key)
+
+    def group_draft_set(self, handle, group, text):
+        return self.request("group.draft_set",
+                            {"profile": handle, "group": group, "text": text})
+
     def workspace_member_remove(self, handle, workspace, member, key):
         return self.request("workspace.member_remove",
                             {"profile": handle, "workspace": workspace, "member": member},

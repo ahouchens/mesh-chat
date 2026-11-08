@@ -21,6 +21,7 @@ CALL_OPERATIONS = ("call.settings_query", "call.settings_update", "call.ice_serv
                     "call.media_query")
 SETTINGS_OPERATIONS = ("settings.query", "settings.update")
 REACTION_OPERATIONS = ("message.reaction_set",)
+GROUP_DRAFT_OPERATIONS = ("group.draft_set",)
 GROUP_OPERATIONS = ("group.query", "group.create", "group.message_enqueue",
                     "group.leave", "group.close", "group.member_remove",
                     "group.invitation_accept", "group.invitation_decline",
@@ -48,6 +49,7 @@ WORKSPACE_CHANNEL_ARCHIVE_OPERATIONS = ("workspace.channel_archive",)
 WORKSPACE_CHANNEL_RECOVER_OPERATIONS = ("workspace.channel_recover",)
 WORKSPACE_CHANNEL_STATE_OPERATIONS = ("workspace.channel_state",)
 WORKSPACE_MEMBER_REMOVE_OPERATIONS = ("workspace.member_remove",)
+WORKSPACE_DRAFT_OPERATIONS = ("workspace.draft_set",)
 WORKSPACE_DEVICE_LINK_CREATE_OPERATIONS = ("workspace.device_link_create",)
 WORKSPACE_DEVICE_LINK_PREVIEW_OPERATIONS = ("workspace.device_link_preview",)
 WORKSPACE_DEVICE_LINK_SUBMIT_OPERATIONS = ("workspace.device_link_submit",)
@@ -618,6 +620,24 @@ def parse_request(value, operations):
                        for item in params.values())):
             raise ApiFailure("invalid_request")
         return operation, params
+    if operation in WORKSPACE_DRAFT_OPERATIONS:
+        params = value["params"]
+        if (not isinstance(params, dict)
+                or not {"profile", "workspace", "conversation", "text"} <= set(params)
+                or set(params) - {"profile", "workspace", "conversation", "text",
+                                  "thread_root", "mention_member_ids"}
+                or any(not isinstance(params[key], str) or not params[key]
+                       for key in ("conversation", "text"))
+                or len(params["text"].encode("utf-8")) > 16384
+                or any(not isinstance(params[key], str) or HANDLE.fullmatch(params[key]) is None
+                       for key in ("profile", "workspace"))
+                or ("thread_root" in params and (not isinstance(params["thread_root"], str)
+                                                 or not params["thread_root"]))
+                or ("mention_member_ids" in params
+                    and (not isinstance(params["mention_member_ids"], list)
+                         or any(not isinstance(item, str) for item in params["mention_member_ids"])))):
+            raise ApiFailure("invalid_request")
+        return operation, params
     if operation in WORKSPACE_MEMBER_REMOVE_OPERATIONS:
         params = value["params"]
         if (not isinstance(params, dict)
@@ -823,6 +843,15 @@ def parse_request(value, operations):
                 or not 1 <= len(params["document"]) <= 1048576):
             raise ApiFailure("invalid_request")
         return operation, params
+    if operation in GROUP_DRAFT_OPERATIONS:
+        params = value["params"]
+        if (not isinstance(params, dict) or set(params) != {"profile", "group", "text"}
+                or any(not isinstance(params[key], str) for key in ("profile", "group"))
+                or HANDLE.fullmatch(params["profile"]) is None
+                or not isinstance(params["text"], str)
+                or len(params["text"].encode("utf-8")) > 16384):
+            raise ApiFailure("invalid_request")
+        return operation, params
     if operation in GROUP_OPERATIONS:
         params = value["params"]
         expected = ({"profile"} if operation == "group.query"
@@ -1016,6 +1045,7 @@ COMPONENT_OPERATIONS = (
     + SETTINGS_OPERATIONS
     + REACTION_OPERATIONS
     + GROUP_OPERATIONS
+    + GROUP_DRAFT_OPERATIONS
     + PAIRING_OPERATIONS
     + REQUEST_OPERATIONS
     + INVITATION_OPERATIONS
@@ -1039,6 +1069,7 @@ COMPONENT_OPERATIONS = (
     + WORKSPACE_CHANNEL_RECOVER_OPERATIONS
     + WORKSPACE_CHANNEL_STATE_OPERATIONS
     + WORKSPACE_MEMBER_REMOVE_OPERATIONS
+    + WORKSPACE_DRAFT_OPERATIONS
     + WORKSPACE_DEVICE_LINK_CREATE_OPERATIONS
     + WORKSPACE_DEVICE_LINK_PREVIEW_OPERATIONS
     + WORKSPACE_DEVICE_LINK_SUBMIT_OPERATIONS

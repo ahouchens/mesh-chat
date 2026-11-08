@@ -46,13 +46,13 @@ from .requests import (
     CURSOR, DIAGNOSTIC_OPERATIONS, INTENT_OPERATIONS, MESSAGE_OPERATIONS, OPERATIONS,
     INVITATION_OPERATIONS, PAIRING_OPERATIONS, RECEIVED_OPERATIONS, RECOVERY_OPERATIONS,
     APPLICATION_OPERATIONS, CALL_OPERATIONS, CALL_CONTROL_OPERATIONS, COMPONENT_OPERATIONS, DRAFT_OPERATIONS,
-    GROUP_OPERATIONS, REACTION_OPERATIONS, RELATIONSHIP_OPERATIONS, SETTINGS_OPERATIONS, REQUEST_OPERATIONS, STOP_OPERATIONS,
+    GROUP_OPERATIONS, GROUP_DRAFT_OPERATIONS, REACTION_OPERATIONS, RELATIONSHIP_OPERATIONS, SETTINGS_OPERATIONS, REQUEST_OPERATIONS, STOP_OPERATIONS,
     WORKSPACE_APPROVE_OPERATIONS, WORKSPACE_DECLINE_OPERATIONS, WORKSPACE_JOIN_OPERATIONS,
     WORKSPACE_CHANNEL_ARCHIVE_OPERATIONS, WORKSPACE_CHANNEL_CREATE_OPERATIONS,
     WORKSPACE_CHANNEL_MEMBERS_OPERATIONS,
     WORKSPACE_CHANNEL_MEMBERS_UPDATE_OPERATIONS, WORKSPACE_CHANNEL_UPDATE_OPERATIONS,
     WORKSPACE_CHANNEL_TRANSFER_ACCEPT_OPERATIONS, WORKSPACE_CHANNEL_TRANSFER_OFFER_OPERATIONS,
-    WORKSPACE_CHANNEL_RECOVER_OPERATIONS, WORKSPACE_CHANNEL_STATE_OPERATIONS, WORKSPACE_MEMBER_REMOVE_OPERATIONS,
+    WORKSPACE_CHANNEL_RECOVER_OPERATIONS, WORKSPACE_CHANNEL_STATE_OPERATIONS, WORKSPACE_MEMBER_REMOVE_OPERATIONS, WORKSPACE_DRAFT_OPERATIONS,
     WORKSPACE_POLICY_UPDATE_OPERATIONS, WORKSPACE_METADATA_OPERATIONS,
     WORKSPACE_RETENTION_OPERATIONS, WORKSPACE_ADMIN_REQUEST_OPERATIONS, WORKSPACE_LIFECYCLE_OPERATIONS, WORKSPACE_AUTHORITY_LOSS_OPERATIONS, WORKSPACE_AUTHORITY_OPERATIONS, WORKSPACE_AUTHORITY_OFFER_OPERATIONS, WORKSPACE_EDGE_OPERATIONS, WORKSPACE_ADMISSION_OPERATIONS, WORKSPACE_TIMELINE_OPERATIONS, WORKSPACE_SNAPSHOT_OPERATIONS, WORKSPACE_ACCESS_OPERATIONS, WORKSPACE_HISTORY_OPERATIONS, WORKSPACE_CONNECTION_OPERATIONS, RUNTIME_QUERY_OPERATIONS, RUNTIME_MUTATION_OPERATIONS, WORKSPACE_DEVICES_OPERATIONS,
     WORKSPACE_DEVICE_REMOVE_OPERATIONS,
@@ -120,6 +120,7 @@ PERMISSION_BY_OPERATION = {
     "settings.update": "send",
     "message.reaction_set": "send",
     "group.query": "read",
+    "group.draft_set": "send",
     "group.create": "send",
     "group.message_enqueue": "send",
     "group.leave": "send",
@@ -137,6 +138,7 @@ PERMISSION_BY_OPERATION = {
     "workspace.channel_recover": "approve",
     "workspace.channel_state": "send",
     "workspace.member_remove": "approve",
+    "workspace.draft_set": "send",
     "workspace.channel_create": "approve",
     "workspace.channel_members": "approve",
     "workspace.channel_members_update": "approve",
@@ -288,6 +290,7 @@ class CoreSession:
             (SETTINGS_OPERATIONS, self._settings),
             (REACTION_OPERATIONS, self._reactions),
             (GROUP_OPERATIONS, self._groups),
+            (GROUP_DRAFT_OPERATIONS, self._groups),
             (PAIRING_OPERATIONS, self._pairing),
             (REQUEST_OPERATIONS, self._pairing),
             (INVITATION_OPERATIONS, self._invitations),
@@ -311,6 +314,7 @@ class CoreSession:
             (WORKSPACE_CHANNEL_RECOVER_OPERATIONS, self._workspace_admin),
             (WORKSPACE_CHANNEL_STATE_OPERATIONS, self._workspace_admin),
             (WORKSPACE_MEMBER_REMOVE_OPERATIONS, self._workspace_admin),
+            (WORKSPACE_DRAFT_OPERATIONS, self._workspace_admin),
             (WORKSPACE_DEVICE_LINK_CREATE_OPERATIONS, self._workspace_admin),
             (WORKSPACE_DEVICE_LINK_PREVIEW_OPERATIONS, self._workspace_admin),
             (WORKSPACE_DEVICE_LINK_SUBMIT_OPERATIONS, self._workspace_admin),
@@ -531,6 +535,18 @@ class CoreSession:
             return self._received_messages(grant, profile, params)
         if operation in INTENT_OPERATIONS:
             return self._intent_operation(grant, profile, operation, params)
+        if operation in GROUP_DRAFT_OPERATIONS:
+            target = profiles.get(params["profile"])
+            if target is None:
+                raise ApiFailure("forbidden")
+            group_id = next(
+                (item.group_id for item in self._groups.list(target)
+                 if self._handle(grant, "group", target, item.group_id)
+                 == params["group"]), None)
+            if group_id is None:
+                raise ApiFailure("forbidden")
+            state = self._groups.save_draft(target, group_id, params["text"])
+            return {"state": state}
         if operation in GROUP_OPERATIONS:
             if operation in {"group.invitation_accept", "group.invitation_decline"}:
                 invitation_id = next(
@@ -1059,6 +1075,14 @@ class CoreSession:
                 self._operation_id(grant, target, key), params.get("posting"))
             return workspace_channel_update_view(
                 params["profile"], params["workspace"], params["channel"], edited)
+        if operation in WORKSPACE_DRAFT_OPERATIONS:
+            target, inside = self._workspace_scope(grant, profiles, params)
+            operation_id = self._required_operation_id(grant, target, key)
+            state = self._workspace_admin.save_draft(
+                target, inside, params["conversation"], params["text"],
+                operation_id, params.get("thread_root"),
+                params.get("mention_member_ids", []))
+            return {"state": state}
         if operation in WORKSPACE_MEMBER_REMOVE_OPERATIONS:
             target, inside = self._workspace_scope(grant, profiles, params)
             member_id = self._member_target(

@@ -343,6 +343,20 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         return dispatch("runtime.mutate", payload, idempotencyKey)
     }
 
+    fun workspaceDraftSet(profile: String, workspace: String, conversation: String,
+                          text: String, idempotencyKey: String,
+                          threadRoot: String? = null, mentions: List<String>? = null): JSONObject {
+        val payload = JSONObject().put("profile", profile).put("workspace", workspace)
+            .put("conversation", conversation).put("text", text)
+        if (threadRoot != null) payload.put("thread_root", threadRoot)
+        if (!mentions.isNullOrEmpty()) payload.put("mention_member_ids", org.json.JSONArray(mentions))
+        return dispatch("workspace.draft_set", payload, idempotencyKey)
+    }
+
+    fun groupDraftSet(profile: String, group: String, text: String): JSONObject =
+        dispatch("group.draft_set", JSONObject().put("profile", profile)
+            .put("group", group).put("text", text), null)
+
     fun workspaceMemberRemove(profile: String, workspace: String, member: String,
                               idempotencyKey: String): JSONObject =
         dispatch("workspace.member_remove", JSONObject().put("profile", profile)

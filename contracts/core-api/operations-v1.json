@@ -104,7 +104,9 @@
     "call.control",
     "workspace.channel_recover",
     "workspace.channel_state",
-    "workspace.member_remove"
+    "workspace.member_remove",
+    "group.draft_set",
+    "workspace.draft_set"
   ],
   "operations": [
     {
@@ -873,6 +875,20 @@
     {
       "operation": "workspace.member_remove",
       "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "group.draft_set",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "none"
+    },
+    {
+      "operation": "workspace.draft_set",
+      "permission": "send",
       "scope": "profile",
       "mutation": true,
       "idempotency": "caller_profile_operation_key"
