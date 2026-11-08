@@ -22,7 +22,6 @@ APPLICATION_COMMANDS = frozenset({
     "prepare_manual_participant_host",
     "configure_participant_firewall",
     "stop_participant_host",
-    "approve_request",
     "send_message",
     "call_media",
     "reconnect_profiles",
