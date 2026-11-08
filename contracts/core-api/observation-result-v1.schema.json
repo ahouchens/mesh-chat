@@ -76,7 +76,7 @@
           "type": "array",
           "uniqueItems": true,
           "minItems": 3,
-          "maxItems": 110,
+          "maxItems": 111,
           "items": {
             "enum": [
               "application.snapshot",
@@ -158,6 +158,7 @@
               "workspace.direct_open",
               "route.update",
               "peer.update",
+              "conversation.mutate",
               "workspace.device_link_create",
               "workspace.device_link_preview",
               "workspace.device_link_submit",

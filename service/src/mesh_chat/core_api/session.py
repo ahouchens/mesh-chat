@@ -52,7 +52,7 @@ from .requests import (
     WORKSPACE_CHANNEL_MEMBERS_OPERATIONS,
     WORKSPACE_CHANNEL_MEMBERS_UPDATE_OPERATIONS, WORKSPACE_CHANNEL_UPDATE_OPERATIONS,
     WORKSPACE_CHANNEL_TRANSFER_ACCEPT_OPERATIONS, WORKSPACE_CHANNEL_TRANSFER_OFFER_OPERATIONS,
-    WORKSPACE_CHANNEL_RECOVER_OPERATIONS, WORKSPACE_CHANNEL_STATE_OPERATIONS, WORKSPACE_MEMBER_REMOVE_OPERATIONS, WORKSPACE_DRAFT_OPERATIONS, REMOTE_PROFILE_OPERATIONS, WORKSPACE_DISPLAY_DECIDE_OPERATIONS, WORKSPACE_DIRECT_OPEN_OPERATIONS, ROUTE_UPDATE_OPERATIONS,
+    WORKSPACE_CHANNEL_RECOVER_OPERATIONS, WORKSPACE_CHANNEL_STATE_OPERATIONS, WORKSPACE_MEMBER_REMOVE_OPERATIONS, WORKSPACE_DRAFT_OPERATIONS, REMOTE_PROFILE_OPERATIONS, WORKSPACE_DISPLAY_DECIDE_OPERATIONS, WORKSPACE_DIRECT_OPEN_OPERATIONS, ROUTE_UPDATE_OPERATIONS, CONVERSATION_OPERATIONS,
     WORKSPACE_POLICY_UPDATE_OPERATIONS, WORKSPACE_METADATA_OPERATIONS,
     WORKSPACE_RETENTION_OPERATIONS, WORKSPACE_ADMIN_REQUEST_OPERATIONS, WORKSPACE_LIFECYCLE_OPERATIONS, WORKSPACE_AUTHORITY_LOSS_OPERATIONS, WORKSPACE_AUTHORITY_OPERATIONS, WORKSPACE_AUTHORITY_OFFER_OPERATIONS, WORKSPACE_EDGE_OPERATIONS, WORKSPACE_ADMISSION_OPERATIONS, WORKSPACE_TIMELINE_OPERATIONS, WORKSPACE_SNAPSHOT_OPERATIONS, WORKSPACE_ACCESS_OPERATIONS, WORKSPACE_HISTORY_OPERATIONS, WORKSPACE_CONNECTION_OPERATIONS, RUNTIME_QUERY_OPERATIONS, RUNTIME_MUTATION_OPERATIONS, WORKSPACE_DEVICES_OPERATIONS,
     WORKSPACE_DEVICE_REMOVE_OPERATIONS,
@@ -144,6 +144,7 @@ PERMISSION_BY_OPERATION = {
     "workspace.display_name_decide": "approve",
     "workspace.direct_open": "send",
     "route.update": "send",
+    "conversation.mutate": "send",
     "workspace.channel_create": "approve",
     "workspace.channel_members": "approve",
     "workspace.channel_members_update": "approve",
@@ -324,6 +325,7 @@ class CoreSession:
             (WORKSPACE_DISPLAY_DECIDE_OPERATIONS, self._workspace_admin),
             (WORKSPACE_DIRECT_OPEN_OPERATIONS, self._workspace_admin),
             (ROUTE_UPDATE_OPERATIONS, self._workspace_admin),
+            (CONVERSATION_OPERATIONS, self._workspace_admin),
             (WORKSPACE_DEVICE_LINK_CREATE_OPERATIONS, self._workspace_admin),
             (WORKSPACE_DEVICE_LINK_PREVIEW_OPERATIONS, self._workspace_admin),
             (WORKSPACE_DEVICE_LINK_SUBMIT_OPERATIONS, self._workspace_admin),
@@ -1085,6 +1087,13 @@ class CoreSession:
                 self._operation_id(grant, target, key), params.get("posting"))
             return workspace_channel_update_view(
                 params["profile"], params["workspace"], params["channel"], edited)
+        if operation in CONVERSATION_OPERATIONS:
+            target = profiles.get(params["profile"])
+            if target is None:
+                raise ApiFailure("forbidden")
+            result = self._workspace_admin.conversation(
+                target, params["action"], params["kind"], params["target_id"])
+            return {"conversation": result}
         if operation in ROUTE_UPDATE_OPERATIONS:
             target = profiles.get(params["profile"])
             if target is None:

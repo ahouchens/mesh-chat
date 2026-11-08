@@ -114,6 +114,7 @@ import {
   coreApiOpenWorkspaceDirect,
   coreApiRouteUpdate,
   coreApiUpdatePeer,
+  coreApiConversation,
   coreApiWorkspaceReadHintSync,
   coreApiWorkspaceRetention,
   coreApiDecideDeviceRemoval,
@@ -5733,10 +5734,8 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     }
     setConversationActionError("");
     try {
-      await serviceCommand("restore_conversation", {
-        kind: next.kind === "contact" ? "direct" : "group",
-        id: next.id,
-      });
+      await coreApiConversation(
+        "restore", next.kind === "contact" ? "direct" : "group", next.id);
       setQuery("");
       selectConversation(next);
       await refresh(true);
@@ -5832,7 +5831,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       // Prevent a delayed draft write from recreating content after the vault
       // has committed the deletion.
       await cancelPendingDraftWrite(draftKey);
-      await serviceCommand("delete_conversation", { kind, id: target.id });
+      await coreApiConversation("delete", kind, target.id);
       if (target.kind === "contact") {
         setDrafts((current) => {
           const next = { ...current };

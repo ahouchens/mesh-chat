@@ -277,6 +277,11 @@ class CoreClient:
                             {"profile": handle, "action": action, **params},
                             idempotency_key=key)
 
+    def conversation(self, handle, action, kind, target_id):
+        return self.request("conversation.mutate",
+                            {"profile": handle, "action": action, "kind": kind,
+                             "target_id": target_id})
+
     def peer_update(self, handle, peer, action, display_name=None):
         params = {"profile": handle, "peer": peer, "action": action}
         if display_name is not None: params["display_name"] = display_name

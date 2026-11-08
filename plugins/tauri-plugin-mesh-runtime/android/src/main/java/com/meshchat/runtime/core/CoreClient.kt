@@ -343,6 +343,11 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         return dispatch("runtime.mutate", payload, idempotencyKey)
     }
 
+    fun conversation(profile: String, action: String, kind: String,
+                     targetId: String): JSONObject =
+        dispatch("conversation.mutate", JSONObject().put("profile", profile)
+            .put("action", action).put("kind", kind).put("target_id", targetId), null)
+
     fun peerUpdate(profile: String, peer: String, action: String,
                    displayName: String? = null): JSONObject {
         val payload = JSONObject().put("profile", profile).put("peer", peer)

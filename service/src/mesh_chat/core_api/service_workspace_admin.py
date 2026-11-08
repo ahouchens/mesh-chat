@@ -1227,3 +1227,16 @@ class ServiceWorkspaceAdmin:
             except (ValidationError, ValueError) as error:
                 raise ApiFailure("invalid_request") from error
             raise ApiFailure("invalid_request")
+
+
+    def conversation(self, profile, action, kind, target_id):
+        self._require_local(profile)
+        with storage_errors():
+            try:
+                if action == "delete":
+                    return dict(self._service.delete_conversation(kind, target_id))
+                if action == "restore":
+                    return dict(self._service.restore_conversation(kind, target_id))
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            raise ApiFailure("invalid_request")

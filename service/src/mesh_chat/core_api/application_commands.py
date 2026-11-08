@@ -61,8 +61,6 @@ APPLICATION_COMMANDS = frozenset({
     "verify_webrtc_onboarding_answer",
     "set_message_reaction",
     "save_draft",
-    "delete_conversation",
-    "restore_conversation",
     "connection_help",
     "search",
     "create_workspace",

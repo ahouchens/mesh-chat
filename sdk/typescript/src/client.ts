@@ -558,6 +558,12 @@ export class CoreClient {
       { idempotencyKey });
   }
 
+  async conversation(profile: string, action: string, kind: string,
+                     targetId: string): Promise<unknown> {
+    return this.request("conversation.mutate",
+      { profile, action, kind, target_id: targetId });
+  }
+
   async peerUpdate(profile: string, peer: string, action: string,
                    displayName?: string): Promise<unknown> {
     return this.request("peer.update", { profile, peer, action,

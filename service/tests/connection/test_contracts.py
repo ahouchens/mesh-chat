@@ -129,6 +129,8 @@ def test_each_designed_operation_has_an_executable_request_vector_and_permission
         "route.update": {"action": "create", "scope_kind": "contact",
           "scope_id": "c1"},
         "peer.update": {"peer": handle, "action": "verify"},
+        "conversation.mutate": {"action": "delete", "kind": "direct",
+          "target_id": "c1"},
         "runtime.query": {"action": "background"},
         "runtime.mutate": {"action": "notification_previews",
           "hidden": True},

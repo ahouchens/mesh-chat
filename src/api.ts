@@ -876,6 +876,16 @@ export async function coreApiWorkspaceMemberRole(
   );
 }
 
+export async function coreApiConversation(
+  action: "delete" | "restore", kind: "direct" | "group", targetId: string,
+): Promise<Record<string, unknown>> {
+  const profile = await coreApiProfile();
+  const result = await coreApiRequest("conversation.mutate",
+    { profile: profile.profile, action, kind, target_id: targetId }) as {
+      conversation?: Record<string, unknown> };
+  return result.conversation ?? {};
+}
+
 export async function coreApiUpdatePeer(
   destination: string, action: "rename" | "verify" | "unverify",
   displayName?: string,
