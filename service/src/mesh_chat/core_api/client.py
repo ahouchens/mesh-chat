@@ -277,6 +277,11 @@ class CoreClient:
                             {"profile": handle, "action": action, **params},
                             idempotency_key=key)
 
+    def route_update(self, handle, action, key, **params):
+        return self.request("route.update",
+                            {"profile": handle, "action": action, **params},
+                            idempotency_key=key)
+
     def workspace_direct_open(self, handle, workspace, member, key):
         return self.request("workspace.direct_open",
                             {"profile": handle, "workspace": workspace, "member": member},

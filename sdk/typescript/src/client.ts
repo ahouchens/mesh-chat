@@ -558,6 +558,12 @@ export class CoreClient {
       { idempotencyKey });
   }
 
+  async routeUpdate(profile: string, action: string, params: Record<string, unknown>,
+                    idempotencyKey: string): Promise<unknown> {
+    return this.request("route.update", { profile, action, ...params },
+      { idempotencyKey });
+  }
+
   async workspaceDirectOpen(profile: string, workspace: string, member: string,
                             idempotencyKey: string): Promise<unknown> {
     return this.request("workspace.direct_open",

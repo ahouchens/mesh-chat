@@ -76,7 +76,7 @@
           "type": "array",
           "uniqueItems": true,
           "minItems": 3,
-          "maxItems": 108,
+          "maxItems": 109,
           "items": {
             "enum": [
               "application.snapshot",
@@ -156,6 +156,7 @@
               "remote_profile.mutate",
               "workspace.display_name_decide",
               "workspace.direct_open",
+              "route.update",
               "workspace.device_link_create",
               "workspace.device_link_preview",
               "workspace.device_link_submit",

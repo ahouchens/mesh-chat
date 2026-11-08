@@ -115,6 +115,7 @@ const api = vi.hoisted(() => {
       : "open_notification_target", params)),
   coreApiWorkspaceAdminSubmit: vi.fn(async (_handle: string, kind: string, memberHandle: string | null, role: string | null, _note: string, key: string): Promise<unknown> =>
     serviceCommand("submit_workspace_admin_request", { workspace_id: workspace.id, request_kind: kind, ...(memberHandle ? { target_member_id: memberHandle } : {}), ...(role ? { requested_role: role } : {}), note: _note, operation_id: key })),
+  coreApiRouteUpdate: vi.fn(async (action: string, params: Record<string, unknown>, key?: string): Promise<unknown> => serviceCommand(action === "preview" ? "preview_route_update" : action === "apply" ? "apply_route_update" : "create_route_update", { ...params, ...(key ? { operation_id: key } : {}) })),
   coreApiOpenWorkspaceDirect: vi.fn(async (_handle: string, memberHandle: string, key: string): Promise<unknown> => serviceCommand("open_workspace_direct", { workspace_id: workspace.id, member_id: memberHandle, operation_id: key })),
   coreApiWorkspaceDisplayNameDecision: vi.fn(async (_handle: string, request: string, approve: boolean, key: string): Promise<unknown> => serviceCommand("decide_workspace_display_name", { workspace_id: workspace.id, request_id: request, approve, operation_id: key })),
   coreApiWorkspaceDisplayNameRequest: vi.fn(async (_handle: string, displayName: string, key: string): Promise<unknown> => serviceCommand("request_workspace_display_name", { workspace_id: workspace.id, display_name: displayName, operation_id: key })),

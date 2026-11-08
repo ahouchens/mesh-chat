@@ -881,6 +881,16 @@ export async function coreApiWorkspaceMemberRole(
   );
 }
 
+export async function coreApiRouteUpdate(
+  action: "preview" | "apply" | "create", params: Record<string, unknown>,
+  idempotencyKey: string = crypto.randomUUID(),
+): Promise<Record<string, unknown>> {
+  const profile = await coreApiProfile();
+  const result = await coreApiRequest("route.update",
+    { profile: profile.profile, action, ...params }, idempotencyKey) as { route?: Record<string, unknown> };
+  return result.route ?? {};
+}
+
 export async function coreApiOpenWorkspaceDirect(
   workspace: string, member: string, idempotencyKey: string,
 ): Promise<unknown> {

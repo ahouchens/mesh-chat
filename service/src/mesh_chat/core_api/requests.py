@@ -53,6 +53,7 @@ WORKSPACE_DRAFT_OPERATIONS = ("workspace.draft_set",)
 REMOTE_PROFILE_OPERATIONS = ("remote_profile.mutate",)
 WORKSPACE_DISPLAY_DECIDE_OPERATIONS = ("workspace.display_name_decide",)
 WORKSPACE_DIRECT_OPEN_OPERATIONS = ("workspace.direct_open",)
+ROUTE_UPDATE_OPERATIONS = ("route.update",)
 WORKSPACE_DEVICE_LINK_CREATE_OPERATIONS = ("workspace.device_link_create",)
 WORKSPACE_DEVICE_LINK_PREVIEW_OPERATIONS = ("workspace.device_link_preview",)
 WORKSPACE_DEVICE_LINK_SUBMIT_OPERATIONS = ("workspace.device_link_submit",)
@@ -662,6 +663,26 @@ def parse_request(value, operations):
                        for item in params.values())):
             raise ApiFailure("invalid_request")
         return operation, params
+    if operation in ROUTE_UPDATE_OPERATIONS:
+        params = value["params"]
+        action = params.get("action") if isinstance(params, dict) else None
+        if action not in {"preview", "apply", "create"}:
+            raise ApiFailure("invalid_request")
+        required = {"profile", "action"}
+        required |= ({"update"} if action in {"preview", "apply"}
+                     else {"scope_kind", "scope_id"})
+        if (not isinstance(params, dict) or set(params) != required
+                or not isinstance(params["profile"], str)
+                or HANDLE.fullmatch(params["profile"]) is None):
+            raise ApiFailure("invalid_request")
+        if action in {"preview", "apply"}:
+            if not isinstance(params["update"], str) or not 1 <= len(params["update"]) <= 1048576:
+                raise ApiFailure("invalid_request")
+        else:
+            if (params["scope_kind"] not in {"contact", "workspace_device"}
+                    or not isinstance(params["scope_id"], str) or not params["scope_id"]):
+                raise ApiFailure("invalid_request")
+        return operation, params
     if operation in WORKSPACE_DIRECT_OPEN_OPERATIONS:
         params = value["params"]
         if (not isinstance(params, dict)
@@ -1165,6 +1186,7 @@ COMPONENT_OPERATIONS = (
     + REMOTE_PROFILE_OPERATIONS
     + WORKSPACE_DISPLAY_DECIDE_OPERATIONS
     + WORKSPACE_DIRECT_OPEN_OPERATIONS
+    + ROUTE_UPDATE_OPERATIONS
     + WORKSPACE_DEVICE_LINK_CREATE_OPERATIONS
     + WORKSPACE_DEVICE_LINK_PREVIEW_OPERATIONS
     + WORKSPACE_DEVICE_LINK_SUBMIT_OPERATIONS

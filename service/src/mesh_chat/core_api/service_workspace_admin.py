@@ -1208,3 +1208,22 @@ class ServiceWorkspaceAdmin:
             if not isinstance(direct, dict) or not isinstance(direct.get("id"), str):
                 raise ApiFailure("internal")
             return direct
+
+
+    def route_update(self, profile, action, params, operation_id):
+        self._require_local(profile)
+        with storage_errors():
+            try:
+                if action == "preview":
+                    return dict(self._service.preview_route_update(params["update"]))
+                if action == "apply":
+                    result = self._service.apply_route_update(params["update"])
+                    return dict(result) if isinstance(result, dict) else {}
+                if action == "create":
+                    result = self._service.create_route_update_command(
+                        params["scope_kind"], params["scope_id"],
+                        params.get("peer_destination"))
+                    return dict(result)
+            except (ValidationError, ValueError) as error:
+                raise ApiFailure("invalid_request") from error
+            raise ApiFailure("invalid_request")

@@ -112,6 +112,7 @@ import {
   coreApiWorkspaceDisplayNameRequest,
   coreApiWorkspaceDisplayNameDecision,
   coreApiOpenWorkspaceDirect,
+  coreApiRouteUpdate,
   coreApiWorkspaceReadHintSync,
   coreApiWorkspaceRetention,
   coreApiDecideDeviceRemoval,
@@ -1848,7 +1849,7 @@ function NewChatDialog({ initialInvitation, initialTab = "invite", initialConnec
         const checked = await serviceCommand<ConnectionReplyPreview>("preview_connection_reply", { response: normalized });
         if (active) setConnectionReplyPreview(checked);
       } else if (documentKind === "route") {
-        const checked = await serviceCommand<RouteUpdatePreview>("preview_route_update", { update: normalized });
+        const checked = await coreApiRouteUpdate("preview", { update: normalized }) as unknown as RouteUpdatePreview;
         if (active) setRouteUpdatePreview(checked);
       } else {
         const checked = await serviceCommand<InvitationPreview>("preview_invitation", { invitation: normalized });
@@ -1873,7 +1874,7 @@ function NewChatDialog({ initialInvitation, initialTab = "invite", initialConnec
         setConnectionReplyPreview(await serviceCommand("preview_connection_reply", { response: normalized }));
         setPreview(null);
       } else if (documentKind === "route") {
-        setRouteUpdatePreview(await serviceCommand("preview_route_update", { update: normalized }));
+        setRouteUpdatePreview(await coreApiRouteUpdate("preview", { update: normalized }) as unknown as RouteUpdatePreview);
         setPreview(null);
       } else setPreview(await serviceCommand("preview_invitation", { invitation: normalized }));
       setRemoteConsent(false); setI2PConsent(false);
@@ -1928,7 +1929,7 @@ function NewChatDialog({ initialInvitation, initialTab = "invite", initialConnec
     setBusy(true); setError("");
     try {
       if (connectionReplyPreview) await serviceCommand("connect_using_reply", { response: raw });
-      else await serviceCommand("apply_route_update", { update: raw });
+      else await coreApiRouteUpdate("apply", { update: raw });
       await onChanged(); onClose();
     } catch (reason) { setError(errorMessage(reason)); }
     finally { setBusy(false); }
@@ -2362,7 +2363,7 @@ function ContactsDialog({
   const createReconnect = async () => {
     if (!selected || busy) return;
     setBusy(true); setError("");
-    try { setReconnectFormats(await serviceCommand<ConnectionDocumentFormats>("create_route_update", { scope_kind: "contact", scope_id: selected.id })); }
+    try { setReconnectFormats(await coreApiRouteUpdate("create", { scope_kind: "contact", scope_id: selected.id }) as unknown as ConnectionDocumentFormats); }
     catch (reason) { setError(errorMessage(reason)); }
     finally { setBusy(false); }
   };

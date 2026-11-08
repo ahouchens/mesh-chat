@@ -126,6 +126,8 @@ def test_each_designed_operation_has_an_executable_request_vector_and_permission
         "workspace.display_name_decide": {"workspace": handle, "request": "r1",
           "approve": True},
         "workspace.direct_open": {"workspace": handle, "member": handle},
+        "route.update": {"action": "create", "scope_kind": "contact",
+          "scope_id": "c1"},
         "runtime.query": {"action": "background"},
         "runtime.mutate": {"action": "notification_previews",
           "hidden": True},

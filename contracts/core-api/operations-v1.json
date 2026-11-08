@@ -109,7 +109,8 @@
     "workspace.draft_set",
     "remote_profile.mutate",
     "workspace.display_name_decide",
-    "workspace.direct_open"
+    "workspace.direct_open",
+    "route.update"
   ],
   "operations": [
     {
@@ -912,6 +913,13 @@
     },
     {
       "operation": "workspace.direct_open",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "route.update",
       "permission": "send",
       "scope": "profile",
       "mutation": true,
