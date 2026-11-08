@@ -1249,3 +1249,19 @@ class ServiceWorkspaceAdmin:
                 return dict(self._service._link_previews.get(provider, identifier))
             except ValidationError as error:
                 raise ApiFailure("invalid_request") from error
+
+
+    def connection_support(self, profile, action, params):
+        self._require_local(profile)
+        with storage_errors():
+            if action == "help":
+                try:
+                    return dict(self._service.connection_help(params["contact_id"]))
+                except ValidationError as error:
+                    raise ApiFailure("invalid_request") from error
+            if action in {"diagnostics", "clear"}:
+                from ..connection_diagnostics import report
+                if action == "clear":
+                    self._store.delete("connection_diagnostics", "history")
+                return dict(report(self._service))
+            raise ApiFailure("invalid_request")

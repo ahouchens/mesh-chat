@@ -876,6 +876,14 @@ export async function coreApiWorkspaceMemberRole(
   );
 }
 
+export async function coreApiConnectionSupport(
+  action: "help" | "diagnostics" | "clear", params: Record<string, unknown> = {},
+): Promise<Record<string, unknown>> {
+  const profile = await coreApiProfile();
+  return await coreApiRequest("connection.support",
+    { profile: profile.profile, action, ...params }) as Record<string, unknown>;
+}
+
 export async function coreApiRecoveryTransfer(
   action: "export" | "import", params: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {

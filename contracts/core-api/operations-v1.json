@@ -116,7 +116,8 @@
     "peer.decide",
     "link.preview",
     "contact.invitation",
-    "recovery.transfer"
+    "recovery.transfer",
+    "connection.support"
   ],
   "operations": [
     {
@@ -968,6 +969,13 @@
     },
     {
       "operation": "recovery.transfer",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "none"
+    },
+    {
+      "operation": "connection.support",
       "permission": "send",
       "scope": "profile",
       "mutation": true,

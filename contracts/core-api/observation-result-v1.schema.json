@@ -76,7 +76,7 @@
           "type": "array",
           "uniqueItems": true,
           "minItems": 3,
-          "maxItems": 115,
+          "maxItems": 116,
           "items": {
             "enum": [
               "application.snapshot",
@@ -163,6 +163,7 @@
               "link.preview",
               "contact.invitation",
               "recovery.transfer",
+              "connection.support",
               "workspace.device_link_create",
               "workspace.device_link_preview",
               "workspace.device_link_submit",

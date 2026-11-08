@@ -136,6 +136,7 @@ def test_each_designed_operation_has_an_executable_request_vector_and_permission
         "contact.invitation": {"action": "receive", "document": "doc",
           "peer": "p1"},
         "recovery.transfer": {"action": "export", "identifier": "r1"},
+        "connection.support": {"action": "diagnostics"},
         "runtime.query": {"action": "background"},
         "runtime.mutate": {"action": "notification_previews",
           "hidden": True},

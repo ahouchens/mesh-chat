@@ -728,7 +728,6 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "verify_webrtc_onboarding_answer"
             | "set_message_reaction"
             | "save_draft"
-            | "connection_help"
             | "search"
             | "create_workspace"
             | "preview_direct_connection"
@@ -745,8 +744,6 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "resume_direct_setup"
             | "check_direct_setup"
             | "retry_direct_setup"
-            | "connection_diagnostics"
-            | "clear_connection_diagnostics"
             | "cancel_direct_setup"
             | "workspace_connectivity"
             | "workspace_helper_status"
@@ -2212,8 +2209,6 @@ mod tests {
             "resume_direct_setup",
             "check_direct_setup",
             "retry_direct_setup",
-            "connection_diagnostics",
-            "clear_connection_diagnostics",
             "cancel_direct_setup",
             "create_workspace",
             "workspace_connectivity",

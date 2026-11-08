@@ -281,6 +281,10 @@ class CoreClient:
         return self.request("peer.decide",
                             {"profile": handle, "peer": peer, "accept": accept})
 
+    def connection_support(self, handle, action, **params):
+        return self.request("connection.support",
+                            {"profile": handle, "action": action, **params})
+
     def recovery_transfer(self, handle, action, **params):
         return self.request("recovery.transfer",
                             {"profile": handle, "action": action, **params})

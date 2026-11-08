@@ -117,6 +117,7 @@ import {
   coreApiConversation,
   coreApiDecidePeerRequest,
   coreApiContactInvitation,
+  coreApiConnectionSupport,
   coreApiWorkspaceReadHintSync,
   coreApiWorkspaceRetention,
   coreApiDecideDeviceRemoval,
@@ -6019,7 +6020,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     }
   };
   const connectionHelp = async () => {
-    if (selectedContact) setHelp(await serviceCommand("connection_help", { contact_id: selectedContact.id }));
+    if (selectedContact) setHelp(await coreApiConnectionSupport("help", { contact_id: selectedContact.id }) as unknown as { code: string; action: string | null });
   };
   const respondToContactInvitation = async (invitation: ContactInvitation, accept: boolean) => {
     setInvitationBusy(invitation.id);

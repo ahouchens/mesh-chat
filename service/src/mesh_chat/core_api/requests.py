@@ -58,6 +58,7 @@ WORKSPACE_DIRECT_OPEN_OPERATIONS = ("workspace.direct_open",)
 ROUTE_UPDATE_OPERATIONS = ("route.update",)
 CONVERSATION_OPERATIONS = ("conversation.mutate",)
 LINK_PREVIEW_OPERATIONS = ("link.preview",)
+CONNECTION_SUPPORT_OPERATIONS = ("connection.support",)
 WORKSPACE_DEVICE_LINK_CREATE_OPERATIONS = ("workspace.device_link_create",)
 WORKSPACE_DEVICE_LINK_PREVIEW_OPERATIONS = ("workspace.device_link_preview",)
 WORKSPACE_DEVICE_LINK_SUBMIT_OPERATIONS = ("workspace.device_link_submit",)
@@ -680,6 +681,19 @@ def parse_request(value, operations):
                        for item in params.values())):
             raise ApiFailure("invalid_request")
         return operation, params
+    if operation in CONNECTION_SUPPORT_OPERATIONS:
+        params = value["params"]
+        action = params.get("action") if isinstance(params, dict) else None
+        required = {"profile", "action"}
+        if action == "help": required.add("contact_id")
+        if action not in {"help", "diagnostics", "clear"} or not isinstance(params, dict) \
+                or set(params) != required \
+                or not isinstance(params["profile"], str) \
+                or HANDLE.fullmatch(params["profile"]) is None \
+                or (action == "help" and (not isinstance(params["contact_id"], str)
+                                          or not params["contact_id"])):
+            raise ApiFailure("invalid_request")
+        return operation, params
     if operation in LINK_PREVIEW_OPERATIONS:
         params = value["params"]
         if (not isinstance(params, dict)
@@ -1272,6 +1286,7 @@ COMPONENT_OPERATIONS = (
     + ROUTE_UPDATE_OPERATIONS
     + CONVERSATION_OPERATIONS
     + LINK_PREVIEW_OPERATIONS
+    + CONNECTION_SUPPORT_OPERATIONS
     + WORKSPACE_DEVICE_LINK_CREATE_OPERATIONS
     + WORKSPACE_DEVICE_LINK_PREVIEW_OPERATIONS
     + WORKSPACE_DEVICE_LINK_SUBMIT_OPERATIONS
