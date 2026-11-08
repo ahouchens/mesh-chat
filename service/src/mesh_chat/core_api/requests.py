@@ -28,6 +28,7 @@ GROUP_OPERATIONS = ("group.query", "group.create", "group.message_enqueue",
                     "group.invitation_accept", "group.invitation_decline",
                     "group.invitation_retry")
 PAIRING_OPERATIONS = ("peer.pairing_accept",)
+PAIRING_PREVIEW_OPERATIONS = ("peer.pairing_preview",)
 CONTACT_INVITATION_OPERATIONS = ("contact.invitation",)
 REQUEST_OPERATIONS = ("peer.pairing_request",)
 INVITATION_OPERATIONS = ("peer.pairing_create",)
@@ -1045,6 +1046,14 @@ def parse_request(value, operations):
         elif not isinstance(params["invitation"], str) or type(params["accept"]) is not bool:
             raise ApiFailure("invalid_request")
         return operation, params
+    if operation in PAIRING_PREVIEW_OPERATIONS:
+        params = value["params"]
+        if (not isinstance(params, dict) or set(params) != {"profile", "document"}
+                or not isinstance(params["profile"], str)
+                or HANDLE.fullmatch(params["profile"]) is None
+                or not isinstance(params["document"], str) or not params["document"]):
+            raise ApiFailure("invalid_request")
+        return operation, params
     if operation in PAIRING_OPERATIONS:
         params = value["params"]
         if (not isinstance(params, dict)
@@ -1281,6 +1290,7 @@ COMPONENT_OPERATIONS = (
     + GROUP_OPERATIONS
     + GROUP_DRAFT_OPERATIONS
     + PAIRING_OPERATIONS
+    + PAIRING_PREVIEW_OPERATIONS
     + CONTACT_INVITATION_OPERATIONS
     + REQUEST_OPERATIONS
     + INVITATION_OPERATIONS

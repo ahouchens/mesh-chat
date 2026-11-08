@@ -350,6 +350,10 @@ class CoreClient private constructor(private val transport: CoreTransport) {
     fun remoteProfiles(profile: String): JSONObject =
         dispatch("remote_profile.query", JSONObject().put("profile", profile), null)
 
+    fun pairingPreview(profile: String, document: String): JSONObject =
+        dispatch("peer.pairing_preview", JSONObject().put("profile", profile)
+            .put("document", document), null)
+
     fun connectionDocument(profile: String, action: String, params: JSONObject): JSONObject {
         val payload = JSONObject().put("profile", profile).put("action", action)
         val keys = params.keys()

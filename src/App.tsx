@@ -79,6 +79,7 @@ import {
   coreApiRemoteProfile,
   coreApiRemoteProfiles,
   coreApiPreviewWorkspaceInvitation,
+  coreApiPreviewInvitation,
   coreApiJoinWorkspace,
   coreApiWorkspaceMemberRole,
   coreApiWorkspacePolicy,
@@ -1859,7 +1860,7 @@ function NewChatDialog({ initialInvitation, initialTab = "invite", initialConnec
         const checked = await coreApiRouteUpdate("preview", { update: normalized }) as unknown as RouteUpdatePreview;
         if (active) setRouteUpdatePreview(checked);
       } else {
-        const checked = await serviceCommand<InvitationPreview>("preview_invitation", { invitation: normalized });
+        const checked = await coreApiPreviewInvitation(normalized) as unknown as InvitationPreview;
         if (active) setPreview(checked);
       }
     })().catch((reason) => { if (active) setError(importedDocumentErrorMessage(reason)); });
@@ -1883,7 +1884,7 @@ function NewChatDialog({ initialInvitation, initialTab = "invite", initialConnec
       } else if (documentKind === "route") {
         setRouteUpdatePreview(await coreApiRouteUpdate("preview", { update: normalized }) as unknown as RouteUpdatePreview);
         setPreview(null);
-      } else setPreview(await serviceCommand("preview_invitation", { invitation: normalized }));
+      } else setPreview(await coreApiPreviewInvitation(normalized) as unknown as InvitationPreview);
       setRemoteConsent(false); setI2PConsent(false);
     }
     catch (reason) { setError(importedDocumentErrorMessage(reason)); }

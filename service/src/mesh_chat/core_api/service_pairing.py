@@ -75,3 +75,12 @@ class ServicePairing:
             except (ValidationError, InvitationInvalid, InvitationExpired) as error:
                 raise ApiFailure("invalid_request") from error
             return dict(result) if isinstance(result, dict) else {}
+
+
+    def preview_invitation(self, profile, document):
+        self._require_local(profile)
+        with storage_errors():
+            try:
+                return dict(self._service.preview_invitation(document))
+            except (ValidationError, InvitationInvalid, InvitationExpired) as error:
+                raise ApiFailure("invalid_request") from error

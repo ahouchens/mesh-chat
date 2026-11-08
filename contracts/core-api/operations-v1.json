@@ -119,7 +119,8 @@
     "recovery.transfer",
     "connection.support",
     "remote_profile.query",
-    "connection.document"
+    "connection.document",
+    "peer.pairing_preview"
   ],
   "operations": [
     {
@@ -995,6 +996,13 @@
       "permission": "send",
       "scope": "profile",
       "mutation": true,
+      "idempotency": "none"
+    },
+    {
+      "operation": "peer.pairing_preview",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": false,
       "idempotency": "none"
     }
   ],

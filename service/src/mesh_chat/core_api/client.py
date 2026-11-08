@@ -284,6 +284,10 @@ class CoreClient:
     def remote_profiles(self, handle):
         return self.request("remote_profile.query", {"profile": handle})
 
+    def pairing_preview(self, handle, document):
+        return self.request("peer.pairing_preview",
+                            {"profile": handle, "document": document})
+
     def connection_document(self, handle, action, **params):
         return self.request("connection.document",
                             {"profile": handle, "action": action, **params})

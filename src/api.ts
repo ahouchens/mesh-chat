@@ -202,6 +202,14 @@ export async function coreApiCreateInvitation(
   return coreApiRequest("peer.pairing_create", { ...options, profile: profile.profile });
 }
 
+export async function coreApiPreviewInvitation(
+  document: string,
+): Promise<Record<string, unknown>> {
+  const profile = await coreApiProfile();
+  return await coreApiRequest("peer.pairing_preview",
+    { profile: profile.profile, document }) as Record<string, unknown>;
+}
+
 export async function coreApiAcceptInvitation(
   document: string,
   i2pConsent = false,

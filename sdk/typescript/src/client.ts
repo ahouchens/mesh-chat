@@ -566,6 +566,10 @@ export class CoreClient {
     return this.request("remote_profile.query", { profile });
   }
 
+  async pairingPreview(profile: string, document: string): Promise<unknown> {
+    return this.request("peer.pairing_preview", { profile, document });
+  }
+
   async connectionDocument(profile: string, action: string,
                            params: Record<string, unknown>): Promise<unknown> {
     return this.request("connection.document", { profile, action, ...params });
