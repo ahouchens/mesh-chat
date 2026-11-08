@@ -1126,3 +1126,14 @@ class ServiceWorkspaceAdmin:
             except ValidationError as error:
                 raise ApiFailure("invalid_request") from error
             raise ApiFailure("invalid_request")
+
+
+    def remove_member(self, profile, workspace_id, member_id, operation_id):
+        self._require_local(profile)
+        with storage_errors():
+            try:
+                self._service.remove_workspace_member(
+                    workspace_id, member_id, operation_id)
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            return "removed"

@@ -277,6 +277,11 @@ class CoreClient:
                             {"profile": handle, "action": action, **params},
                             idempotency_key=key)
 
+    def workspace_member_remove(self, handle, workspace, member, key):
+        return self.request("workspace.member_remove",
+                            {"profile": handle, "workspace": workspace, "member": member},
+                            idempotency_key=key)
+
     def workspace_channel_state(self, handle, workspace, action, key, **params):
         return self.request("workspace.channel_state",
                             {"profile": handle, "workspace": workspace,

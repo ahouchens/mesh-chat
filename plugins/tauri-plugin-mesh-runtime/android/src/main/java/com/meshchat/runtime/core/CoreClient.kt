@@ -343,6 +343,11 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         return dispatch("runtime.mutate", payload, idempotencyKey)
     }
 
+    fun workspaceMemberRemove(profile: String, workspace: String, member: String,
+                              idempotencyKey: String): JSONObject =
+        dispatch("workspace.member_remove", JSONObject().put("profile", profile)
+            .put("workspace", workspace).put("member", member), idempotencyKey)
+
     fun workspaceChannelState(profile: String, workspace: String, action: String,
                               params: JSONObject, idempotencyKey: String): JSONObject {
         val payload = JSONObject().put("profile", profile).put("workspace", workspace)

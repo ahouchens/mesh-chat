@@ -77,6 +77,7 @@ import {
   coreApiWorkspacePolicy,
   coreApiCreateWorkspaceChannel,
   coreApiRecoverWorkspaceChannel,
+  coreApiRemoveWorkspaceMember,
   coreApiWorkspaceChannelState,
   coreApiUpdateWorkspaceChannel,
   coreApiUpdateChannelMembers,
@@ -6259,6 +6260,21 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
           }
         }
       }
+      if (command === "remove_workspace_member" && selectedWorkspace.core_handle
+          && typeof payload.member_id === "string") {
+        const member = selectedWorkspace.members.find((item) => item.id === payload.member_id);
+        if (member?.core_handle) {
+          try {
+            await coreApiRemoveWorkspaceMember(
+              selectedWorkspace.core_handle, member.core_handle, newOperationId());
+            await refresh(true);
+            return;
+          } catch (reason) {
+            if (!String(reason).includes("core_api_unavailable")) throw reason;
+            throw new Error("core_api_unavailable");
+          }
+        }
+      }
       if (command === "submit_workspace_admin_request" && selectedWorkspace.core_handle
           && (payload.request_kind === "invitation" || payload.request_kind === "member_removal"
               || payload.request_kind === "role_change")) {
@@ -6545,6 +6561,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
             return;
           } catch (reason) {
             if (!String(reason).includes("core_api_unavailable")) throw reason;
+            throw new Error("core_api_unavailable");
           }
         }
       }
@@ -6625,6 +6642,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
           return;
         } catch (reason) {
           if (!String(reason).includes("core_api_unavailable")) throw reason;
+          throw new Error("core_api_unavailable");
         }
       }
       if ((command === "set_workspace_channel_subscription"

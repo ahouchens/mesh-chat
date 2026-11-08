@@ -52,7 +52,7 @@ from .requests import (
     WORKSPACE_CHANNEL_MEMBERS_OPERATIONS,
     WORKSPACE_CHANNEL_MEMBERS_UPDATE_OPERATIONS, WORKSPACE_CHANNEL_UPDATE_OPERATIONS,
     WORKSPACE_CHANNEL_TRANSFER_ACCEPT_OPERATIONS, WORKSPACE_CHANNEL_TRANSFER_OFFER_OPERATIONS,
-    WORKSPACE_CHANNEL_RECOVER_OPERATIONS, WORKSPACE_CHANNEL_STATE_OPERATIONS,
+    WORKSPACE_CHANNEL_RECOVER_OPERATIONS, WORKSPACE_CHANNEL_STATE_OPERATIONS, WORKSPACE_MEMBER_REMOVE_OPERATIONS,
     WORKSPACE_POLICY_UPDATE_OPERATIONS, WORKSPACE_METADATA_OPERATIONS,
     WORKSPACE_RETENTION_OPERATIONS, WORKSPACE_ADMIN_REQUEST_OPERATIONS, WORKSPACE_LIFECYCLE_OPERATIONS, WORKSPACE_AUTHORITY_LOSS_OPERATIONS, WORKSPACE_AUTHORITY_OPERATIONS, WORKSPACE_AUTHORITY_OFFER_OPERATIONS, WORKSPACE_EDGE_OPERATIONS, WORKSPACE_ADMISSION_OPERATIONS, WORKSPACE_TIMELINE_OPERATIONS, WORKSPACE_SNAPSHOT_OPERATIONS, WORKSPACE_ACCESS_OPERATIONS, WORKSPACE_HISTORY_OPERATIONS, WORKSPACE_CONNECTION_OPERATIONS, RUNTIME_QUERY_OPERATIONS, RUNTIME_MUTATION_OPERATIONS, WORKSPACE_DEVICES_OPERATIONS,
     WORKSPACE_DEVICE_REMOVE_OPERATIONS,
@@ -136,6 +136,7 @@ PERMISSION_BY_OPERATION = {
     "workspace.channel_archive": "approve",
     "workspace.channel_recover": "approve",
     "workspace.channel_state": "send",
+    "workspace.member_remove": "approve",
     "workspace.channel_create": "approve",
     "workspace.channel_members": "approve",
     "workspace.channel_members_update": "approve",
@@ -309,6 +310,7 @@ class CoreSession:
             (WORKSPACE_CHANNEL_ARCHIVE_OPERATIONS, self._workspace_admin),
             (WORKSPACE_CHANNEL_RECOVER_OPERATIONS, self._workspace_admin),
             (WORKSPACE_CHANNEL_STATE_OPERATIONS, self._workspace_admin),
+            (WORKSPACE_MEMBER_REMOVE_OPERATIONS, self._workspace_admin),
             (WORKSPACE_DEVICE_LINK_CREATE_OPERATIONS, self._workspace_admin),
             (WORKSPACE_DEVICE_LINK_PREVIEW_OPERATIONS, self._workspace_admin),
             (WORKSPACE_DEVICE_LINK_SUBMIT_OPERATIONS, self._workspace_admin),
@@ -1057,6 +1059,15 @@ class CoreSession:
                 self._operation_id(grant, target, key), params.get("posting"))
             return workspace_channel_update_view(
                 params["profile"], params["workspace"], params["channel"], edited)
+        if operation in WORKSPACE_MEMBER_REMOVE_OPERATIONS:
+            target, inside = self._workspace_scope(grant, profiles, params)
+            member_id = self._member_target(
+                grant, target, inside, params["member"])
+            operation_id = self._required_operation_id(grant, target, key)
+            state = self._workspace_admin.remove_member(
+                target, inside, member_id, operation_id)
+            return workspace_member_remove_view(
+                params["profile"], params["workspace"], params["member"], state)
         if operation in WORKSPACE_CHANNEL_STATE_OPERATIONS:
             target, inside = self._workspace_scope(grant, profiles, params)
             operation_id = self._required_operation_id(grant, target, key)

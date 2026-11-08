@@ -487,6 +487,14 @@ export async function coreApiRuntimeMutate(
   return result.result ?? {};
 }
 
+export async function coreApiRemoveWorkspaceMember(
+  workspace: string, member: string, idempotencyKey: string,
+): Promise<unknown> {
+  const profile = await coreApiProfile();
+  return coreApiRequest("workspace.member_remove",
+    { profile: profile.profile, workspace, member }, idempotencyKey);
+}
+
 export async function coreApiWorkspaceChannelState(
   workspace: string, action: "subscribe" | "mute" | "leave" | "sync",
   params: Record<string, unknown>, idempotencyKey: string,

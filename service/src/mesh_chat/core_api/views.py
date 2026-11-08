@@ -709,3 +709,11 @@ def workspace_channel_state_view(profile, workspace, channel, state):
     if channel is not None:
         result["channel"] = channel
     return result
+
+
+def workspace_member_remove_view(profile, workspace, member, state):
+    if (any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
+            for item in (profile, workspace, member)) or state != "removed"):
+        raise ValueError("Invalid member removal observation")
+    return {"profile": profile, "workspace": workspace, "member": member,
+            "state": state}

@@ -99,20 +99,21 @@ const api = vi.hoisted(() => {
   coreApiRequestDeviceRemoval: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiDecideDeviceRemoval: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiWorkspaceDeviceLinkDecision: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
-  coreApiUpdateChannelMembers: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiUpdateChannelMembers: vi.fn(async (_handle: string, channelHandle: string, members: string[], key: string): Promise<unknown> => serviceCommand("update_workspace_private_channel_members", { workspace_id: workspace.id, channel_id: channelHandle === "workspace-channel-handle" ? "77777777-7777-4777-8777-777777777777" : channelHandle, member_ids: members, operation_id: key })),
   coreApiOfferChannelTransfer: vi.fn(async (_handle: string, channelHandle: string, memberHandle: string, key: string): Promise<unknown> =>
     serviceCommand("offer_workspace_channel_transfer", { workspace_id: workspace.id, channel_id: channelHandle === "channel-handle-field" ? "55555555-5555-4555-8555-555555555555" : workspaceChannel.id, successor_member_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", operation_id: key })),
   coreApiAcceptChannelTransfer: vi.fn(async (_handle: string, channelHandle: string, key: string): Promise<unknown> =>
     serviceCommand("accept_workspace_channel_transfer", { workspace_id: workspace.id, channel_id: channelHandle, transfer_id: "transfer-local", operation_id: key })),
   coreApiUpdateWorkspaceChannel: vi.fn(async (_handle: string, channelHandle: string, name: string, topic: string, archived: boolean, key: string): Promise<unknown> =>
     serviceCommand("update_workspace_channel", { workspace_id: workspace.id, channel_id: channelHandle === "channel-handle-field" ? "55555555-5555-4555-8555-555555555555" : workspaceChannel.id, name, topic, archived, operation_id: key })),
-  coreApiCreateWorkspaceChannel: vi.fn(async (..._args: unknown[]): Promise<{ channel: string; name: string }> => { throw new Error("core_api_unavailable"); }),
+  coreApiCreateWorkspaceChannel: vi.fn(async (_handle: string, name: string, topic: string, visibility: string, members: string[], key: string): Promise<{ channel: string; name: string }> => serviceCommand("create_workspace_channel", { workspace_id: workspace.id, name, topic, visibility, member_ids: members, operation_id: key }) as Promise<{ channel: string; name: string }>),
   coreApiWorkspaceChannelState: vi.fn(async (_handle: string, action: string, params: Record<string, unknown>, key: string): Promise<unknown> => {
     const command = action === "subscribe" ? "set_workspace_channel_subscription"
       : action === "mute" ? "set_workspace_channel_mentions_muted"
       : action === "leave" ? "leave_workspace_private_channel" : "sync_workspace_channels";
     return serviceCommand(command, { workspace_id: workspace.id, ...(params.channel ? { channel_id: params.channel === "workspace-channel-handle" ? workspaceChannel.id : params.channel } : {}), ...(typeof params.subscribed === "boolean" ? { subscribed: params.subscribed } : {}), ...(typeof params.muted === "boolean" ? { muted: params.muted } : {}), operation_id: key });
   }),
+  coreApiRemoveWorkspaceMember: vi.fn(async (_handle: string, memberHandle: string, key: string): Promise<unknown> => serviceCommand("remove_workspace_member", { workspace_id: workspace.id, member_id: memberHandle, operation_id: key })),
   coreApiRecoverWorkspaceChannel: vi.fn(async (_handle: string, channelHandle: string, key: string): Promise<unknown> =>
     serviceCommand("recover_workspace_channel", { workspace_id: workspace.id, channel_id: channelHandle === "channel-handle-field" ? "55555555-5555-4555-8555-555555555555" : "55555555-5555-4555-8555-555555555555", operation_id: key })),
   coreApiWorkspacePolicy: vi.fn(async (_handle: string, channelCreation: string, posting: string, invitationRequests: string, key: string): Promise<unknown> =>
@@ -6207,6 +6208,7 @@ describe("desktop workspaces", () => {
   it("exposes owner administration, name requests, and explicit propagation consent", async () => {
     const member = {
       id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      core_handle: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       display_name: "Bailey",
       role: "member" as const,
       status: "active" as const,
@@ -6375,7 +6377,10 @@ describe("desktop workspaces", () => {
       short_id: "aaaaaa",
       device: { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", destination_hash: "99".repeat(16), fingerprint: "BBBB CCCC DDDD EEEE" },
     };
-    const withMember: Workspace = { ...workspace, members: [...workspace.members, member] };
+    const withMember: Workspace = { ...workspace, members: [
+      ...workspace.members.map((item) => ({ ...item, core_handle: item.id })),
+      { ...member, core_handle: member.id },
+    ] };
     const privateChannel: WorkspaceChannel = {
       ...workspaceChannel,
       id: "77777777-7777-4777-8777-777777777777",

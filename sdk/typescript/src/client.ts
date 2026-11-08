@@ -558,6 +558,12 @@ export class CoreClient {
       { idempotencyKey });
   }
 
+  async workspaceMemberRemove(profile: string, workspace: string, member: string,
+                               idempotencyKey: string): Promise<unknown> {
+    return this.request("workspace.member_remove",
+      { profile, workspace, member }, { idempotencyKey });
+  }
+
   async workspaceChannelState(profile: string, workspace: string, action: string,
                               params: Record<string, unknown>, idempotencyKey: string): Promise<unknown> {
     return this.request("workspace.channel_state",
