@@ -17,6 +17,7 @@ class PairingRequest:
 
 
 class Pairing(Protocol):
+    def contact_invitation(self, profile: str, action: str, params: dict) -> dict: ...
     """Accept one signed invitation and send a signed request to a known peer."""
 
     def accept(self, profile: str, document: str, *, i2p_consent: bool = False) -> PairingObservation: ...

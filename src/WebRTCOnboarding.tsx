@@ -3,7 +3,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { Check, Copy, Phone, RefreshCw, X } from "lucide-react";
 
 import { coreApiCreateInvitation, desktopServiceHealth, loadCallIceServers,
-  loadCallSettings, saveCallSettings, coreApiCallControl, coreApiCreateWorkspaceInvitation, serviceCommand, onServiceEvent, type ServiceEvent } from "./api";
+  loadCallSettings, saveCallSettings, coreApiCallControl, coreApiCreateWorkspaceInvitation, coreApiContactInvitation, serviceCommand, onServiceEvent, type ServiceEvent } from "./api";
 import { attachWebRTCBridge, isWindowsWebRTCPlatform, shouldAutoCloseWebRTCOnboarding, webRTCWindowsChecklist, type WebRTCBridge } from "./webrtc-onboarding";
 import { usesServiceWebRTCTransport, nativeWebRTCAccept, nativeWebRTCApplyAnswer, nativeWebRTCClose, nativeWebRTCControl, nativeWebRTCOffer, nativeWebRTCStats, type NativeChannelSpec } from "./native-webrtc";
 import { rememberWebRTCDiagnostics } from "./webrtc-diagnostics";
@@ -533,12 +533,12 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
     if (message.type === "contact_invitation" && roleRef.current === "join") {
       if (typeof message.document !== "string" || !message.document) return;
       try {
-        const saved = await serviceCommand<ContactInvitation>("receive_contact_invitation", {
+        const saved = await coreApiContactInvitation("receive", {
           document: message.document,
-          peer_destination: peerDestinationRef.current,
+          peer: peerDestinationRef.current,
           ...(typeof message.workspace_document === "string" && message.workspace_document
             ? { workspace_document: message.workspace_document } : {}),
-        });
+        }) as unknown as ContactInvitation;
         await onChanged();
         if (!current()) return;
         if (saved.state !== "pending") {

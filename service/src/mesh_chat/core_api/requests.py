@@ -27,6 +27,7 @@ GROUP_OPERATIONS = ("group.query", "group.create", "group.message_enqueue",
                     "group.invitation_accept", "group.invitation_decline",
                     "group.invitation_retry")
 PAIRING_OPERATIONS = ("peer.pairing_accept",)
+CONTACT_INVITATION_OPERATIONS = ("contact.invitation",)
 REQUEST_OPERATIONS = ("peer.pairing_request",)
 INVITATION_OPERATIONS = ("peer.pairing_create",)
 STOP_OPERATIONS = ("runtime.stop",)
@@ -966,6 +967,31 @@ def parse_request(value, operations):
                        for item in params.values())):
             raise ApiFailure("invalid_request")
         return operation, params
+    if operation in CONTACT_INVITATION_OPERATIONS:
+        params = value["params"]
+        action = params.get("action") if isinstance(params, dict) else None
+        if action == "receive":
+            required = {"profile", "action", "document", "peer"}
+            allowed = required | {"workspace_document"}
+        elif action == "decide":
+            required = {"profile", "action", "invitation", "accept"}
+            allowed = required
+        else:
+            raise ApiFailure("invalid_request")
+        if not isinstance(params, dict) or set(params) != allowed:
+            raise ApiFailure("invalid_request")
+        if not isinstance(params["profile"], str) or HANDLE.fullmatch(params["profile"]) is None:
+            raise ApiFailure("invalid_request")
+        if action == "receive":
+            if (not isinstance(params["document"], str) or not params["document"]
+                    or not isinstance(params["peer"], str) or not params["peer"]
+                    or ("workspace_document" in params
+                        and (not isinstance(params["workspace_document"], str)
+                             or not params["workspace_document"]))):
+                raise ApiFailure("invalid_request")
+        elif not isinstance(params["invitation"], str) or type(params["accept"]) is not bool:
+            raise ApiFailure("invalid_request")
+        return operation, params
     if operation in PAIRING_OPERATIONS:
         params = value["params"]
         if (not isinstance(params, dict)
@@ -1201,6 +1227,7 @@ COMPONENT_OPERATIONS = (
     + GROUP_OPERATIONS
     + GROUP_DRAFT_OPERATIONS
     + PAIRING_OPERATIONS
+    + CONTACT_INVITATION_OPERATIONS
     + REQUEST_OPERATIONS
     + INVITATION_OPERATIONS
     + STOP_OPERATIONS

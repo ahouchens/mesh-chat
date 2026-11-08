@@ -57,3 +57,21 @@ class ServicePairing:
             if not isinstance(document, str) or not 1 <= len(document) <= 65536:
                 raise ApiFailure("internal")
             return PairingRequest(contact_id, document)
+
+
+    def contact_invitation(self, profile, action, params):
+        self._require_local(profile)
+        with storage_errors():
+            try:
+                if action == "receive":
+                    result = self._service.receive_contact_invitation(
+                        params["document"], params["peer"],
+                        params.get("workspace_document"))
+                elif action == "decide":
+                    result = self._service.decide_contact_invitation(
+                        params["invitation"], params["accept"])
+                else:
+                    raise ApiFailure("invalid_request")
+            except (ValidationError, InvitationInvalid, InvitationExpired) as error:
+                raise ApiFailure("invalid_request") from error
+            return dict(result) if isinstance(result, dict) else {}

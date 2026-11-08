@@ -76,7 +76,7 @@
           "type": "array",
           "uniqueItems": true,
           "minItems": 3,
-          "maxItems": 113,
+          "maxItems": 114,
           "items": {
             "enum": [
               "application.snapshot",
@@ -161,6 +161,7 @@
               "conversation.mutate",
               "peer.decide",
               "link.preview",
+              "contact.invitation",
               "workspace.device_link_create",
               "workspace.device_link_preview",
               "workspace.device_link_submit",

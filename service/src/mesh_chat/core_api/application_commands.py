@@ -13,8 +13,6 @@ APPLICATION_COMMANDS = frozenset({
     "create_invitation",
     "preview_invitation",
     "accept_invitation",
-    "receive_contact_invitation",
-    "decide_contact_invitation",
     "create_connection_reply",
     "preview_connection_reply",
     "connect_using_reply",

@@ -2812,6 +2812,33 @@
     {
       "type": "object",
       "properties": {
+        "api_version": {"const": 1},
+        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"},
+        "operation": {"const": "contact.invitation"},
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {"": "#//handle"},
+            "action": {"enum": ["receive", "decide"]},
+            "document": {"type": "string", "minLength": 1, "maxLength": 1048576},
+            "peer": {"type": "string", "minLength": 1, "maxLength": 160},
+            "workspace_document": {"type": "string", "minLength": 1, "maxLength": 1048576},
+            "invitation": {"type": "string", "minLength": 1, "maxLength": 160},
+            "accept": {"type": "boolean"}
+          },
+          "required": ["profile", "action"],
+          "additionalProperties": false
+        },
+        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"}
+      },
+      "required": ["api_version", "request_id", "operation", "params"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
         "api_version": {
           "const": 1
         },

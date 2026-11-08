@@ -44,7 +44,7 @@ from .diagnostics import Diagnostics, MAX_DIAGNOSTICS, MAX_DIAGNOSTIC_BYTES
 from .diagnostic_views import diagnostics_view
 from .requests import (
     CURSOR, DIAGNOSTIC_OPERATIONS, INTENT_OPERATIONS, MESSAGE_OPERATIONS, OPERATIONS,
-    INVITATION_OPERATIONS, PAIRING_OPERATIONS, RECEIVED_OPERATIONS, RECOVERY_OPERATIONS,
+    INVITATION_OPERATIONS, PAIRING_OPERATIONS, CONTACT_INVITATION_OPERATIONS, RECEIVED_OPERATIONS, RECOVERY_OPERATIONS,
     APPLICATION_OPERATIONS, CALL_OPERATIONS, CALL_CONTROL_OPERATIONS, COMPONENT_OPERATIONS, DRAFT_OPERATIONS,
     GROUP_OPERATIONS, GROUP_DRAFT_OPERATIONS, REACTION_OPERATIONS, RELATIONSHIP_OPERATIONS, SETTINGS_OPERATIONS, REQUEST_OPERATIONS, STOP_OPERATIONS,
     WORKSPACE_APPROVE_OPERATIONS, WORKSPACE_DECLINE_OPERATIONS, WORKSPACE_JOIN_OPERATIONS,
@@ -300,6 +300,7 @@ class CoreSession:
             (GROUP_OPERATIONS, self._groups),
             (GROUP_DRAFT_OPERATIONS, self._groups),
             (PAIRING_OPERATIONS, self._pairing),
+            (CONTACT_INVITATION_OPERATIONS, self._pairing),
             (REQUEST_OPERATIONS, self._pairing),
             (INVITATION_OPERATIONS, self._invitations),
             (STOP_OPERATIONS, self._lifecycle),
@@ -655,6 +656,13 @@ class CoreSession:
             return draft_view(params["profile"], params["peer"], observation)
         if operation in RELATIONSHIP_OPERATIONS:
             return self._relationship_operation(grant, profile, operation, params)
+        if operation in CONTACT_INVITATION_OPERATIONS:
+            target = profiles.get(params["profile"])
+            if target is None:
+                raise ApiFailure("forbidden")
+            result = self._pairing.contact_invitation(
+                target, params["action"], params)
+            return {"contact_invitation": result}
         if operation in PAIRING_OPERATIONS:
             return self._pairing_operation(grant, profile, params)
         if operation in REQUEST_OPERATIONS:

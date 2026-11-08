@@ -133,6 +133,8 @@ def test_each_designed_operation_has_an_executable_request_vector_and_permission
           "target_id": "c1"},
         "peer.decide": {"peer": handle, "accept": False},
         "link.preview": {"provider": "youtube", "identifier": "abc"},
+        "contact.invitation": {"action": "receive", "document": "doc",
+          "peer": "p1"},
         "runtime.query": {"action": "background"},
         "runtime.mutate": {"action": "notification_previews",
           "hidden": True},

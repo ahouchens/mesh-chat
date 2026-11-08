@@ -562,6 +562,11 @@ export class CoreClient {
     return this.request("peer.decide", { profile, peer, accept });
   }
 
+  async contactInvitation(profile: string, action: string,
+                           params: Record<string, unknown>): Promise<unknown> {
+    return this.request("contact.invitation", { profile, action, ...params });
+  }
+
   async linkPreview(profile: string, provider: string, identifier: string): Promise<unknown> {
     return this.request("link.preview", { profile, provider, identifier });
   }

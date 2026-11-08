@@ -281,6 +281,10 @@ class CoreClient:
         return self.request("peer.decide",
                             {"profile": handle, "peer": peer, "accept": accept})
 
+    def contact_invitation(self, handle, action, **params):
+        return self.request("contact.invitation",
+                            {"profile": handle, "action": action, **params})
+
     def link_preview(self, handle, provider, identifier):
         return self.request("link.preview",
                             {"profile": handle, "provider": provider,

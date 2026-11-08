@@ -116,6 +116,7 @@ import {
   coreApiUpdatePeer,
   coreApiConversation,
   coreApiDecidePeerRequest,
+  coreApiContactInvitation,
   coreApiWorkspaceReadHintSync,
   coreApiWorkspaceRetention,
   coreApiDecideDeviceRemoval,
@@ -6024,9 +6025,9 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     setInvitationBusy(invitation.id);
     setInvitationError("");
     try {
-      const accepted = await serviceCommand<{ id?: string; reconnect_capabilities?: string }>(
-        "decide_contact_invitation", { invitation_id: invitation.id, accept },
-      );
+      const accepted = await coreApiContactInvitation(
+        "decide", { invitation: invitation.id, accept },
+      ) as { id?: string; reconnect_capabilities?: string };
       for (const session of getWebRTCSessions()) {
         if (session.controlPurpose === "reconnect" || session.peerDestination !== invitation.preview.destination_hash) continue;
         if (accept && accepted.id) updateWebRTCSessionContact(accepted.id, session.key);

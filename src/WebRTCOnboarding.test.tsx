@@ -23,6 +23,11 @@ vi.mock("./api", () => ({
   loadCallIceServers: async () => mocks.serviceCommand("call_ice_servers"),
   loadCallSettings: async () => mocks.serviceCommand("call_settings"),
   saveCallSettings: async (settings: Record<string, unknown>) => mocks.serviceCommand("update_call_settings", settings),
+  coreApiContactInvitation: async (action: string, params: Record<string, unknown>) =>
+    mocks.serviceCommand(action === "decide" ? "decide_contact_invitation" : "receive_contact_invitation",
+      action === "decide" ? { invitation_id: params.invitation, accept: params.accept }
+        : { document: params.document, peer_destination: params.peer,
+            ...(params.workspace_document ? { workspace_document: params.workspace_document } : {}) }),
   onServiceEvent: mocks.onServiceEvent,
   desktopServiceHealth: mocks.desktopServiceHealth,
 }));

@@ -876,6 +876,16 @@ export async function coreApiWorkspaceMemberRole(
   );
 }
 
+export async function coreApiContactInvitation(
+  action: "receive" | "decide", params: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const profile = await coreApiProfile();
+  const result = await coreApiRequest("contact.invitation",
+    { profile: profile.profile, action, ...params }) as {
+      contact_invitation?: Record<string, unknown> };
+  return result.contact_invitation ?? {};
+}
+
 export async function coreApiLinkPreview(
   provider: string, identifier: string,
 ): Promise<Record<string, unknown>> {

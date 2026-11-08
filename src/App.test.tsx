@@ -115,6 +115,7 @@ const api = vi.hoisted(() => {
       : "open_notification_target", params)),
   coreApiWorkspaceAdminSubmit: vi.fn(async (_handle: string, kind: string, memberHandle: string | null, role: string | null, _note: string, key: string): Promise<unknown> =>
     serviceCommand("submit_workspace_admin_request", { workspace_id: workspace.id, request_kind: kind, ...(memberHandle ? { target_member_id: memberHandle } : {}), ...(role ? { requested_role: role } : {}), note: _note, operation_id: key })),
+  coreApiContactInvitation: vi.fn(async (action: string, params: Record<string, unknown>): Promise<unknown> => serviceCommand(action === "decide" ? "decide_contact_invitation" : "receive_contact_invitation", action === "decide" ? { invitation_id: params.invitation, accept: params.accept } : { document: params.document, peer_destination: params.peer, ...(params.workspace_document ? { workspace_document: params.workspace_document } : {}) })),
   coreApiDecidePeerRequest: vi.fn(async (destination: string, accept: boolean): Promise<unknown> => {
     const target = await api.coreApiPeerForDestination(destination);
     return api.coreApiRequest("peer.decide", { profile: target.profile, peer: target.peer, accept });

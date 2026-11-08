@@ -114,7 +114,8 @@
     "peer.update",
     "conversation.mutate",
     "peer.decide",
-    "link.preview"
+    "link.preview",
+    "contact.invitation"
   ],
   "operations": [
     {
@@ -955,6 +956,13 @@
       "permission": "send",
       "scope": "profile",
       "mutation": false,
+      "idempotency": "none"
+    },
+    {
+      "operation": "contact.invitation",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
       "idempotency": "none"
     }
   ],
