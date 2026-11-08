@@ -767,7 +767,6 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "connection_diagnostics"
             | "clear_connection_diagnostics"
             | "cancel_direct_setup"
-            | "submit_workspace_join"
             | "start_workspace_history"
             | "cancel_workspace_history"
             | "workspace_connectivity"
@@ -2242,7 +2241,6 @@ mod tests {
             "clear_connection_diagnostics",
             "cancel_direct_setup",
             "create_workspace",
-            "submit_workspace_join",
             "start_workspace_history",
             "cancel_workspace_history",
             "workspace_connectivity",

@@ -631,7 +631,10 @@ def parse_request(value, operations):
         return operation, params
     if operation in WORKSPACE_DEVICE_LINK_SUBMIT_OPERATIONS:
         params = value["params"]
-        if (not isinstance(params, dict) or set(params) != {"profile", "document"}
+        if (not isinstance(params, dict)
+                or not {"profile", "document"} <= set(params)
+                or set(params) - {"profile", "document", "i2p_consent"}
+                or ("i2p_consent" in params and type(params["i2p_consent"]) is not bool)
                 or "idempotency_key" not in value
                 or not isinstance(params["profile"], str)
                 or HANDLE.fullmatch(params["profile"]) is None

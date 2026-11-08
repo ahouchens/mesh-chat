@@ -42,13 +42,13 @@ class ServiceWorkspace:
             return WorkspacePreview(name, description, members, retention, float(expires),
                                     bool(preview.get("requires_i2p_consent", False)))
 
-    def join(self, profile, document, operation_id):
+    def join(self, profile, document, operation_id, i2p_consent=False):
         self._document(profile, document)
         if not isinstance(operation_id, str) or not operation_id:
             raise ApiFailure("invalid_request")
         with storage_errors():
             try:
-                workspace = self._service.submit_workspace_join(document, operation_id)
+                workspace = self._service.submit_workspace_join(document, operation_id, i2p_consent)
             except (ValidationError, InvitationInvalid, InvitationExpired) as error:
                 raise ApiFailure("invalid_request") from error
             workspace_id, name, state = (workspace.get("id"), workspace.get("name"),

@@ -78,6 +78,7 @@ import {
   coreApiCreateWorkspaceInvitation,
   coreApiRemoteProfile,
   coreApiPreviewWorkspaceInvitation,
+  coreApiJoinWorkspace,
   coreApiWorkspaceMemberRole,
   coreApiWorkspacePolicy,
   coreApiCreateWorkspaceChannel,
@@ -3732,10 +3733,12 @@ function JoinWorkspaceDialog({ initialValue = "", promptId, promptWorkspaceName,
       }
       if (!workspace) {
         if (devicePreview) throw new Error("core_api_unavailable");
-        workspace = await serviceCommand<Workspace>(command, {
-          operation_id: joinAttempt.current.operationId,
-          ...(devicePreview ? { device_link: document } : promptId ? { prompt_id: promptId } : { invitation: document, ...(preview?.i2p_access_point ? { i2p_consent: i2pConsent } : {}) }),
-        });
+        workspace = promptId
+          ? await serviceCommand<Workspace>("submit_workspace_invitation_prompt", {
+              operation_id: joinAttempt.current.operationId, prompt_id: promptId,
+            })
+          : await coreApiJoinWorkspace(
+              document, joinAttempt.current.operationId, i2pConsent) as Workspace;
       }
       if (workspace.connection_results?.length && !workspace.connection_results.some((item) => item.result === "connected")) {
         setConnectionResults(workspace.connection_results);

@@ -1035,7 +1035,8 @@ class CoreSession:
             if key is None:
                 raise ApiFailure("invalid_request")
             operation_id = self._operation_id(grant, target, key)
-            joined = self._workspace.join(target, params["document"], operation_id)
+            joined = self._workspace.join(target, params["document"], operation_id,
+                                         params.get("i2p_consent") is True)
             workspace = self._handle(grant, "workspace", target, joined.workspace)
             return workspace_join_view(params["profile"], workspace, joined)
 

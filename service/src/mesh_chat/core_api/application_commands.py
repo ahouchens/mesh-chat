@@ -95,7 +95,6 @@ APPLICATION_COMMANDS = frozenset({
     "connection_diagnostics",
     "clear_connection_diagnostics",
     "cancel_direct_setup",
-    "submit_workspace_join",
     "start_workspace_history",
     "cancel_workspace_history",
     "workspace_connectivity",

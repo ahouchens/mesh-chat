@@ -350,6 +350,15 @@ export async function coreApiSendGroupMessage(group: string, text: string): Prom
   });
 }
 
+export async function coreApiJoinWorkspace(
+  document: string, idempotencyKey: string, i2pConsent = false,
+): Promise<unknown> {
+  const profile = await coreApiProfile();
+  return coreApiRequest("workspace.join",
+    { profile: profile.profile, document,
+      ...(i2pConsent ? { i2p_consent: true } : {}) }, idempotencyKey);
+}
+
 export async function coreApiPreviewWorkspaceInvitation(
   document: string,
 ): Promise<unknown> {
