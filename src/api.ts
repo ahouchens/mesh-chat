@@ -876,6 +876,22 @@ export async function coreApiWorkspaceMemberRole(
   );
 }
 
+export async function coreApiLinkPreview(
+  provider: string, identifier: string,
+): Promise<Record<string, unknown>> {
+  const profile = await coreApiProfile();
+  return await coreApiRequest("link.preview",
+    { profile: profile.profile, provider, identifier }) as Record<string, unknown>;
+}
+
+export async function coreApiDecidePeerRequest(
+  destination: string, accept: boolean,
+): Promise<unknown> {
+  const target = await coreApiPeerForDestination(destination);
+  return coreApiRequest("peer.decide",
+    { profile: target.profile, peer: target.peer, accept });
+}
+
 export async function coreApiConversation(
   action: "delete" | "restore", kind: "direct" | "group", targetId: string,
 ): Promise<Record<string, unknown>> {

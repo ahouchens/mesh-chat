@@ -112,7 +112,9 @@
     "workspace.direct_open",
     "route.update",
     "peer.update",
-    "conversation.mutate"
+    "conversation.mutate",
+    "peer.decide",
+    "link.preview"
   ],
   "operations": [
     {
@@ -939,6 +941,20 @@
       "permission": "send",
       "scope": "profile",
       "mutation": true,
+      "idempotency": "none"
+    },
+    {
+      "operation": "peer.decide",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "none"
+    },
+    {
+      "operation": "link.preview",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": false,
       "idempotency": "none"
     }
   ],

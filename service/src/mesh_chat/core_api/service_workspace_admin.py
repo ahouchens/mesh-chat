@@ -1240,3 +1240,12 @@ class ServiceWorkspaceAdmin:
             except ValidationError as error:
                 raise ApiFailure("invalid_request") from error
             raise ApiFailure("invalid_request")
+
+
+    def link_preview(self, profile, provider, identifier):
+        self._require_local(profile)
+        with storage_errors():
+            try:
+                return dict(self._service._link_previews.get(provider, identifier))
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error

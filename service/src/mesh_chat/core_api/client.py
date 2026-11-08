@@ -277,6 +277,15 @@ class CoreClient:
                             {"profile": handle, "action": action, **params},
                             idempotency_key=key)
 
+    def peer_decide(self, handle, peer, accept):
+        return self.request("peer.decide",
+                            {"profile": handle, "peer": peer, "accept": accept})
+
+    def link_preview(self, handle, provider, identifier):
+        return self.request("link.preview",
+                            {"profile": handle, "provider": provider,
+                             "identifier": identifier})
+
     def conversation(self, handle, action, kind, target_id):
         return self.request("conversation.mutate",
                             {"profile": handle, "action": action, "kind": kind,

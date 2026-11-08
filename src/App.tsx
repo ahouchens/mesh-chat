@@ -115,6 +115,7 @@ import {
   coreApiRouteUpdate,
   coreApiUpdatePeer,
   coreApiConversation,
+  coreApiDecidePeerRequest,
   coreApiWorkspaceReadHintSync,
   coreApiWorkspaceRetention,
   coreApiDecideDeviceRemoval,
@@ -6057,10 +6058,11 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
         } catch { /* Fall back only when approval was not accepted by the facade. */ }
       }
       if (!approval) {
-        approval = await serviceCommand<{ reconnect_capabilities?: string }>(
-          accept ? "approve_request" : "decline_request",
-          { contact_id: contact.id },
-        );
+        approval = accept
+          ? await serviceCommand<{ reconnect_capabilities?: string }>(
+              "approve_request", { contact_id: contact.id })
+          : await coreApiDecidePeerRequest(
+              contact.destination_hash, false) as { reconnect_capabilities?: string };
       }
       try {
         const matching = getWebRTCSessionForContact(contact.id);

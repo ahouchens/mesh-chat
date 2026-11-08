@@ -105,3 +105,18 @@ class ServiceRelationship:
             except ValidationError as error:
                 raise ApiFailure("invalid_request") from error
             return self._observation(contact_id)
+
+
+    def decide(self, profile, contact_id, accept):
+        with storage_errors():
+            contact = self._contact(profile, contact_id)
+            if contact.get("trust") != TrustState.PENDING_REQUEST.value:
+                raise ApiFailure("forbidden")
+            try:
+                if accept:
+                    self._service.approve_request(contact_id)
+                else:
+                    self._service.decline_request(contact_id)
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            return self._observation(contact_id)

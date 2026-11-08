@@ -14,7 +14,7 @@ MESSAGE_OPERATIONS = ("peer.query", "message.enqueue", "message.query")
 RECOVERY_OPERATIONS = ("message.list", "events.poll", "events.ack")
 RECEIVED_OPERATIONS = ("message.received",)
 INTENT_OPERATIONS = ("connection.start", "connection.stop")
-RELATIONSHIP_OPERATIONS = ("peer.approve", "peer.revoke", "peer.unblock", "peer.delete", "peer.update")
+RELATIONSHIP_OPERATIONS = ("peer.approve", "peer.revoke", "peer.unblock", "peer.delete", "peer.update", "peer.decide")
 DRAFT_OPERATIONS = ("peer.draft_get", "peer.draft_set")
 CALL_CONTROL_OPERATIONS = ("call.control",)
 CALL_OPERATIONS = ("call.settings_query", "call.settings_update", "call.ice_servers",
@@ -55,6 +55,7 @@ WORKSPACE_DISPLAY_DECIDE_OPERATIONS = ("workspace.display_name_decide",)
 WORKSPACE_DIRECT_OPEN_OPERATIONS = ("workspace.direct_open",)
 ROUTE_UPDATE_OPERATIONS = ("route.update",)
 CONVERSATION_OPERATIONS = ("conversation.mutate",)
+LINK_PREVIEW_OPERATIONS = ("link.preview",)
 WORKSPACE_DEVICE_LINK_CREATE_OPERATIONS = ("workspace.device_link_create",)
 WORKSPACE_DEVICE_LINK_PREVIEW_OPERATIONS = ("workspace.device_link_preview",)
 WORKSPACE_DEVICE_LINK_SUBMIT_OPERATIONS = ("workspace.device_link_submit",)
@@ -664,6 +665,14 @@ def parse_request(value, operations):
                        for item in params.values())):
             raise ApiFailure("invalid_request")
         return operation, params
+    if operation in LINK_PREVIEW_OPERATIONS:
+        params = value["params"]
+        if (not isinstance(params, dict)
+                or set(params) != {"profile", "provider", "identifier"}
+                or any(not isinstance(params[key], str) or not params[key]
+                       for key in ("profile", "provider", "identifier"))):
+            raise ApiFailure("invalid_request")
+        return operation, params
     if operation in CONVERSATION_OPERATIONS:
         params = value["params"]
         if (not isinstance(params, dict)
@@ -1087,6 +1096,14 @@ def parse_request(value, operations):
         return operation, params
     if operation in RELATIONSHIP_OPERATIONS:
         params = value["params"]
+        if operation == "peer.decide":
+            if (not isinstance(params, dict)
+                    or set(params) != {"profile", "peer", "accept"}
+                    or any(not isinstance(params[key], str) or HANDLE.fullmatch(params[key]) is None
+                           for key in ("profile", "peer"))
+                    or type(params["accept"]) is not bool):
+                raise ApiFailure("invalid_request")
+            return operation, params
         if operation == "peer.update":
             action = params.get("action") if isinstance(params, dict) else None
             expected = {"profile", "peer", "action"}
@@ -1212,6 +1229,7 @@ COMPONENT_OPERATIONS = (
     + WORKSPACE_DIRECT_OPEN_OPERATIONS
     + ROUTE_UPDATE_OPERATIONS
     + CONVERSATION_OPERATIONS
+    + LINK_PREVIEW_OPERATIONS
     + WORKSPACE_DEVICE_LINK_CREATE_OPERATIONS
     + WORKSPACE_DEVICE_LINK_PREVIEW_OPERATIONS
     + WORKSPACE_DEVICE_LINK_SUBMIT_OPERATIONS

@@ -343,6 +343,14 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         return dispatch("runtime.mutate", payload, idempotencyKey)
     }
 
+    fun peerDecide(profile: String, peer: String, accept: Boolean): JSONObject =
+        dispatch("peer.decide", JSONObject().put("profile", profile)
+            .put("peer", peer).put("accept", accept), null)
+
+    fun linkPreview(profile: String, provider: String, identifier: String): JSONObject =
+        dispatch("link.preview", JSONObject().put("profile", profile)
+            .put("provider", provider).put("identifier", identifier), null)
+
     fun conversation(profile: String, action: String, kind: String,
                      targetId: String): JSONObject =
         dispatch("conversation.mutate", JSONObject().put("profile", profile)
