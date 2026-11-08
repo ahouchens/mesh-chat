@@ -281,6 +281,9 @@ class CoreClient:
         return self.request("peer.decide",
                             {"profile": handle, "peer": peer, "accept": accept})
 
+    def remote_profiles(self, handle):
+        return self.request("remote_profile.query", {"profile": handle})
+
     def connection_support(self, handle, action, **params):
         return self.request("connection.support",
                             {"profile": handle, "action": action, **params})

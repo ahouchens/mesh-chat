@@ -1179,6 +1179,8 @@ class ServiceWorkspaceAdmin:
                     result = self._service.remove_remote_profile(params["remote_profile_id"])
                 elif action == "remove_propagation":
                     result = self._service.remove_remote_propagation(params["remote_profile_id"])
+                elif action == "approve_propagation":
+                    result = self._service.approve_remote_propagation(params["remote_profile_id"])
                 else:
                     raise ApiFailure("invalid_request")
             except ValidationError as error:
@@ -1265,3 +1267,9 @@ class ServiceWorkspaceAdmin:
                     self._store.delete("connection_diagnostics", "history")
                 return dict(report(self._service))
             raise ApiFailure("invalid_request")
+
+
+    def remote_profiles(self, profile):
+        self._require_local(profile)
+        with storage_errors():
+            return dict(self._service.list_remote_profiles())

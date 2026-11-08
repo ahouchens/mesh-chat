@@ -117,7 +117,8 @@
     "link.preview",
     "contact.invitation",
     "recovery.transfer",
-    "connection.support"
+    "connection.support",
+    "remote_profile.query"
   ],
   "operations": [
     {
@@ -979,6 +980,13 @@
       "permission": "send",
       "scope": "profile",
       "mutation": true,
+      "idempotency": "none"
+    },
+    {
+      "operation": "remote_profile.query",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": false,
       "idempotency": "none"
     }
   ],

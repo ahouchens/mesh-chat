@@ -77,6 +77,7 @@ import {
   coreApiWorkspaceJoinDecision,
   coreApiCreateWorkspaceInvitation,
   coreApiRemoteProfile,
+  coreApiRemoteProfiles,
   coreApiPreviewWorkspaceInvitation,
   coreApiJoinWorkspace,
   coreApiWorkspaceMemberRole,
@@ -2604,8 +2605,8 @@ function RemoteConnectionsSettings({ initial, onChanged, onEditStateChange }: { 
   const dirty = adding && Boolean(label || host || port !== "4242" || propagation || allowPrivate);
   useEffect(() => { onEditStateChange?.({ dirty, busy: busy !== null }); }, [dirty, busy, onEditStateChange]);
   const reload = async () => {
-    const result = await serviceCommand<{ profiles: RemoteProfile[] }>("list_remote_profiles");
-    setProfiles(result.profiles);
+    const result = await coreApiRemoteProfiles() as { profiles?: RemoteProfile[] };
+    setProfiles(result.profiles ?? []);
   };
   const run = async (command: string, profileId: string) => {
     setBusy(profileId); setError("");

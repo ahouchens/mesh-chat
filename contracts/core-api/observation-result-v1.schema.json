@@ -76,7 +76,7 @@
           "type": "array",
           "uniqueItems": true,
           "minItems": 3,
-          "maxItems": 116,
+          "maxItems": 117,
           "items": {
             "enum": [
               "application.snapshot",
@@ -164,6 +164,7 @@
               "contact.invitation",
               "recovery.transfer",
               "connection.support",
+              "remote_profile.query",
               "workspace.device_link_create",
               "workspace.device_link_preview",
               "workspace.device_link_submit",

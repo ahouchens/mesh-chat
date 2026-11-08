@@ -53,6 +53,7 @@ WORKSPACE_CHANNEL_STATE_OPERATIONS = ("workspace.channel_state",)
 WORKSPACE_MEMBER_REMOVE_OPERATIONS = ("workspace.member_remove",)
 WORKSPACE_DRAFT_OPERATIONS = ("workspace.draft_set",)
 REMOTE_PROFILE_OPERATIONS = ("remote_profile.mutate",)
+REMOTE_PROFILE_QUERY_OPERATIONS = ("remote_profile.query",)
 WORKSPACE_DISPLAY_DECIDE_OPERATIONS = ("workspace.display_name_decide",)
 WORKSPACE_DIRECT_OPEN_OPERATIONS = ("workspace.direct_open",)
 ROUTE_UPDATE_OPERATIONS = ("route.update",)
@@ -750,10 +751,18 @@ def parse_request(value, operations):
                 or type(params["approve"]) is not bool):
             raise ApiFailure("invalid_request")
         return operation, params
+    if operation in REMOTE_PROFILE_QUERY_OPERATIONS:
+        params = value["params"]
+        if (not isinstance(params, dict) or set(params) != {"profile"}
+                or not isinstance(params["profile"], str)
+                or HANDLE.fullmatch(params["profile"]) is None):
+            raise ApiFailure("invalid_request")
+        return operation, params
     if operation in REMOTE_PROFILE_OPERATIONS:
         params = value["params"]
         action = params.get("action") if isinstance(params, dict) else None
-        if action not in {"create", "test", "retry", "remove", "remove_propagation"}:
+        if action not in {"create", "test", "retry", "remove", "remove_propagation",
+                          "approve_propagation"}:
             raise ApiFailure("invalid_request")
         allowed = {"profile", "action"}
         if action == "create":
@@ -1281,6 +1290,7 @@ COMPONENT_OPERATIONS = (
     + WORKSPACE_MEMBER_REMOVE_OPERATIONS
     + WORKSPACE_DRAFT_OPERATIONS
     + REMOTE_PROFILE_OPERATIONS
+    + REMOTE_PROFILE_QUERY_OPERATIONS
     + WORKSPACE_DISPLAY_DECIDE_OPERATIONS
     + WORKSPACE_DIRECT_OPEN_OPERATIONS
     + ROUTE_UPDATE_OPERATIONS

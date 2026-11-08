@@ -688,8 +688,6 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "create_connection_reply"
             | "preview_connection_reply"
             | "connect_using_reply"
-            | "list_remote_profiles"
-            | "approve_remote_propagation"
             | "check_direct_connection"
             | "prepare_manual_participant_host"
             | "configure_participant_firewall"
@@ -2184,8 +2182,6 @@ mod tests {
         assert!(allowed_renderer_command("set_message_reaction"));
         assert!(!allowed_renderer_command("delete_contact_identity"));
         for command in [
-            "list_remote_profiles",
-            "approve_remote_propagation",
             "stop_participant_host",
         ] {
             assert!(allowed_renderer_command(command), "{command}");

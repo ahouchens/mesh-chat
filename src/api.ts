@@ -965,8 +965,14 @@ export async function coreApiWorkspaceDisplayNameDecision(
     { profile: profile.profile, workspace, request, approve }, idempotencyKey);
 }
 
+export async function coreApiRemoteProfiles(): Promise<Record<string, unknown>> {
+  const profile = await coreApiProfile();
+  return await coreApiRequest("remote_profile.query",
+    { profile: profile.profile }) as Record<string, unknown>;
+}
+
 export async function coreApiRemoteProfile(
-  action: "create" | "test" | "retry" | "remove" | "remove_propagation",
+  action: "create" | "test" | "retry" | "remove" | "remove_propagation" | "approve_propagation",
   params: Record<string, unknown>, idempotencyKey: string = crypto.randomUUID(),
 ): Promise<unknown> {
   const profile = await coreApiProfile();

@@ -347,6 +347,9 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         dispatch("peer.decide", JSONObject().put("profile", profile)
             .put("peer", peer).put("accept", accept), null)
 
+    fun remoteProfiles(profile: String): JSONObject =
+        dispatch("remote_profile.query", JSONObject().put("profile", profile), null)
+
     fun connectionSupport(profile: String, action: String, params: JSONObject): JSONObject {
         val payload = JSONObject().put("profile", profile).put("action", action)
         val keys = params.keys()

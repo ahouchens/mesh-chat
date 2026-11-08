@@ -562,6 +562,10 @@ export class CoreClient {
     return this.request("peer.decide", { profile, peer, accept });
   }
 
+  async remoteProfiles(profile: string): Promise<unknown> {
+    return this.request("remote_profile.query", { profile });
+  }
+
   async connectionSupport(profile: string, action: string,
                           params: Record<string, unknown>): Promise<unknown> {
     return this.request("connection.support", { profile, action, ...params });

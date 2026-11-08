@@ -16,8 +16,6 @@ APPLICATION_COMMANDS = frozenset({
     "create_connection_reply",
     "preview_connection_reply",
     "connect_using_reply",
-    "list_remote_profiles",
-    "approve_remote_propagation",
     "check_direct_connection",
     "prepare_manual_participant_host",
     "configure_participant_firewall",
