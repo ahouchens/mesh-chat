@@ -350,6 +350,22 @@ export async function coreApiSendGroupMessage(group: string, text: string): Prom
   });
 }
 
+export async function coreApiPreviewWorkspaceInvitation(
+  document: string,
+): Promise<unknown> {
+  const profile = await coreApiProfile();
+  return coreApiRequest("workspace.invitation_preview",
+    { profile: profile.profile, document });
+}
+
+export async function coreApiCreateWorkspaceInvitation(
+  workspace: string, connection: Record<string, unknown>, idempotencyKey: string,
+): Promise<unknown> {
+  const profile = await coreApiProfile();
+  return coreApiRequest("workspace.invitation_create",
+    { profile: profile.profile, workspace, ...connection }, idempotencyKey);
+}
+
 export async function coreApiWorkspaceJoinDecision(
   workspace: string,
   request: string,

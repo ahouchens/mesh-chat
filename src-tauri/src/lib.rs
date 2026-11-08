@@ -96,7 +96,7 @@ fn renderer_payload_maximum(command: &str) -> usize {
         MAX_WORKSPACE_DEVICE_LINK_PAYLOAD_BYTES
     } else if matches!(
         command,
-        "preview_workspace_invitation" | "submit_workspace_join" | "create_connection_reply"
+        "submit_workspace_join" | "create_connection_reply"
     ) {
         MAX_WORKSPACE_INVITATION_PAYLOAD_BYTES
     } else if matches!(command, "preview_connection_reply" | "connect_using_reply") {
@@ -751,11 +751,8 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "connection_help"
             | "search"
             | "update_settings"
-            | "create_group"
             | "save_group_draft"
             | "create_workspace"
-            | "create_workspace_invitation"
-            | "preview_workspace_invitation"
             | "preview_direct_connection"
             | "prepare_direct_offer"
             | "prepare_direct_answer"
@@ -2266,8 +2263,6 @@ mod tests {
             "clear_connection_diagnostics",
             "cancel_direct_setup",
             "create_workspace",
-            "create_workspace_invitation",
-            "preview_workspace_invitation",
             "submit_workspace_join",
             "start_workspace_history",
             "cancel_workspace_history",

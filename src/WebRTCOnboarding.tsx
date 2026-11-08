@@ -3,7 +3,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { Check, Copy, Phone, RefreshCw, X } from "lucide-react";
 
 import { coreApiCreateInvitation, desktopServiceHealth, loadCallIceServers,
-  loadCallSettings, saveCallSettings, coreApiCallControl, serviceCommand, onServiceEvent, type ServiceEvent } from "./api";
+  loadCallSettings, saveCallSettings, coreApiCallControl, coreApiCreateWorkspaceInvitation, serviceCommand, onServiceEvent, type ServiceEvent } from "./api";
 import { attachWebRTCBridge, isWindowsWebRTCPlatform, shouldAutoCloseWebRTCOnboarding, webRTCWindowsChecklist, type WebRTCBridge } from "./webrtc-onboarding";
 import { usesServiceWebRTCTransport, nativeWebRTCAccept, nativeWebRTCApplyAnswer, nativeWebRTCClose, nativeWebRTCControl, nativeWebRTCOffer, nativeWebRTCStats, type NativeChannelSpec } from "./native-webrtc";
 import { rememberWebRTCDiagnostics } from "./webrtc-diagnostics";
@@ -190,7 +190,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
   onChanged: () => Promise<void>;
   onConnected?: (path: WebRTCSessionPath) => void;
   onFallback?: () => void;
-  workspaces?: Array<{ id: string; name: string }>;
+  workspaces?: Array<{ id: string; name: string; core_handle?: string }>;
   initialPairingCode?: string;
 }) {
   const [phase, setPhase] = useState<Phase>("choose");
@@ -497,13 +497,11 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       if (attemptRef.current !== attempt) return;
       let workspaceDocument: string | undefined;
       if (selectedWorkspaceId) {
-        const workspace = await serviceCommand<WorkspaceInvitationFormats>("create_workspace_invitation", {
-          operation_id: crypto.randomUUID(),
-          workspace_id: selectedWorkspaceId,
-          lifetime_days: 7,
-          connection_mode: "webrtc",
-        });
-        workspaceDocument = workspace.value;
+        const workspace = workspaces.find((item) => item.id === selectedWorkspaceId);
+        if (!workspace?.core_handle) throw new Error("core_api_unavailable");
+        const invitation = await coreApiCreateWorkspaceInvitation(
+          workspace.core_handle, { connection_mode: "webrtc" }, crypto.randomUUID());
+        workspaceDocument = (invitation as WorkspaceInvitationFormats).value;
       }
       if (attemptRef.current !== attempt) return;
       if (!(await sendControlText(JSON.stringify({ type: "contact_invitation", document: created.file, workspace_document: workspaceDocument })))) {

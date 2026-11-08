@@ -73,6 +73,8 @@ import {
   coreApiCallControl,
   coreApiGroupInvitation,
   coreApiWorkspaceJoinDecision,
+  coreApiCreateWorkspaceInvitation,
+  coreApiPreviewWorkspaceInvitation,
   coreApiWorkspaceMemberRole,
   coreApiWorkspacePolicy,
   coreApiCreateWorkspaceChannel,
@@ -1521,10 +1523,7 @@ function Onboarding({
             memberDisplayName: checked.member_display_name,
           });
         } else {
-          const checked = await serviceCommand<WorkspaceInvitationPreview>(
-            "preview_workspace_invitation",
-            { invitation: normalized },
-          );
+          const checked = await coreApiPreviewWorkspaceInvitation(normalized) as WorkspaceInvitationPreview;
           if (generation !== previewGeneration.current) return;
           setWorkspaceContext({
             kind: "workspace",
@@ -1999,13 +1998,8 @@ function CreateGroupDialog({
         return;
       } catch (reason) {
         if (!String(reason).includes("core_api_unavailable")) throw reason;
+        throw new Error("core_api_unavailable");
       }
-      const group = await serviceCommand<Group>("create_group", {
-        title: title.trim(),
-        member_ids: memberIds,
-        posting_policy: postingPolicy,
-      });
-      await onCreated(group);
     } catch (reason) {
       setError(errorMessage(reason));
       setBusy(false);
@@ -3685,7 +3679,7 @@ function JoinWorkspaceDialog({ initialValue = "", promptId, promptWorkspaceName,
         const checked = promptId
           ? await fetchWorkspaceConnection(null, "prompt_preview", { prompt_id: promptId },
               "preview_workspace_invitation_prompt") as unknown as WorkspaceInvitationPreview
-          : await serviceCommand<WorkspaceInvitationPreview>("preview_workspace_invitation", { invitation: normalized });
+          : await coreApiPreviewWorkspaceInvitation(normalized) as WorkspaceInvitationPreview;
         if (generation !== reviewGeneration.current) return;
         setPreview(checked);
         setRemoteConsent(false); setI2PConsent(false);
@@ -3900,7 +3894,9 @@ function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles,
       if (connectionChoice === "webrtc" && webrtcControls.length !== 1) {
         throw new Error("Choose a verified contact for a specific WebRTC route, or keep exactly one WebRTC invitation session open.");
       }
-      const created = await serviceCommand<WorkspaceInvitationFormats>("create_workspace_invitation", { operation_id: newOperationId(), workspace_id: workspace.id, lifetime_days: 7, ...connection });
+      if (!workspace.core_handle) throw new Error("core_api_unavailable");
+      const created = await coreApiCreateWorkspaceInvitation(
+        workspace.core_handle, connection, newOperationId()) as WorkspaceInvitationFormats;
       if (connectionChoice === "webrtc") {
         const control = webrtcControls[0].control;
         if (!control || control.readyState !== "open") throw new Error("The WebRTC DataChannel is not open.");

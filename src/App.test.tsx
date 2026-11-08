@@ -11,7 +11,11 @@ const api = vi.hoisted(() => {
   coreApiAcceptInvitation: vi.fn(async (..._args: unknown[]): Promise<{ profile: string; peer: string; trust: string }> => { throw new Error("core_api_unavailable"); }),
   coreApiDraftGet: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiDraftSet: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
-  coreApiCreateGroup: vi.fn(async (..._args: unknown[]): Promise<{ group: string; name: string; posting_policy: string }> => { throw new Error("core_api_unavailable"); }),
+  coreApiCreateGroup: vi.fn(async (name: string, policy: string, destinations: string[]): Promise<{ group: string; name: string; posting_policy: string }> => {
+    const memberIds = destinations.map((destination) => destination === approved.destination_hash ? approved.id : destination);
+    const created = await serviceCommand("create_group", { title: name, member_ids: memberIds, posting_policy: policy }) as { id?: string; title?: string; posting_policy?: string };
+    return { group: created.id ?? "group", name: created.title ?? name, posting_policy: created.posting_policy ?? policy };
+  }),
   coreApiCreateInvitation: vi.fn(async (..._args: unknown[]): Promise<{ profile: string; link: string; text: string; file: string; expires_at: number }> => { throw new Error("core_api_unavailable"); }),
   coreApiPeerForDestination: vi.fn(async (): Promise<{ profile: string; peer: string; destination: string }> => { throw new Error("core_api_unavailable"); }),
   coreApiRequest: vi.fn(async (): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
@@ -106,6 +110,8 @@ const api = vi.hoisted(() => {
     serviceCommand("accept_workspace_channel_transfer", { workspace_id: workspace.id, channel_id: channelHandle, transfer_id: "transfer-local", operation_id: key })),
   coreApiUpdateWorkspaceChannel: vi.fn(async (_handle: string, channelHandle: string, name: string, topic: string, archived: boolean, key: string): Promise<unknown> =>
     serviceCommand("update_workspace_channel", { workspace_id: workspace.id, channel_id: channelHandle === "channel-handle-field" ? "55555555-5555-4555-8555-555555555555" : workspaceChannel.id, name, topic, archived, operation_id: key })),
+  coreApiPreviewWorkspaceInvitation: vi.fn(async (document: string): Promise<unknown> => serviceCommand("preview_workspace_invitation", { invitation: document })),
+  coreApiCreateWorkspaceInvitation: vi.fn(async (_handle: string, connection: Record<string, unknown>, key: string): Promise<unknown> => serviceCommand("create_workspace_invitation", { workspace_id: workspace.id, lifetime_days: 7, ...connection, operation_id: key })),
   coreApiCreateWorkspaceChannel: vi.fn(async (_handle: string, name: string, topic: string, visibility: string, members: string[], key: string): Promise<{ channel: string; name: string }> => serviceCommand("create_workspace_channel", { workspace_id: workspace.id, name, topic, visibility, member_ids: members, operation_id: key }) as Promise<{ channel: string; name: string }>),
   coreApiWorkspaceChannelState: vi.fn(async (_handle: string, action: string, params: Record<string, unknown>, key: string): Promise<unknown> => {
     const command = action === "subscribe" ? "set_workspace_channel_subscription"
