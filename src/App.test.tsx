@@ -152,7 +152,7 @@ const api = vi.hoisted(() => {
     serviceCommand("recover_workspace_channel", { workspace_id: workspace.id, channel_id: channelHandle === "channel-handle-field" ? "55555555-5555-4555-8555-555555555555" : "55555555-5555-4555-8555-555555555555", operation_id: key })),
   coreApiWorkspacePolicy: vi.fn(async (_handle: string, channelCreation: string, posting: string, invitationRequests: string, key: string): Promise<unknown> =>
     serviceCommand("update_workspace_policies", { workspace_id: workspace.id, channel_creation: channelCreation, posting, invitation_requests: invitationRequests, operation_id: key })),
-  coreApiWorkspaceMemberRole: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiWorkspaceMemberRole: vi.fn(async (_handle: string, memberHandle: string, role: string, key: string): Promise<unknown> => serviceCommand("change_workspace_role", { workspace_id: workspace.id, member_id: memberHandle, role, operation_id: key })),
   coreApiWorkspaceJoinDecision: vi.fn(async (_handle: string, requestHandle: string, accept: boolean, key: string): Promise<unknown> => serviceCommand(accept ? "approve_workspace_join" : "decline_workspace_join", { workspace_id: workspace.id, request_id: requestHandle, operation_id: key })),
   coreApiGroupInvitation: vi.fn(async (_handle: string, accept: boolean): Promise<unknown> => serviceCommand(accept ? "accept_group_invitation" : "decline_group_invitation", { invitation_id: groupInvitation.id })),
   coreApiGroupDraftSet: vi.fn(async (_handle: string, text: string): Promise<unknown> => serviceCommand("save_group_draft", { group_id: group.id, text })),
@@ -4926,7 +4926,11 @@ describe("desktop workspaces", () => {
       state: "pending",
       created_at: 5,
     };
-    const ownerWorkspace: Workspace = { ...workspace, pending_owner_review_count: 1 };
+    const ownerWorkspace: Workspace = { ...workspace, pending_owner_review_count: 1,
+      members: [...workspace.members, { id: request.member_id, core_handle: request.member_id,
+        display_name: request.display_name, role: "member", status: "active",
+        short_id: "aaaaaa", device: { id: request.device_id, destination_hash: request.destination_hash,
+          fingerprint: request.fingerprint } }] };
     let current: Snapshot = {
       ...snapshot(),
       workspaces: [workspace],

@@ -774,7 +774,6 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "submit_workspace_join"
             | "start_workspace_history"
             | "cancel_workspace_history"
-            | "change_workspace_role"
             | "workspace_connectivity"
             | "workspace_helper_status"
             | "workspace_helper_consent_set"
@@ -2255,7 +2254,6 @@ mod tests {
             "submit_workspace_join",
             "start_workspace_history",
             "cancel_workspace_history",
-            "change_workspace_role",
             "workspace_connectivity",
             "workspace_helper_status",
             "workspace_helper_consent_set",
