@@ -227,13 +227,16 @@ describe("Core application serialization", () => {
     expect(requests("peer.composer_update")).toHaveLength(1);
   });
 
-  it("keeps profile content hidden and offers retry when native lock was not confirmed", async () => {
+  it.each([
+    new Error("service_write_failed"),
+    JSON.stringify({ code: "unavailable", outcome: "unknown", retry_after_ms: null }),
+  ])("keeps profile content hidden and offers retry when native lock rejects with %s", async (failure) => {
     render(<App />);
     await screen.findByRole("button", { name: "Lock Mesh Chat" });
     const original = host.invoke.getMockImplementation()!;
     // Lock is asynchronous behind the retirement barrier.
     host.invoke.mockImplementation(async (command, payload) => {
-      if (command === "lock_service") throw new Error("service_write_failed");
+      if (command === "lock_service") throw failure;
       return original(command, payload);
     });
     fireEvent.click(screen.getByRole("button", { name: "Lock Mesh Chat" }));
