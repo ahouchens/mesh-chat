@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ComposerHostFixture } from "./test/composer-host";
+import { callRecovery } from "./call-operation";
 
 import packageInfo from "../package.json";
 import type { ChatMessage, Contact, Group, GroupInvitation, GroupMessage, Snapshot, Workspace, WorkspaceAdminRequest, WorkspaceChannel, WorkspaceDirect, WorkspaceJoinRequest, WorkspaceMentionPage, WorkspaceMessage, WorkspaceMessagePage, WorkspaceSearchPage, WorkspaceThreadActivityPage, WorkspaceThreadPage } from "./types";
@@ -31,7 +32,14 @@ const api = vi.hoisted(() => {
   coreApiCreateWorkspace: vi.fn(async (name: string, description: string, key: string): Promise<unknown> => serviceCommand("create_workspace", { operation_id: key, name, description })),
   coreApiCreateInvitation: vi.fn(async (payload: Record<string, unknown>): Promise<unknown> => serviceCommand("create_invitation", payload)),
   coreApiPeerForDestination: vi.fn(async (_destination: string): Promise<{ profile: string; peer: string; destination: string }> => { throw new Error("core_api_unavailable"); }),
-  coreApiRequest: vi.fn(async (_operation: string, _params?: Record<string, unknown>): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiProfile: vi.fn(async () => ({ profile: "presentation-profile" })),
+  coreApiRequest: vi.fn(async (operation: string, params?: Record<string, unknown>): Promise<unknown> => {
+    if (operation === "call.control" && params) {
+      const { profile: _profile, action, ...payload } = params;
+      return { result: await api.coreApiCallControl(String(action), payload) };
+    }
+    throw new Error("core_api_unavailable");
+  }),
   coreApiCallControl: vi.fn(async (action: string, params: Record<string, unknown>): Promise<unknown> => {
     const command = action === "start" ? "start_call"
       : action === "answer" ? "answer_call"
@@ -506,12 +514,18 @@ async function directComposerInput(): Promise<HTMLTextAreaElement> {
 
 afterEach(async () => {
   cleanup();
-  await Promise.resolve();
+  await waitFor(() => expect(callRecovery.getSnapshot()).toHaveLength(0));
   vi.clearAllMocks();
   api.coreApiAcceptInvitation.mockImplementation(async (invitation: string, i2pConsent = false) => api.serviceCommand("accept_invitation", { invitation, ...(i2pConsent ? { i2p_consent: true } : {}) }));
   api.coreApiCreateInvitation.mockImplementation(async (payload: Record<string, unknown>) => api.serviceCommand("create_invitation", payload));
   api.coreApiPeerForDestination.mockImplementation(async () => { throw new Error("core_api_unavailable"); });
-  api.coreApiRequest.mockImplementation(async () => { throw new Error("core_api_unavailable"); });
+  api.coreApiRequest.mockImplementation(async (operation: string, params?: Record<string, unknown>) => {
+    if (operation === "call.control" && params) {
+      const { profile: _profile, action, ...payload } = params;
+      return { result: await api.coreApiCallControl(String(action), payload) };
+    }
+    throw new Error("core_api_unavailable");
+  });
   vi.unstubAllGlobals();
   window.localStorage.clear();
   document.documentElement.removeAttribute("data-theme");
@@ -2679,7 +2693,7 @@ describe("contact management", () => {
 
   it("shows and reviews an incoming call above Settings while its conversation pane is hidden", async () => {
     const call = {
-      id: "c".repeat(32), contact_id: approved.id, role: "callee" as const,
+      id: "c".repeat(32), core_handle: "call-incoming", contact_id: approved.id, role: "callee" as const,
       media: "audio" as const, state: "ringing" as const, direction: "inbound" as const,
       created_at: 1, updated_at: 1, expires_at: 2_000_000_000,
       candidate_count: 1, has_local_sdp: false, has_remote_sdp: true,
@@ -2693,7 +2707,7 @@ describe("contact management", () => {
       listener = callback;
       return () => undefined;
     });
-    api.serviceCommand.mockImplementation(async (command: string) => command === "snapshot" ? current : {});
+    api.serviceCommand.mockImplementation(async (command: string) => command === "snapshot" ? current : command === "call_media" ? call : {});
     render(<App />);
     await screen.findByLabelText("Conversation with Taylor");
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
@@ -2715,7 +2729,7 @@ describe("contact management", () => {
 
   it.each(["audio", "video"] as const)("preserves an accepted %s call through an early connection and failed refresh", async (media) => {
     const call = {
-      id: "c".repeat(32), contact_id: approved.id, role: "callee" as const,
+      id: "c".repeat(32), core_handle: "call-incoming", contact_id: approved.id, role: "callee" as const,
       media, state: "ringing" as const, direction: "inbound" as const,
       created_at: 1, updated_at: 1, expires_at: 2_000_000_000,
       candidate_count: 1, has_local_sdp: false, has_remote_sdp: true,
