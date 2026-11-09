@@ -1,9 +1,6 @@
-import { createContext, useContext } from "react";
-
-export class ProfileRetiredError extends Error {
-  readonly code = "profile_changed";
-  constructor() { super("The profile lifetime changed."); }
-}
+import { createContext, useCallback, useContext, useState } from "react";
+import { ProfileRetiredError, type CoreRequestAdmission } from "./core-admission";
+export { ProfileRetiredError } from "./core-admission";
 
 export const PROFILE_RETIREMENT_GRACE_MS = 1000;
 export type RetirementDisposition = "drained" | "pending";
@@ -96,3 +93,9 @@ export class ProfileLifetime {
 
 export const ProfileLifetimeContext = createContext<ProfileLifetime | null>(null);
 export const useProfileLifetime = () => useContext(ProfileLifetimeContext);
+
+export function useProfileRequestAdmission(): CoreRequestAdmission {
+  const lifetime = useProfileLifetime();
+  const [generation] = useState(() => lifetime?.capture());
+  return useCallback((request) => lifetime ? lifetime.mutate(generation!, request) : request(), [lifetime, generation]);
+}

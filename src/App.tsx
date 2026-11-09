@@ -1,7 +1,7 @@
 import { CallDialog, IncomingCallPrompt, type CallPeer } from "./CallDialog";
 import { CallRecoveryNotice } from "./CallRecoveryNotice";
-import { ProfileLifetime, ProfileLifetimeContext, ProfileRetiredError, useProfileLifetime } from "./profile-lifetime";
-import type { CoreRequestAdmission } from "./core-admission";
+import { ProfileLifetime, ProfileLifetimeContext, ProfileRetiredError, useProfileLifetime, useProfileRequestAdmission } from "./profile-lifetime";
+import { admitCoreRequest, type CoreRequestAdmission } from "./core-admission";
 import { workspaceConnectivityLabel, workspaceStateLabel, workspaceSyncIssueLabel } from "./workspaceLabels";
 import { contactTrustDescription, contactTrustLabel, groupComposerState, groupInvitationBanner, groupInviteDeliveryLabel, groupPolicyLabel, pluralize } from "./groupLabels";
 import { canPrepareDirectHost, directActionLabel, directPhaseLabel, directFailureReport, directReasonLabel, sanitizedDoctorSummary } from "./directLabels";
@@ -357,9 +357,10 @@ async function fetchWorkspaceAccessRecommendation(
   action: string,
   params: Record<string, unknown>,
   key?: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<Record<string, unknown>> {
   return await coreApiWorkspaceAccessRecommendation(
-    workspace.core_handle ?? "", action as never, params, key);
+    workspace.core_handle ?? "", action as never, params, key, admit);
 }
 
 async function fetchWorkspaceHistory(
@@ -367,9 +368,10 @@ async function fetchWorkspaceHistory(
   action: string,
   params: Record<string, unknown>,
   key?: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<Record<string, unknown>> {
   return await coreApiWorkspaceHistory(
-    workspace.core_handle ?? "", action as never, params, key);
+    workspace.core_handle ?? "", action as never, params, key, admit);
 }
 
 async function fetchWorkspaceConnection(
@@ -377,25 +379,26 @@ async function fetchWorkspaceConnection(
   action: string,
   params: Record<string, unknown>,
   key?: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<Record<string, unknown>> {
   return await coreApiWorkspaceConnection(
-    workspace?.core_handle ?? null, action, params, key);
+    workspace?.core_handle ?? null, action, params, key, admit);
 }
 
 async function fetchBackgroundStatus(): Promise<BackgroundAvailability> {
   return await coreApiRuntimeQuery("background") as unknown as BackgroundAvailability;
 }
 
-async function setBackgroundAvailability(enabled: boolean): Promise<BackgroundAvailability> {
-  return await coreApiRuntimeMutate("background_set", { enabled }, newOperationId()) as unknown as BackgroundAvailability;
+async function setBackgroundAvailability(enabled: boolean, admit: CoreRequestAdmission = admitCoreRequest): Promise<BackgroundAvailability> {
+  return await coreApiRuntimeMutate("background_set", { enabled }, newOperationId(), admit) as unknown as BackgroundAvailability;
 }
 
 async function fetchNotificationState(): Promise<WorkspaceNotificationState> {
   return await coreApiRuntimeQuery("notifications") as unknown as WorkspaceNotificationState;
 }
 
-async function setNotificationPreviews(hidden: boolean): Promise<WorkspaceNotificationState> {
-  return await coreApiRuntimeMutate("notification_previews", { hidden }, newOperationId()) as unknown as WorkspaceNotificationState;
+async function setNotificationPreviews(hidden: boolean, admit: CoreRequestAdmission = admitCoreRequest): Promise<WorkspaceNotificationState> {
+  return await coreApiRuntimeMutate("notification_previews", { hidden }, newOperationId(), admit) as unknown as WorkspaceNotificationState;
 }
 
 async function openNotificationTarget(notificationId: string, lifetime: ProfileLifetime, generation: number): Promise<NotificationOpenTarget> {
@@ -552,6 +555,7 @@ function candidateSummary(results: ParticipantCandidateResult[]): string {
 }
 
 function InvitationShare({ formats, onShared }: { formats: InvitationFormats; onShared?: () => void }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   const [feedback, setFeedback] = useState("");
   const [hostingStopped, setHostingStopped] = useState(false);
   const [firewallBusy, setFirewallBusy] = useState(false);
@@ -599,7 +603,7 @@ function InvitationShare({ formats, onShared }: { formats: InvitationFormats; on
     if (!formats.host_session_id || firewallBusy) return;
     setFirewallBusy(true);
     try {
-      const result = await serviceCommand<DirectDoctorStep>("configure_participant_firewall", { access_id: formats.host_session_id });
+      const result = await serviceCommand<DirectDoctorStep>("configure_participant_firewall", { access_id: formats.host_session_id }, admitProfileRequest);
       setFeedback(result.result === "prepared_unverified"
         ? "Temporary Windows Firewall rule added for this invitation only."
         : `${directReasonLabel(result.reason)} ${directActionLabel(result.recommended_action)}`);
@@ -610,7 +614,7 @@ function InvitationShare({ formats, onShared }: { formats: InvitationFormats; on
   const stopHosting = async () => {
     if (!formats.host_session_id) return;
     try {
-      await serviceCommand("stop_participant_host", { access_id: formats.host_session_id });
+      await serviceCommand("stop_participant_host", { access_id: formats.host_session_id }, admitProfileRequest);
       setHostingStopped(true);
       setFeedback("Direct hosting stopped. Create a new Internet invitation to reconnect.");
     } catch (reason) {
@@ -690,6 +694,7 @@ function Onboarding({
   initialPairingCode?: string;
   onReady: (snapshot: Snapshot, pendingInvitation?: string, startWebRTC?: boolean) => void;
 }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   const initialWorkspacePrefixOnly = isWorkspaceInvitationValue(initialInvitation) && isWorkspacePrefixOnly(initialInvitation);
   const [mode, setMode] = useState<OnboardingMode>(initialInvitation ? "join" : initialPairingCode ? "start" : "home");
   const [webRTCJoin, setWebRTCJoin] = useState(Boolean(initialPairingCode));
@@ -810,7 +815,7 @@ function Onboarding({
       if (!ready?.profile) {
         if (operation.accepted) throw new Error("profile_snapshot_pending");
         operation.attempted = true;
-        await coreApiCreateProfile(displayName, operation.key);
+        await coreApiCreateProfile(displayName, operation.key, admitProfileRequest);
         operation.accepted = true;
         ready = await coreApiSnapshot() as unknown as Snapshot;
       }
@@ -818,7 +823,7 @@ function Onboarding({
       operation.accepted = true;
       if (mode === "join") {
         await coreApiAcceptInvitation(invitation,
-          Boolean(preview?.i2p_access_point && i2pConsent));
+          Boolean(preview?.i2p_access_point && i2pConsent), admitProfileRequest);
         onReady(ready);
       } else {
         onReady(ready, pendingWorkspaceInvitation || undefined, webRTCJoin);
@@ -973,6 +978,7 @@ function SecurityDetails({ fingerprint, destination, open, onOpenChange }: { fin
 }
 
 function NewChatDialog({ initialInvitation, initialTab = "invite", initialConnection = "direct_tcp", remoteProfiles, onClose, onChanged, onWorkspaceInvitation }: { initialInvitation: string; initialTab?: "invite" | "join"; initialConnection?: ConnectionTransportKind; remoteProfiles: RemoteProfile[]; onClose: () => void; onChanged: () => Promise<void>; onWorkspaceInvitation: (value: string) => void }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   const [tab, setTab] = useState<"invite" | "join">(initialInvitation ? "join" : initialTab);
   const [formats, setFormats] = useState<InvitationFormats | null>(null);
   const [raw, setRaw] = useState(initialInvitation);
@@ -1002,10 +1008,10 @@ function NewChatDialog({ initialInvitation, initialTab = "invite", initialConnec
 
   const stopUnsharedHost = async () => {
     const id = generatedHostSession.current;
-    if (id && !shared) await serviceCommand("stop_participant_host", { access_id: id }).catch(() => undefined);
+    if (id && !shared) await serviceCommand("stop_participant_host", { access_id: id }, admitProfileRequest).catch(() => undefined);
     generatedHostSession.current = null;
     const replyId = replyHostSession.current;
-    if (replyId && !replyShared) await serviceCommand("stop_participant_host", { access_id: replyId }).catch(() => undefined);
+    if (replyId && !replyShared) await serviceCommand("stop_participant_host", { access_id: replyId }, admitProfileRequest).catch(() => undefined);
     replyHostSession.current = null;
   };
   const closeDialog = async () => { await stopUnsharedHost(); onClose(); };
@@ -1016,7 +1022,7 @@ function NewChatDialog({ initialInvitation, initialTab = "invite", initialConnec
   };
   const checkDirect = async () => {
     setBusy(true); setInviteError("");
-    try { setDoctor(await serviceCommand<DirectDoctorReport>("check_direct_connection")); }
+    try { setDoctor(await serviceCommand<DirectDoctorReport>("check_direct_connection", undefined, admitProfileRequest)); }
     catch (reason) { setInviteError(errorMessage(reason)); }
     finally { setBusy(false); }
   };
@@ -1024,7 +1030,7 @@ function NewChatDialog({ initialInvitation, initialTab = "invite", initialConnec
     setBusy(true); setInviteError("");
     try {
       await stopUnsharedHost();
-      const setup = await serviceCommand<ManualParticipantSetup>("prepare_manual_participant_host", { purpose: "personal" });
+      const setup = await serviceCommand<ManualParticipantSetup>("prepare_manual_participant_host", { purpose: "personal" }, admitProfileRequest);
       generatedHostSession.current = setup.setup_id;
       setManualSetup(setup); setManualHost(""); setManualPort(String(setup.tcp_port)); setDoctor(null); setFormats(null); setShared(false);
     } catch (reason) { setInviteError(errorMessage(reason)); }
@@ -1043,7 +1049,7 @@ function NewChatDialog({ initialInvitation, initialTab = "invite", initialConnec
             : { connection_mode: "remote", remote_profile_id: connectionChoice.slice("remote:".length) };
       const created = await coreApiCreateInvitation(payload) as unknown as InvitationFormats;
       const previous = generatedHostSession.current;
-      if (previous && previous !== created.host_session_id) await serviceCommand("stop_participant_host", { access_id: previous }).catch(() => undefined);
+      if (previous && previous !== created.host_session_id) await serviceCommand("stop_participant_host", { access_id: previous }, admitProfileRequest).catch(() => undefined);
       generatedHostSession.current = created.host_session_id ?? null;
       setFormats(created); setShared(false); setManualSetup(null);
     } catch (reason) {
@@ -1069,10 +1075,10 @@ function NewChatDialog({ initialInvitation, initialTab = "invite", initialConnec
       }
       const documentKind = connectionDocumentKind(normalized);
       if (documentKind === "reply") {
-        const checked = await coreApiConnectionDocument("preview_reply", { response: normalized }) as unknown as ConnectionReplyPreview;
+        const checked = await coreApiConnectionDocument("preview_reply", { response: normalized }, admitProfileRequest) as unknown as ConnectionReplyPreview;
         if (active) setConnectionReplyPreview(checked);
       } else if (documentKind === "route") {
-        const checked = await coreApiRouteUpdate("preview", { update: normalized }) as unknown as RouteUpdatePreview;
+        const checked = await coreApiRouteUpdate("preview", { update: normalized }, undefined, admitProfileRequest) as unknown as RouteUpdatePreview;
         if (active) setRouteUpdatePreview(checked);
       } else {
         const checked = await coreApiPreviewInvitation(normalized) as unknown as InvitationPreview;
@@ -1094,10 +1100,10 @@ function NewChatDialog({ initialInvitation, initialTab = "invite", initialConnec
       }
       const documentKind = connectionDocumentKind(normalized);
       if (documentKind === "reply") {
-        setConnectionReplyPreview(await coreApiConnectionDocument("preview_reply", { response: normalized }) as unknown as ConnectionReplyPreview);
+        setConnectionReplyPreview(await coreApiConnectionDocument("preview_reply", { response: normalized }, admitProfileRequest) as unknown as ConnectionReplyPreview);
         setPreview(null);
       } else if (documentKind === "route") {
-        setRouteUpdatePreview(await coreApiRouteUpdate("preview", { update: normalized }) as unknown as RouteUpdatePreview);
+        setRouteUpdatePreview(await coreApiRouteUpdate("preview", { update: normalized }, undefined, admitProfileRequest) as unknown as RouteUpdatePreview);
         setPreview(null);
       } else setPreview(await coreApiPreviewInvitation(normalized) as unknown as InvitationPreview);
       setRemoteConsent(false); setI2PConsent(false);
@@ -1109,7 +1115,7 @@ function NewChatDialog({ initialInvitation, initialTab = "invite", initialConnec
     setBusy(true); setError(""); setCandidateResults([]);
     try {
       const accepted = await coreApiAcceptInvitation(
-        raw, Boolean(preview?.i2p_access_point && i2pConsent)) as unknown as Contact;
+        raw, Boolean(preview?.i2p_access_point && i2pConsent), admitProfileRequest) as unknown as Contact;
       await onChanged();
       if (accepted.connection_results?.length && !accepted.connection_results.some((item) => item.result === "connected")) {
         setCandidateResults(accepted.connection_results);
@@ -1123,17 +1129,17 @@ function NewChatDialog({ initialInvitation, initialTab = "invite", initialConnec
   const createReply = async () => {
     setBusy(true); setError("");
     try {
-      const report = await serviceCommand<DirectDoctorReport>("check_direct_connection");
+      const report = await serviceCommand<DirectDoctorReport>("check_direct_connection", undefined, admitProfileRequest);
       if (!canPrepareDirectHost(report)) {
         setReplyDoctor(report);
         return;
       }
       setReplyDoctor(null);
-      const created = await coreApiConnectionDocument("create_reply", { invitation: raw, purpose: "personal" }) as unknown as ConnectionDocumentFormats;
+      const created = await coreApiConnectionDocument("create_reply", { invitation: raw, purpose: "personal" }, admitProfileRequest) as unknown as ConnectionDocumentFormats;
       const previous = replyHostSession.current;
       replyHostSession.current = created.host_session_id ?? null;
       setReplyShared(false); setReplyFormats(created);
-      if (previous && previous !== created.host_session_id) await serviceCommand("stop_participant_host", { access_id: previous }).catch(() => undefined);
+      if (previous && previous !== created.host_session_id) await serviceCommand("stop_participant_host", { access_id: previous }, admitProfileRequest).catch(() => undefined);
     }
     catch (reason) {
       const report = directFailureReport(reason);
@@ -1145,8 +1151,8 @@ function NewChatDialog({ initialInvitation, initialTab = "invite", initialConnec
   const applyConnectionDocument = async () => {
     setBusy(true); setError("");
     try {
-      if (connectionReplyPreview) await serviceCommand("connect_using_reply", { response: raw });
-      else await coreApiRouteUpdate("apply", { update: raw });
+      if (connectionReplyPreview) await serviceCommand("connect_using_reply", { response: raw }, admitProfileRequest);
+      else await coreApiRouteUpdate("apply", { update: raw }, undefined, admitProfileRequest);
       await onChanged(); onClose();
     } catch (reason) { setError(errorMessage(reason)); }
     finally { setBusy(false); }
@@ -1195,6 +1201,7 @@ function CreateGroupDialog({
   onClose: () => void;
   onCreated: (group: Group | { name: string }) => Promise<void>;
 }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   const [mode, setMode] = useState<"group" | "channel">("group");
   const [title, setTitle] = useState("");
   const [memberIds, setMemberIds] = useState<string[]>([]);
@@ -1219,7 +1226,7 @@ function CreateGroupDialog({
         .map((id) => contacts.find((contact) => contact.id === id)?.destination_hash)
         .filter((value): value is string => Boolean(value));
       try {
-        const created = await coreApiCreateGroup(title.trim(), postingPolicy, destinations);
+        const created = await coreApiCreateGroup(title.trim(), postingPolicy, destinations, admitProfileRequest);
         await onCreated({ name: created.name });
         return;
       } catch (reason) {
@@ -1504,6 +1511,7 @@ function ContactsDialog({
   onDeleted: (contactId: string) => Promise<void>;
   reconnect: ReconnectCoordinator | null;
 }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   const sorted = useMemo(
     () => [...contacts].sort((left, right) => left.display_name.localeCompare(right.display_name)),
     [contacts],
@@ -1542,11 +1550,11 @@ function ContactsDialog({
     setError("");
     try {
       if (command === "verify_contact" || command === "unverify_contact") {
-        await coreApiUpdatePeer(selected.destination_hash, command === "verify_contact" ? "verify" : "unverify");
+        await coreApiUpdatePeer(selected.destination_hash, command === "verify_contact" ? "verify" : "unverify", undefined, admitProfileRequest);
       } else {
         const target = await coreApiPeerForDestination(selected.destination_hash);
-        await coreApiRequest(command === "block_contact" ? "peer.revoke" : "peer.unblock",
-          { profile: target.profile, peer: target.peer });
+        await admitProfileRequest(() => coreApiRequest(command === "block_contact" ? "peer.revoke" : "peer.unblock",
+          { profile: target.profile, peer: target.peer }));
       }
       setConfirm(null);
       await onChanged();
@@ -1561,7 +1569,7 @@ function ContactsDialog({
     setBusy(true);
     setError("");
     try {
-      await coreApiUpdatePeer(selected.destination_hash, "rename", name.trim());
+      await coreApiUpdatePeer(selected.destination_hash, "rename", name.trim(), admitProfileRequest);
       await onChanged();
     } catch (reason) {
       setError(errorMessage(reason));
@@ -1572,7 +1580,7 @@ function ContactsDialog({
   const createReconnect = async () => {
     if (!selected || busy) return;
     setBusy(true); setError("");
-    try { setReconnectFormats(await coreApiRouteUpdate("create", { scope_kind: "contact", scope_id: selected.id }) as unknown as ConnectionDocumentFormats); }
+    try { setReconnectFormats(await coreApiRouteUpdate("create", { scope_kind: "contact", scope_id: selected.id }, undefined, admitProfileRequest) as unknown as ConnectionDocumentFormats); }
     catch (reason) { setError(errorMessage(reason)); }
     finally { setBusy(false); }
   };
@@ -1585,7 +1593,7 @@ function ContactsDialog({
       let handled = false;
       try {
         const target = await coreApiPeerForDestination(selected.destination_hash);
-        await coreApiRequest("peer.delete", { profile: target.profile, peer: target.peer });
+        await admitProfileRequest(() => coreApiRequest("peer.delete", { profile: target.profile, peer: target.peer }));
         handled = true;
       } catch { /* Fall back only when the facade did not accept the deletion. */ }
       if (!handled) throw new Error("core_api_unavailable");
@@ -1675,6 +1683,7 @@ function participantMethodLabel(method: ParticipantHosting["methods"][number]): 
 type SettingsEditState = { dirty: boolean; busy: boolean };
 
 function ParticipantHostingSettings({ initial, workspaces, onChanged, onEditStateChange }: { initial: ParticipantHosting[]; workspaces: Workspace[]; onChanged: () => Promise<void>; onEditStateChange?: (state: SettingsEditState) => void }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   const [hosts, setHosts] = useState(initial);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState("");
@@ -1683,7 +1692,7 @@ function ParticipantHostingSettings({ initial, workspaces, onChanged, onEditStat
   const stop = async (host: ParticipantHosting) => {
     setBusy(host.id); setError("");
     try {
-      await serviceCommand("stop_participant_host", { access_id: host.id });
+      await serviceCommand("stop_participant_host", { access_id: host.id }, admitProfileRequest);
       setHosts((current) => current.filter((item) => item.id !== host.id));
       await onChanged();
     } catch (reason) { setError(errorMessage(reason)); }
@@ -1692,7 +1701,7 @@ function ParticipantHostingSettings({ initial, workspaces, onChanged, onEditStat
   const configureFirewall = async (host: ParticipantHosting) => {
     setBusy(host.id); setError("");
     try {
-      const outcome = await serviceCommand<DirectDoctorStep>("configure_participant_firewall", { access_id: host.id });
+      const outcome = await serviceCommand<DirectDoctorStep>("configure_participant_firewall", { access_id: host.id }, admitProfileRequest);
       if (outcome.result !== "prepared_unverified") setError(`${directReasonLabel(outcome.reason)} ${directActionLabel(outcome.recommended_action)}`);
       await onChanged();
     } catch (reason) { setError(errorMessage(reason)); }
@@ -1714,6 +1723,7 @@ function BackgroundAvailabilitySettings({
   initial?: BackgroundAvailability;
   onChanged: () => Promise<void>;
 }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   const [value, setValue] = useState<BackgroundAvailability | undefined>(initial);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -1742,15 +1752,15 @@ function BackgroundAvailabilitySettings({
     setError("");
     try {
       if (next) {
-        setValue(await setBackgroundAvailability(true));
+        setValue(await setBackgroundAvailability(true, admitProfileRequest));
         try {
           await setNativeBackgroundAvailability(true);
         } catch (reason) {
-          setValue(await setBackgroundAvailability(false).catch(() => undefined));
+          setValue(await setBackgroundAvailability(false, admitProfileRequest).catch(() => undefined));
           throw reason;
         }
       } else {
-        setValue(await setBackgroundAvailability(false));
+        setValue(await setBackgroundAvailability(false, admitProfileRequest));
         await setNativeBackgroundAvailability(false);
       }
       await onChanged();
@@ -1785,6 +1795,7 @@ function BackgroundAvailabilitySettings({
 }
 
 function RemoteConnectionsSettings({ initial, onChanged, onEditStateChange }: { initial: RemoteProfile[]; onChanged: () => Promise<void>; onEditStateChange?: (state: SettingsEditState) => void }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   const [profiles, setProfiles] = useState(initial);
   const [adding, setAdding] = useState(false);
   const [label, setLabel] = useState("");
@@ -1802,7 +1813,7 @@ function RemoteConnectionsSettings({ initial, onChanged, onEditStateChange }: { 
   };
   const run = async (action: "test" | "retry" | "approve_propagation" | "remove_propagation" | "remove", profileId: string) => {
     setBusy(profileId); setError("");
-    try { await coreApiRemoteProfile(action, { remote_profile_id: profileId }, newOperationId()); await reload(); await onChanged(); }
+    try { await coreApiRemoteProfile(action, { remote_profile_id: profileId }, newOperationId(), admitProfileRequest); await reload(); await onChanged(); }
     catch (reason) { setError(errorMessage(reason)); }
     finally { setBusy(null); }
   };
@@ -1816,7 +1827,7 @@ function RemoteConnectionsSettings({ initial, onChanged, onEditStateChange }: { 
         endpoints: [{ host: host.trim(), port: numericPort }],
         propagation_node: propagation.trim() || null,
         allow_private: allowPrivate,
-      });
+      }, undefined, admitProfileRequest);
       setLabel(""); setHost(""); setPort("4242"); setPropagation(""); setAllowPrivate(false); setAdding(false);
       await reload(); await onChanged();
     } catch (reason) { setError(errorMessage(reason)); }
@@ -1841,6 +1852,7 @@ const I2P_ROUTER_REASON: Record<string, string> = {
 };
 
 function WebRTCCallSettings({ onSaved, onEditStateChange }: { onSaved: () => Promise<void>; onEditStateChange?: (state: SettingsEditState) => void }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   const [settings, setSettings] = useState<CallSettings | null>(null);
   const [stun, setStun] = useState("");
   const [turnUrl, setTurnUrl] = useState("");
@@ -1896,7 +1908,7 @@ function WebRTCCallSettings({ onSaved, onEditStateChange }: { onSaved: () => Pro
         turn_broker_consent: turnBrokerConsent,
         relay_only: relayOnly,
         store_call_signaling: storeCallSignaling,
-      }) as unknown as CallSettings;
+      }, admitProfileRequest) as unknown as CallSettings;
       setSettings(result);
       setStun((result.stun_urls ?? []).join(", "));
       setTurnUrl(result.turn_url ?? "");
@@ -1961,6 +1973,7 @@ const SETTINGS_SECTIONS = [
 ] as const;
 
 function SettingsPage({ snapshot, theme, onThemeChange, onClose, onSaved, onBackHandlerChange }: { snapshot: Snapshot; theme: Theme; onThemeChange: (theme: Theme) => void; onClose: () => void; onSaved: () => Promise<void>; onBackHandlerChange?: (handler: (() => void) | null) => void }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   const [section, setSection] = useState<typeof SETTINGS_SECTIONS[number]["id"]>("appearance");
   const [settings, setSettings] = useState<NetworkSettings>(snapshot.settings);
   const [savedNetworkSettings, setSavedNetworkSettings] = useState(snapshot.settings);
@@ -2014,7 +2027,7 @@ function SettingsPage({ snapshot, theme, onThemeChange, onClose, onSaved, onBack
   useEffect(() => {
     void Promise.resolve(runtimePlatform()).then((value) => setIsAndroid(value === "android")).catch(() => undefined);
     if (settings.i2p_enabled) {
-      void Promise.resolve(serviceCommand<I2PStatus>("i2p_status")).then(setI2PStatus).catch(() => undefined);
+      void Promise.resolve(serviceCommand<I2PStatus>("i2p_status", undefined, admitProfileRequest)).then(setI2PStatus).catch(() => undefined);
     }
   }, []);
   const darkThemeRef = useRef<HTMLButtonElement>(null);
@@ -2062,7 +2075,7 @@ function SettingsPage({ snapshot, theme, onThemeChange, onClose, onSaved, onBack
     if (!notification || notificationBusy) return;
     setNotificationBusy(true); setNotificationError("");
     try {
-      setNotification(await setNotificationPreviews(!notification.hide_previews));
+      setNotification(await setNotificationPreviews(!notification.hide_previews, admitProfileRequest));
       await onSaved();
     } catch (reason) { setNotificationError(errorMessage(reason)); }
     finally { setNotificationBusy(false); }
@@ -2071,7 +2084,7 @@ function SettingsPage({ snapshot, theme, onThemeChange, onClose, onSaved, onBack
     if (saving || !networkDirty) return;
     setSaving(true); setSaveError("");
     try {
-      await saveNetworkSettings(settings as unknown as Record<string, unknown>);
+      await saveNetworkSettings(settings as unknown as Record<string, unknown>, admitProfileRequest);
       setSavedNetworkSettings(settings);
       setSaved(true);
       await onSaved();
@@ -2807,6 +2820,7 @@ function WorkspaceSwitcher({ workspaces, activeId, onSelect, onCreate, onJoin }:
 }
 
 function JoinWorkspaceDialog({ initialValue = "", promptId, promptWorkspaceName, resumeWorkspaceId, workspaces, onClose, onJoined }: { initialValue?: string; promptId?: string | null; promptWorkspaceName?: string; resumeWorkspaceId?: string; workspaces: Workspace[]; onClose: () => void; onJoined: (workspace: Workspace) => Promise<void> }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   const [value, setValue] = useState(initialValue);
   const [preview, setPreview] = useState<WorkspaceInvitationPreview | null>(null);
   const [devicePreview, setDevicePreview] = useState<WorkspaceDeviceLinkPreview | null>(null);
@@ -2842,7 +2856,7 @@ function JoinWorkspaceDialog({ initialValue = "", promptId, promptWorkspaceName,
   const joinAttempt = useRef<{ command: string; document: string; operationId: string } | null>(null);
   const stopUnsharedReply = async () => {
     const hostId = replyHostSession.current;
-    if (hostId && !replyShared) await serviceCommand("stop_participant_host", { access_id: hostId }).catch(() => undefined);
+    if (hostId && !replyShared) await serviceCommand("stop_participant_host", { access_id: hostId }, admitProfileRequest).catch(() => undefined);
     replyHostSession.current = null;
   };
   const closeDialog = async () => { await stopUnsharedReply(); onClose(); };
@@ -2869,14 +2883,14 @@ function JoinWorkspaceDialog({ initialValue = "", promptId, promptWorkspaceName,
       const isDeviceLink = classifyInvitationInput(normalized) === "workspace_device";
       if (isDeviceLink) {
         const checked = await fetchWorkspaceConnection(null, "device_link_preview",
-          { device_link: normalized }) as unknown as WorkspaceDeviceLinkPreview;
+          { device_link: normalized }, undefined, admitProfileRequest) as unknown as WorkspaceDeviceLinkPreview;
         if (generation !== reviewGeneration.current) return;
         setDevicePreview(checked);
         setPreview(null);
         setRemoteConsent(false); setI2PConsent(false);
       } else {
         const checked = promptId
-          ? await fetchWorkspaceConnection(null, "prompt_preview", { prompt_id: promptId }) as unknown as WorkspaceInvitationPreview
+          ? await fetchWorkspaceConnection(null, "prompt_preview", { prompt_id: promptId }, undefined, admitProfileRequest) as unknown as WorkspaceInvitationPreview
           : await coreApiPreviewWorkspaceInvitation(normalized) as WorkspaceInvitationPreview;
         if (generation !== reviewGeneration.current) return;
         setPreview(checked);
@@ -2918,7 +2932,7 @@ function JoinWorkspaceDialog({ initialValue = "", promptId, promptWorkspaceName,
       let workspace: Workspace | null = null;
       if (devicePreview) {
         try {
-          workspace = await coreApiSubmitDeviceLink(document, joinAttempt.current.operationId);
+          workspace = await coreApiSubmitDeviceLink(document, joinAttempt.current.operationId, admitProfileRequest);
         } catch (reason) {
           if (!String(reason).includes("core_api_unavailable")) throw reason;
         }
@@ -2927,9 +2941,9 @@ function JoinWorkspaceDialog({ initialValue = "", promptId, promptWorkspaceName,
         if (devicePreview) throw new Error("core_api_unavailable");
         workspace = promptId
           ? await coreApiSubmitWorkspacePrompt(
-              promptId, joinAttempt.current.operationId) as Workspace
+              promptId, joinAttempt.current.operationId, admitProfileRequest) as Workspace
           : await coreApiJoinWorkspace(
-              document, joinAttempt.current.operationId, i2pConsent) as Workspace;
+              document, joinAttempt.current.operationId, i2pConsent, admitProfileRequest) as Workspace;
       }
       if (workspace.connection_results?.length && !workspace.connection_results.some((item) => item.result === "connected")) {
         setConnectionResults(workspace.connection_results);
@@ -2943,17 +2957,17 @@ function JoinWorkspaceDialog({ initialValue = "", promptId, promptWorkspaceName,
   const createReply = async () => {
     setBusy(true); setError("");
     try {
-      const report = await serviceCommand<DirectDoctorReport>("check_direct_connection");
+      const report = await serviceCommand<DirectDoctorReport>("check_direct_connection", undefined, admitProfileRequest);
       if (!canPrepareDirectHost(report)) {
         setReplyDoctor(report);
         return;
       }
       setReplyDoctor(null);
-      const created = await coreApiConnectionDocument("create_reply", { invitation: value.trim(), purpose: "workspace" }) as unknown as ConnectionDocumentFormats;
+      const created = await coreApiConnectionDocument("create_reply", { invitation: value.trim(), purpose: "workspace" }, admitProfileRequest) as unknown as ConnectionDocumentFormats;
       const previous = replyHostSession.current;
       replyHostSession.current = created.host_session_id ?? null;
       setReplyShared(false); setReplyFormats(created);
-      if (previous && previous !== created.host_session_id) await serviceCommand("stop_participant_host", { access_id: previous }).catch(() => undefined);
+      if (previous && previous !== created.host_session_id) await serviceCommand("stop_participant_host", { access_id: previous }, admitProfileRequest).catch(() => undefined);
     }
     catch (reason) {
       const report = directFailureReport(reason);
@@ -3018,6 +3032,7 @@ function JoinWorkspaceDialog({ initialValue = "", promptId, promptWorkspaceName,
 }
 
 function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles, contacts, webrtcActive, onOpenWebRTC, onClose }: { workspace: Workspace; existingInvitations: WorkspaceInvitation[]; remoteProfiles: RemoteProfile[]; contacts: Contact[]; webrtcActive: boolean; onOpenWebRTC: () => void; onClose: () => void }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   const availableContacts = contacts.filter((candidate) => {
     if (candidate.trust !== "approved" && candidate.trust !== "verified") return false;
     return !workspace.members.some((member) => member.status === "active"
@@ -3058,7 +3073,7 @@ function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles,
     setContactBusy(true); setContactFeedback(""); setContactError("");
     try {
       const result = await fetchWorkspaceConnection(workspace, "invite_contact",
-        { contact_id: contactId }) as unknown as { sent: boolean; message_state?: string; invitation: WorkspaceInvitationFormats };
+        { contact_id: contactId }, undefined, admitProfileRequest) as unknown as { sent: boolean; message_state?: string; invitation: WorkspaceInvitationFormats };
       if (result.invitation) {
         setExisting((current) => [...current, { ...result.invitation, offered_manifest_digest: "", state: "active", created_at: Date.now() / 1000, contact_id: contactId, contact_display_name: selectedContact?.display_name, delivery_state: result.message_state }]);
       }
@@ -3095,7 +3110,7 @@ function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles,
       }
       if (!workspace.core_handle) throw new Error("core_api_unavailable");
       const created = await coreApiCreateWorkspaceInvitation(
-        workspace.core_handle, connection, newOperationId()) as WorkspaceInvitationFormats;
+        workspace.core_handle, connection, newOperationId(), admitProfileRequest) as WorkspaceInvitationFormats;
       if (connectionChoice === "webrtc") {
         const control = webrtcControls[0].control;
         if (!control || control.readyState !== "open") throw new Error("The WebRTC DataChannel is not open.");
@@ -3119,7 +3134,7 @@ function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles,
         ?? (invitation?.id === invitationId ? invitation.core_handle : undefined);
       if (workspace.core_handle && invitationHandle) {
         try {
-          await coreApiWorkspaceInvitationRevoke(workspace.core_handle, invitationHandle, newOperationId());
+          await coreApiWorkspaceInvitationRevoke(workspace.core_handle, invitationHandle, newOperationId(), admitProfileRequest);
           handled = true;
         } catch (reason) {
           if (!String(reason).includes("core_api_unavailable")) throw reason;
@@ -3135,15 +3150,15 @@ function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles,
   const usableProfiles = remoteProfiles.filter((profile) => profile.state !== "expired");
   const checkDirect = async () => {
     setBusy(true); setError("");
-    try { setDoctor(await serviceCommand<DirectDoctorReport>("check_direct_connection")); }
+    try { setDoctor(await serviceCommand<DirectDoctorReport>("check_direct_connection", undefined, admitProfileRequest)); }
     catch (reason) { setError(errorMessage(reason)); }
     finally { setBusy(false); }
   };
   const prepareManual = async () => {
     setBusy(true); setError("");
     try {
-      if (manualSetup) await serviceCommand("stop_participant_host", { access_id: manualSetup.setup_id }).catch(() => undefined);
-      const setup = await serviceCommand<ManualParticipantSetup>("prepare_manual_participant_host", { purpose: "workspace" });
+      if (manualSetup) await serviceCommand("stop_participant_host", { access_id: manualSetup.setup_id }, admitProfileRequest).catch(() => undefined);
+      const setup = await serviceCommand<ManualParticipantSetup>("prepare_manual_participant_host", { purpose: "workspace" }, admitProfileRequest);
       setManualSetup(setup); setManualHost(""); setManualPort(String(setup.tcp_port)); setDoctor(null);
     } catch (reason) { setError(errorMessage(reason)); }
     finally { setBusy(false); }
@@ -3151,10 +3166,10 @@ function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles,
   const closeDialog = async () => {
     if (invitation?.host_session_id && !shared) {
       if (workspace.core_handle && invitation.core_handle) {
-        await coreApiWorkspaceInvitationRevoke(workspace.core_handle, invitation.core_handle, newOperationId()).catch(() => undefined);
+        await coreApiWorkspaceInvitationRevoke(workspace.core_handle, invitation.core_handle, newOperationId(), admitProfileRequest).catch(() => undefined);
       }
     } else if (manualSetup) {
-      await serviceCommand("stop_participant_host", { access_id: manualSetup.setup_id }).catch(() => undefined);
+      await serviceCommand("stop_participant_host", { access_id: manualSetup.setup_id }, admitProfileRequest).catch(() => undefined);
     }
     onClose();
   };
@@ -3193,7 +3208,7 @@ function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles,
     if (!invitation?.host_session_id || busy) return;
     setBusy(true); setFirewallFeedback("");
     try {
-      const result = await serviceCommand<DirectDoctorStep>("configure_participant_firewall", { access_id: invitation.host_session_id });
+      const result = await serviceCommand<DirectDoctorStep>("configure_participant_firewall", { access_id: invitation.host_session_id }, admitProfileRequest);
       setFirewallFeedback(result.result === "prepared_unverified"
         ? "Temporary Windows Firewall rule added for this invitation only."
         : `${directReasonLabel(result.reason)} ${directActionLabel(result.recommended_action)}`);
@@ -3272,6 +3287,7 @@ function workspaceAdminRequestStateLabel(request: WorkspaceAdminRequest): string
 }
 
 export function WorkspacePeopleSettingsContent({ workspace, requests, adminRequests, busy, error, onRequestName, onDecideName, onRemove, onChangeRole, onInvitationPolicy, onSubmitAdminRequest, onDecideAdminRequest, onCancelAdminRequest, onDismissAdminRequest, onMessage }: { workspace: Workspace; requests: WorkspaceDisplayNameRequest[]; adminRequests: WorkspaceAdminRequest[]; busy: boolean; error: string; onRequestName: (displayName: string) => void; onDecideName: (requestId: string, approve: boolean) => void; onRemove: (memberId: string) => void; onChangeRole: (memberId: string, role: "admin" | "member") => void; onInvitationPolicy: (policy: "owner_only" | "owner_and_admins" | "all_members_request") => void; onSubmitAdminRequest: (kind: "invitation" | "member_removal" | "role_change", targetMemberId?: string, requestedRole?: "admin" | "member") => void; onDecideAdminRequest: (requestId: string, approve: boolean) => void; onCancelAdminRequest: (requestId: string) => void; onDismissAdminRequest: (requestId: string) => void; onMessage: (memberId: string) => void }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   const local = workspace.members.find((member) => member.id === workspace.local_member_id);
   const [displayName, setDisplayName] = useState(local?.display_name ?? "");
   const [invitationPolicy, setInvitationPolicy] = useState(workspace.policies.invitation_requests);
@@ -3296,7 +3312,7 @@ export function WorkspacePeopleSettingsContent({ workspace, requests, adminReque
     setConnectivityError("");
     try {
       const command = requestPaths ? "workspace_request_paths" : "workspace_connectivity";
-      setConnectivity(await serviceCommand<WorkspaceConnectivity>(command, { workspace_id: workspace.id }));
+      setConnectivity(await serviceCommand<WorkspaceConnectivity>(command, { workspace_id: workspace.id }, admitProfileRequest));
     } catch (reason) {
       setConnectivityError(errorMessage(reason));
     } finally {
@@ -3385,6 +3401,7 @@ export function WorkspaceAuthoritySettingsContent({ workspace, transitions, busy
 }
 
 export function WorkspaceAccessSettingsContent({ workspace, onSaved }: { workspace: Workspace; onSaved: () => Promise<void> }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   const [profiles, setProfiles] = useState<RemoteProfile[]>([]);
   const [profileId, setProfileId] = useState("");
   const [created, setCreated] = useState<WorkspaceAccessRecommendation | null>(null);
@@ -3401,7 +3418,7 @@ export function WorkspaceAccessSettingsContent({ workspace, onSaved }: { workspa
   const owner = workspace.local_role === "owner" && workspace.local_device_id === workspace.authority_device_id && workspace.state === "active";
   const loadReceived = async () => {
     try {
-      const value = await fetchWorkspaceAccessRecommendation(workspace, "list", {}) as unknown as { recommendations: WorkspaceAccessRecommendationSummary[] };
+      const value = await fetchWorkspaceAccessRecommendation(workspace, "list", {}, undefined, admitProfileRequest) as unknown as { recommendations: WorkspaceAccessRecommendationSummary[] };
       setReceived(value.recommendations ?? []);
     } catch {
       setReceived([]);
@@ -3423,7 +3440,7 @@ export function WorkspaceAccessSettingsContent({ workspace, onSaved }: { workspa
     setBusy(true); setError(""); setNotice("");
     try {
       const result = await fetchWorkspaceAccessRecommendation(workspace, "create",
-        { remote_profile_id: profileId, lifetime_days: 7 }) as unknown as WorkspaceAccessRecommendation;
+        { remote_profile_id: profileId, lifetime_days: 7 }, undefined, admitProfileRequest) as unknown as WorkspaceAccessRecommendation;
       setCreated(result);
       setRecommendation(result.text);
       setNotice("Recommendation created. Share the complete text with members.");
@@ -3435,7 +3452,7 @@ export function WorkspaceAccessSettingsContent({ workspace, onSaved }: { workspa
     try {
       const result = await fetchWorkspaceAccessRecommendation(workspace, "send",
         { recommendation: created.text },
-        newOperationId()) as unknown as { sent_devices: number };
+        newOperationId(), admitProfileRequest) as unknown as { sent_devices: number };
       setNotice(`Queued the recommendation for ${result.sent_devices} active member device${result.sent_devices === 1 ? "" : "s"}. Delivery remains retryable.`);
     } catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); }
   };
@@ -3443,7 +3460,7 @@ export function WorkspaceAccessSettingsContent({ workspace, onSaved }: { workspa
     setBusy(true); setError(""); setNotice(""); setReceivedPreview(null); setReceivedConsent(false);
     try {
       const result = await fetchWorkspaceAccessRecommendation(workspace, "preview_by_id",
-        { recommendation_id: id }) as unknown as WorkspaceAccessPreview;
+        { recommendation_id: id }, undefined, admitProfileRequest) as unknown as WorkspaceAccessPreview;
       setReceivedPreview(result); setReceivedId(id);
     } catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); }
   };
@@ -3452,7 +3469,7 @@ export function WorkspaceAccessSettingsContent({ workspace, onSaved }: { workspa
     setBusy(true); setError(""); setNotice("");
     try {
       const result = await fetchWorkspaceAccessRecommendation(workspace, "apply_by_id",
-        { recommendation_id: receivedId, consent: receivedConsent }) as unknown as WorkspaceAccessApplyResult;
+        { recommendation_id: receivedId, consent: receivedConsent }, undefined, admitProfileRequest) as unknown as WorkspaceAccessApplyResult;
       setNotice(`Attached “${result.profile.label}” to this workspace.`);
       setReceivedPreview(null); setReceivedId(null); setReceivedConsent(false);
       await loadReceived();
@@ -3463,14 +3480,14 @@ export function WorkspaceAccessSettingsContent({ workspace, onSaved }: { workspa
     setBusy(true); setError(""); setNotice(""); setPreview(null); setConsent(false);
     try {
       setPreview(await fetchWorkspaceAccessRecommendation(workspace, "preview",
-        { recommendation: recommendation.trim() }) as unknown as WorkspaceAccessPreview);
+        { recommendation: recommendation.trim() }, undefined, admitProfileRequest) as unknown as WorkspaceAccessPreview);
     } catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); }
   };
   const apply = async () => {
     setBusy(true); setError(""); setNotice("");
     try {
       const result = await fetchWorkspaceAccessRecommendation(workspace, "apply",
-        { recommendation: recommendation.trim(), consent }) as unknown as WorkspaceAccessApplyResult;
+        { recommendation: recommendation.trim(), consent }, undefined, admitProfileRequest) as unknown as WorkspaceAccessApplyResult;
       setNotice(`Attached “${result.profile.label}” to this workspace.`);
       setPreview(null); setConsent(false);
       await onSaved();
@@ -3487,6 +3504,7 @@ export function WorkspaceAccessSettingsContent({ workspace, onSaved }: { workspa
 }
 
 function WorkspaceReconnectSettings({ workspace, coordinator }: { workspace: Workspace; coordinator: ReconnectCoordinator | null }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   const [status, setStatus] = useState<WorkspaceReconnectStatus | null>(null);
   const [autoReconnect, setAutoReconnect] = useState(false);
   const [allowDirect, setAllowDirect] = useState(false);
@@ -3495,7 +3513,7 @@ function WorkspaceReconnectSettings({ workspace, coordinator }: { workspace: Wor
   const [notice, setNotice] = useState("");
   const load = async () => {
     try {
-      const value = await fetchWorkspaceConnection(workspace, "reconnect_status", {}) as unknown as WorkspaceReconnectStatus;
+      const value = await fetchWorkspaceConnection(workspace, "reconnect_status", {}, undefined, admitProfileRequest) as unknown as WorkspaceReconnectStatus;
       if (typeof value?.enabled !== "boolean" || typeof value?.peer_count !== "number") return;
       setStatus(value);
       setAutoReconnect(value.enabled);
@@ -3508,7 +3526,7 @@ function WorkspaceReconnectSettings({ workspace, coordinator }: { workspace: Wor
     try {
       const value = await fetchWorkspaceConnection(workspace, "reconnect_consent",
         { auto_reconnect: autoReconnect, allow_direct_ip_disclosure: allowDirect,
-          relay_consent_scope: "workspace" }) as unknown as WorkspaceReconnectStatus;
+          relay_consent_scope: "workspace" }, undefined, admitProfileRequest) as unknown as WorkspaceReconnectStatus;
       setStatus(value);
       setAutoReconnect(value.enabled);
       setAllowDirect(value.allow_direct_ip_disclosure);
@@ -3530,6 +3548,7 @@ function WorkspaceReconnectSettings({ workspace, coordinator }: { workspace: Wor
 }
 
 function WorkspaceAdmissionGrants({ workspace }: { workspace: Workspace }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   type Grant = { id: string; admission_grant?: string; state: string; admin_member_id: string; admin_device_id: string; max_admissions: number; use_count: number; expires_at: number; accepted: boolean };
   const [grants, setGrants] = useState<Grant[]>([]);
   const [adminMemberId, setAdminMemberId] = useState("");
@@ -3544,7 +3563,7 @@ function WorkspaceAdmissionGrants({ workspace }: { workspace: Workspace }) {
   const loadGrants = async (): Promise<Grant[]> => {
     if (workspace.core_handle) {
       try {
-        const result = await coreApiAdmissionGrantList(workspace.core_handle);
+        const result = await coreApiAdmissionGrantList(workspace.core_handle, admitProfileRequest);
         return Array.isArray(result.grants) ? result.grants as unknown as Grant[] : [];
       } catch (reason) {
         if (!String(reason).includes("core_api_unavailable")) throw reason;
@@ -3575,7 +3594,7 @@ function WorkspaceAdmissionGrants({ workspace }: { workspace: Workspace }) {
       const device = adminDevices.find((item) => item.id === adminDeviceId);
       if (workspace.core_handle && selectedAdmin.core_handle && device?.core_handle) {
         try {
-          await coreApiAdmissionGrantCreate(workspace.core_handle, selectedAdmin.core_handle, device.core_handle, v2Ready, newOperationId());
+          await coreApiAdmissionGrantCreate(workspace.core_handle, selectedAdmin.core_handle, device.core_handle, v2Ready, newOperationId(), admitProfileRequest);
           handled = true;
         } catch (reason) {
           if (!String(reason).includes("core_api_unavailable")) throw reason;
@@ -3593,7 +3612,7 @@ function WorkspaceAdmissionGrants({ workspace }: { workspace: Workspace }) {
       const grant = grants.find((item) => item.id === grantId);
       if (workspace.core_handle && grant?.admission_grant) {
         try {
-          await coreApiAdmissionGrantAccept(workspace.core_handle, grant.admission_grant, newOperationId());
+          await coreApiAdmissionGrantAccept(workspace.core_handle, grant.admission_grant, newOperationId(), admitProfileRequest);
           handled = true;
         } catch (reason) {
           if (!String(reason).includes("core_api_unavailable")) throw reason;
@@ -3612,7 +3631,7 @@ function WorkspaceAdmissionGrants({ workspace }: { workspace: Workspace }) {
       const grant = grants.find((item) => item.id === grantId);
       if (workspace.core_handle && grant?.admission_grant) {
         try {
-          await coreApiAdmissionGrantEnd(workspace.core_handle, grant.admission_grant, newOperationId());
+          await coreApiAdmissionGrantEnd(workspace.core_handle, grant.admission_grant, newOperationId(), admitProfileRequest);
           handled = true;
         } catch (reason) {
           if (!String(reason).includes("core_api_unavailable")) throw reason;
@@ -3672,6 +3691,7 @@ function workspaceHistoryStateLabel(status: WorkspaceHistoryStatus["status"]): s
 }
 
 export function WorkspaceHistorySettingsContent({ workspace, conversationId, conversationName, busy, error, onUpdate, onPrune }: { workspace: Workspace; conversationId?: string; conversationName?: string; busy: boolean; error: string; onUpdate: (retentionDays: 30 | 90 | 365 | null) => void; onPrune: () => Promise<WorkspaceRetentionPruneResult | null> }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   const [retention, setRetention] = useState<"30" | "90" | "365" | "indefinite">(workspace.retention_days === null ? "indefinite" : String(workspace.retention_days) as "30" | "90" | "365");
   const [result, setResult] = useState<WorkspaceRetentionPruneResult | null>(null);
   const [history, setHistory] = useState<WorkspaceHistoryStatus | null>(null);
@@ -3684,7 +3704,7 @@ export function WorkspaceHistorySettingsContent({ workspace, conversationId, con
     try {
       setHistoryError("");
       setHistory(await fetchWorkspaceHistory(workspace, "status",
-        { conversation: conversationId }) as unknown as WorkspaceHistoryStatus);
+        { conversation: conversationId }, undefined, admitProfileRequest) as unknown as WorkspaceHistoryStatus);
     } catch (reason) { setHistoryError(errorMessage(reason)); }
   }, [conversationId, workspace.id]);
   useEffect(() => { void loadHistory(); }, [loadHistory]);
@@ -3692,7 +3712,7 @@ export function WorkspaceHistorySettingsContent({ workspace, conversationId, con
     if (!conversationId) return;
     setHistoryBusy(true); setHistoryError("");
     try {
-      await fetchWorkspaceHistory({ id: workspace.id, core_handle: workspace.core_handle }, command === "start_workspace_history" ? "start" : "cancel", { conversation: conversationId }, newOperationId());
+      await fetchWorkspaceHistory({ id: workspace.id, core_handle: workspace.core_handle }, command === "start_workspace_history" ? "start" : "cancel", { conversation: conversationId }, newOperationId(), admitProfileRequest);
       await loadHistory();
     } catch (reason) { setHistoryError(errorMessage(reason)); }
     finally { setHistoryBusy(false); }
@@ -3783,6 +3803,7 @@ function WorkspaceMessageCard({
   onOpenThread?: () => void;
   allowedMentionMemberIds: string[];
 }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState(message.text);
   const [editMentionMemberIds, setEditMentionMemberIds] = useState(
@@ -3809,7 +3830,7 @@ function WorkspaceMessageCard({
         event_id: message.id,
         cursor: append ? revisionPage?.next_cursor ?? null : null,
         limit: 50,
-      }) as unknown as WorkspaceRevisionPage;
+      }, undefined, admitProfileRequest) as unknown as WorkspaceRevisionPage;
       setRevisionPage((current) => append && current
         ? { ...next, revisions: [...current.revisions, ...next.revisions] }
         : next);
@@ -3879,6 +3900,7 @@ function WorkspaceMentionChips({ workspace, memberIds, onRemove }: { workspace: 
 }
 
 function WorkspaceTombstoneDialog({ workspace, conversationId, onClose }: { workspace: Workspace; conversationId: string; onClose: () => void }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   const [page, setPage] = useState<WorkspaceTombstonePage | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -3891,7 +3913,7 @@ function WorkspaceTombstoneDialog({ workspace, conversationId, onClose }: { work
         conversation: conversationId,
         cursor: append ? page?.next_cursor ?? null : null,
         limit: 50,
-      }) as unknown as WorkspaceTombstonePage;
+      }, undefined, admitProfileRequest) as unknown as WorkspaceTombstonePage;
       setPage((current) => append && current
         ? { ...next, tombstones: [...current.tombstones, ...next.tombstones] }
         : next);
@@ -4183,6 +4205,7 @@ type WorkspaceMessageInvalidations = Record<string, {
 }>;
 
 function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageInvalidations, notificationTarget, onNotificationHandled, onLock, initialInvitation, onInvitationHandled, initialPairingCode = "", initialWebRTCJoin = false, onWebRTCJoinHandled, onPairingHandled }: { snapshot: Snapshot; theme: Theme; onThemeChange: (theme: Theme) => void; refresh: (afterCurrent?: boolean) => Promise<Snapshot>; workspaceMessageInvalidations: WorkspaceMessageInvalidations; notificationTarget: NotificationOpenTarget | null; onNotificationHandled: () => void; onLock: () => Promise<void>; initialInvitation: string; onInvitationHandled: () => void; initialPairingCode?: string; initialWebRTCJoin?: boolean; onWebRTCJoinHandled?: () => void; onPairingHandled?: () => void }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   const lifetime = useProfileLifetime();
   const [profileGeneration] = useState(() => lifetime?.capture());
   const draftsRetiring = useRef(false);
@@ -4530,7 +4553,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     // Manual pairing can precede creation of a reconnect profile. Start native
     // path discovery once for this verified peer without requiring a chat send
     // or mailbox setup; the transport owns ongoing discovery/recovery.
-    void serviceCommand("reconnect_path_status", { contact_id: selectedApprovedContactId })
+    void serviceCommand("reconnect_path_status", { contact_id: selectedApprovedContactId }, admitProfileRequest)
       .then(() => { if (active) return refresh(true); })
       .catch(() => undefined);
     return () => { active = false; };
@@ -4866,7 +4889,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       const target = kind === "direct" ? selectedContact?.id : selectedGroup?.id;
       if (!target) throw new Error("core_api_unavailable");
       await coreApiConversationReaction(
-        kind, target, messageId, validation.emoji, active);
+        kind, target, messageId, validation.emoji, active, admitProfileRequest);
       await refresh(true);
       if (reactionInteractionGeneration.current === interactionGeneration) {
         setReactionTarget((current) => current?.kind === kind && current.messageId === messageId ? null : current);
@@ -4890,7 +4913,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     setConversationActionError("");
     try {
       await coreApiConversation(
-        "restore", next.kind === "contact" ? "direct" : "group", next.id);
+        "restore", next.kind === "contact" ? "direct" : "group", next.id, admitProfileRequest);
       setQuery("");
       selectConversation(next);
       await refresh(true);
@@ -4990,7 +5013,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       // Direct composer tickets are retired by the Core deletion transaction.
       // The group writer still needs its pending keystrokes canceled here.
       if (target.kind === "group") await cancelPendingDraftWrite(`group:${target.id}`);
-      await coreApiConversation("delete", kind, target.id);
+      await coreApiConversation("delete", kind, target.id, admitProfileRequest);
       if (target.kind === "group") {
         setGroupDrafts((current) => {
           const next = { ...current };
@@ -5093,14 +5116,14 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     }
   };
   const connectionHelp = async () => {
-    if (selectedContact) setHelp(await coreApiConnectionSupport("help", { contact_id: selectedContact.id }) as unknown as { code: string; action: string | null });
+    if (selectedContact) setHelp(await coreApiConnectionSupport("help", { contact_id: selectedContact.id }, admitProfileRequest) as unknown as { code: string; action: string | null });
   };
   const respondToContactInvitation = async (invitation: ContactInvitation, accept: boolean) => {
     setInvitationBusy(invitation.id);
     setInvitationError("");
     try {
       const accepted = await coreApiContactInvitation(
-        "decide", { invitation: invitation.id, accept },
+        "decide", { invitation: invitation.id, accept }, admitProfileRequest
       ) as { id?: string; reconnect_capabilities?: string };
       for (const session of getWebRTCSessions()) {
         if (session.controlPurpose === "reconnect" || session.peerDestination !== invitation.preview.destination_hash) continue;
@@ -5128,13 +5151,13 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       if (accept) {
         try {
           const target = await coreApiPeerForDestination(contact.destination_hash);
-          await coreApiRequest("peer.approve", { profile: target.profile, peer: target.peer });
+          await admitProfileRequest(() => coreApiRequest("peer.approve", { profile: target.profile, peer: target.peer }));
           approval = {};
         } catch { /* Fall back only when approval was not accepted by the facade. */ }
       }
       if (!approval) {
         approval = await coreApiDecidePeerRequest(
-          contact.destination_hash, accept) as { reconnect_capabilities?: string };
+          contact.destination_hash, accept, admitProfileRequest) as { reconnect_capabilities?: string };
       }
       try {
         const matching = getWebRTCSessionForContact(contact.id);
@@ -5204,7 +5227,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       let handled = false;
       if (invitation.core_handle) {
         try {
-          await coreApiGroupInvitation(invitation.core_handle, accept);
+          await coreApiGroupInvitation(invitation.core_handle, accept, admitProfileRequest);
           handled = true;
         } catch (reason) {
           if (!String(reason).includes("core_api_unavailable")) throw reason;
@@ -5227,15 +5250,15 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       if (selectedGroup?.core_handle) {
         try {
           if (command === "leave_group") {
-            await coreApiLeaveGroup(selectedGroup.core_handle);
+            await coreApiLeaveGroup(selectedGroup.core_handle, admitProfileRequest);
           } else if (command === "close_group") {
-            await coreApiCloseGroup(selectedGroup.core_handle);
+            await coreApiCloseGroup(selectedGroup.core_handle, admitProfileRequest);
           } else if (command === "retry_group_invitation"
               && typeof payload.destination_hash === "string") {
             await coreApiRetryGroupInvitation(
-              selectedGroup.core_handle, payload.destination_hash);
+              selectedGroup.core_handle, payload.destination_hash, admitProfileRequest);
           } else if (typeof payload.destination_hash === "string") {
-            await coreApiRemoveGroupMember(selectedGroup.core_handle, payload.destination_hash);
+            await coreApiRemoveGroupMember(selectedGroup.core_handle, payload.destination_hash, admitProfileRequest);
           }
           handled = true;
         } catch (reason) {
@@ -5257,7 +5280,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     const workspace = (latest.workspaces ?? []).find((item) => item.id === workspaceId);
     const member = workspace?.members.find((item) => item.id === memberId);
     if (!workspace?.core_handle || !member?.core_handle) throw new Error("core_api_unavailable");
-    await coreApiWorkspaceMemberRole(workspace.core_handle, member.core_handle, "admin", newOperationId());
+    await coreApiWorkspaceMemberRole(workspace.core_handle, member.core_handle, "admin", newOperationId(), admitProfileRequest);
   };
   const respondToWorkspaceJoin = async (request: WorkspaceJoinRequest, accept: boolean, role: "member" | "admin" = "member") => {
     if (workspaceActionBusy || !workspaces.some((workspace) => workspace.id === request.workspace_id)) return;
@@ -5277,7 +5300,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       if (workspace?.core_handle && request.core_handle) {
         try {
           await coreApiWorkspaceJoinDecision(
-            workspace.core_handle, request.core_handle, accept, newOperationId());
+            workspace.core_handle, request.core_handle, accept, newOperationId(), admitProfileRequest);
           handled = true;
         } catch (reason) {
           if (!String(reason).includes("core_api_unavailable")) throw reason;
@@ -5374,7 +5397,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
           try {
             await coreApiWorkspaceAdminRequest(
               selectedWorkspace.core_handle, request.core_handle,
-              action as "approve" | "decline" | "cancel" | "dismiss", newOperationId());
+              action as "approve" | "decline" | "cancel" | "dismiss", newOperationId(), admitProfileRequest);
             await refresh(true);
             return;
           } catch (reason) {
@@ -5388,7 +5411,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
         if (member?.core_handle) {
           try {
             await coreApiRemoveWorkspaceMember(
-              selectedWorkspace.core_handle, member.core_handle, newOperationId());
+              selectedWorkspace.core_handle, member.core_handle, newOperationId(), admitProfileRequest);
             await refresh(true);
             return;
           } catch (reason) {
@@ -5410,7 +5433,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
             payload.requested_role === "admin" || payload.requested_role === "member"
               ? payload.requested_role : null,
             typeof payload.note === "string" ? payload.note : "",
-            newOperationId());
+            newOperationId(), admitProfileRequest);
           await refresh(true);
           return;
         } catch (reason) {
@@ -5421,7 +5444,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
           && typeof payload.request_id === "string" && typeof payload.approve === "boolean") {
         try {
           await coreApiWorkspaceDisplayNameDecision(
-            selectedWorkspace.core_handle, payload.request_id, payload.approve, newOperationId());
+            selectedWorkspace.core_handle, payload.request_id, payload.approve, newOperationId(), admitProfileRequest);
           await refresh(true);
           return;
         } catch (reason) {
@@ -5433,7 +5456,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
           && typeof payload.display_name === "string") {
         try {
           await coreApiWorkspaceDisplayNameRequest(
-            selectedWorkspace.core_handle, payload.display_name, newOperationId());
+            selectedWorkspace.core_handle, payload.display_name, newOperationId(), admitProfileRequest);
           await refresh(true);
           return;
         } catch (reason) {
@@ -5445,7 +5468,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
           && typeof payload.enabled === "boolean") {
         try {
           await coreApiWorkspaceReadHintSync(
-            selectedWorkspace.core_handle, payload.enabled, newOperationId());
+            selectedWorkspace.core_handle, payload.enabled, newOperationId(), admitProfileRequest);
           await refresh(true);
           return;
         } catch (reason) {
@@ -5466,7 +5489,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
           try {
             await coreApiWorkspaceAuthorityOffer(
               selectedWorkspace.core_handle, payload.transition_kind,
-              member.core_handle, device.core_handle, outgoing, newOperationId());
+              member.core_handle, device.core_handle, outgoing, newOperationId(), admitProfileRequest);
             await refresh(true);
             return;
           } catch (reason) {
@@ -5484,7 +5507,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
             await coreApiWorkspaceAuthority(
               selectedWorkspace.core_handle, transition.core_handle,
               command === "accept_workspace_authority_transition" ? "accept" : "finalize",
-              newOperationId());
+              newOperationId(), admitProfileRequest);
             await refresh(true);
             return;
           } catch (reason) {
@@ -5495,7 +5518,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       }
       if (command === "report_workspace_authority_loss" && selectedWorkspace.core_handle) {
         try {
-          await coreApiReportAuthorityLoss(selectedWorkspace.core_handle, newOperationId());
+          await coreApiReportAuthorityLoss(selectedWorkspace.core_handle, newOperationId(), admitProfileRequest);
           await refresh(true);
           return;
         } catch (reason) {
@@ -5507,7 +5530,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
           && typeof payload.name === "string" && typeof payload.description === "string") {
         try {
           await coreApiWorkspaceMetadata(
-            selectedWorkspace.core_handle, payload.name, payload.description, newOperationId());
+            selectedWorkspace.core_handle, payload.name, payload.description, newOperationId(), admitProfileRequest);
           await refresh(true);
           return;
         } catch (reason) {
@@ -5519,7 +5542,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
           && (payload.retention_days === null || typeof payload.retention_days === "number")) {
         try {
           await coreApiWorkspaceRetention(
-            selectedWorkspace.core_handle, payload.retention_days, newOperationId());
+            selectedWorkspace.core_handle, payload.retention_days, newOperationId(), admitProfileRequest);
           await refresh(true);
           return;
         } catch (reason) {
@@ -5535,7 +5558,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
         if (device?.core_handle) {
           try {
             await coreApiRequestDeviceRemoval(
-              selectedWorkspace.core_handle, device.core_handle, newOperationId());
+              selectedWorkspace.core_handle, device.core_handle, newOperationId(), admitProfileRequest);
             await refresh(true);
             return;
           } catch (reason) {
@@ -5551,7 +5574,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
           try {
             await coreApiDecideDeviceRemoval(
               selectedWorkspace.core_handle, transition.core_handle,
-              command === "approve_workspace_device_removal", newOperationId());
+              command === "approve_workspace_device_removal", newOperationId(), admitProfileRequest);
             await refresh(true);
             return;
           } catch (reason) {
@@ -5566,7 +5589,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
           try {
             await coreApiWorkspaceDeviceLinkDecision(
               selectedWorkspace.core_handle, transition.core_handle,
-              command === "approve_workspace_device_link", newOperationId());
+              command === "approve_workspace_device_link", newOperationId(), admitProfileRequest);
             await refresh(true);
             return;
           } catch (reason) {
@@ -5585,7 +5608,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
             typeof payload.invitation_requests === "string"
               ? payload.invitation_requests
               : selectedWorkspace.policies.invitation_requests,
-            newOperationId(),
+            newOperationId(), admitProfileRequest
           );
           handled = true;
         } catch (reason) {
@@ -5598,7 +5621,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
         if (member?.core_handle && (payload.role === "member" || payload.role === "admin")) {
           try {
             await coreApiWorkspaceMemberRole(
-              selectedWorkspace.core_handle, member.core_handle, payload.role, newOperationId());
+              selectedWorkspace.core_handle, member.core_handle, payload.role, newOperationId(), admitProfileRequest);
             handled = true;
           } catch (reason) {
             if (!String(reason).includes("core_api_unavailable")) throw reason;
@@ -5619,7 +5642,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       if (selectedWorkspace.core_handle) {
         try {
           result = await coreApiCreateWorkspaceDeviceLink(
-            selectedWorkspace.core_handle, newOperationId());
+            selectedWorkspace.core_handle, newOperationId(), admitProfileRequest);
         } catch (reason) {
           if (!String(reason).includes("core_api_unavailable")) throw reason;
         }
@@ -5638,7 +5661,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     try {
       const result = await fetchWorkspaceHistory(selectedWorkspace, "prune", {
         max_events: 500,
-      }, newOperationId()) as unknown as WorkspaceRetentionPruneResult;
+      }, newOperationId(), admitProfileRequest) as unknown as WorkspaceRetentionPruneResult;
       await refresh(true);
       if (result.pruned_this_batch) {
         setWorkspacePage(null);
@@ -5682,7 +5705,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
         if (channel?.core_handle) {
           try {
             await coreApiUpdateChannelMembers(
-              selectedWorkspace.core_handle, channel.core_handle, members, newOperationId());
+              selectedWorkspace.core_handle, channel.core_handle, members, newOperationId(), admitProfileRequest);
             await refresh(true);
             return;
           } catch (reason) {
@@ -5699,7 +5722,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
         if (channel?.core_handle && member?.core_handle) {
           try {
             await coreApiOfferChannelTransfer(
-              selectedWorkspace.core_handle, channel.core_handle, member.core_handle, newOperationId());
+              selectedWorkspace.core_handle, channel.core_handle, member.core_handle, newOperationId(), admitProfileRequest);
             await refresh(true);
             return;
           } catch (reason) {
@@ -5715,7 +5738,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
         if (channel?.core_handle) {
           try {
             await coreApiAcceptChannelTransfer(
-              selectedWorkspace.core_handle, channel.core_handle, newOperationId());
+              selectedWorkspace.core_handle, channel.core_handle, newOperationId(), admitProfileRequest);
             await refresh(true);
             return;
           } catch (reason) {
@@ -5732,7 +5755,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
           try {
             await coreApiUpdateWorkspaceChannel(
               selectedWorkspace.core_handle, channel.core_handle, payload.name,
-              payload.topic, payload.archived === true, newOperationId());
+              payload.topic, payload.archived === true, newOperationId(), admitProfileRequest);
             if (payload.archived === true) setWorkspaceManageChannelOpen(false);
             await refresh(true);
             return;
@@ -5754,7 +5777,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
         });
         try {
           await coreApiCreateWorkspaceChannel(
-            selectedWorkspace.core_handle, name, topic, visibility, members, newOperationId());
+            selectedWorkspace.core_handle, name, topic, visibility, members, newOperationId(), admitProfileRequest);
           const refreshed = await refresh(true);
           const created = (refreshed.workspace_channels ?? []).find((channel) => channel.name === name);
           if (created) setWorkspaceSelectedChannelId(created.id);
@@ -5785,7 +5808,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
               { channel: channel.core_handle,
                 ...(action === "subscribe" ? { subscribed: payload.subscribed === true } : {}),
                 ...(action === "mute" ? { muted: payload.muted === true } : {}) },
-              newOperationId());
+              newOperationId(), admitProfileRequest);
             await refresh(true);
             return;
           } catch (reason) {
@@ -5797,7 +5820,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       if (command === "sync_workspace_channels" && selectedWorkspace.core_handle) {
         try {
           await coreApiWorkspaceChannelState(
-            selectedWorkspace.core_handle, "sync", {}, newOperationId());
+            selectedWorkspace.core_handle, "sync", {}, newOperationId(), admitProfileRequest);
           await refresh(true);
           return;
         } catch (reason) {
@@ -5811,7 +5834,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
         if (channel?.core_handle) {
           try {
             await coreApiRecoverWorkspaceChannel(
-              selectedWorkspace.core_handle, channel.core_handle, newOperationId());
+              selectedWorkspace.core_handle, channel.core_handle, newOperationId(), admitProfileRequest);
             await refresh(true);
             return;
           } catch (reason) {
@@ -5847,7 +5870,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
         approved_propagation_nodes: [
           ...new Set([...snapshot.settings.approved_propagation_nodes, node]),
         ],
-      } as unknown as Record<string, unknown>);
+      } as unknown as Record<string, unknown>, admitProfileRequest);
       await refresh(true);
     } catch (reason) { setWorkspaceActionError(errorMessage(reason)); }
     finally { setWorkspaceActionBusy(false); }
@@ -5987,7 +6010,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       const member = selectedWorkspace.members.find((item) => item.id === memberId);
       if (!member?.core_handle) throw new Error("core_api_unavailable");
       const direct = await coreApiOpenWorkspaceDirect(
-        selectedWorkspace.core_handle ?? "", member.core_handle, newOperationId()) as { id: string } as WorkspaceDirect;
+        selectedWorkspace.core_handle ?? "", member.core_handle, newOperationId(), admitProfileRequest) as { id: string } as WorkspaceDirect;
       setWorkspaceSelectedDirectId(direct.id);
       setWorkspaceSelectedChannelId(null);
       setWorkspaceMentionsOpen(false);
@@ -6005,7 +6028,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     setWorkspaceActionBusy(true); setWorkspaceError("");
     try {
       await fetchWorkspaceHistory(selectedWorkspace, "hide_direct",
-        { conversation: selectedWorkspaceDirect.id }, newOperationId());
+        { conversation: selectedWorkspaceDirect.id }, newOperationId(), admitProfileRequest);
       setWorkspaceSelectedDirectId(null);
       await refresh(true);
     } catch (reason) { setWorkspaceError(errorMessage(reason)); }
@@ -6088,7 +6111,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     setWorkspaceError("");
     try {
       await fetchWorkspaceHistory(selectedWorkspace, "hide_message",
-        { event_id: eventId }, newOperationId());
+        { event_id: eventId }, newOperationId(), admitProfileRequest);
       if (workspaceThreadRootId === eventId) {
         setWorkspaceThreadRootId(null);
         setWorkspaceThreadPage(null);
@@ -6172,7 +6195,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
             command === "close_workspace" ? "close"
               : command === "leave_workspace" ? "leave" : "remove",
             newOperationId(),
-            confirmation,
+            confirmation, admitProfileRequest
           );
           handled = true;
         } catch (reason) {
@@ -6396,7 +6419,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     setContactInviteDismissBusy(promptId);
     setContactInviteDismissError(null);
     try {
-      await fetchWorkspaceConnection(null, "prompt_dismiss", { prompt_id: promptId });
+      await fetchWorkspaceConnection(null, "prompt_dismiss", { prompt_id: promptId }, undefined, admitProfileRequest);
       setDismissedContactInviteIds((current) => new Set(current).add(promptId));
       void refresh(true).catch(() => undefined);
     } catch {
@@ -7016,7 +7039,7 @@ export default function App() {
       if (!lifetime.active) return Promise.resolve();
       const generation = lifetime.capture();
       if (mobileReconcileInFlight.current) return mobileReconcileInFlight.current;
-      const request = lifetime.mutate(generation, () => serviceCommand("reconcile_mobile_lifecycle"))
+      const request = serviceCommand("reconcile_mobile_lifecycle", {}, (submit) => lifetime.mutate(generation, submit))
         .then(() => lifetime.isCurrent(generation) ? refresh(true) : undefined)
         .catch(() => lifetime.isCurrent(generation) ? refresh() : undefined)
         .then(() => undefined);

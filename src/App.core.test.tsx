@@ -153,6 +153,51 @@ describe("Core application serialization", () => {
 
   const nativeLocks = () => host.invoke.mock.calls.filter(([command]) => command === "lock_service");
 
+  it("does not save settings when the profile lookup finishes after lock and reopen", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Settings" }));
+    const settings = await screen.findByRole("region", { name: "Settings" });
+    fireEvent.click(within(settings).getByRole("button", { name: "Connections" }));
+    const profileReply = deferred<unknown>();
+    const original = host.invoke.getMockImplementation()!;
+    let delaying = true;
+    host.invoke.mockImplementation(async (command, payload) => command === "core_api_profile" && delaying
+      ? profileReply.promise : original(command, payload));
+    fireEvent.click(within(settings).getByRole("checkbox", { name: /Find nearby people/ }));
+    const before = host.invoke.mock.calls.filter(([command]) => command === "core_api_profile").length;
+    fireEvent.click(within(settings).getByRole("button", { name: "Save connection settings" }));
+    await waitFor(() => expect(host.invoke.mock.calls.filter(([command]) => command === "core_api_profile").length).toBeGreaterThan(before));
+    // Exercise global retirement while Settings owns the foreground surface.
+    fireEvent.click(screen.getByLabelText("Lock Mesh Chat"));
+    await screen.findByRole("heading", { name: "Mesh Chat is locked" });
+    delaying = false;
+    fireEvent.click(screen.getByRole("button", { name: "Unlock" }));
+    await screen.findByRole("textbox", { name: "Message Taylor" });
+    await act(async () => profileReply.resolve({ profile: profileHandle }));
+    expect(requests("settings.update")).toHaveLength(0);
+  });
+
+  it("does not verify a contact when its peer lookup finishes after lock and reopen", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Contacts" }));
+    const dialog = await screen.findByRole("dialog", { name: "Contacts" });
+    const peerReply = deferred<unknown>();
+    const original = host.invoke.getMockImplementation()!;
+    let delaying = true;
+    host.invoke.mockImplementation(async (command, payload) => command === "core_api_peer_for_destination" && delaying
+      ? peerReply.promise : original(command, payload));
+    const before = host.invoke.mock.calls.filter(([command]) => command === "core_api_peer_for_destination").length;
+    fireEvent.click(within(dialog).getByRole("button", { name: "Mark verified" }));
+    await waitFor(() => expect(host.invoke.mock.calls.filter(([command]) => command === "core_api_peer_for_destination").length).toBeGreaterThan(before));
+    fireEvent.click(screen.getByRole("button", { name: "Lock Mesh Chat" }));
+    await screen.findByRole("heading", { name: "Mesh Chat is locked" });
+    delaying = false;
+    fireEvent.click(screen.getByRole("button", { name: "Unlock" }));
+    await screen.findByRole("textbox", { name: "Message Taylor" });
+    await act(async () => peerReply.resolve({ profile: profileHandle, peer: "e".repeat(40), destination: contact.destination_hash }));
+    expect(requests("peer.update")).toHaveLength(0);
+  });
+
   async function openWorkspaceComposer() {
     current = { ...current, workspaces: [workspace], workspace_channels: [channel] };
     render(<App />);
