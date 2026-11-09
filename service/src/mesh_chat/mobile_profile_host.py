@@ -101,8 +101,8 @@ class NativeMobileProfileHost:
     def _notify(self):
         context = self.context()
         if self._last_context != context:
-            self._last_context = context
             self._emit({"type": "event", "event": "profile_lifecycle", **context})
+            self._last_context = context
 
     def exchange(self, caller, frame, scope):
         identifier = None
@@ -111,6 +111,8 @@ class NativeMobileProfileHost:
             if not isinstance(frame, (bytes, bytearray)) or not 0 < len(frame) <= 4194304:
                 raise ApiFailure("invalid_request")
             request = decode_frame(frame)
+            if not isinstance(request, dict):
+                raise ApiFailure("invalid_request")
             identifier, operation = request.get("request_id"), request.get("operation")
             with self._session_lock:
                 session = self._sessions.get((caller, scope))
@@ -130,8 +132,10 @@ class NativeMobileProfileHost:
             return reply
         except ApiFailure as error:
             code = error.code
-        except Exception:
+        except (ValueError, TypeError, RecursionError):
             code = "invalid_request"
+        except Exception:
+            code = "unavailable"
         return encode_frame({"api_version": 1, "request_id": identifier, "ok": False,
                              "error": {"code": code, "retry_after_ms": None}})
 
@@ -156,7 +160,7 @@ class NativeMobileProfileHost:
 
     def _credential_authorized(self, caller, profile_id):
         challenge = self._issuing
-        return (challenge is not None and caller == self.caller and profile_id == PROFILE_SLOT
+        return (not self._closed and challenge is not None and caller == self.caller and profile_id == PROFILE_SLOT
                 and self.provider.consumeAuthorization(challenge, caller, profile_id) is True)
 
     def complete_authentication(self, challenge):
@@ -207,9 +211,7 @@ class NativeMobileProfileHost:
                 # Host termination can drain an interrupted unlock without
                 # authorizing it to open again. Its old-host journal intent
                 # deliberately resolves to resync after a cold host restart.
-                self.core.lifecycle.reconcile()
-                if self.core.lifecycle.active is not None:
-                    self.lock()
+                self.core.lifecycle.retire_for_host_shutdown()
                 if self.core.lifecycle.query()["state"] != "locked":
                     raise NativeUnavailable("Native profile retirement is incomplete")
                 self._closed = True

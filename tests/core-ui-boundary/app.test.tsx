@@ -19,6 +19,8 @@ let loseNextProfileReply = false;
 let failRefreshAfterEnqueue = false;
 let enqueueAccepted = false;
 let beforeThreadReply: (() => Promise<void>) | null = null;
+let loseNextGroupCreateReply = false;
+let loseNextGroupSendReply = false;
 
 beforeEach(async () => {
   hostStarted = false;
@@ -27,6 +29,8 @@ beforeEach(async () => {
   failRefreshAfterEnqueue = false;
   enqueueAccepted = false;
   beforeThreadReply = null;
+  loseNextGroupCreateReply = false;
+  loseNextGroupSendReply = false;
   window.localStorage.clear();
   transport.invoke.mockReset();
   transport.invoke.mockImplementation(async (command: string, args: Record<string, unknown> = {}) => {
@@ -38,6 +42,11 @@ beforeEach(async () => {
     if (command === "core_api_request" && args.operation === "workspace.timeline_mutation"
       && (args.params as Record<string, unknown>).action === "thread_reply") await beforeThreadReply?.();
     const result = await host.invoke(command, args);
+    if (command === "core_api_request" && ((args.operation === "group.create" && loseNextGroupCreateReply)
+      || (args.operation === "group.message_enqueue" && loseNextGroupSendReply))) {
+      loseNextGroupCreateReply = loseNextGroupSendReply = false;
+      throw new Error(JSON.stringify({ code: "unavailable", retry_after_ms: null, outcome: "unknown" }));
+    }
     if (command === "core_api_request" && args.operation === "message.enqueue_draft") {
       enqueueAccepted = true;
       if (loseNextDraftSendReply) {
@@ -83,6 +92,69 @@ async function liveComposer() {
 }
 
 describe("rendered UI through the production framed Core session", () => {
+  async function groupDialog(title: string) {
+    fireEvent.click(await screen.findByRole("button", { name: "New group" }));
+    const dialog = await screen.findByRole("dialog", { name: "Create a private group" });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Name" }), { target: { value: title } });
+    fireEvent.click(within(dialog).getByRole("checkbox"));
+    return dialog;
+  }
+
+  it("replays lost committed group creation with the original caller key and one durable group", async () => {
+    await startHost();
+    const caps = await host.invoke("core_api_capabilities") as { optional_keyed_operations: string[] };
+    expect(caps.optional_keyed_operations).toEqual(expect.arrayContaining(["group.create", "group.message_enqueue"]));
+    render(<App />);
+    let dialog = await groupDialog("Boundary keyed group");
+    loseNextGroupCreateReply = true;
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create group" }));
+    await within(dialog).findByRole("button", { name: "Retry group creation" });
+    const committed = await host.invoke("fixture_inspect") as { groups: { id: string; title: string }[]; optional_receipt_count: number; group_delivery_count: number };
+    expect(committed.groups.map(group => group.title)).toEqual(["Boundary keyed group"]);
+    expect(committed.optional_receipt_count).toBe(1);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    dialog = await groupDialog("Boundary keyed group");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Retry group creation" }));
+    await screen.findByRole("region", { name: "Group conversation Boundary keyed group" });
+    expect(screen.queryByRole("textbox", { name: "Message Boundary keyed group" })).toBeNull();
+    const creates = transport.invoke.mock.calls.filter(([command, args]) => command === "core_api_request" && args.operation === "group.create");
+    expect(creates).toHaveLength(2);
+    expect(creates[1][1]).toEqual(creates[0][1]);
+    expect(creates[0][1].idempotencyKey).toEqual(expect.any(String));
+    const replayed = await host.invoke("fixture_inspect");
+    expect(replayed).toMatchObject({ groups: committed.groups, group_delivery_count: committed.group_delivery_count, optional_receipt_count: 1 });
+  });
+
+  it("replays lost committed group send once and preserves a newer draft through actual Core", async () => {
+    await startHost();
+    const profile = await coreApiProfile();
+    await host.invoke("core_api_request", { operation: "group.create", params: { profile: profile.profile,
+      title: "Boundary send group", posting_policy: "members", members: [profile.peers[0]] }, idempotencyKey: "boundary-group-send-setup-0001" });
+    expect(await host.invoke("fixture_group_accept")).toMatchObject({ signed_acceptance_applied: true, epoch: 2 });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Boundary send group/ }));
+    const composer = await screen.findByRole("textbox", { name: "Message Boundary send group" }) as HTMLTextAreaElement;
+    fireEvent.change(composer, { target: { value: "Original group boundary message" } });
+    loseNextGroupSendReply = true;
+    fireEvent.click(screen.getByRole("button", { name: "Send group message" }));
+    const retry = await screen.findByRole("button", { name: "Retry previous group send" });
+    await waitFor(() => expect(retry).toHaveProperty("disabled", false));
+    const committed = await host.invoke("fixture_inspect") as { group_messages: { id: string; text: string }[]; group_delivery_count: number };
+    expect(committed.group_messages.map(message => message.text)).toEqual(["Original group boundary message"]);
+    fireEvent.change(composer, { target: { value: "Newer group boundary draft" } });
+    expect(screen.getByRole("textbox", { name: "Previous group send text" })).toHaveProperty("value", "Original group boundary message");
+    fireEvent.click(retry);
+    await screen.findByRole("button", { name: "Send group message" });
+    await waitFor(() => expect(composer.value).toBe("Newer group boundary draft"));
+    const sends = transport.invoke.mock.calls.filter(([command, args]) => command === "core_api_request" && args.operation === "group.message_enqueue");
+    expect(sends).toHaveLength(2);
+    expect(sends[1][1]).toEqual(sends[0][1]);
+    expect(sends[0][1].idempotencyKey).toEqual(expect.any(String));
+    const replayed = await host.invoke("fixture_inspect");
+    expect(replayed).toMatchObject({ group_messages: committed.group_messages, group_delivery_count: committed.group_delivery_count, optional_receipt_count: 2 });
+    expect(transport.invoke.mock.calls.some(([command, args]) => command === "core_api_request" && args.operation === "message.query")).toBe(false);
+  });
+
   it("restores an unsent composer after renderer remount and real vault reopen", async () => {
     await startHost();
     const caps = await host.invoke("core_api_capabilities") as { operations: string[] };

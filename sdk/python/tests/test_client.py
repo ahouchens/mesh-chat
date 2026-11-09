@@ -62,6 +62,43 @@ def test_repaired_helpers_preserve_supplied_keys_without_inventing_any():
     assert all(json.loads(value)["idempotency_key"] == key for value in stream.written[1:])
 
 
+@pytest.mark.parametrize("damage", ["old", "missing_operation", "missing_limit", "boolean_limit", "fractional_minor"])
+def test_call_recovery_requires_complete_capabilities_before_any_frame(damage):
+    limits = {name: 256 for name in ("call_operations_per_caller_profile", "call_operations_per_vault",
+        "call_operation_retention_seconds", "call_operation_keys_per_caller_profile", "call_operation_keys_per_vault")}
+    caps = {**CAP, "api_minor": 1, "operations": ["call.operation_list", "call.operation_query", "call.operation_abandon"], "limits": limits}
+    if damage == "old": caps["api_minor"] = 0
+    if damage == "fractional_minor": caps["api_minor"] = 1.5
+    if damage == "missing_operation": caps["operations"] = caps["operations"][:-1]
+    if damage == "missing_limit": del limits["call_operations_per_vault"]
+    if damage == "boolean_limit": limits["call_operations_per_vault"] = True
+    stream = Scripted(response("client:1", caps))
+    if damage == "fractional_minor":
+        with pytest.raises(CoreClientError, match="incompatible_version"):
+            CoreClient.open(stream.read, stream.write)
+        assert len(stream.written) == 1
+        return
+    client = CoreClient.open(stream.read, stream.write)
+    for invoke in [lambda: client.call_operation_list("p" * 64),
+                   lambda: client.call_operation_query("p" * 64, "o" * 64),
+                   lambda: client.call_operation_abandon("p" * 64, "o" * 64, "explicit-abandon-key00")]:
+        with pytest.raises(CoreClientError, match="unsupported_operation"): invoke()
+    assert len(stream.written) == 1
+
+
+def test_call_recovery_preserves_explicit_abandon_key_without_retry():
+    caps = {**CAP, "api_minor": 1, "operations": ["call.operation_list", "call.operation_query", "call.operation_abandon"],
+            "limits": {name: 256 for name in ("call_operations_per_caller_profile", "call_operations_per_vault",
+                "call_operation_retention_seconds", "call_operation_keys_per_caller_profile", "call_operation_keys_per_vault")}}
+    stream = Scripted(response("client:1", caps), response("client:2", {}))
+    client = CoreClient.open(stream.read, stream.write)
+    with pytest.raises(ValueError): client.call_operation_abandon("p" * 64, "o" * 64, "bad")
+    assert len(stream.written) == 1
+    client.call_operation_abandon("p" * 64, "o" * 64, "explicit-abandon-key00")
+    frame = json.loads(stream.written[1])
+    assert frame["idempotency_key"] == "explicit-abandon-key00" and frame["params"] == {"profile": "p" * 64, "operation": "o" * 64}
+
+
 def test_optional_group_key_requires_complete_capability_and_valid_key():
     caps = {**CAP, "api_minor": 1, "operations": ["runtime.capabilities", "group.create"],
             "optional_keyed_operations": ["group.create"], "limits": {"optional_key_idempotency_seconds": 604800,

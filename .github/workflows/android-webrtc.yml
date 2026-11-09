@@ -98,11 +98,15 @@ jobs:
             dist/mobile/**
             dist/android-core-consumer/**
             sdk/kotlin/build/repository/**
+            sdk/kotlin/build/test-results/**
+            sdk/kotlin/build/reports/tests/**
             dist/reports/**
             plugins/tauri-plugin-mesh-runtime/android/webrtc-smoke/build/outputs/apk/release/webrtc-smoke-release.apk
             plugins/tauri-plugin-mesh-runtime/android/webrtc-smoke/build/outputs/apk/androidTest/release/webrtc-smoke-release-androidTest.apk
             plugins/tauri-plugin-mesh-runtime/android/build/outputs/apk/androidTest/debug/tauri-plugin-mesh-runtime-debug-androidTest.apk
             plugins/tauri-plugin-mesh-runtime/android/build/reports/androidTests/**
+            plugins/tauri-plugin-mesh-runtime/android/build/test-results/**
+            plugins/tauri-plugin-mesh-runtime/android/build/reports/tests/**
             plugins/tauri-plugin-mesh-runtime/android/build/outputs/androidTest-results/**
             plugins/tauri-plugin-mesh-runtime/android/webrtc-smoke/build/reports/androidTests/**
             plugins/tauri-plugin-mesh-runtime/android/webrtc-smoke/build/outputs/androidTest-results/**

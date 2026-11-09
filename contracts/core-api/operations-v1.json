@@ -132,7 +132,10 @@
     "profile.catalog",
     "profile.lock",
     "profile.select",
-    "profile.unlock"
+    "profile.unlock",
+    "call.operation_list",
+    "call.operation_query",
+    "call.operation_abandon"
   ],
   "private_host_operations": [
     "native.command",
@@ -1117,6 +1120,27 @@
       "scope": "runtime",
       "mutation": false,
       "idempotency": "query"
+    },
+    {
+      "operation": "call.operation_list",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "call.operation_query",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "call.operation_abandon",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
     }
   ],
   "limits": {
@@ -1156,10 +1180,20 @@
     "profile_unlock_credentials": 128,
     "optional_key_idempotency_seconds": 604800,
     "optional_keys_per_caller_profile": 4096,
-    "optional_keys_per_vault": 65536
+    "optional_keys_per_vault": 65536,
+    "call_operations_per_caller_profile": 256,
+    "call_operations_per_vault": 4096,
+    "call_operation_retention_seconds": 604800,
+    "call_operation_keys_per_caller_profile": 4096,
+    "call_operation_keys_per_vault": 65536
   },
   "optional_keyed_operations": [
     "group.create",
     "group.message_enqueue"
+  ],
+  "call_recovery_operations": [
+    "call.operation_list",
+    "call.operation_query",
+    "call.operation_abandon"
   ]
 }

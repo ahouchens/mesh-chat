@@ -303,13 +303,33 @@ def run_shared_runtime_native(root, url):
             for peer in peers:
                 peer.store.close()
 
+def reconnect_executor(owner):
+    """Select the real reconnect adapter, never attach unused wrapper fields."""
+    from mesh_chat.connection.adapters.pairing import PairingAndReconnectExecutor
+    from mesh_chat.connection.adapters.reconnect import ReconnectExecutor
+    executor = owner.executor
+    if isinstance(executor, PairingAndReconnectExecutor):
+        executor = executor.reconnect
+    assert isinstance(executor, ReconnectExecutor), "Unexpected native reconnect adapter"
+    return executor
+
+
+def install_synthetic_manual_path(owner):
+    """Instrumentation-only remote RNS path; actual JNI/owner stay production."""
+    executor = reconnect_executor(owner)
+    original = executor.path
+    executor.path = lambda _: {"has_path": True, "ready": True}
+    return executor, original
+
+
 def verify_native_startup_retention(service, owner, native, local_id, remote_id):
     """Delay attachment at its port; real JNI packets must survive until RNS registration."""
     import base64
     from dataclasses import replace
     from mesh_chat.service import WebRTCInterface
 
-    port = owner.executor.native
+    executor = reconnect_executor(owner)
+    port = executor.native
     attach_entered, allow_attach = threading.Event(), threading.Event()
     retained, delivered = threading.Event(), threading.Event()
     marker = b"mesh-startup-" + uuid.uuid4().bytes
@@ -334,7 +354,7 @@ def verify_native_startup_retention(service, owner, native, local_id, remote_id)
             delivered.set()
         return original_incoming(interface, packet)
 
-    owner.executor.native = replace(port, attach=delayed_attach)
+    executor.native = replace(port, attach=delayed_attach)
     service._native_startup_packets.retain = observe_retention
     WebRTCInterface.process_incoming = observe_delivery
     try:
@@ -351,7 +371,7 @@ def verify_native_startup_retention(service, owner, native, local_id, remote_id)
         assert service._native_resources.require(local_id) == physical
     finally:
         allow_attach.set()
-        owner.executor.native = port
+        executor.native = port
         service._native_startup_packets.retain = original_retain
         WebRTCInterface.process_incoming = original_incoming
 
@@ -383,8 +403,6 @@ def run_manual_native_adoption(automatic=True):
     assert owner._failure is None
     assert service._background_reconnect_supervisor is None
     assert not service._native_webrtc_live
-    # Only remote Reticulum path readiness is synthetic in this scenario.
-    owner.executor.path = lambda _: {"has_path": True, "ready": True}
     service._call_settings.signal_mailbox_url = None
     service._call_settings.turn_broker_url = None
     service._call_settings.stun_urls = []
@@ -398,6 +416,8 @@ def run_manual_native_adoption(automatic=True):
     ice = {"iceServers": [], "iceTransportPolicy": "all"}
     channels = [{"label": "mesh-reticulum", "binary": True, "ordered": True},
                 {"label": "mesh-onboarding", "binary": False, "ordered": True}]
+    # Only remote Reticulum path readiness is synthetic in this scenario.
+    executor, original_path = install_synthetic_manual_path(owner)
     try:
         offer = native.invoke("createOffer", remote_id, json.dumps(ice), json.dumps(channels))
         document = create_onboarding_offer(identity, session_id=uuid.uuid4().hex,
@@ -423,7 +443,7 @@ def run_manual_native_adoption(automatic=True):
         if automatic:
             service.reconnect_start(contact_id)
         wait_until(lambda: owner.snapshots().get(profile_id, {}).get("messaging_ready"),
-                   "Shared owner did not adopt the manual native carrier", 30)
+                   "Shared owner did not reach manual-carrier messaging readiness", 30)
         assert service._connection_runtime is owner and owner._failure is None
         assert service._background_reconnect_supervisor is None
         states = owner.owner.snapshots()
@@ -471,9 +491,12 @@ def run_manual_native_adoption(automatic=True):
         assert native.invoke("stats", replacement)["ice_connection_state"] != "closed"
         return True
     finally:
-        if owner is not None:
-            owner.stop()
-            owner.wait()
+        try:
+            if owner is not None:
+                owner.stop()
+                owner.wait()
+        finally:
+            executor.path = original_path
         service.native_webrtc_close(local_id)
         native.close(remote_id)
 

@@ -11,6 +11,36 @@ reports. Exact evidence and limits are in the ledger. Wave 2 is activated below.
 Existing human authorization covers continued implementation, integration and
 worker follow-ups without another permission request.
 
+Current Wave 2 CI `42676194199` at `da81565` fails two synthetic run-context
+fixtures and Windows first-time pairing (`approved_path`, both carriers absent).
+The fixture repair is integrated and passes all 94 matrix checks under CI-like
+context. C and D prioritize production handoff diagnosis and bounded probe
+diagnostics before another full dispatch. Local `a899b85` passes the exact
+640-Python/eight-rendered-App gate; `50474ec` adds independently installed public
+SDK application staging, with nine focused passes. These do not establish SC21
+traffic or packaged acceptance. A's call recovery must preserve ordinary
+start/end/start behavior and require actual trusted retirement before replacing
+uncertain media resources. B's group keys remain explicit and capability gated.
+
+The run has finished with a failed overall gate. Both controlled direct-network
+platforms pass independently validated 25/10/12-case inventories. Android's two
+manual-readiness fixture failures are repaired by targeting the inner reconnect
+executor (`3a122d4`); Kotlin explicit-key assertion and license packaging repairs
+are integrated with host-gated call recovery (`5be412a`, `dee09a7`). The lead's
+248 focused checks pass at `5556cc0`. D supplies complete recovery vectors and
+failed-run reporting. C's Android provider batch `0b012c3` remains under review:
+cold catalog initialization must not read the profile vault key before native
+authentication. Windows first-time pairing diagnosis remains the CI priority.
+
+Corrected checkpoint: complete policy at `6875b00` passes 3,251 cases without
+skips; exact `efbddfa` boundary passes 649 Python plus ten rendered-App cases.
+C's isolated pending-contact projection fix `0af2687` was cherry-picked as
+`e7f6497` with attribution, leaving held provider ancestor `0b012c3` out. The lead
+passes 31 actual native pairing/runtime checks, including two authenticated
+receipts over the original carrier. Full packaged CI is next. A continues public
+pairing, C fixes catalog-key/auth-result isolation and app-owned host composition,
+B continues lifecycle/effect admission, and D continues independent consumers.
+
 Wave 2 local checkpoint: `8950053` passes 420 Python and all eight rendered
 boundary cases, including same-vault reopen and uncertain-send recovery. The
 earlier full policy gate passed 2,630 cases at `6e97db5`. Composer storage,
