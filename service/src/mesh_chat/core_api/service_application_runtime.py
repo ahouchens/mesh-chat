@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from .service_messages import storage_errors
+
 
 class ApplicationRuntime(Protocol):
     def query(self, profile: str, action: str) -> dict: ...
@@ -29,11 +31,13 @@ class ServiceApplicationRuntime:
         raise ValueError("unsupported runtime query")
 
     def mutate(self, profile, action, params, operation_id):
-        if action == "background_set":
-            return dict(self.service.set_background_availability(params["enabled"]))
-        if action == "notification_previews":
-            return dict(self.service.set_hide_notification_previews(
-                params["hidden"], operation_id))
-        if action == "notification_open":
-            return dict(self.service.open_notification_target(params["notification_id"]))
-        raise ValueError("unsupported runtime action")
+        with storage_errors():
+            if action == "background_set":
+                return dict(self.service.set_background_availability(
+                    params["enabled"], operation_id=operation_id))
+            if action == "notification_previews":
+                return dict(self.service.set_hide_notification_previews(
+                    params["hidden"], operation_id))
+            if action == "notification_open":
+                return dict(self.service.open_notification_target(params["notification_id"]))
+            raise ValueError("unsupported runtime action")
