@@ -70,12 +70,15 @@ class ParticipantAccessServiceMixin:
     def _participant_intent_holds_capacity(self, intent: dict[str, Any], now: float) -> bool:
         if float(intent.get("uncertain_lease_until", 0)) > now:
             return True
+        if (intent.get("state") == "allocating"
+                and self.store.get("participant_host", intent["host_session_id"]) is None):
+            # A crash can interrupt retirement after deleting the host record.
+            return float(intent["maximum_expires_at"]) + DEFAULT_MAPPING_LIFETIME > now
         if float(intent.get("maximum_expires_at", 0)) <= now:
             return False
         if intent.get("state") == "reserved":
             return intent.get("runtime_epoch") == self._participant_runtime_epoch()
-        return (intent.get("state") == "allocating"
-                and self.store.get("participant_host", intent["host_session_id"]) is None)
+        return False
 
     def reserve_participant_host_intent(
         self, operation_id, input_digest, *, purpose, scope_id, maximum_expires_at,
@@ -119,7 +122,8 @@ class ParticipantAccessServiceMixin:
                     if previous.get(key) != value:
                         raise ValidationError("Operation ID was already used with different input")
                 return deepcopy(self._require_participant_host_intent(operation_id, input_digest))
-            self.store.operation_result(operation_id, input_digest)
+            if self.store.operation_result(operation_id, input_digest) is not None:
+                raise ParticipantReservationUnavailable("Participant operation has no reservation")
             intents = self.store.list("participant_host_intent")
             if len(intents) >= MAX_PARTICIPANT_INTENTS:
                 raise ParticipantReservationCapacity("Too many participant operation intents")
@@ -138,8 +142,14 @@ class ParticipantAccessServiceMixin:
                 "access_mode": access_mode, "preferred_external_port": preferred_external_port,
                 "local_destination": self._require_profile()["destination_hash"],
                 "created_at": time.time()}
-            self.store.put("participant_host_intent", operation_id, intent)
+            self.store.commit_operation(operation_id, input_digest,
+                self._participant_intent_receipt(operation_id),
+                [("participant_host_intent", operation_id, intent)])
             return deepcopy(intent)
+
+    @staticmethod
+    def _participant_intent_receipt(operation_id: str) -> dict[str, str]:
+        return {"action": "participant_host", "intent_id": operation_id}
 
     def _require_participant_host_intent(self, operation_id, input_digest):
         intent = self.store.get("participant_host_intent", operation_id)
@@ -151,9 +161,8 @@ class ParticipantAccessServiceMixin:
             self._retire_participant_intent(intent)
             raise ParticipantReservationUnavailable("Local profile is unavailable")
         try:
-            # Core keys span operation families. A different command may have
-            # consumed this key after a reservation's incomplete parent call.
-            self.store.operation_result(operation_id, input_digest)
+            if self.store.operation_result(operation_id, input_digest) != self._participant_intent_receipt(operation_id):
+                raise ParticipantReservationUnavailable("Participant operation reservation is missing")
             relationship = intent["relationship_scope"]
             canonical, audience, _, _ = self._route_update_binding(
                 relationship["kind"], relationship["id"], intent["peer_destination"])
@@ -248,10 +257,17 @@ class ParticipantAccessServiceMixin:
             self.store.put("participant_host_intent", operation_id, intent)
             return result
 
-    def _prepare_participant_host_completion(self, operation_id, input_digest):
+    def _prepare_participant_host_completion(self, operation_id, input_digest, *, result: dict[str, Any]):
+        if not isinstance(result, dict):
+            raise ValidationError("Participant completion must be an object")
         intent = self._require_participant_host_intent(operation_id, input_digest)
         self._participant_reserved_access(intent)
-        return [("participant_host_intent", operation_id, {**intent, "state": "committed"})]
+        existing = self.store.get("participant_host_completion", operation_id)
+        completion = {"id": operation_id, "input_digest": input_digest, "result": deepcopy(result)}
+        if existing is not None and existing != completion:
+            raise ValidationError("Participant completion cannot change")
+        return [("participant_host_intent", operation_id, {**intent, "state": "committed"}),
+                ("participant_host_completion", operation_id, completion)]
 
     def _restore_participant_interfaces(self) -> None:
         now = time.time()

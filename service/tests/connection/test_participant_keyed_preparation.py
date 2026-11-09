@@ -98,7 +98,7 @@ def completion(service, intent, access):
         audience_destination=bytes.fromhex(intent["peer_destination"]), generation=intent["generation"],
         access={key: value for key, value in access.items() if key != "host_session_id"})
     outcome = {"document": document, "generation": intent["generation"], "host_session_id": intent["host_session_id"]}
-    writes = [*service._prepare_participant_host_completion(intent["id"], intent["input_digest"]),
+    writes = [*service._prepare_participant_host_completion(intent["id"], intent["input_digest"], result=outcome),
         ("route_generation", intent["generation_id"], {"id": intent["generation_id"],
             "generation": intent["generation"], "host_session_id": intent["host_session_id"], "document": document})]
     return outcome, writes
@@ -114,9 +114,11 @@ def test_intent_commit_precedes_any_listener_or_mapping(hosts, monkeypatch):
         raise OSError("intent commit failed")
 
     monkeypatch.setattr(service.store, "_write_records_locked", fail)
+    operation = str(uuid4())
     with pytest.raises(OSError):
-        reserve(service)
+        reserve(service, operation)
     assert service.store.list("participant_host_intent") == []
+    assert service.store.operation_result(operation, "a" * 64) is None
     assert service.network.created == 0 and mappings == []
 
 
@@ -144,6 +146,30 @@ def test_lost_post_allocation_reply_reuses_exact_listener_mapping_and_access(hos
     assert service.network.created == len(mappings) == 1
 
 
+def test_lost_final_completion_reply_preserves_exact_result_and_cannot_change_it(hosts, monkeypatch):
+    open_host, mappings, _, _, _ = hosts
+    service = open_host()
+    intent = reserve(service)
+    access = service.materialize_participant_host_intent(intent["id"], intent["input_digest"])
+    result, writes = completion(service, intent, access)
+    original = service.store.put_and_delete
+
+    def lost_reply(*args, **kwargs):
+        original(*args, **kwargs)
+        raise OSError("completion committed but reply lost")
+
+    monkeypatch.setattr(service.store, "put_and_delete", lost_reply)
+    with pytest.raises(OSError):
+        service.store.put_and_delete(writes, [])
+    monkeypatch.setattr(service.store, "put_and_delete", original)
+    assert service.materialize_participant_host_intent(intent["id"], intent["input_digest"]) == access
+    assert service.store.get("participant_host_completion", intent["id"])["result"] == result
+    with pytest.raises(ValidationError, match="completion cannot change"):
+        service._prepare_participant_host_completion(intent["id"], intent["input_digest"],
+            result={**result, "document": "a different signed result"})
+    assert service.network.created == len(mappings) == 1
+
+
 def test_final_generation_document_and_receipt_rollback_without_duplicate_resource(hosts, monkeypatch):
     open_host, mappings, _, _, _ = hosts
     service = open_host()
@@ -158,13 +184,14 @@ def test_final_generation_document_and_receipt_rollback_without_duplicate_resour
 
     monkeypatch.setattr(service.store, "_write_records_locked", fail)
     with pytest.raises(OSError):
-        service.store.commit_operation(intent["id"], intent["input_digest"], result, writes)
+        service.store.put_and_delete(writes, [])
     assert service.store.get("route_generation", intent["generation_id"]) is None
-    assert service.store.operation_result(intent["id"], intent["input_digest"]) is None
+    assert service.store.get("participant_host_completion", intent["id"]) is None
+    assert service.store.operation_result(intent["id"], intent["input_digest"]) == service._participant_intent_receipt(intent["id"])
     monkeypatch.setattr(service.store, "_write_records_locked", original)
     assert service.materialize_participant_host_intent(intent["id"], intent["input_digest"]) == access
-    service.store.commit_operation(intent["id"], intent["input_digest"], result, writes)
-    assert service.store.operation_result(intent["id"], intent["input_digest"]) == result
+    service.store.put_and_delete(writes, [])
+    assert service.store.get("participant_host_completion", intent["id"])["result"] == result
     assert service.materialize_participant_host_intent(intent["id"], intent["input_digest"]) == access
     assert service.network.created == len(mappings) == 1
 
@@ -212,7 +239,8 @@ def test_replay_after_explicit_stop_does_not_remove_the_mapping_twice(hosts):
     assert len(mappings) == len(removed) == 1
 
 
-def test_unknown_router_reply_never_reallocates_and_holds_capacity_past_document_expiry(hosts, monkeypatch):
+@pytest.mark.parametrize("held_state", ["retired", "allocating"])
+def test_unknown_router_reply_never_reallocates_and_holds_capacity_past_document_expiry(hosts, monkeypatch, held_state):
     open_host, mappings, _, _, _ = hosts
     service = open_host()
     intent = reserve(service)
@@ -233,6 +261,10 @@ def test_unknown_router_reply_never_reallocates_and_holds_capacity_past_document
     assert len(mappings) == service.network.created == 1
     # An expired access document cannot release an unknown live router lease.
     retired["maximum_expires_at"] = int(time.time()) - 1
+    if held_state == "allocating":
+        # Simulate a crash after host deletion but before retiring the intent.
+        retired["state"] = "allocating"
+        retired.pop("uncertain_lease_until")
     service.store.put("participant_host_intent", intent["id"], retired)
     for _ in range(7):
         reserve(service)
@@ -246,13 +278,13 @@ def test_restart_fences_old_receipts_and_never_allocates_again(hosts):
     intent = reserve(service)
     access = service.materialize_participant_host_intent(intent["id"], intent["input_digest"])
     result, writes = completion(service, intent, access)
-    service.store.commit_operation(intent["id"], intent["input_digest"], result, writes)
+    service.store.put_and_delete(writes, [])
     service.close()
     reopened = open_host()
     with pytest.raises(ParticipantReservationUnavailable):
         reopened.materialize_participant_host_intent(intent["id"], intent["input_digest"])
     assert len(mappings) == len(removed) == 1
-    assert reopened.store.operation_result(intent["id"], intent["input_digest"]) == result
+    assert reopened.store.get("participant_host_completion", intent["id"])["result"] == result
     assert reopened.network.listeners == {}
 
 
@@ -299,18 +331,47 @@ def test_changed_payload_conflicts_before_new_allocation(hosts):
 
 
 @pytest.mark.parametrize("allocated", [False, True])
-def test_another_command_consuming_the_global_key_fences_and_cleans_route_intent(hosts, allocated):
+def test_route_global_reservation_blocks_another_command_before_its_effect(hosts, monkeypatch, allocated):
     open_host, mappings, removed, _, _ = hosts
     service = open_host()
     intent = reserve(service)
     if allocated:
-        service.materialize_participant_host_intent(intent["id"], intent["input_digest"])
-    service.store.commit_operation(intent["id"], "b" * 64, {"action": "another-command"}, [])
+        original = service.store.put
+
+        def lost_reply(kind, identifier, value):
+            original(kind, identifier, value)
+            if kind == "participant_host_intent" and value["state"] == "allocated":
+                raise OSError("allocation continuation reply lost")
+
+        monkeypatch.setattr(service.store, "put", lost_reply)
+        with pytest.raises(OSError):
+            service.materialize_participant_host_intent(intent["id"], intent["input_digest"])
+        monkeypatch.setattr(service.store, "put", original)
     with pytest.raises(ValidationError, match="already used with different input"):
-        service.materialize_participant_host_intent(intent["id"], intent["input_digest"])
-    assert service.store.get("participant_host_intent", intent["id"])["state"] == "retired"
-    assert service.network.listeners == {}
-    assert len(mappings) == len(removed) == int(allocated)
+        service.store.commit_operation(intent["id"], "b" * 64, {"action": "another-command"},
+            [("another_effect", "new", {"performed": True})])
+    assert service.store.get("another_effect", "new") is None
+    assert service.store.get("participant_host_intent", intent["id"])["state"] == ("allocated" if allocated else "reserved")
+    assert len(mappings) == int(allocated) and removed == []
+
+
+def test_lost_global_reservation_reply_reuses_the_same_intent_without_allocation(hosts, monkeypatch):
+    open_host, mappings, _, _, _ = hosts
+    service = open_host()
+    original = service.store.commit_operation
+    operation = str(uuid4())
+
+    def lost_reply(*args, **kwargs):
+        original(*args, **kwargs)
+        raise OSError("global reservation committed but reply lost")
+
+    monkeypatch.setattr(service.store, "commit_operation", lost_reply)
+    with pytest.raises(OSError):
+        reserve(service, operation)
+    stored = service.store.get("participant_host_intent", operation)
+    monkeypatch.setattr(service.store, "commit_operation", original)
+    assert reserve(service, operation) == stored
+    assert mappings == [] and service.network.created == 0
 
 
 def test_previously_consumed_global_key_cannot_create_an_intent(hosts):
