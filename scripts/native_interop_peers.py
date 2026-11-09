@@ -11,6 +11,8 @@ from pathlib import Path
 import queue
 import re
 import socket
+import signal
+import shutil
 import struct
 import subprocess
 import sys
@@ -198,8 +200,9 @@ class WindowsPeer:
         failure, code = None, None
         try:
             if crash:
-                self._kill_tree(process)
-                self.forced_exits += 1
+                if process.poll() is None:
+                    self._kill_tree(process)
+                    self.forced_exits += 1
             elif self._poisoned:
                 raise PeerFailure("peer_poisoned")
             else:
@@ -376,3 +379,87 @@ class AndroidPeer:
                 process.wait(timeout=10)
             process.stdout.close()
             self.process = None
+
+
+class AndroidEmulator:
+    """Own the KVM emulator for the whole Node Action, including its cleanup."""
+    IMAGE = "system-images;android-35;google_apis;x86_64"
+
+    def __init__(self):
+        if (sys.platform != "linux" or os.environ.get("GITHUB_ACTIONS") != "true"
+                or not os.access("/dev/kvm", os.R_OK | os.W_OK)):
+            raise PeerFailure("linux_kvm_ci_required")
+        self.sdk = Path(os.environ.get("ANDROID_SDK_ROOT") or os.environ["ANDROID_HOME"])
+        self.name = "mesh-native-" + uuid4().hex[:12]
+        self.root = Path(os.environ["RUNNER_TEMP"]).resolve() / self.name
+        self.serial = "emulator-5554"
+        self.process = None
+        self.old_environment = {}
+
+    def _adb(self, *arguments, timeout=30):
+        return subprocess.check_output([str(self.sdk / "platform-tools/adb"), "-s", self.serial, *arguments],
+            stderr=subprocess.DEVNULL, timeout=timeout).decode().strip()
+
+    def start(self, apks):
+        devices = subprocess.check_output([str(self.sdk / "platform-tools/adb"), "devices"],
+            stderr=subprocess.DEVNULL, text=True, timeout=15)
+        if any(line.strip() for line in devices.splitlines()[1:]):
+            raise PeerFailure("unowned_android_device_present")
+        self.root.mkdir(exist_ok=False)
+        for key, value in {"ANDROID_AVD_HOME": str(self.root), "ANDROID_SERIAL": self.serial}.items():
+            self.old_environment[key] = os.environ.get(key)
+            os.environ[key] = value
+        try:
+            avdmanager = shutil.which("avdmanager")
+            if not avdmanager:
+                raise PeerFailure("avdmanager_unavailable")
+            subprocess.run([avdmanager, "create", "avd", "--name", self.name, "--package", self.IMAGE],
+                input=b"no\n", check=True, capture_output=True, timeout=120)
+            self.process = subprocess.Popen([str(self.sdk / "emulator/emulator"), "-avd", self.name,
+                "-port", "5554", "-no-window", "-gpu", "swiftshader_indirect", "-accel", "on",
+                "-no-snapshot", "-noaudio", "-no-boot-anim", "-camera-back", "none", "-camera-front", "none"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+            deadline = time.monotonic() + 600
+            booted = False
+            while time.monotonic() < deadline:
+                if self.process.poll() is not None:
+                    raise PeerFailure("emulator_exited_during_boot")
+                try: booted = self._adb("shell", "getprop", "sys.boot_completed", timeout=5) == "1"
+                except Exception: booted = False
+                if booted: break
+                time.sleep(1)
+            if not booted: raise PeerFailure("emulator_boot_deadline")
+            self._adb("root")
+            self._adb("wait-for-device")
+            if self._adb("shell", "id", "-u") != "0":
+                raise PeerFailure("required_rootable_kernel_unavailable")
+            for apk in apks:
+                self._adb("install", "-r", str(apk), timeout=120)
+            self._adb("shell", "pm", "grant", AndroidPeer.APP, "android.permission.POST_NOTIFICATIONS")
+        except Exception:
+            self.close()
+            raise
+
+    def close(self):
+        failure = None
+        if self.process is not None:
+            try:
+                if self.process.poll() is None:
+                    self._adb("emu", "kill")
+                    self.process.wait(timeout=30)
+            except Exception:
+                try:
+                    os.killpg(self.process.pid, signal.SIGKILL)
+                    self.process.wait(timeout=15)
+                except Exception:
+                    failure = PeerFailure("emulator_retirement_failed")
+            if self.process.poll() is not None: self.process = None
+        if self.process is None:
+            expected_parent = Path(os.environ["RUNNER_TEMP"]).resolve()
+            if self.root.parent != expected_parent or self.root.name != self.name:
+                raise PeerFailure("emulator_cleanup_path_changed")
+            if self.root.is_dir(): shutil.rmtree(self.root)
+            for key, previous in self.old_environment.items():
+                if previous is None: os.environ.pop(key, None)
+                else: os.environ[key] = previous
+        if failure is not None: raise failure

@@ -8,7 +8,7 @@ import re
 import subprocess
 
 
-SUITES = ("policy", "verification", "android", "direct", "layout")
+SUITES = ("policy", "verification", "android", "direct", "layout", "native_interop")
 
 # Component evidence each required suite must contribute to the uniform manifest.
 COMPONENTS = {
@@ -21,6 +21,7 @@ COMPONENTS = {
     "direct": {"direct_Linux_recovery", "direct_Linux_setup", "direct_Linux_fabric",
                "direct_Windows_recovery", "direct_Windows_setup", "direct_Windows_fabric"},
     "layout": set(),
+    "native_interop": {"native_windows_peer", "native_android_peer"},
 }
 PROTECTED_DOCS = {"AGENTS.md", "SKILL.md", "Mesh_Chat_Connection_Runtime_Spec.md"}
 CONNECTION_TESTS = "service/tests/connection/"
@@ -151,6 +152,8 @@ def select(paths, *, event="pull_request"):
         required, reason = ["policy", "verification", "android"], "isolated_kotlin_client"
     else:
         required, reason = list(SUITES), "conservative_full_matrix"
+    if "verification" in required and "android" in required and "native_interop" not in required:
+        required.append("native_interop")
     return {
         "version": 1, "event": event, "paths": paths,
         "required": required, "reason": reason,
