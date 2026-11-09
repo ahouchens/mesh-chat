@@ -20,6 +20,13 @@ and scenario rows below to complete; their named remaining obligations still
 apply, including packaged cross-platform transport and unavailable physical
 qualification.
 
+Wave 2 now has a complete local policy pass at `538ba226` (2,815 cases, no skips),
+exact rendered-App/Core recovery evidence, installed SDK consumer checks and
+pinned component upgrade/downgrade fixtures. These strengthen the local boundary
+evidence for INV21–INV26 and SC23/SC25. They do not close packaged independent
+transport, full profile lifecycle, remaining mutation-key or physical obligations.
+Exact commits, counts and limitations remain in the ledger.
+
 The rows below summarize historical evidence, not qualification of baseline
 `435b497150e5f0d12cb1c5dc7b4602da7a66ec4c` or subsequent integration commits.
 The historical baseline audit supplied to this integration found 25 passing schema tests

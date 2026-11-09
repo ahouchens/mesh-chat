@@ -20,6 +20,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Set up pnpm and Node.js
         uses: pnpm/setup@v3
@@ -78,6 +80,7 @@ jobs:
           name: core-sdk-verification-${{ github.sha }}
           path: |
             dist/sdk/**
+            dist/sdk-upgrade/**
             dist/reports/core-sdk-distribution-staging.json
           if-no-files-found: error
           retention-days: 14

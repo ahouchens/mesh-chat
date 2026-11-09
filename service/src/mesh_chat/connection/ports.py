@@ -1,6 +1,6 @@
 """Private capabilities supplied by the composition root, never public commands."""
 
-from typing import Protocol
+from typing import Callable, Protocol
 
 from .model import Adopted, ConnectionKey, Desired, Failed, Operation, Resource, Result, Work
 
@@ -30,6 +30,11 @@ class IntentStore(Protocol):
 
 
 class PairingHandoff(Protocol):
-    def __call__(self, operation: Operation, resource: Resource) -> bool:
-        """Revalidate approved capability binding after the owner releases it."""
+    def __call__(self, operation: Operation, resource: Resource,
+                 commit: Callable[[Resource, ConnectionKey], bool]) -> None:
+        """Commit exact physical custody before making it claimable by target.
+
+        A return value is never a transfer receipt. Once commit succeeds,
+        exceptions cannot return cleanup authority to the source actor.
+        """
         ...

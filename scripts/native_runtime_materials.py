@@ -12,7 +12,14 @@ ROOT = Path(__file__).resolve().parents[1]
 DECLARATION = Path(__file__).with_name("native-runtime-materials-v1.json")
 PREFIX = "mesh-runtime-materials"
 EMBEDDED = PREFIX + "/inventory.json"
+EMBEDDED_DECLARATION = PREFIX + "/native-runtime-materials-v1.json"
 LEVEL = "windows_frozen_runtime_materials_inventory"
+
+
+class MaterialFailure(ValueError):
+    def __init__(self, code):
+        self.code = code
+        super().__init__(code)
 
 
 def digest(data):
@@ -21,6 +28,11 @@ def digest(data):
 
 def canonical(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+
+
+def text_bytes(path):
+    """Repository text must have identical archive bytes on Windows and Linux."""
+    return path.read_bytes().replace(b"\r\n", b"\n")
 
 
 def normalized(name):
@@ -88,19 +100,29 @@ def collection(*, root=ROOT, distribution=importlib.metadata.distribution):
                          "notice_files": materials, "wheel_native_files": native})
     for source, target in ((root / "THIRD_PARTY_NOTICES.md", PREFIX + "/THIRD_PARTY_NOTICES.md"),
                            (root / "LICENSE", PREFIX + "/LICENSE"),
-                           (root / "scripts/native-runtime-materials-v1.json", PREFIX + "/declaration.json")):
+                           (root / "scripts/native-runtime-materials-v1.json", EMBEDDED_DECLARATION)):
         datas.append((str(source), str(PurePosixPath(target).parent)))
     return {"v": 1, "declaration_sha256": digest(canonical(declaration)), "packages": packages,
-            "project_license_sha256": digest((root / "LICENSE").read_bytes()),
-            "repository_notices_sha256": digest((root / "THIRD_PARTY_NOTICES.md").read_bytes())}, datas
+            "project_license_sha256": digest(text_bytes(root / "LICENSE")),
+            "repository_notices_sha256": digest(text_bytes(root / "THIRD_PARTY_NOTICES.md"))}, datas
 
 
-def pyinstaller_datas():
-    inventory, datas = collection()
-    path = ROOT / "service/build/native-runtime-materials/inventory.json"
+def pyinstaller_datas(*, root=ROOT, distribution=importlib.metadata.distribution):
+    inventory, datas = collection(root=root, distribution=distribution)
+    path = root / "service/build/native-runtime-materials/inventory.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(canonical(inventory))
-    return [*datas, (str(path), PREFIX)]
+    repository_inputs = {root / "LICENSE", root / "THIRD_PARTY_NOTICES.md", root / "scripts/native-runtime-materials-v1.json"}
+    staged = []
+    for source, target in datas:
+        source = Path(source)
+        if source in repository_inputs:
+            normalized = path.parent / "repository" / source.name
+            normalized.parent.mkdir(parents=True, exist_ok=True)
+            normalized.write_bytes(text_bytes(source))
+            source = normalized
+        staged.append((str(source), target))
+    return [*staged, (str(path), PREFIX)]
 
 
 def inspect_archive(archive, expected, declaration):
@@ -108,14 +130,19 @@ def inspect_archive(archive, expected, declaration):
     if len(names) != len(archive.toc):
         raise ValueError("Frozen archive has ambiguous normalized paths")
     def extract(name):
+        if name not in names:
+            code = {EMBEDDED: "frozen_inventory_missing", EMBEDDED_DECLARATION: "frozen_declaration_missing",
+                    PREFIX + "/LICENSE": "frozen_project_license_missing",
+                    PREFIX + "/THIRD_PARTY_NOTICES.md": "frozen_repository_notices_missing"}.get(name, "frozen_dependency_material_missing")
+            raise MaterialFailure(code)
         value = archive.extract(names[name])
         if not isinstance(value, bytes):
             raise ValueError("Required frozen material is not bytes")
         return value
     if extract(EMBEDDED) != canonical(expected):
         raise ValueError("Frozen inventory differs from the installed locked materials")
-    if digest(extract(PREFIX + "/declaration.json")) != digest(DECLARATION.read_bytes()):
-        raise ValueError("Frozen materials declaration is stale")
+    if digest(extract(EMBEDDED_DECLARATION)) != digest(text_bytes(DECLARATION)):
+        raise MaterialFailure("frozen_declaration_changed")
     if digest(extract(PREFIX + "/THIRD_PARTY_NOTICES.md")) != expected["repository_notices_sha256"]:
         raise ValueError("Frozen repository notice differs")
     if digest(extract(PREFIX + "/LICENSE")) != expected["project_license_sha256"]:
@@ -164,7 +191,7 @@ def verify_report(record, source, tree):
             or record["v"] != 1 or record["passed"] is not True or record["evidence_level"] != LEVEL
             or record["source_commit"] != source or record["source_tree"] != tree
             or record["scope"] != declaration["scope"]
-            or record["declaration_sha256"] != digest(DECLARATION.read_bytes())):
+            or record["declaration_sha256"] != digest(text_bytes(DECLARATION))):
         raise ValueError("Runtime materials report source, declaration or outcome differs")
     def sha(value):
         if not isinstance(value, str) or re.fullmatch(r"[a-f0-9]{64}", value) is None:
@@ -176,7 +203,7 @@ def verify_report(record, source, tree):
             "required_modules_verified", "notice_limits", "native_files_without_wheel_owner", "release_approval"}
             or value["required_modules_verified"] != declaration["required_modules"]
             or value["notice_limits"] != declaration["wheel_native_notice_limit"] or value["release_approval"] is not False
-            or value["project_license_sha256"] != digest((ROOT / "LICENSE").read_bytes())):
+            or value["project_license_sha256"] != digest(text_bytes(ROOT / "LICENSE"))):
         raise ValueError("Runtime material scope or inventory is incomplete")
     packages = value["packages"]
     locked = locked_distributions(ROOT / "service/requirements.lock")
@@ -238,22 +265,34 @@ def main():
     parser.add_argument("--output", type=Path, default=ROOT / "dist/reports/native-runtime-materials.json")
     args = parser.parse_args()
     result = {"v": 1, "passed": False, "evidence_level": LEVEL}
+    phase = "source_artifact_binding"
     try:
         from native_windows_evidence import artifact_binding, require_unchanged
         from PyInstaller.archive.readers import CArchiveReader
         binary, binding = artifact_binding(args.expected_source)
+        phase = "locked_installed_materials"
         expected, _ = collection()
         declaration = json.loads(DECLARATION.read_text())
-        inspected = inspect_archive(CArchiveReader(str(binary)), expected, declaration)
+        phase = "frozen_archive_open"
+        archive = CArchiveReader(str(binary))
+        phase = "frozen_archive_validation"
+        inspected = inspect_archive(archive, expected, declaration)
+        phase = "unchanged_artifact_binding"
         require_unchanged(binary, binding)
         result.update(binding, inventory=inspected, passed=True,
-                      scope=declaration["scope"], declaration_sha256=digest(DECLARATION.read_bytes()))
+                      scope=declaration["scope"], declaration_sha256=digest(text_bytes(DECLARATION)))
         verify_report(result, binding["source_commit"], binding["source_tree"])
     except Exception as error:
         result["passed"] = False
         result["failure_type"] = type(error).__name__
+        result["phase"] = phase
+        result["error_code"] = error.code if isinstance(error, MaterialFailure) else {
+            KeyError: "archive_member_missing", FileNotFoundError: "required_file_missing",
+            ValueError: "material_validation_failed", RuntimeError: "artifact_binding_failed",
+        }.get(type(error), "materials_verification_failed")
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=2) + "\n")
+    print(json.dumps({key: result[key] for key in ("passed", "phase", "error_code", "failure_type") if key in result}))
     return 0 if result["passed"] else 1
 
 
