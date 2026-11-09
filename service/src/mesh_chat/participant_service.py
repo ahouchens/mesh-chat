@@ -67,6 +67,34 @@ class ParticipantAccessServiceMixin:
             self._participant_reservation_epoch = secrets.token_hex(16)
         return self._participant_reservation_epoch
 
+    def _participant_retirements(self) -> dict[str, dict[str, Any]]:
+        if not hasattr(self, "_participant_retired_intents"):
+            self._participant_retired_intents = {}
+        return self._participant_retired_intents
+
+    def _reclaim_participant_intents(self, now: float) -> None:
+        """Discard private history only after every possible lease has expired."""
+        deletions = []
+        reclaimed = []
+        for intent in self.store.list("participant_host_intent"):
+            operation = intent["id"]
+            expiry = float(intent["maximum_expires_at"])
+            safe_after = expiry if intent["state"] == "reserved" else expiry + DEFAULT_MAPPING_LIFETIME
+            local = self._participant_retirements().get(operation, {})
+            if (now <= max(safe_after, float(intent.get("uncertain_lease_until", 0)))
+                    or self.store.get("participant_host", intent["host_session_id"]) is not None
+                    or intent.get("cleanup") or local.get("cleanup")
+                    or intent["host_session_id"] in getattr(self, "_participant_pending_resources", {})):
+                continue
+            if self.store.operation_result(operation, intent["input_digest"]) != self._participant_intent_receipt(operation):
+                continue
+            deletions.extend([("participant_host_intent", operation), ("participant_host_completion", operation)])
+            reclaimed.append(operation)
+        if deletions:
+            self.store.put_and_delete([], deletions)
+            for operation in reclaimed:
+                self._participant_retirements().pop(operation, None)
+
     def _participant_intent_holds_capacity(self, intent: dict[str, Any], now: float) -> bool:
         if float(intent.get("uncertain_lease_until", 0)) > now:
             return True
@@ -124,6 +152,7 @@ class ParticipantAccessServiceMixin:
                 return deepcopy(self._require_participant_host_intent(operation_id, input_digest))
             if self.store.operation_result(operation_id, input_digest) is not None:
                 raise ParticipantReservationUnavailable("Participant operation has no reservation")
+            self._reclaim_participant_intents(time.time())
             intents = self.store.list("participant_host_intent")
             if len(intents) >= MAX_PARTICIPANT_INTENTS:
                 raise ParticipantReservationCapacity("Too many participant operation intents")
@@ -157,6 +186,8 @@ class ParticipantAccessServiceMixin:
             raise ParticipantReservationUnavailable("Participant reservation is missing")
         if intent.get("input_digest") != input_digest:
             raise ValidationError("Operation ID was already used with different input")
+        if operation_id in self._participant_retirements():
+            raise ParticipantReservationUnavailable("Participant reservation is retired in this runtime")
         if self._identity is None or self._shutdown.is_set():
             self._retire_participant_intent(intent)
             raise ParticipantReservationUnavailable("Local profile is unavailable")
@@ -186,7 +217,8 @@ class ParticipantAccessServiceMixin:
         session = intent["host_session_id"]
         host = self.store.get("participant_host", session)
         memory = getattr(self, "_participant_pending_resources", {}).get(session)
-        resource = memory or host or intent.get("cleanup")
+        local = self._participant_retirements().get(intent["id"])
+        resource = local.get("cleanup") if local is not None else memory or host or intent.get("cleanup")
         def matches(item):
             return (item is not None and item.get("reservation_operation_id") == intent["id"]
                     and item.get("reservation_epoch") == intent["runtime_epoch"])
@@ -197,22 +229,46 @@ class ParticipantAccessServiceMixin:
             retired["uncertain_lease_until"] = max(
                 float(intent.get("uncertain_lease_until", 0)), time.time() + DEFAULT_MAPPING_LIFETIME)
         if matches(resource):
-            retired["cleanup"] = resource
-        self.store.put("participant_host_intent", intent["id"], retired)
+            retired["cleanup"] = deepcopy(resource)
+        else:
+            retired.pop("cleanup", None)
+        # Fence before the first fallible write. Restore and replay must deny
+        # this listener even while durable retirement is unavailable.
+        self._participant_retirements()[intent["id"]] = retired
+        errors = []
+        try:
+            self.store.put("participant_host_intent", intent["id"], retired)
+        except Exception as error:
+            errors.append(error)
         if matches(host):
-            self.store.delete("participant_host", session)
-        if matches(resource):
+            try:
+                self.store.delete("participant_host", session)
+            except Exception as error:
+                errors.append(error)
+        if matches(resource) or matches(host) or local is not None:
             try:
                 self._apply_participant_interfaces()
-            finally:
-                for key in ("mapping", "pinhole"):
-                    if isinstance(resource.get(key), dict):
-                        remove_port_mapping(resource[key])
-                if isinstance(resource.get("firewall"), dict):
-                    remove_temporary_windows_rule(resource["firewall"])
-                getattr(self, "_participant_pending_resources", {}).pop(session, None)
+            except Exception as error:
+                errors.append(error)
+        if matches(resource):
+            for key, cleanup in (("mapping", remove_port_mapping), ("pinhole", remove_port_mapping),
+                                 ("firewall", remove_temporary_windows_rule)):
+                if not isinstance(retired["cleanup"].get(key), dict):
+                    continue
+                try:
+                    cleanup(retired["cleanup"][key])
+                    retired["cleanup"].pop(key)
+                except Exception as error:
+                    errors.append(error)
+            getattr(self, "_participant_pending_resources", {}).pop(session, None)
+            if not any(isinstance(retired["cleanup"].get(key), dict) for key in ("mapping", "pinhole", "firewall")):
                 retired.pop("cleanup", None)
-                self.store.put("participant_host_intent", intent["id"], retired)
+        try:
+            self.store.put("participant_host_intent", intent["id"], retired)
+        except Exception as error:
+            errors.append(error)
+        if errors:
+            raise errors[0]
 
     def retire_participant_host_intent(self, operation_id, input_digest):
         with self._dispatch_lock:
@@ -275,6 +331,8 @@ class ParticipantAccessServiceMixin:
         clients: list[dict[str, Any]] = []
         for record_id, record in self.store.items("participant_host"):
             if record.get("reservation_operation_id"):
+                if record["reservation_operation_id"] in self._participant_retirements():
+                    continue
                 intent = self.store.get("participant_host_intent", record["reservation_operation_id"])
                 if (intent is None or intent.get("state") == "retired"
                         or record.get("reservation_epoch") != self._participant_runtime_epoch()):
@@ -1097,6 +1155,13 @@ class ParticipantAccessServiceMixin:
         now = time.time()
         changed = False
         for record in list(self._participant_hosts()):
+            if record.get("reservation_operation_id") in self._participant_retirements():
+                intent = self._participant_retirements()[record["reservation_operation_id"]]
+                try:
+                    self._retire_participant_intent(intent)
+                except Exception:
+                    pass
+                continue
             if float(record.get("expires_at", 0)) <= now:
                 self.stop_participant_host(record["id"])
                 changed = True
