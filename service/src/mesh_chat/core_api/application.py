@@ -1,9 +1,6 @@
 """Owner-scoped application read projection over the protected service."""
 
-from uuid import uuid4
-
-from .native_commands import NATIVE_COMMANDS
-from .session import ApiFailure
+from .errors import ApiFailure
 
 
 class ServiceApplication:
@@ -21,25 +18,3 @@ class ServiceApplication:
             return self._service.snapshot()
         except Exception as error:
             raise ApiFailure("internal") from error
-
-
-    def command(self, command, payload):
-        if command not in NATIVE_COMMANDS:
-            raise ApiFailure("forbidden")
-        if not isinstance(payload, dict):
-            raise ApiFailure("invalid_request")
-        response, should_stop = self._service.dispatch({
-            "v": 1,
-            "id": uuid4().hex,
-            "command": command,
-            "payload": payload,
-        })
-        if should_stop:
-            raise ApiFailure("forbidden")
-        if response.get("ok") is not True:
-            code = response.get("error", {}).get("code", "internal")
-            raise ApiFailure(code if code in {
-                "invalid_request", "forbidden", "unavailable", "conflict",
-                "resource_exhausted", "internal",
-            } else "internal")
-        return response.get("result")

@@ -20,6 +20,15 @@ explicit capabilities and schemas before clients can enqueue them.
 
 ## Trust and binding
 
+`request-v1.schema.json` is the public request contract. Native transport and
+lifecycle commands use `private-host-request-v1.schema.json` and the manifest's
+separate `private_host_operations` inventory. An ordinary `approve` grant or
+packaged `owner` consumer neither advertises nor invokes `native.command`.
+Only trusted bootstrap can attach a separate native command port: the desktop
+sidecar after exact executable allowlisting, or Android's actual own-UID binding.
+Frame JSON cannot attach that port or widen its authority. Media plumbing keeps
+the existing native command allowlist through this private port.
+
 The trusted application host authenticates callers before constructing a facade
 session. The session holds its caller ID, operation permissions and allowed
 profile scopes; none of those facts come from request JSON. Windows bootstrap

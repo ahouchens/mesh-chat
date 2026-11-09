@@ -18,11 +18,11 @@ PROFILE_PERMISSIONS = frozenset({"observe", "read", "send"})
 
 
 class HostedClient:
-    def __init__(self, service, permissions=PROFILE_PERMISSIONS):
+    def __init__(self, service, permissions=PROFILE_PERMISSIONS, *, private_native=False):
         server_read, client_write = os.pipe()
         client_read, server_write = os.pipe()
         grants = [Grant("alex", permissions, ("local",))]
-        session = bind_service_stream(service, lambda: grants[0])
+        session = bind_service_stream(service, lambda: grants[0], private_native=private_native)
 
         def serve():
             with os.fdopen(server_read, "rb", buffering=0) as reader, \
@@ -220,9 +220,9 @@ def test_facade_call_settings_round_trip(host):
         owner.close()
 
 
-def test_native_command_is_owner_only_and_allowlisted(host):
+def test_native_command_requires_explicit_private_host_binding_and_is_allowlisted(host):
     service = host()
-    owner = HostedClient(service, frozenset({"observe", "read", "approve"}))
+    owner = HostedClient(service, frozenset({"observe", "read", "approve"}), private_native=True)
     try:
         client = CoreClient.open(owner.reader.readline, owner.writer.write)
         snapshot = client.native_command("workspace_snapshot", {})
@@ -236,7 +236,7 @@ def test_native_command_is_owner_only_and_allowlisted(host):
         client = CoreClient.open(consumer.reader.readline, consumer.writer.write)
         with pytest.raises(CoreClientError) as raised:
             client.native_command("workspace_snapshot", {})
-        assert raised.value.code == "forbidden"
+        assert raised.value.code == "unsupported_operation"
     finally:
         consumer.close()
 

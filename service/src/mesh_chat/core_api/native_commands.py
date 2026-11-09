@@ -1,8 +1,13 @@
 """Commands the trusted application host may dispatch through the facade.
 
-Generated from the desktop renderer allowlist. The service remains the policy
-owner; this list only prevents the facade from becoming an arbitrary RPC.
+Generated from the desktop renderer allowlist. Only a private host-bound port may
+invoke these commands; public owner/approve grants never attach that port.
 """
+
+from uuid import uuid4
+
+from .errors import ApiFailure
+
 
 NATIVE_COMMANDS = frozenset({
     "workspace_snapshot",
@@ -64,3 +69,31 @@ NATIVE_COMMANDS = frozenset({
     "workspace_request_paths",
     "reconcile_mobile_lifecycle",
 })
+
+
+class ServiceNativeCommands:
+    """Private adapter bound only by authenticated application bootstrap."""
+
+    def __init__(self, service):
+        self._service = service
+
+    def command(self, command, payload):
+        if command not in NATIVE_COMMANDS:
+            raise ApiFailure("forbidden")
+        if not isinstance(payload, dict):
+            raise ApiFailure("invalid_request")
+        response, should_stop = self._service.dispatch({
+            "v": 1,
+            "id": uuid4().hex,
+            "command": command,
+            "payload": payload,
+        })
+        if should_stop:
+            raise ApiFailure("forbidden")
+        if response.get("ok") is not True:
+            code = response.get("error", {}).get("code", "internal")
+            raise ApiFailure(code if code in {
+                "invalid_request", "forbidden", "unavailable", "conflict",
+                "resource_exhausted", "internal",
+            } else "internal")
+        return response.get("result")
