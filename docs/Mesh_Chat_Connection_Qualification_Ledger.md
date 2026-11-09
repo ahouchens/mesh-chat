@@ -13,8 +13,11 @@ executed and passed, zero failures or skips, qualification ID
 The workflow is not accepted: Windows failed frozen-material verification;
 broad verification passed 4,075 tests but failed one stale frontend history
 assertion (51 environment-specific skips); Android instrumentation compilation
-could not resolve its transitive Binder SDK dependency. Direct jobs were still
-running when this checkpoint was recorded.
+could not resolve its transitive Binder SDK dependency. Direct jobs subsequently
+completed successfully: both Windows and Linux passed 25 fabric, 10 recovery
+and 12 setup cases with zero skips. The lead validated each retained inventory
+and report using pinned `dcac85e` validators. Binary hashes in these report-only
+archives remain runner claims. The final workflow gate failed.
 
 Read-only inspection of the retained Windows executable confirmed SHA-256
 `1b9d37786c8c626fcd28c4d9e8021480c95e63c9c070255798a87fe4927df8b2` and identified
@@ -30,6 +33,83 @@ repository-byte repairs plus prepared reaction/invitation hooks. The lead ran
 zero skips, 12.30 seconds. Invitation preparation does not itself establish atomic
 personal adoption/workspace join; parent integration remains required. Runtime
 profile host binding and actual Windows–Android topology remain pending.
+
+### Combined native custody review
+
+Source `5cf3478f45bd8052d1e0dd4684c2c0ada4a7362d` integrates concrete supervisor
+pairing, complete private native lease accounting, the queued-creation
+cancellation fix, and the Android instrumentation dependency correction. Strict
+model/reducer typing passes. The complete local required run executed 2,982 cases:
+2,977 passed, five failed, zero skipped in 287.14 seconds. Four failures were
+boundary vectors still routing runtime lifecycle requests through the ordinary
+service session or omitting `profile.catalog`; D owns their correction. The
+remaining Bash fixture failed sandbox path traversal and passed independently
+with the necessary filesystem access. This is not a passing policy gate.
+
+Follow-up `02db485`, integrated at `8e396b7`, retains an acquired profile service
+through any handle-authority validation failure. The full corrected policy run
+and packaged CI remain required. Supervisor-owned initial pairing still needs
+its trusted host entry wired into the topology controller; a manually driven
+native handshake does not establish that coverage.
+
+The corrected complete policy run at
+`1e288ecbf9da00d49c84ee63ff9ece76a3f15f7d` passes all 3,108 collected/executed
+cases with zero failures or skips in 306.43 seconds. Qualification ID:
+`6b165305c11c4d418b07f57484b6b60c`; retained files are
+`dist/reports/policy-runtime-custody.{xml,json,inventory.json}`. Seven warnings
+concern existing JUnit metadata/upstream deprecation behavior. This source also
+contains the two-role topology infrastructure, whose actual execution and
+supervisor-owned pairing-entry followup remain pending. Passing its controller
+component tests is not transport qualification.
+
+### Native retirement and UI lifetime follow-up
+
+Source `5a523d75940e903a023f5637c5cb37074631e4f1` integrates the private,
+marked-profile supervisor pairing entry, immediate routing removal after a lost
+native creation return, and truthful mobile shutdown acknowledgment. Android
+keeps its native response pump alive until deferred vault cleanup finishes.
+The lead's combined Windows host, private pairing, mobile bootstrap and profile
+lifecycle check passed 76 tests, zero skips, in 6.74 seconds. The retained report
+is `.test-tmp/native-retirement-review.xml`.
+
+Source `0f19638a58aa2086af97813ce2cdf78ff8167dbb` adds the private mobile profile
+host foundation. Its 14 encrypted-vault/Core lifecycle tests passed in 2.39
+seconds with zero skips (`.test-tmp/mobile-profile-review.xml`). OS key retrieval
+and authentication are explicit boundary doubles in this run; production
+Kotlin/Binder/provider wiring remains pending.
+
+UI worker source `bb14d2bce5f043df9e8ae129901e7217c8d1815c` passed 630 Python
+boundary cases plus eight rendered-App cases, zero skips, in 41.81 seconds.
+Final worker source `002ddd4fae9b979748f2c6d45d6f7c9d913d27af` changes only the
+notification presentation fixture after that gate and passes all 700 frontend
+tests across 43 files in 58.98 seconds, plus TypeScript compilation. These are
+worker-reported checks, not a claim that the exact final worker head repeated
+the Python boundary gate. The batch is integrated at `ec96794708876675ee02d9fea97a8a6cd25fa362`.
+It hides retired profile content, bounds final UI work to one second, preserves
+uncertain lock outcomes for retry, and fences delayed notification admission.
+Full renderer-restart call intent recovery and live public profile selection
+remain open. No new packaged qualification is claimed by these local checks.
+
+### Runtime catalog and installed SDK checkpoint
+
+Source `8ef8dd5388e617ad4dae0a1425318cd05f08d8f7`, tree
+`609d4f4797eac4b90c3b62d8df87e3cf17ad738a`, stages the updated public SDK archives
+and passes 239 runtime-host, installed SDK, pinned upgrade and contract cases
+without skips in 35.28 seconds. The encrypted host catalog survives profile-vault
+closure, preserves derived opaque-handle authority and fences active services
+against the final persisted selection. A two-slot constructor race rejects the
+changed selection before publication. Trusted platform key-slot openers are still
+required; this is not installed Windows/Android lifecycle evidence.
+
+Source `d8869d06c92cc1f6dae3eb8ce1e8a5b97ac52d0e` keeps the selected profile first
+in capability results for existing clients. The lead ran the four pinned Python
+and TypeScript 0.2 consumer cases with both selected slots: four passed, zero
+skips, 4.68 seconds (27 unrelated cases explicitly deselected). The earlier
+frontend history repair at `5fa62a9` passes all seven layout checks in 0.39 seconds.
+
+Renderer-restart recovery of an unknown call start still needs a protected Core
+operation query and authoritative cleanup disposition. An in-memory UI ticket or
+a bare `resync_required` response does not close that obligation.
 
 ### Wave 2 combined policy and upgrade checkpoint
 

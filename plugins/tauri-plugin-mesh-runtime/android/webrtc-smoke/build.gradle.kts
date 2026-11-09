@@ -38,6 +38,7 @@ android {
 kotlin { compilerOptions { jvmTarget = JvmTarget.JVM_17 } }
 
 dependencies {
+    androidTestImplementation(project(":mesh-core-client"))
     implementation(project(":tauri-plugin-mesh-runtime"))
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test:runner:1.6.2")

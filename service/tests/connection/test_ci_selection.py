@@ -2,11 +2,13 @@
 import importlib.util
 from pathlib import Path
 import subprocess
+import sys
 
 import pytest
 
 
 SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "connection_ci.py"
+sys.path.insert(0, str(SCRIPT.parent))
 KOTLIN_CLIENT = "sdk/kotlin/src/main/java/com/meshchat/runtime/core/"
 spec = importlib.util.spec_from_file_location("connection_ci", SCRIPT)
 ci = importlib.util.module_from_spec(spec)
@@ -34,11 +36,24 @@ def test_documentation_exclusion_is_explicit_and_does_not_hide_mixed_changes():
 @pytest.mark.parametrize("paths", [None, [], ["../README.md"], ["/README.md"], ["docs\\guide.md"]])
 def test_missing_empty_or_ambiguous_diff_expands_coverage(paths):
     assert ci.select(paths)["required"] == list(ci.SUITES)
+    assert ci.select(paths)["native_workload"] == "full"
 
 
 @pytest.mark.parametrize("event", ["workflow_dispatch", "merge_group", "release", "schedule", "unknown"])
 def test_manual_release_merge_queue_and_unknown_events_cannot_narrow_coverage(event):
     assert ci.select(["README.md"], event=event)["required"] == list(ci.SUITES)
+    assert ci.select(["README.md"], event=event)["native_workload"] == "full"
+
+
+def test_known_affected_pr_keeps_actual_native_smoke_but_push_remains_full():
+    path = "service/src/mesh_chat/service.py"
+    plan = ci.select([path], event="pull_request")
+    assert "native_interop" in plan["required"] and plan["native_workload"] == "quick"
+    assert ci.select([path], event="push")["native_workload"] == "full"
+    assert ci.select(None, event="pull_request")["native_workload"] == "full"
+    plan["native_workload"] = "full"
+    with pytest.raises(ValueError):
+        ci.validate(plan, {suite: {"result": "success"} for suite in ci.SUITES})
 
 
 def test_complete_selected_execution_passes_but_omitted_job_does_not():
@@ -195,7 +210,7 @@ def test_isolated_pipe_production_changes_skip_platform_recompilation():
 @pytest.mark.parametrize("name", ["CoreClient.kt", "CoreTransport.kt", "CoreExchangeTransport.kt"])
 def test_isolated_kotlin_client_keeps_android_consumer_and_contract_qualification(name):
     plan = ci.select([KOTLIN_CLIENT + name])
-    assert plan["required"] == ["policy", "verification", "android"]
+    assert plan["required"] == ["policy", "verification", "android", "native_interop"]
     assert plan["reason"] == "isolated_kotlin_client"
     jobs = {suite: {"result": "success" if suite in plan["required"] else "skipped"}
             for suite in ci.SUITES}
@@ -322,3 +337,24 @@ def test_isolated_cli_production_skips_platform_recompilation():
 def test_cli_narrowing_is_limited_to_branch_events(event):
     assert ci.select(["service/src/mesh_chat/core_api/cli.py"],
                      event=event)["required"] == list(ci.SUITES)
+
+
+@pytest.mark.parametrize("status", ["failure", "cancelled", "skipped", None])
+def test_android_and_verification_dependency_changes_cannot_hide_missing_native_topology(status):
+    plan = ci.select([KOTLIN_CLIENT + "CoreClient.kt"])
+    assert {"verification", "android", "native_interop"} <= set(plan["required"])
+    jobs = {suite: {"result": "success"} for suite in ci.SUITES}
+    jobs["native_interop"]["result"] = status
+    with pytest.raises(ValueError, match="native_interop"): ci.validate(plan, jobs)
+
+
+def test_native_topology_starts_after_both_real_packages_and_is_a_required_final_dependency():
+    import yaml
+    value = yaml.safe_load((SCRIPT.parents[1] / ".github/workflows/connection-qualification.yml").read_text())
+    jobs = value["jobs"]
+    assert set(jobs["native_interop"]["needs"]) == {"plan", "verification", "android"}
+    assert jobs["native_interop"]["uses"] == "./.github/workflows/native-interop.yml"
+    assert "native_interop" in jobs["gate"]["needs"] and jobs["gate"]["if"] == "always()"
+    downloads = [step.get("with", {}).get("name", "") for step in jobs["gate"]["steps"] if step.get("uses", "").startswith("actions/download-artifact@")]
+    assert any(name.startswith("native-interop-windows-") for name in downloads)
+    assert any(name.startswith("native-interop-android-") for name in downloads)

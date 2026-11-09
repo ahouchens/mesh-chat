@@ -26,6 +26,8 @@ jobs:
       android: ${{ steps.select.outputs.android }}
       direct: ${{ steps.select.outputs.direct }}
       layout: ${{ steps.select.outputs.layout }}
+      native_interop: ${{ steps.select.outputs.native_interop }}
+      native_workload: ${{ steps.select.outputs.native_workload }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -63,16 +65,36 @@ jobs:
     if: needs.plan.outputs.layout == 'true'
     uses: ./.github/workflows/connection-layout.yml
 
+  native_interop:
+    needs: [plan, verification, android]
+    if: needs.plan.outputs.native_interop == 'true'
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/native-interop.yml
+    with:
+      workload: ${{ needs.plan.outputs.native_workload }}
+
   gate:
     name: Required connection qualification gate
     if: always()
-    needs: [plan, policy, verification, android, direct, layout]
+    needs: [plan, policy, verification, android, direct, layout, native_interop]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        if: needs.plan.outputs.native_interop == 'true'
+        with:
+          name: native-interop-windows-${{ github.sha }}
+          path: dist/qualification/native-interop
+      - uses: actions/download-artifact@v4
+        if: needs.plan.outputs.native_interop == 'true'
+        with:
+          name: native-interop-android-${{ github.sha }}
+          path: dist/qualification/native-interop
       - uses: actions/download-artifact@v4
         with:
           name: connection-selection-${{ github.sha }}

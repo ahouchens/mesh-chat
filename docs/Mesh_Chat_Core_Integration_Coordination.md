@@ -52,6 +52,36 @@ reaction/invitation hooks are integrated at `67ff95b` (225 focused passes, no
 skips). A's runtime profile host remains under review for persisted-selection
 versus active-vault authority. No new packaged acceptance is claimed.
 
+Runtime host `08e29df` plus persisted-selection fence `fc7e5d9` are integrated
+at `8ef8dd5`; source-bound SDK staging and 239 runtime/installed-consumer/upgrade
+cases pass without skips. Selected-first compatibility `540d959` is integrated
+at `d8869d0`, with four actual older-SDK two-slot cases passing. B now owns
+src-only profile lifecycle facade/UI work coordinated with C's platform credential
+bridge. A retains `call_manager.py` for protected unknown-call recovery after the
+group mutation batch; C owns any required `service.py` glue. Caller operation
+keys, consent and unresolved cleanup must survive these boundaries.
+
+Combined `1e288ec` passes 3,108 required policy cases, zero skips, after D's
+runtime-host vector correction. D's topology workflow/controller infrastructure
+is integrated but held from acceptance until C's trusted supervisor pairing
+entry replaces manual handshake orchestration and both platform initiator roles
+are exercised. C now exclusively owns `core_api/qualification_host.py` and new
+`test_native_pairing_host_port.py` for this narrow private route; ordinary public
+SDK/native command authority is unchanged. C also corrects mobile shutdown
+acknowledgment when a retiring service still holds its vault and removes the
+Windows long-lived initialization-key reference. B's bounded UI lifetime barrier
+must keep such pending shutdown outcomes uncertain, with a retry action.
+
+The next checkpoint `ec967947` includes the reviewed private supervisor pairing
+entry and truthful mobile retirement acknowledgment (76 lead checks pass),
+unwired mobile profile host foundation (14 lead checks pass), and B's bounded
+UI lifetime guards (700 frontend tests and the recorded worker boundary pass).
+C continues actual platform provider/authentication wiring; B consumes that
+contract when available. D migrates the topology controller to the private
+supervisor entry and declares quick/full qualification selection. A continues
+atomic optional group keys, then protected call-operation recovery. No new
+packaged run or broader milestone acceptance is implied.
+
 ## Active Wave 2 handoff
 
 All workers merge the current lead branch before edits. Source `174728e` is the

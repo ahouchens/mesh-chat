@@ -3,10 +3,12 @@
 import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
+import sys
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / "scripts"))
 spec = importlib.util.spec_from_file_location("boundary_ci", ROOT / "scripts/connection_ci.py")
 ci = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ci)

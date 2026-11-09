@@ -37,6 +37,12 @@
   },
   {
     "api_version": 1,
+    "request_id": "boundary:catalog",
+    "operation": "profile.catalog",
+    "params": {}
+  },
+  {
+    "api_version": 1,
     "request_id": "boundary:1",
     "operation": "profile.select",
     "params": {

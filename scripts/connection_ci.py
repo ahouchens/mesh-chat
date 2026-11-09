@@ -6,9 +6,10 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import subprocess
+from native_interop_workload import selected_workload
 
 
-SUITES = ("policy", "verification", "android", "direct", "layout")
+SUITES = ("policy", "verification", "android", "direct", "layout", "native_interop")
 
 # Component evidence each required suite must contribute to the uniform manifest.
 COMPONENTS = {
@@ -21,6 +22,7 @@ COMPONENTS = {
     "direct": {"direct_Linux_recovery", "direct_Linux_setup", "direct_Linux_fabric",
                "direct_Windows_recovery", "direct_Windows_setup", "direct_Windows_fabric"},
     "layout": set(),
+    "native_interop": {"native_windows_peer", "native_android_peer"},
 }
 PROTECTED_DOCS = {"AGENTS.md", "SKILL.md", "Mesh_Chat_Connection_Runtime_Spec.md"}
 CONNECTION_TESTS = "service/tests/connection/"
@@ -151,9 +153,12 @@ def select(paths, *, event="pull_request"):
         required, reason = ["policy", "verification", "android"], "isolated_kotlin_client"
     else:
         required, reason = list(SUITES), "conservative_full_matrix"
+    if "verification" in required and "android" in required and "native_interop" not in required:
+        required.append("native_interop")
     return {
         "version": 1, "event": event, "paths": paths,
         "required": required, "reason": reason,
+        "native_workload": selected_workload(event, paths) if "native_interop" in required else "full",
     }
 
 
@@ -241,7 +246,8 @@ def main():
         if args.evidence_dir is None:
             raise ValueError("Required component evidence directory is missing")
         from connection_matrix import collect
-        collected = collect(args.evidence_dir, plan["source_commit"], plan["source_tree"], plan["required"])
+        collected = collect(args.evidence_dir, plan["source_commit"], plan["source_tree"], plan["required"],
+                            native_workload=plan["native_workload"])
         result = manifest(plan, collected,
                           {name: value["result"] for name, value in jobs.items()})
     else:
@@ -249,6 +255,7 @@ def main():
         with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
             for suite in SUITES:
                 output.write(f"{suite}={str(suite in plan['required']).lower()}\n")
+            output.write(f"native_workload={plan['native_workload']}\n")
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(result))

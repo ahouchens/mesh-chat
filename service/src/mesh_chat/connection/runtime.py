@@ -235,7 +235,7 @@ class ConnectionRuntime:
                     try:
                         if self._handoff is not None:
                             self._handoff(event.operation, event.allocated,
-                                lambda resource, target: self.owner.commit_handoff(event.operation, resource, target))
+                                lambda resource, target: self.owner.commit_handoff(event.operation, resource, target, self.now()))
                     except Exception:
                         # Commit is the receipt. A callback may lose its return
                         # after committing or even after target adoption.

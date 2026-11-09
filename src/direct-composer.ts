@@ -45,6 +45,7 @@ export class DirectComposerController {
   private pendingUpdate: PendingUpdate | null = null;
   private pendingSend: PendingSend | null = null;
   private sendRequested = false;
+  private frozen = false;
   private tail: Promise<unknown> = Promise.resolve();
   private listeners = new Set<() => void>();
   private view: DirectComposerView = this.project();
@@ -59,6 +60,7 @@ export class DirectComposerController {
   };
 
   edit(text: string): void {
+    if (this.frozen) return;
     this.text = text;
     this.editVersion += 1;
     this.dirty = true;
@@ -100,7 +102,7 @@ export class DirectComposerController {
 
   save(): Promise<void> {
     return this.serialize(async () => {
-      if (!this.composer || this.pendingUpdate || this.recoveryText !== null || !this.dirty) return;
+      if (this.frozen || !this.composer || this.pendingUpdate || this.recoveryText !== null || !this.dirty) return;
       if (this.pendingSend) {
         try {
           const current = await this.port.query(this.pendingSend.revision);
@@ -117,22 +119,24 @@ export class DirectComposerController {
           return;
         }
       }
+      if (this.frozen) return;
       await this.persist(this.text, this.editVersion);
     });
   }
 
   send(): Promise<void> {
+    if (this.frozen) return Promise.resolve();
     if (this.sendRequested) return this.tail.then(() => undefined);
     this.sendRequested = true;
     this.emit();
     const text = this.text;
     const version = this.editVersion;
     const sending = this.serialize(async () => {
-      if (!this.composer || !text.trim() || this.pendingUpdate || this.pendingSend || this.recoveryText !== null) return;
+      if (this.frozen || !this.composer || !text.trim() || this.pendingUpdate || this.pendingSend || this.recoveryText !== null) return;
       if (this.dirty || this.composer.revision === null || this.composer.text !== text) {
         await this.persist(text, version);
       }
-      if (this.pendingUpdate || this.recoveryText !== null || !this.composer.revision || this.composer.text !== text) return;
+      if (this.frozen || this.pendingUpdate || this.recoveryText !== null || !this.composer.revision || this.composer.text !== text) return;
       this.pendingSend = { revision: this.composer.revision, text, editVersion: version };
       await this.submitPendingSend();
     });
@@ -142,11 +146,23 @@ export class DirectComposerController {
   /** Called only by an explicit Retry action; it never substitutes a new key. */
   retry(): Promise<void> {
     return this.serialize(async () => {
+      if (this.frozen) return;
       if (this.pendingUpdate) {
         await this.submitPendingUpdate(true);
       } else if (this.pendingSend) {
         await this.submitPendingSend();
       }
+    });
+  }
+
+  freezeAndFlush(): Promise<void> {
+    this.frozen = true;
+    this.emit();
+    return this.serialize(async () => {
+      if (!this.composer || !this.dirty || this.pendingUpdate || this.pendingSend || this.recoveryText !== null) return;
+      this.pendingUpdate = { expectedRevision: this.composer.revision, updateKey: this.composer.update_key,
+        text: this.text, editVersion: this.editVersion };
+      await this.submitPendingUpdate(false, true);
     });
   }
 
@@ -158,13 +174,14 @@ export class DirectComposerController {
     await this.submitPendingUpdate(false);
   }
 
-  private async submitPendingUpdate(explicitRetry: boolean): Promise<void> {
+  private async submitPendingUpdate(explicitRetry: boolean, retirement = false): Promise<void> {
     const pending = this.pendingUpdate;
     if (!pending) return;
     this.phase = "saving";
     this.emit();
     try {
-      const result = await this.port.update(pending.expectedRevision, pending.text, pending.updateKey);
+      const update = retirement && this.port.updateForRetirement ? this.port.updateForRetirement : this.port.update;
+      const result = await update(pending.expectedRevision, pending.text, pending.updateKey);
       this.pendingUpdate = null;
       if (result.composer.revision !== result.applied_revision && this.dirty && this.editVersion !== pending.editVersion) {
         this.conflict(result.composer);
@@ -262,7 +279,7 @@ export class DirectComposerController {
   }
 
   private project(): DirectComposerView {
-    const ready = this.phase === "ready" && this.composer !== null && this.recoveryText === null;
+    const ready = !this.frozen && this.phase === "ready" && this.composer !== null && this.recoveryText === null;
     return {
       text: this.text, loaded: this.composer !== null, phase: this.phase, error: this.error, saved: this.saved, recoveryText: this.recoveryText,
       canSave: ready && this.dirty && !this.pendingUpdate,

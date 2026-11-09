@@ -3,6 +3,7 @@
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import re
 from types import SimpleNamespace
@@ -12,6 +13,8 @@ from connection_evidence import evidence as policy_evidence
 from core_boundary_evidence import UI_LEVEL, WINDOWS_LEVEL, ui_evidence, windows_evidence
 from native_windows_evidence import verify_report as native_evidence
 from native_runtime_materials import verify_report as runtime_materials_evidence
+from native_interop_evidence import verify_pair as native_interop_pair
+from native_interop_workload import workload as required_native_workload
 from direct_qualification import SUITES as DIRECT_SUITES, read_suite as direct_suite
 from test_desktop_transport import PYTHON_SOURCES, verified_report as desktop_evidence
 from test_packaged_lifecycle import verify_report as packaged_evidence
@@ -124,7 +127,7 @@ def android_evidence(record, source, tree):
     return record
 
 
-def collect(directory: Path, source: str, tree: str, required):
+def collect(directory: Path, source: str, tree: str, required, *, native_workload="full"):
     policy_path = directory / "policy/connection-policy.json"
     policy = read(policy_path)
     executed = policy_evidence(policy_path.with_suffix(".xml"), source, source,
@@ -256,6 +259,32 @@ def collect(directory: Path, source: str, tree: str, required):
                                 report="android", tests=counts(record),
                                 artifacts=android["artifacts"],
                                 cleanup=android["platform"]["test_host_cleanup"]))
+    if "native_interop" in required:
+        if not {"verification", "android"} <= set(required):
+            raise ValueError("Native interoperability requires both actual packaged producer suites")
+        paths = {role: directory / f"native-interop/native-interop-{role}.json" for role in ("windows", "android")}
+        context = None
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            context = {"repository": os.environ["GITHUB_REPOSITORY"], "repository_id": int(os.environ["GITHUB_REPOSITORY_ID"]),
+                       "run_id": int(os.environ["GITHUB_RUN_ID"]), "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]), "source_commit": source}
+        plan = required_native_workload(native_workload)
+        windows_peer, android_peer = native_interop_pair(read(paths["windows"]), read(paths["android"]), source, tree,
+                                                       context=context, workload=native_workload)
+        if any(windows_peer["artifacts"][field] != native_records[0][field]
+               for field in ("sidecar_sha256", "build_input_sha256", "build_manifest_sha256")):
+            raise ValueError("Native interop did not run the retained and tested Windows executable")
+        if android_peer["artifacts"] != android["artifacts"]:
+            raise ValueError("Native interop did not run the retained and tested Android artifacts")
+        for role, peer in (("windows", windows_peer), ("android", android_peer)):
+            name = "native_interop_" + role
+            reports[name] = paths[role]
+            checks = len(plan["paths"]) + plan["iterations"] + (3 if native_workload == "full" else 0)
+            suites.append(suite_record("native_" + role + "_peer", plan["level"], source, tree,
+                report=name, checks=checks, artifacts=peer["artifacts"], cleanup=peer["execution"]["cleanup"]))
+        summary["native_interop"] = {"workload": native_workload, "receipt_iterations_per_role": plan["iterations"],
+                                     "periodic_cold_starts_per_role": (plan["iterations"] - 1) // plan["cold_start_every"] + 1,
+                                     "path_initiators": [list(case) for case in plan["paths"]],
+                                     "impairment": "Linux kernel netem plus counted selected-socket block controls" if native_workload == "full" else "not executed"}
     if "direct" in required:
         for platform in ("Linux", "Windows"):
             for record in direct_records[platform]:
