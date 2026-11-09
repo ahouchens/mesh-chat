@@ -28,6 +28,20 @@ Reports are retained under `.test-tmp/ci-evidence-da81565/desktop-transport`.
 Its executable hashes remain runner claims until independently checked against
 the executable archive. Required native topology has not executed in this run.
 
+Android also failed two manual native adoption instrumentation cases, the Kotlin
+`workspaceJoinIsConvergentWithoutACallerKey` unit assertion (20 passes, one
+failure), and public AAR license verification. The final runner exception must
+not obscure the earlier test failures. Failed report artifact `13701676421` has
+verified ZIP SHA-256
+`a5c1bc1f29487851dc1a3279c95445f8bbb1fcdba5ecfbd76f13f5d1a95bdb84`.
+Lead inspection found that the manual-adoption fixture assigns synthetic path
+readiness to the new outer executor wrapper instead of its reconnect executor;
+the same fixture also accesses the native port through the obsolete location.
+D owns correcting those instrumentation hooks and verifying the intended inner
+port. A owns the Kotlin assertion and license packaging diagnosis. This fixture
+finding does not establish the cause of the separate Windows pairing failure.
+The required native-interoperability job was skipped after prerequisite failure.
+
 Local source `a899b8576ee2130510b5bf98b6a64b7b44bf7f71`, tree
 `ebd717956b4b7ff7ceb215b8afa4cc4357879b77`, integrates the fixture repair,
 independent group authority tests and the remaining API/component admission
