@@ -6,6 +6,13 @@ import xml.etree.ElementTree as ET
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def isolate_synthetic_reports_from_live_workflow(monkeypatch):
+    # These component fixtures describe example/mesh run 2, never the live CI
+    # run. A test exercising CI admission opts back in with an explicit context.
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 import connection_matrix as matrix
 import native_runtime_materials as runtime_materials
@@ -217,6 +224,20 @@ def test_quick_native_smoke_is_required_and_cannot_satisfy_full_gate(tmp_path):
     assert result["native_interop"]["periodic_cold_starts_per_role"] == 1
     assert result["native_interop"]["impairment"] == "not executed"
     with pytest.raises(ValueError): matrix.collect(tmp_path, source, tree, required)
+
+
+@pytest.mark.parametrize("workload", ["quick", "full"])
+def test_ci_native_context_accepts_exact_run_and_rejects_another_attempt(tmp_path, monkeypatch, workload):
+    source, tree, android = fixture(tmp_path)
+    native_interop_reports(tmp_path, source, tree, android["artifacts"], workload=workload)
+    for key, value in {"GITHUB_ACTIONS": "true", "GITHUB_REPOSITORY": "example/mesh", "GITHUB_REPOSITORY_ID": "1",
+                       "GITHUB_RUN_ID": "2", "GITHUB_RUN_ATTEMPT": "1"}.items():
+        monkeypatch.setenv(key, value)
+    required = ["verification", "android", "native_interop"]
+    assert matrix.collect(tmp_path, source, tree, required, native_workload=workload)["native_interop"]["workload"] == workload
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
+    with pytest.raises(ValueError, match="another workflow run or attempt"):
+        matrix.collect(tmp_path, source, tree, required, native_workload=workload)
 
 
 @pytest.mark.parametrize("fault", ["missing_windows", "missing_android", "other_windows_binary", "other_android_apk", "cross_peer_message", "prior_attempt"])
