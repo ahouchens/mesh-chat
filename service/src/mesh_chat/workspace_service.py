@@ -311,9 +311,32 @@ CURRENT_WORKSPACE_ACCESS_OPERATIONS = frozenset({
     "mark_workspace_read", "mark_workspace_thread_read", "mark_workspace_mentions_read",
     "set_workspace_notification_preference", "set_workspace_read_hint_sync",
     "save_workspace_draft", "save_workspace_thread_draft", "start_workspace_history",
+    "sync_workspace_channels", "set_workspace_channel_subscription", "set_workspace_channel_mentions_muted",
 })
 WORKSPACE_POSTING_OPERATIONS = frozenset({
     "send_workspace_message", "send_workspace_direct_message", "send_workspace_thread_reply",
+})
+CURRENT_WORKSPACE_MEMBER_OPERATIONS = frozenset({
+    "open_workspace_direct", "create_workspace_invitation", "approve_workspace_join", "decline_workspace_join",
+    "create_workspace_device_link", "request_workspace_device_removal",
+    "approve_workspace_device_link", "decline_workspace_device_link",
+    "approve_workspace_device_removal", "decline_workspace_device_removal",
+    "create_workspace_channel", "update_workspace_channel", "update_workspace_private_channel_members",
+    "offer_workspace_channel_transfer", "accept_workspace_channel_transfer", "recover_workspace_channel",
+    "accept_workspace_channel_management",
+    "update_workspace_policies", "update_workspace_retention", "update_workspace_metadata",
+    "remove_workspace_member", "change_workspace_role", "offer_workspace_authority_transition",
+    "accept_workspace_authority_transition", "finalize_workspace_authority_transition",
+    "submit_workspace_admin_request", "decide_workspace_admin_request",
+    "request_workspace_display_name", "decide_workspace_display_name", "send_workspace_access_recommendation",
+})
+CURRENT_WORKSPACE_OWNER_OPERATIONS = frozenset({
+    "create_workspace_invitation", "decline_workspace_join",
+    "approve_workspace_device_link", "decline_workspace_device_link",
+    "approve_workspace_device_removal", "decline_workspace_device_removal",
+    "update_workspace_policies", "update_workspace_retention", "update_workspace_metadata",
+    "remove_workspace_member", "change_workspace_role", "decide_workspace_admin_request",
+    "decide_workspace_display_name", "send_workspace_access_recommendation",
 })
 
 
@@ -482,7 +505,7 @@ class WorkspaceServiceMixin:
                 raise ValueError
         except (ValueError, AttributeError) as exc:
             raise ValidationError("Operation ID is invalid") from exc
-        if command in CURRENT_WORKSPACE_ACCESS_OPERATIONS:
+        if command in CURRENT_WORKSPACE_ACCESS_OPERATIONS | CURRENT_WORKSPACE_MEMBER_OPERATIONS:
             self._require_current_workspace_access(command, payload)
         digest = _canonical_digest(command, payload)
         replay = self.store.operation_result(operation_id, digest)
@@ -513,6 +536,19 @@ class WorkspaceServiceMixin:
                 or device[0].member_id != member.member_id
                 or device[1].public_identity != self._identity.get_public_key()):
             raise ContactNotApproved("This device is not an active workspace member")
+        if command in CURRENT_WORKSPACE_OWNER_OPERATIONS and member.role != WorkspaceRole.OWNER:
+            raise ContactNotApproved("Current workspace owner authority is required")
+        if command == "create_workspace_channel" and not self._channel_creation_allowed(manifest, member):
+            raise ContactNotApproved("Workspace channel creation is restricted to owners and administrators")
+        if command in {"update_workspace_channel", "update_workspace_private_channel_members", "offer_workspace_channel_transfer"}:
+            channel = self._require_workspace_channel(workspace["id"], payload.get("channel_id"))
+            if (channel.get("manager_member_id") != member.member_id
+                    or channel.get("manager_device_id") != workspace["local_device_id"]):
+                raise ContactNotApproved("Current channel manager authority is required")
+        if command == "recover_workspace_channel" and member.role != WorkspaceRole.OWNER:
+            raise ContactNotApproved("Current workspace owner authority is required")
+        if command not in CURRENT_WORKSPACE_ACCESS_OPERATIONS:
+            return
         conversation = payload.get("channel_id") or payload.get("conversation_id")
         root = payload.get("thread_root_id") or payload.get("thread_root")
         if root is not None:
@@ -524,6 +560,8 @@ class WorkspaceServiceMixin:
             if isinstance(target, str):
                 state = self.store.get("workspace_message_state", self._workspace_message_record_id(target))
                 if state is not None:
+                    if command in {"edit_workspace_message", "delete_workspace_message"} and state.get("author_member_id") != member.member_id:
+                        raise ContactNotApproved("Only the message author can change it")
                     conversation = state.get("conversation_id")
         if conversation is None:
             return
@@ -4675,45 +4713,14 @@ class WorkspaceServiceMixin:
         self._workspace_changed(workspace["id"])
         return committed
 
-    def create_workspace_invitation_command(
-        self,
-        workspace_id: Any,
-        operation_id: Any,
-        lifetime_days: Any = 7,
-        remote_profile_id: Any = None,
-        connection_mode: Any = None,
-        manual_setup_id: Any = None,
-        external_host: Any = None,
-        external_port: Any = None,
-        i2p_access_point: Any = None,
-        i2p_label: Any = None,
-    ) -> dict[str, Any]:
-        payload = {
-            "workspace_id": workspace_id,
-            "lifetime_days": lifetime_days,
-            "remote_profile_id": remote_profile_id,
-            "connection_mode": connection_mode,
-            "manual_setup_id": manual_setup_id,
-            "external_host": external_host,
-            "external_port": external_port,
-            "i2p_access_point": i2p_access_point,
-            "i2p_label": i2p_label,
-        }
-        operation_id, digest, replay = self._workspace_operation(
-            "create_workspace_invitation", operation_id, payload
-        )
-        if replay is not None:
-            return replay
-        workspace = self._require_workspace(workspace_id)
-        if workspace.get("state") != "active" or workspace.get("local_role") != "owner":
-            raise ContactNotApproved("Only the active workspace owner can invite members")
+    def _prepare_workspace_invitation(self, workspace, lifetime_days):
         if len(self._workspace_current_manifest(workspace).members) >= MAX_ACTIVE_MEMBERS:
             raise ValidationError("A workspace supports at most eight people")
         now = time.time()
         expired_records: list[tuple[str, str, dict[str, Any]]] = []
         for record_id, existing in self.store.items("workspace_invitation"):
             if (
-                existing.get("workspace_id") != workspace_id
+                existing.get("workspace_id") != workspace["id"]
                 or existing.get("state") != "active"
             ):
                 continue
@@ -4764,6 +4771,45 @@ class WorkspaceServiceMixin:
             "workspace_id": workspace["id"],
             **workspace_invitation_formats(raw),
         }
+        return record, outcome, expired_records, raw, invite
+
+    def create_workspace_invitation_command(
+        self,
+        workspace_id: Any,
+        operation_id: Any,
+        lifetime_days: Any = 7,
+        remote_profile_id: Any = None,
+        connection_mode: Any = None,
+        manual_setup_id: Any = None,
+        external_host: Any = None,
+        external_port: Any = None,
+        i2p_access_point: Any = None,
+        i2p_label: Any = None,
+    ) -> dict[str, Any]:
+        payload = {
+            "workspace_id": workspace_id,
+            "lifetime_days": lifetime_days,
+            "remote_profile_id": remote_profile_id,
+            "connection_mode": connection_mode,
+            "manual_setup_id": manual_setup_id,
+            "external_host": external_host,
+            "external_port": external_port,
+            "i2p_access_point": i2p_access_point,
+            "i2p_label": i2p_label,
+        }
+        operation_id, digest, replay = self._workspace_operation(
+            "create_workspace_invitation", operation_id, payload
+        )
+        if replay is not None:
+            return replay
+        workspace = self._require_workspace(workspace_id)
+        if workspace.get("state") != "active" or workspace.get("local_role") != "owner":
+            raise ContactNotApproved("Only the active workspace owner can invite members")
+        if len(self._workspace_current_manifest(workspace).members) >= MAX_ACTIVE_MEMBERS:
+            raise ValidationError("A workspace supports at most eight people")
+        record, outcome, expired_records, raw, invite = self._prepare_workspace_invitation(workspace, lifetime_days)
+        invitation_id = record["id"]
+        identity = self._identity
         remote_record = None
         email_record = None
         if connection_mode == "i2p":
@@ -4901,6 +4947,7 @@ class WorkspaceServiceMixin:
         self,
         workspace_id: Any,
         contact_id: Any,
+        *, operation_id: str | None = None,
     ) -> dict[str, Any]:
         workspace = self._require_workspace(workspace_id)
         if workspace.get("state") != "active" or workspace.get("local_role") != "owner":
@@ -4923,6 +4970,8 @@ class WorkspaceServiceMixin:
             for device in member.devices
         ):
             raise ValidationError("Contact is already an active workspace device")
+        if operation_id is not None:
+            return self._invite_contact_to_workspace_keyed(workspace, contact, operation_id)
         invitation = self.create_workspace_invitation_command(
             workspace_id,
             str(uuid.uuid4()),
@@ -4955,6 +5004,35 @@ class WorkspaceServiceMixin:
             "message_state": current_message["state"],
             "sent": True,
         }
+
+    def _invite_contact_to_workspace_keyed(self, workspace, contact, operation_id):
+        self._require_current_workspace_access("invite_contact_to_workspace", {"workspace_id": workspace["id"]})
+        manifest = self._workspace_current_manifest(workspace)
+        member = find_member(manifest, workspace["local_member_id"])
+        if member.role != WorkspaceRole.OWNER:
+            raise ContactNotApproved("Only the active workspace owner can invite contacts")
+        operation_id, digest, replay = self._workspace_operation(
+            "invite_contact_to_workspace", operation_id,
+            {"workspace_id": workspace["id"], "contact_id": contact["id"]})
+        if replay is not None:
+            invitation = self.store.get("workspace_invitation", replay["invitation"]["id"])
+            message = self.store.get("message", replay["message_id"])
+            if (invitation is None or invitation.get("state") != "active"
+                    or float(invitation.get("expires_at", 0)) <= time.time() or message is None):
+                raise ContactNotApproved("Workspace invitation is no longer active")
+            return {**replay, "message_state": message["state"]}
+        record, invitation, expired_records, _, _ = self._prepare_workspace_invitation(workspace, 7)
+        invitation.update(connection_mode="contact", transfer="verified_contact")
+        message = self._outbound_record(contact, MessageKind.WORKSPACE_INVITE, "", invitation=invitation["value"])
+        record.update(connection_mode="contact", contact_id=contact["id"],
+            contact_display_name=contact["display_name"], delivery_message_id=message["id"])
+        outcome = {"workspace_id": workspace["id"], "contact_id": contact["id"], "invitation": invitation,
+                   "message_id": message["id"], "message_state": message["state"], "sent": True}
+        self._workspace_store.commit_operation(operation_id, digest, outcome, [*expired_records,
+            ("workspace_invitation", record["id"], record), ("message", message["id"], message)])
+        self._queue_direct_retry(message["id"])
+        self._workspace_changed(workspace["id"], resource_kind="invitation")
+        return outcome
 
     def preview_workspace_invitation(self, raw: Any) -> dict[str, Any]:
         if not isinstance(raw, str):
@@ -7229,6 +7307,15 @@ class WorkspaceServiceMixin:
         if identity is None:
             raise ValidationError("Local identity is unavailable")
         current = self._workspace_current_manifest(workspace)
+        if find_device(current, target_device_id) is None:
+            local = find_member(current, workspace["local_member_id"])
+            settled = next((record for record in self.store.list("workspace_device_transition")
+                if record.get("workspace_id") == workspace_id and record.get("transition_kind") == "removal"
+                and record.get("device_id") == target_device_id and record.get("member_id") == local.member_id
+                and record.get("state") == "approved"), None)
+            if settled is not None:
+                outcome = {key: value for key, value in settled.items() if key != "document"}
+                return self._workspace_store.commit_operation(operation_id, digest, outcome, ())
         raw = create_workspace_device_removal(
             identity,
             manifest=current,
@@ -7335,6 +7422,11 @@ class WorkspaceServiceMixin:
             workspace_id, transition_id
         )
         record = self.store.get("workspace_device_transition", record_id)
+        expected = "approved" if approve else "declined"
+        if (record is not None and record.get("transition_kind") == expected_kind
+                and record.get("state") == expected):
+            return self._workspace_store.commit_operation(operation_id, digest,
+                {"id": transition_id, "state": expected}, ())
         if (
             record is None
             or record.get("transition_kind") != expected_kind
@@ -14511,12 +14603,25 @@ class WorkspaceServiceMixin:
         return committed
 
     def accept_workspace_channel_transfer(
-        self, workspace_id: Any, transfer_id: Any, operation_id: Any
+        self, workspace_id: Any, transfer_id: Any, operation_id: Any, *, channel_id: str | None = None,
     ) -> dict[str, Any]:
         payload = {"workspace_id": workspace_id, "transfer_id": transfer_id}
+        command = "accept_workspace_channel_transfer"
+        if channel_id is not None:
+            command = "accept_workspace_channel_management"
+            payload = {"workspace_id": workspace_id, "channel_id": channel_id}
         operation_id, digest, replay = self._workspace_operation(
-            "accept_workspace_channel_transfer", operation_id, payload
+            command, operation_id, payload
         )
+        if channel_id is not None and (replay is not None or transfer_id is None):
+            workspace = self._require_workspace(workspace_id)
+            channel = self._require_workspace_channel(workspace_id, channel_id)
+            if channel.get("manager_member_id") != workspace["local_member_id"]:
+                raise ContactNotApproved("Current channel management authority is required")
+            outcome = self._public_workspace_channel(channel)
+            if replay is not None:
+                return outcome
+            return self._workspace_store.commit_operation(operation_id, digest, outcome, ())
         if replay is not None:
             return replay
         workspace = self._require_workspace(workspace_id)
@@ -15643,9 +15748,11 @@ class WorkspaceServiceMixin:
             member is None
             or member.status != "active"
             or member.role == WorkspaceRole.OWNER
-            or member.role == requested_role
         ):
             raise ValidationError("Workspace member role cannot be changed")
+        if member.role == requested_role:
+            return self._workspace_store.commit_operation(
+                operation_id, digest, self._public_workspace(workspace), ())
         identity = self._identity
         if identity is None:
             raise ValidationError("Local identity is unavailable")
@@ -20161,13 +20268,17 @@ class WorkspaceServiceMixin:
         return {**preview, "id": record["id"]}
 
     def apply_workspace_access_recommendation_by_id(
-        self, workspace_id: Any, recommendation_id: Any, consent: Any
+        self, workspace_id: Any, recommendation_id: Any, consent: Any,
+        *, operation_id: str | None = None,
     ) -> dict[str, Any]:
         if not isinstance(consent, bool) or not consent:
             raise ValidationError("Workspace access point consent is required")
         workspace, record = self._workspace_access_recommendation_record(
             workspace_id, recommendation_id
         )
+        if operation_id is not None:
+            return self._apply_keyed_workspace_access(record["document"], consent,
+                operation_id, recommendation_record=record)
         preview = self.preview_workspace_access_recommendation(record["document"])
         checked = verify_workspace_access_recommendation(record["document"])
         attached = self._approve_remote_document(
@@ -20249,6 +20360,7 @@ class WorkspaceServiceMixin:
         auto_reconnect: Any,
         allow_direct_ip_disclosure: Any,
         relay_consent_scope: Any = "workspace",
+        *, operation_id: str | None = None,
     ) -> dict[str, Any]:
         workspace = self._require_workspace(workspace_id)
         if workspace.get("state") != "active":
@@ -20283,6 +20395,17 @@ class WorkspaceServiceMixin:
             or local_device is None
         ):
             raise ContactNotApproved("This device is not an active workspace member")
+        self._require_current_workspace_access("workspace_reconnect_consent_set", {"workspace_id": workspace["id"]})
+        digest = None
+        if operation_id is not None:
+            operation_id, digest, replay = self._workspace_operation(
+                "workspace_reconnect_consent_set", operation_id, {
+                    "workspace_id": workspace["id"], "auto_reconnect": auto_reconnect,
+                    "allow_direct_ip_disclosure": allow_direct_ip_disclosure,
+                    "relay_consent_scope": relay_consent_scope,
+                })
+            if replay is not None:
+                return self.workspace_reconnect_status(workspace["id"])
         peers = [
             (member, device)
             for member in manifest.members
@@ -20303,15 +20426,15 @@ class WorkspaceServiceMixin:
         )
         if len(self.store.list("reconnect_profile")) + new_profiles > 64:
             raise ValidationError("Too many reconnect profiles")
-        records: list[tuple[str, str, dict[str, Any]]] = []
+        records: dict[tuple[str, str], dict[str, Any]] = {}
         deliveries: list[dict[str, Any]] = []
         for member, device in peers:
             peer_id = self._workspace_reconnect_peer_id(
                 workspace["id"], member.member_id, device.device_id
             )
             contact = self._workspace_reconnect_contact(peer_id)
-            profile = self._reconnect_profile_for_contact(
-                peer_id, device.device_id
+            profile = self._prepare_reconnect_profile_for_contact(
+                peer_id, device.device_id, records=records
             )
             changed = (
                 bool(profile.get("auto_reconnect")) != auto_reconnect
@@ -20329,8 +20452,8 @@ class WorkspaceServiceMixin:
             profile["allow_direct_ip_disclosure"] = allow_direct_ip_disclosure
             profile["relay_consent_scope"] = relay_consent_scope
             profile["updated_at"] = time.time()
-            self._reconnect_issue_local_capabilities(
-                profile, contact, rotate=changed
+            self._prepare_reconnect_local_capabilities(
+                profile, contact, rotate=changed, records=records
             )
             wrapper = create_workspace_reconnect_capability(
                 self._call_identity(),
@@ -20338,7 +20461,7 @@ class WorkspaceServiceMixin:
                 manifest_digest=workspace["manifest_hash"],
                 capability=profile["local_capabilities"],
             )
-            records.append(("reconnect_profile", profile["id"], profile))
+            records[("reconnect_profile", profile["id"])] = profile
             deliveries.append(
                 self._workspace_delivery_record(
                     workspace_id=workspace["id"],
@@ -20349,16 +20472,19 @@ class WorkspaceServiceMixin:
                     priority=0,
                 )
             )
-        self._workspace_store.put_many(
-            [
-                *records,
+        writes = [
+                *[(kind, identifier, record) for (kind, identifier), record in records.items()],
                 *[
                     ("workspace_delivery", delivery["id"], delivery)
                     for delivery in deliveries
                 ],
                 *self._due_records(add=deliveries),
             ]
-        )
+        if operation_id is not None:
+            self._workspace_store.commit_operation(operation_id, digest,
+                {"workspace_id": workspace["id"]}, writes)
+        else:
+            self._workspace_store.put_many(writes)
         self._workspace_changed(
             workspace["id"], resource_kind="reconnect_consent"
         )
@@ -20745,12 +20871,14 @@ class WorkspaceServiceMixin:
         }
 
     def apply_workspace_access_recommendation(
-        self, raw: Any, consent: Any
+        self, raw: Any, consent: Any, *, operation_id: str | None = None,
     ) -> dict[str, Any]:
         """Attach a recommended access point to this workspace after consent."""
 
         if not isinstance(consent, bool) or not consent:
             raise ValidationError("Workspace access point consent is required")
+        if operation_id is not None:
+            return self._apply_keyed_workspace_access(raw, consent, operation_id)
         checked = verify_workspace_access_recommendation(raw)
         preview = self.preview_workspace_access_recommendation(raw)
         record = self._approve_remote_document(
@@ -20765,6 +20893,40 @@ class WorkspaceServiceMixin:
             "profile": sanitized_profile(record),
             "applied": True,
         }
+
+    def _apply_keyed_workspace_access(self, raw, consent, operation_id, *, recommendation_record=None):
+        """Commit approval, reconciliation intent and received-state together."""
+        if consent is not True:
+            raise ValidationError("Workspace access point consent is required")
+        checked = verify_workspace_access_recommendation(raw)
+        preview = self.preview_workspace_access_recommendation(raw)
+        self._require_current_workspace_access("apply_workspace_access_recommendation",
+            {"workspace_id": checked.workspace_id})
+        operation_id, digest, replay = self._workspace_operation(
+            "apply_workspace_access_recommendation", operation_id, {
+                "workspace_id": checked.workspace_id, "document": raw, "consent": consent,
+                "recommendation_id": None if recommendation_record is None else recommendation_record["id"],
+            })
+        if replay is not None:
+            record = self.store.get("remote_profile", checked.profile["id"])
+            if record is None or {"kind": "workspace", "id": checked.workspace_id} not in record.get("scopes", []):
+                raise ContactNotApproved("Workspace access consent is no longer active")
+        else:
+            record, writes = self._prepare_remote_approval(checked.profile,
+                origin="workspace_access", scope_kind="workspace", scope_id=checked.workspace_id,
+                operation_id=operation_id)
+            if recommendation_record is not None:
+                recommendation_record = dict(recommendation_record, state="applied", updated_at=time.time())
+                writes.append(("workspace_access_recommendation", recommendation_record["id"], recommendation_record))
+            self._workspace_store.commit_operation(operation_id, digest,
+                {"workspace_id": checked.workspace_id, "profile_id": record["id"]}, writes)
+            self.reconcile_remote_profiles()
+            self._workspace_changed(checked.workspace_id, resource_kind="access_recommendation")
+            record = self.store.get("remote_profile", record["id"])
+            if record is None or {"kind": "workspace", "id": checked.workspace_id} not in record.get("scopes", []):
+                raise ContactNotApproved("Workspace access consent is no longer active")
+        return {"workspace_id": checked.workspace_id, "workspace_name": preview["workspace_name"],
+                "profile": self._remote_profile_view(record), "applied": True}
 
     def workspace_connectivity(self, workspace_id: Any) -> dict[str, Any]:
         """Report advisory per-device workspace reachability.

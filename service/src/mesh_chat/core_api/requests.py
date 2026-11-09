@@ -449,7 +449,7 @@ def _parse_request(value, operations):
             raise ApiFailure("invalid_request")
         if action == "reconnect_consent" and (type(params["auto_reconnect"]) is not bool
                                               or type(params["allow_direct_ip_disclosure"]) is not bool
-                                              or params["relay_consent_scope"] not in {"workspace", "profile"}):
+                                              or params["relay_consent_scope"] not in {"workspace", "session"}):
             raise ApiFailure("invalid_request")
         return operation, params
     if operation in WORKSPACE_HISTORY_OPERATIONS:
