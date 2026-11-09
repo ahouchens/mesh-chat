@@ -17,9 +17,20 @@ async function check(executable, directory) {
     try {
       phase = "capabilities";
       client = await CoreClient.open(await connectNamedPipe(runtime.pipe));
-      if (client.capabilities.profiles.length !== incarnation
+      if (client.capabilities.profiles.length !== 1
           || !client.capabilities.operations.includes("profile.create")
           || client.capabilities.operations.includes("native.command")) throw new Error();
+      phase = "fresh_state";
+      const before = await client.request("application.snapshot", {});
+      if ((before.profile === null) !== (incarnation === 0) || before.contacts.length || before.messages.length) throw new Error();
+      if (incarnation === 0) {
+        try {
+          await client.request("profile.query", { profile: client.capabilities.profiles[0] });
+          throw new Error();
+        } catch (error) {
+          if (!(error instanceof CoreError) || error.code !== "locked") throw error;
+        }
+      }
       phase = "profile_create";
       const first = await client.request("profile.create", { display_name: displayName }, { idempotencyKey: key });
       phase = "key_replay";
