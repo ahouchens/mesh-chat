@@ -63,9 +63,11 @@ class CoreHostClientTest {
         assertEquals("hello", frames.last().getJSONObject("params").getString("text"))
         commands.execute("sendMessage", payload)
         assertEquals("message.enqueue", frames.last().getString("operation"))
-        assertEquals("opaque-peer", frames.last().getJSONObject("params").getString("recipient"))
+        assertEquals(mapOf("profile" to "opaque-profile", "recipient" to "opaque-peer",
+            "kind" to "text", "text" to "hello"), frames.last().getJSONObject("params").let { params ->
+                params.keys().asSequence().associateWith { params.get(it) }
+            })
         assertEquals("stable-message-key", frames.last().getString("idempotency_key"))
-        assertFalse(frames.last().getJSONObject("params").has("destination"))
     }
 
     @Test fun errorsKeepRetryAndUnknownOutcomeMetadataWithoutReplaying() {

@@ -90,7 +90,8 @@ internal class CoreHostCommands(private val client: CoreHostClient) {
             "draftGet" -> client.request("peer.draft_get", params)
             "draftSet" -> client.request("peer.draft_set", params.put("text", payload.getString("text")))
             else -> client.request("message.enqueue", JSONObject().put("profile", params.getString("profile"))
-                .put("recipient", peer).put("text", payload.getString("text")), payload.getString("idempotencyKey"))
+                .put("recipient", peer).put("kind", "text").put("text", payload.getString("text")),
+                payload.getString("idempotencyKey"))
         }
     }
 }
