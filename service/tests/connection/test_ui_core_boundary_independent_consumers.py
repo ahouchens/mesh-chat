@@ -57,7 +57,8 @@ def pairing_record(source="a" * 40, tree="b" * 40):
 
 
 @pytest.mark.parametrize("fault", ["bootstrap_scope", "SC21_scope", "implicit_approval", "missing_receipt",
-    "duplicate_records", "missing_transfer", "missing_cancel", "unready", "efs", "receipt_boolean", "cleanup", "missing_bootstrap_binding"])
+    "duplicate_records", "missing_transfer", "missing_cancel", "unready", "efs", "receipt_boolean", "cleanup", "missing_bootstrap_binding",
+    "direct_disclosure", "relay_not_requested", "broker_consent"])
 def test_public_pairing_report_requires_exact_receipts_consent_and_normal_host_provenance(fault):
     record = pairing_record()
     pairing.verify_report(record, "a" * 40, "b" * 40)
@@ -72,6 +73,9 @@ def test_public_pairing_report_requires_exact_receipts_consent_and_normal_host_p
     elif fault == "efs": record["checks"]["efs_vault_files"] = 0
     elif fault == "receipt_boolean": record["checks"]["original_message_key_replay"] = 1
     elif fault == "cleanup": record["cleanup"] = "pending"
+    elif fault == "direct_disclosure": record["checks"]["direct_disclosure_consented"] = True
+    elif fault == "relay_not_requested": record["checks"]["relay_only_requested"] = False
+    elif fault == "broker_consent": record["checks"]["broker_consent"] = False
     else: record.pop("bootstrap_report_sha256")
     with pytest.raises(ValueError): pairing.verify_report(record, "a" * 40, "b" * 40)
 
