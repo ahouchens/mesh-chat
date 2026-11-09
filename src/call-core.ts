@@ -20,10 +20,18 @@ export async function submitCallControl(ticket: CallControlTicket): Promise<Reco
   return response.result;
 }
 
-export async function fetchCallMedia(call: Pick<CallSummary, "id" | "core_handle">): Promise<CallMedia> {
+export async function incomingCallProfile(call: Pick<CallSummary, "id" | "core_handle">): Promise<string> {
+  if (!call.core_handle) throw new ServiceCommandError("forbidden");
+  const profile = (await coreApiProfile()).profile;
+  const media = await coreApiCallMedia(call.core_handle, profile);
+  if (media.id !== call.id) throw new ServiceCommandError("forbidden");
+  return profile;
+}
+
+export async function fetchCallMedia(call: Pick<CallSummary, "id" | "core_handle">, scope?: string): Promise<CallMedia> {
   const handle = call.core_handle ?? ((await coreApiSnapshot()) as { calls?: CallSummary[] })
     .calls?.find((item) => item.id === call.id)?.core_handle;
   if (!handle) throw new ServiceCommandError("call_not_found");
-  const media = await coreApiCallMedia(handle);
+  const media = await coreApiCallMedia(handle, scope);
   return { ...media, core_handle: handle } as unknown as CallMedia;
 }

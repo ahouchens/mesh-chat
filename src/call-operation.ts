@@ -39,6 +39,7 @@ export class CallOperation {
   private pending: Pending | null = null;
   private attempt: Promise<void> | null = null;
   private scope?: string;
+  private scopeBinding: Promise<string> | null = null;
   private callId?: string;
   private cancellation: "completed" | "declined" | "cancelled" | null = null;
   private cancellationDone: Promise<void> | null = null;
@@ -48,7 +49,7 @@ export class CallOperation {
   private listeners = new Set<() => void>();
   private view: CallOperationView = { pending: false, busy: false, uncertain: false, cancelling: false, errorCode: null };
 
-  constructor(readonly name: string, initialCallId?: string) { this.callId = initialCallId; }
+  constructor(readonly name: string, initialCallId?: string, private readonly verifyIncomingScope?: () => Promise<string>) { this.callId = initialCallId; }
 
   getSnapshot = () => this.view;
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
@@ -56,6 +57,14 @@ export class CallOperation {
   control(action: string, params: Record<string, unknown>): Promise<Result> {
     if (this.pending || this.attempt || this.cancellation) return Promise.reject(new Error("call_operation_pending"));
     return this.begin(action, params);
+  }
+
+  async bindIncomingScope(): Promise<string | undefined> {
+    if (!this.scope && this.verifyIncomingScope) {
+      this.scopeBinding ??= this.verifyIncomingScope().catch((error: unknown) => { this.scopeBinding = null; throw error; });
+      this.scope = await this.scopeBinding;
+    }
+    return this.scope;
   }
 
   reset(): boolean {
@@ -110,6 +119,7 @@ export class CallOperation {
     // A microtask installs the single-flight guard before calling the host.
     this.attempt = Promise.resolve().then(async () => {
       try {
+        await this.bindIncomingScope();
         pending.ticket ??= await prepareCallControl(pending.action, pending.params, this.scope);
         this.scope ??= pending.ticket.params.profile;
         if (this.cancellation && !pending.invoked && pending.action !== "end") {

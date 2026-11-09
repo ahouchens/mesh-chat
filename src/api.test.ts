@@ -15,7 +15,7 @@ vi.mock("@tauri-apps/plugin-deep-link", () => ({
 }));
 vi.mock("@tauri-apps/api/app", () => ({ onBackButtonPress: vi.fn() }));
 
-import { beginCallAudio, coreApiBootstrapPreview, coreApiCreateProfile, coreApiRequest, coreApiSendMessage, lockService, onInvitation, pickInvitationFile, requestMediaPermission, serviceCommand, type ServiceEvent } from "./api";
+import { beginCallAudio, coreApiBootstrapPreview, coreApiCreateProfile, coreApiRequest, coreApiSendMessage, initializeService, lockService, onInvitation, pickInvitationFile, requestMediaPermission, serviceCommand, type ServiceEvent } from "./api";
 import { loadPairingResume, savePairingResume } from "./pairing-resume";
 
 it("forgets encrypted pairing secrets when locking the service", async () => {
@@ -30,6 +30,16 @@ afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   vi.clearAllMocks();
+});
+
+it("loads the initial display snapshot from Core after native initialization", async () => {
+  const scoped = { calls: [{ id: "call-id", core_handle: "original-call-handle" }] };
+  tauri.invoke.mockResolvedValueOnce({ calls: [{ id: "call-id" }] }).mockResolvedValueOnce(scoped);
+  await expect(initializeService()).resolves.toEqual(scoped);
+  expect(tauri.invoke.mock.calls).toEqual([
+    ["initialize_service", { displayName: null }],
+    ["core_api_request", { operation: "application.snapshot", params: {}, idempotencyKey: null }],
+  ]);
 });
 
 it.each(["request", "send"] as const)("preserves typed %s errors and retry metadata without a legacy resend", async (kind) => {

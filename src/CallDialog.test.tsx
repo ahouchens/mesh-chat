@@ -10,6 +10,7 @@ vi.mock("@tauri-apps/api/app", () => ({ onBackButtonPress: vi.fn() }));
 import { CallDialog } from "./CallDialog";
 import { CallRecoveryNotice } from "./CallRecoveryNotice";
 import { callRecovery } from "./call-operation";
+import type { CallSummary } from "./types";
 
 const sdp = "v=0\r\na=fingerprint:sha-256 AA:BB\r\na=candidate:1 1 udp 1 192.0.2.1 1234 typ host\r\n";
 const stop = vi.fn();
@@ -20,6 +21,8 @@ let calls: number;
 let ends: number;
 let delayStart: (() => Promise<void>) | null;
 let rejectReplay: boolean;
+let currentProfile: string;
+const incoming: CallSummary = { id: "incoming-call", core_handle: "incoming-handle", contact_id: "contact", role: "callee", media: "audio", state: "ringing", direction: "inbound", created_at: 1, updated_at: 1, expires_at: 2_000_000_000, candidate_count: 1, has_local_sdp: false, has_remote_sdp: true };
 const receipts = new Map<string, Record<string, unknown>>();
 const mutations = () => host.invoke.mock.calls.filter(([command, request]) => command === "core_api_request" && request.operation === "call.control")
   .map(([, request]) => request as { params: Record<string, unknown>; idempotencyKey: string });
@@ -45,6 +48,7 @@ class Peer {
 
 beforeEach(() => {
   losses = 1; endLosses = 0; calls = 0; ends = 0; delayStart = null; rejectReplay = false;
+  currentProfile = "original-profile";
   receipts.clear(); Peer.instances = []; stop.mockReset(); capture.mockReset(); host.invoke.mockReset();
   capture.mockResolvedValue({ getTracks: () => [{ kind: "audio", stop }], getAudioTracks: () => [], getVideoTracks: () => [] });
   vi.stubGlobal("navigator", { mediaDevices: { getUserMedia: capture } });
@@ -53,10 +57,16 @@ beforeEach(() => {
     if (command === "runtime_platform") return "desktop";
     if (command === "begin_call_audio") return { granted: true };
     if (command === "end_call_audio") return { active: false };
-    if (command === "core_api_profile") return { profile: "original-profile" };
+    if (command === "core_api_profile") return { profile: currentProfile };
     if (request.operation === "call.ice_servers") return { ice: { iceServers: [], iceTransportPolicy: "all" } };
     if (request.operation === "application.snapshot") return { calls: [{ id: "one-call", core_handle: "scoped-call" }] };
-    if (request.operation === "call.media_query") return { media: { id: "one-call", state: "dialing", remote_sdp: null } };
+    if (request.operation === "call.media_query") {
+      if (request.params.call === incoming.core_handle) {
+        if (request.params.profile !== "original-profile") throw JSON.stringify({ code: "forbidden" });
+        return { media: { ...incoming, remote_sdp: sdp } };
+      }
+      return { media: { id: "one-call", state: "dialing", remote_sdp: null } };
+    }
     if (request.operation !== "call.control") throw new Error("Unexpected Core request");
     const existing = receipts.get(request.idempotencyKey);
     if (existing) {
@@ -74,7 +84,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  cleanup(); rejectReplay = false; endLosses = 0;
+  cleanup(); rejectReplay = false; endLosses = 0; currentProfile = "original-profile";
   for (const session of callRecovery.getSnapshot()) await session.retry();
   await waitFor(() => expect(callRecovery.getSnapshot()).toHaveLength(0));
   vi.unstubAllGlobals();
@@ -149,5 +159,52 @@ it("keeps unresolved cleanup visible after unmount for explicit same-ticket reco
   expect(mutations()[1]).toEqual(mutations()[0]);
   expect(mutations()[2]).toEqual(mutations()[0]);
   expect(calls).toBe(1);
+  expect(capture).toHaveBeenCalledTimes(1);
+});
+
+it("blocks incoming acceptance and capture until the previous call cleanup resolves", async () => {
+  const previous = open();
+  await screen.findByRole("button", { name: "Resolve previous call operation" });
+  rejectReplay = true;
+  previous.unmount();
+  await waitFor(() => expect(callRecovery.getSnapshot()[0]?.getSnapshot()).toMatchObject({ uncertain: true, busy: false }));
+  render(<CallDialog contact={{ id: "contact", display_name: "Taylor" }} initialCall={incoming} onClose={vi.fn()} onChanged={async () => undefined} />);
+  const accept = screen.getByRole("button", { name: "Accept" });
+  expect(accept).toHaveProperty("disabled", true);
+  fireEvent.click(accept);
+  expect(capture).toHaveBeenCalledTimes(1);
+  expect(Peer.instances).toHaveLength(1);
+  expect(mutations().some((request) => request.params.action === "answer")).toBe(false);
+  rejectReplay = false;
+  await callRecovery.getSnapshot()[0].retry();
+  await waitFor(() => expect(accept).toHaveProperty("disabled", false));
+  expect(capture).toHaveBeenCalledTimes(1);
+});
+
+it("rejects an incoming handle under a switched profile before capture or answer", async () => {
+  render(<CallDialog contact={{ id: "contact", display_name: "Taylor" }} initialCall={incoming} onClose={vi.fn()} onChanged={async () => undefined} />);
+  currentProfile = "switched-profile";
+  fireEvent.click(screen.getByRole("button", { name: "Accept" }));
+  await screen.findByRole("alert");
+  expect(capture).not.toHaveBeenCalled();
+  expect(mutations()).toHaveLength(0);
+  expect(host.invoke.mock.calls.some(([command, request]) => command === "core_api_request" && request.operation === "call.media_query"
+    && request.params.profile === "switched-profile" && request.params.call === incoming.core_handle)).toBe(true);
+  currentProfile = "original-profile";
+  for (const session of callRecovery.getSnapshot()) await session.retry();
+  await waitFor(() => expect(callRecovery.getSnapshot()).toHaveLength(0));
+  expect(mutations().every((request) => request.params.profile === "original-profile")).toBe(true);
+});
+
+it("keeps the validated incoming profile when the current profile changes during capture", async () => {
+  losses = 0;
+  capture.mockImplementationOnce(async () => {
+    currentProfile = "switched-profile";
+    return { getTracks: () => [{ kind: "audio", stop }], getAudioTracks: () => [], getVideoTracks: () => [] };
+  });
+  render(<CallDialog contact={{ id: "contact", display_name: "Taylor" }} initialCall={incoming} onClose={vi.fn()} onChanged={async () => undefined} />);
+  fireEvent.click(screen.getByRole("button", { name: "Accept" }));
+  await waitFor(() => expect(mutations().some((request) => request.params.action === "answer")).toBe(true));
+  expect(mutations()[0].params).toMatchObject({ profile: "original-profile", action: "answer", call_id: incoming.id });
   expect(capture).toHaveBeenCalledTimes(1);
 });

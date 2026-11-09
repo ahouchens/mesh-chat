@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { Mic, MicOff, Phone, PhoneOff, RefreshCw, Video, VideoOff } from "lucide-react";
 import { loadCallIceServers, requestMediaPermission, runtimePlatform } from "./api";
 import { acquireCallAudio, releaseCallAudio } from "./call-audio";
-import { fetchCallMedia } from "./call-core";
+import { fetchCallMedia, incomingCallProfile } from "./call-core";
 import { CallOperation, callRecovery } from "./call-operation";
 import { connectionPath, waitForCandidates } from "./webrtc-peer";
 import { errorMessage } from "./errors";
@@ -27,7 +27,7 @@ export type CallPeer = { id: string; display_name: string };
 export function IncomingCallPrompt({ call, name, onReview, onChanged }: {
   call: CallSummary; name: string; onReview: () => void; onChanged: () => Promise<void>;
 }) {
-  const [controls] = useState(() => new CallOperation(name, call.id));
+  const [controls] = useState(() => new CallOperation(name, call.id, () => incomingCallProfile(call)));
   const operationView = useSyncExternalStore(controls.subscribe, controls.getSnapshot, controls.getSnapshot);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -69,7 +69,8 @@ export function CallDialog({
   onClose: () => void;
   onChanged: () => Promise<void>;
 }) {
-  const [controls] = useState(() => new CallOperation(contact.display_name, initialCall?.id));
+  const [controls] = useState(() => new CallOperation(contact.display_name, initialCall?.id,
+    initialCall ? () => incomingCallProfile(initialCall) : undefined));
   const operationView = useSyncExternalStore(controls.subscribe, controls.getSnapshot, controls.getSnapshot);
   const pendingCleanup = useSyncExternalStore(callRecovery.subscribe, callRecovery.getSnapshot, callRecovery.getSnapshot);
   const [call, setCall] = useState<CallSummary | undefined>(initialCall);
@@ -277,7 +278,7 @@ export function CallDialog({
       try {
         let latest: CallMedia;
         try {
-          latest = await fetchCallMedia({ id: callId, core_handle: callHandleRef.current });
+          latest = await fetchCallMedia({ id: callId, core_handle: callHandleRef.current }, await controls.bindIncomingScope());
         } catch {
           // A transient service read can be retried on the next poll.
           return;
@@ -367,6 +368,7 @@ export function CallDialog({
         throw new Error(media === "video" ? "Microphone and camera access are required for a video call." : "Microphone access is required for an audio call.");
       }
     }
+    if (callRecovery.getSnapshot().length > 0) throw new Error("Finish the previous call cleanup before starting media.");
     return navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       video: media === "video" ? { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } } : false,
@@ -510,7 +512,7 @@ export function CallDialog({
   }, [attachPeer, configureVideoSender, contact.id, controls, failCall, onChanged, prepareMedia, startPolling, waitForCandidates]);
 
   const acceptCall = useCallback(async () => {
-    if (!call || mediaOperationPendingRef.current || controls.getSnapshot().pending) return;
+    if (!call || mediaOperationPendingRef.current || controls.getSnapshot().pending || callRecovery.getSnapshot().length > 0) return;
     mediaOperationPendingRef.current = true;
     const operation = ++mediaOperationRef.current;
     const current = () => operation === mediaOperationRef.current;
@@ -519,8 +521,9 @@ export function CallDialog({
     setError("");
     setPhase("preparing");
     try {
-      const details = await fetchCallMedia(call);
+      const details = await fetchCallMedia(call, await controls.bindIncomingScope());
       if (!current()) throw new Error("Call cancelled.");
+      if (callRecovery.getSnapshot().length > 0) throw new Error("Finish the previous call cleanup before accepting this call.");
       callHandleRef.current = details.core_handle;
       if (!details.remote_sdp) throw new Error("This call invitation has no media description.");
       const capturedStream = await prepareMedia(call.media);
@@ -633,7 +636,7 @@ export function CallDialog({
             <p className="muted">Your microphone and camera stay off until you accept.</p>
             <div className="dialog-actions">
               <Button variant="danger" onClick={() => void hangup("declined")}>Decline</Button>
-              <Button onClick={() => void acceptCall()}><Phone size={17} /> Accept</Button>
+              <Button disabled={pendingCleanup.length > 0} onClick={() => void acceptCall()}><Phone size={17} /> Accept</Button>
             </div>
           </>
         )}
