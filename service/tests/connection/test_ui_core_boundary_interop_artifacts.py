@@ -140,3 +140,42 @@ def test_each_publisher_phase_is_single_use_and_cleans_temporary_bundle(tmp_path
     transport.close()
     assert transport._token is None
     peer.close()
+
+
+@pytest.mark.parametrize("fault", ["raw_shareable", "credential", "extra_field", "phase", "role", "nonce", "ciphertext"])
+def test_upload_boundary_rejects_plaintext_or_wrong_envelope_before_writing_or_spawning(tmp_path, monkeypatch, fault):
+    transport = backend.GithubArtifacts(CONTEXT, "windows", tmp_path, environment=environment("windows"))
+    windows = Rendezvous(CONTEXT, "windows")
+    android = Rendezvous(CONTEXT, "android")
+    windows.bind_partner(android.public_manifest())
+    bundle = windows.seal("offer", {"shareable": "private synthetic invitation"})
+    if fault == "raw_shareable":
+        bundle = {"context": CONTEXT, "producer_job": "native_windows_peer", "shareable": "private synthetic invitation"}
+    elif fault == "credential": bundle["turn_credential"] = "must never be published"
+    elif fault == "extra_field": bundle["debug"] = {"plaintext": "private invitation"}
+    elif fault == "phase": bundle["phase"] = "answer"
+    elif fault == "role": bundle["sender"] = "android"
+    elif fault == "nonce": bundle["nonce"] = "short"
+    else: bundle["ciphertext"] = "not-encrypted"
+    calls = []
+    monkeypatch.setattr(backend.subprocess, "run", lambda *args, **kwargs: calls.append(1))
+    try:
+        with pytest.raises(ValueError): transport.publish("offer", bundle)
+        assert calls == [] and list(tmp_path.iterdir()) == []
+    finally:
+        windows.close()
+        android.close()
+        transport.close()
+
+
+def test_closing_artifact_transport_fences_later_publish_and_wait(tmp_path):
+    transport = backend.GithubArtifacts(CONTEXT, "windows", tmp_path, environment=environment("windows"))
+    peer = Rendezvous(CONTEXT, "windows")
+    transport.close()
+    try:
+        with pytest.raises(backend.RendezvousUnavailable, match="closed"):
+            transport.publish("key", peer.public_manifest())
+        with pytest.raises(backend.RendezvousUnavailable, match="closed"):
+            transport.wait("android", "key")
+    finally:
+        peer.close()

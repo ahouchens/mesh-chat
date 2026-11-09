@@ -82,13 +82,17 @@ paths, impairment and media coexistence require their own actual evidence.
 The staged native topology uses concurrent Windows and Linux KVM jobs after
 both source-bound packages are available. `native_interop_rendezvous.py` and
 `native_interop_artifacts.py` bound setup/control to repository, source commit,
-workflow run, run attempt, expected publishing job, role and phase. Each runner
+workflow run, run attempt, workflow-owned publishing role and phase. Each runner
 keeps an ephemeral X25519 private key in memory; only its public key and
 HKDF/AES-GCM sealed setup/control bundles can be uploaded. Key lifetime is two
 hours, each sealed phase lasts ten minutes, and each phase is single-use. The
 official artifact SDK is pinned in `scripts/native-interop-artifact`; the
-publisher requires the expected `GITHUB_JOB`. Downloads rehash the immutable
-archive against authenticated same-run REST metadata before reading one
+publisher requires the expected `GITHUB_JOB` and rejects unknown/plaintext fields
+before writing an upload file. Producer job is a checked bundle declaration
+under trusted workflow code; GitHub REST does not independently attest its job
+of origin. REST authenticates the repository/run/source; attempt is bound in
+artifact names and bodies. Downloads rehash the immutable archive against
+authenticated same-run REST metadata before reading one
 bounded JSON member. Repository bearer credentials are not forwarded to signed
 blob URLs; transient bundles and raw SDK errors are not retained.
 
