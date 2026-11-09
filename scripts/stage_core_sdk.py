@@ -13,6 +13,10 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 ARTIFACTS = {"python": "mesh_chat_core_client-0.3.0.dev0-py3-none-any.whl",
              "typescript": "mesh-chat-core-client-0.3.0-experimental.tgz"}
+BASELINE = "174728edad62aae6ef16e95b075183d06c5cdda3"
+BASELINE_TREE = "239d041f87b26f50879008ac947481464dcf4551"
+UPGRADE_FILES = {"python_service_carrier": "mesh_chat_service-0.9.66-py3-none-any.whl",
+                 "typescript": "mesh-chat-core-client-0.2.0-experimental.tgz"}
 
 
 def sha256(path):
@@ -76,10 +80,47 @@ def stage(directory, node, npm):
         subprocess.run(command, cwd=ROOT, env=environment, check=True, capture_output=True, text=True, timeout=180)
 
 
+def stage_upgrade(directory, node, npm):
+    # Exact source is mandatory. A shallow checkout must fetch it; never use HEAD
+    # or substitute candidate code when the historical commit is unavailable.
+    actual = subprocess.check_output(["git", "rev-parse", BASELINE + "^{tree}"], cwd=ROOT, text=True, timeout=15).strip()
+    if actual != BASELINE_TREE:
+        raise ValueError("Pinned upgrade baseline tree is unavailable")
+    environment = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "MESH_NODE": node, "MESH_NPM_CLI": npm}
+    subprocess.run([sys.executable, str(ROOT / "scripts/check_core_sdk_upgrade.py"), "--output-dir", str(directory),
+                    "--node", node, "--npm-cli", npm], cwd=ROOT, env=environment,
+                   check=True, capture_output=True, text=True, timeout=300)
+
+
+def verify_upgrade(directory):
+    path = directory / "upgrade-artifacts.json"
+    if not path.is_file() or not 0 < path.stat().st_size <= 128 * 1024:
+        raise ValueError("Pinned upgrade build report is missing")
+    value = json.loads(path.read_text())
+    if (type(value.get("v")) is not int or value["v"] != 1 or value.get("baseline_source") != BASELINE
+            or value.get("baseline_tree") != BASELINE_TREE
+            or value.get("provenance") != "Component artifacts rebuilt from exact Git source; not retained platform binaries"
+            or not isinstance(value.get("artifacts"), dict) or set(value["artifacts"]) != set(UPGRADE_FILES)):
+        raise ValueError("Pinned upgrade build has incorrect source or provenance")
+    records = {}
+    for kind, name in UPGRADE_FILES.items():
+        artifact = directory / name
+        item = value["artifacts"][kind]
+        if (not artifact.is_file() or not 0 < artifact.stat().st_size <= 4 * 1024 * 1024
+                or not isinstance(item, dict) or item.get("filename") != name
+                or type(item.get("size_bytes")) is not int or item["size_bytes"] != artifact.stat().st_size
+                or item.get("sha256") != sha256(artifact)):
+            raise ValueError("Pinned upgrade artifact differs from its build report")
+        records[kind] = dict(item)
+    return {"baseline_source": BASELINE, "baseline_tree": BASELINE_TREE,
+            "provenance": value["provenance"], "report_sha256": sha256(path), "artifacts": records}
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--expected-source", required=True)
     parser.add_argument("--output-dir", type=Path, default=ROOT / "dist/sdk")
+    parser.add_argument("--upgrade-dir", type=Path, default=ROOT / "dist/sdk-upgrade")
     parser.add_argument("--report", type=Path, default=ROOT / "dist/reports/core-sdk-distribution-staging.json")
     args = parser.parse_args()
     args.report.parent.mkdir(parents=True, exist_ok=True)
@@ -93,9 +134,13 @@ def main():
         directory = args.output_dir.resolve()
         phase = "candidate_staging"
         stage(directory, node, npm)
+        phase = "pinned_upgrade_staging"
+        upgrade_directory = args.upgrade_dir.resolve()
+        stage_upgrade(upgrade_directory, node, npm)
         phase = "artifact_binding"
         version = subprocess.check_output([node, "--version"], text=True, timeout=15).strip()
         result = verify_artifacts(directory, source, tree, version)
+        result["pinned_upgrade"] = verify_upgrade(upgrade_directory)
         if source_identity(source) != (source, tree):
             raise RuntimeError("Source changed while staging SDK artifacts")
         if path := os.environ.get("GITHUB_ENV"):
@@ -103,6 +148,7 @@ def main():
             if not consumer_temp.is_dir() or consumer_temp.is_relative_to(ROOT):
                 raise ValueError("Installed SDK consumer temporary directory must be outside the checkout")
             values = {"MESH_CORE_SDK_ARTIFACTS": str(directory), "MESH_NODE": node, "MESH_NPM_CLI": npm,
+                      "MESH_CORE_SDK_UPGRADE_ARTIFACTS": str(upgrade_directory),
                       "MESH_CORE_CONSUMER_TMP": str(consumer_temp)}
             if any("\n" in value or "\r" in value for value in values.values()):
                 raise ValueError("Invalid SDK staging environment path")
