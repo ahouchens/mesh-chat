@@ -43,6 +43,8 @@ RENDERED_CASES = {("tests/core-ui-boundary/app.test.tsx",
     "resolves a lost draft enqueue reply after remount and vault reopen without a second send",
     "replays lost committed group creation with the original caller key and one durable group",
     "replays lost committed group send once and preserves a newer draft through actual Core",
+    "restores an unsent group composer after renderer remount and real vault reopen",
+    "resolves a lost group draft enqueue after remount and vault reopen without a second send",
 )}
 
 

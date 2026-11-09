@@ -5,6 +5,17 @@ the production `App` and executes the production `api.ts` serializers against a
 separate Python process running `FramedSession`, `CoreSession`, domain services
 and a fresh encrypted test vault. Network startup is disabled. It neither maps
 typed operations into legacy command mocks nor claims native transport evidence.
+The required rendered inventory now has twelve cases. Group send qualification
+uses the advertised atomic group composer, waits for save/send readiness, drops
+the actual `group.message_enqueue_draft` reply after commit and verifies one
+message/outbox/send receipt while preserving newer text. Two additional cases
+remount the renderer and reopen the real vault to recover an unsent group draft
+and an accepted group send. Replaying the old Core revision preserves a newer
+draft without another message. These are component remount/reopen checks, not
+native traffic or complete recovery of every UI action key after process death.
+The three group-composer request vectors use valid signed-group and protected
+draft handles before grant revocation; denied query/update/enqueue cannot change
+sealed records, retry hints or network effects or disclose protected text.
 The mandatory rendered onboarding case uses the explicit empty-vault host mode:
 neither its profile nor its identity is seeded. The form submits through the real
 serializer and private bootstrap port; a lost committed response is resolved by
