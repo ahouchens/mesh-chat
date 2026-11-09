@@ -11,7 +11,7 @@ reports. Exact evidence and limits are in the ledger. Wave 2 is activated below.
 Existing human authorization covers continued implementation, integration and
 worker follow-ups without another permission request.
 
-The shared feature branch remains `5ea2949`; lead integration is `90a0004`.
+The shared feature branch remains `5ea2949`; lead integration is `a175ae5`.
 CI `42693457737` has three known failures, repaired locally: Windows empty
 identity assertion (`e8f73e0`), separate Android instrumentation module compile
 (`d23452c`) and exact CSS-selector/layout guards (`706df7f`). The exact repaired
@@ -19,10 +19,15 @@ UI boundary passes 664 Python plus ten rendered cases. D's public Windows
 pairing producer is integrated with 287 focused passes, but requires an explicit
 relay-only follow-up before dispatch: direct pairing gathering consent does not
 grant persistent personal messaging consent. No private bypass is permitted.
-C's standalone Android host `c2fc072` awaits the existing-catalog missing-key
-guard; B's group composer `86366d0` awaits A's atomic producer. D prepares the
+C's standalone Android host plus catalog/startup safeguards `dfc47da` is
+integrated, with 38 lead host checks and 26 actual-source JVM checks passing.
+A's atomic group producer/SDK `76ed4fb` plus `306feb3`, B's group UI `86366d0`
+and owner-retirement follow-up `839c076` are integrated. Eighty App/controller
+checks pass after retirement integration. D first repairs the independent
+group-operation vectors and real rendered fixture, then continues the
 outside-checkout Android runtime-host consumer. Existing worker ownership and
-human follow-up authorization remain in effect.
+human follow-up authorization remain in effect. No standalone AAR/device claim
+follows from cached Kotlin compilation or Python/JVM components.
 
 The shared checkpoint includes C's reviewed Android provider correction
 `0bfb95d`. Separate protected catalog authority avoids reading the profile key

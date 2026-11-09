@@ -4,6 +4,15 @@
 
 ### Atomic group integration and completed profile CI
 
+Subsequent lead source `a175ae5` integrates C's standalone Android host
+`c2fc072` and safeguards `dfc47da`, plus B's composer owner-retirement fix
+`839c076`. Lead host/profile checks pass **38 cases in 5.03s**; actual-source
+key-policy/native-custody JVM checks pass **26 cases in 0.171s**. The cached
+compiler uses explicit native/platform doubles, not Android execution. B's
+shared App/controller regression selection passes **80 cases in 16.01s**,
+including queued work after navigation and posting revocation. D's required
+boundary inventory and real rendered fixture corrections are still pending.
+
 Lead source `02f83b8` includes A's atomic group producer `76ed4fb`, its additional
 expiry/target controls `306feb3`, B's gated UI `86366d0` and D's explicit
 relay-only Windows producer correction `2cf3f41` (applied as `b156300`). At
