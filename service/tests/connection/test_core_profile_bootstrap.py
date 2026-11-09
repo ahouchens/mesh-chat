@@ -3,14 +3,21 @@
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 import os
+import json
+import time
+import uuid
+import socket
 
 import pytest
+import RNS
 
 from mesh_chat.core_api import android_host, host
 from mesh_chat.core_api.composition import bind_service_stream
 from mesh_chat.core_api.session import Grant
 from mesh_chat.core_api.wire_codec import decode_frame, encode_frame
 from mesh_chat.errors import StorageUnavailable
+from mesh_chat.invitations import create_invitation
+from mesh_chat.remote import create_profile_document, create_remote_personal_invitation
 from mesh_chat.service import MeshChatService
 from mesh_chat.vault import VaultStore
 
@@ -168,3 +175,64 @@ def test_android_actual_owner_binding_can_bootstrap_an_existing_empty_service(em
     assert reply["ok"], reply
     assert decode_frame(android_host.exchange(service, caller, encode_frame(value), "owner")) == reply
     assert service.store.get("profile", "local")["display_name"] == "Android Alex"
+
+
+def test_verification_only_previews_do_not_create_profile_or_mutate_vault(empty_host, tmp_path, monkeypatch):
+    signer_store = VaultStore(tmp_path / "signer", os.urandom(32), allow_unprotected_for_tests=True)
+    signer = MeshChatService(signer_store, tmp_path / "signer", lambda _: None)
+    signer.create_profile("Blair")
+    workspace = signer.create_workspace(str(uuid.uuid4()), "Signed Team", "Preview only")
+    invitation = signer.create_workspace_invitation_command(workspace["id"], str(uuid.uuid4()))
+    device_link = signer.create_workspace_device_link(workspace["id"], str(uuid.uuid4()))
+    personal = create_invitation(RNS.Identity(), "Blair")["file"]
+    i2p = signer.invitation(connection_mode="i2p", i2p_access_point="a" * 52 + ".b32.i2p")["file"]
+    remote = create_remote_personal_invitation(signer._identity, signer.invitation()["file"],
+        create_profile_document("Relay", [{"host": "relay.example", "port": 4242}]))
+    signer.close()
+    service = empty_host()
+    session = bootstrap(service)
+    before = service.store._db.execute("SELECT kind,record_id,sealed FROM records ORDER BY kind,record_id").fetchall()
+
+    def forbidden(*_, **__):
+        raise AssertionError("Verification-only preview attempted an effect")
+
+    monkeypatch.setattr(service.store, "_write_records_locked", forbidden)
+    monkeypatch.setattr(service, "_start_network", forbidden)
+    monkeypatch.setattr(service, "approve_participant_access", forbidden)
+    monkeypatch.setattr(service, "_approve_remote_document", forbidden)
+    monkeypatch.setattr(service, "_adopt_i2p_access_point", forbidden)
+    monkeypatch.setattr(socket, "getaddrinfo", forbidden)
+    monkeypatch.setattr(socket, "create_connection", forbidden)
+    for kind, document, field, expected in [
+        ("personal", personal, "display_name", "Blair"),
+        ("workspace", invitation["text"], "name", "Signed Team"),
+        ("device_link", device_link["text"], "name", "Signed Team"),
+    ]:
+        reply = exchange(session, "bootstrap.preview", {"kind": kind, "document": document})
+        assert reply["ok"], reply
+        assert reply["result"]["kind"] == kind
+        assert reply["result"]["preview"][field] == expected
+        assert "workspace_id" not in reply["result"]["preview"]
+    for document, consent in [(i2p, "requires_i2p_consent"), (remote, "requires_network_consent")]:
+        reply = exchange(session, "bootstrap.preview", {"kind": "personal", "document": document})
+        assert reply["ok"] and reply["result"]["preview"][consent] is True, reply
+    assert service._identity is None and service.store.get("profile", "local") is None
+    assert service.store._db.execute("SELECT kind,record_id,sealed FROM records ORDER BY kind,record_id").fetchall() == before
+
+
+def test_pre_profile_preview_rejects_expired_tampered_and_over_budget_documents(empty_host):
+    service = empty_host()
+    session = bootstrap(service)
+    identity = RNS.Identity()
+    expired = create_invitation(identity, "Expired", now=int(time.time()) - 120,
+                                lifetime_seconds=60)["file"]
+    valid = json.loads(create_invitation(identity, "Blair")["file"])
+    valid["display_name"] = "Tampered"
+    for document in (expired, json.dumps(valid), "x" * (1048576 + 1)):
+        reply = exchange(session, "bootstrap.preview", {"kind": "personal", "document": document})
+        assert reply["error"]["code"] == "invalid_request", reply
+    public = host.bind_host_stream(service, caller="external-owner",
+                                    permissions=host.OWNER_PERMISSIONS, scope="owner")
+    assert exchange(public, "runtime.capabilities")["ok"]
+    denied = exchange(public, "bootstrap.preview", {"kind": "personal", "document": expired})
+    assert denied["error"]["code"] == "unsupported_operation"

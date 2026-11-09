@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Private verification-only bootstrap preview v1",
+  "type": "object",
+  "properties": {
+    "api_version": {
+      "const": 1
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "operation": {
+      "const": "bootstrap.preview"
+    },
+    "params": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "personal",
+            "workspace",
+            "device_link"
+          ]
+        },
+        "document": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1048576
+        }
+      },
+      "required": [
+        "kind",
+        "document"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "api_version",
+    "request_id",
+    "operation",
+    "params"
+  ],
+  "additionalProperties": false
+}

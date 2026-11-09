@@ -36,6 +36,7 @@ STOP_OPERATIONS = ("runtime.stop",)
 APPLICATION_OPERATIONS = ("application.snapshot",)
 NATIVE_COMMAND_OPERATIONS = ("native.command",)
 PROFILE_CREATE_OPERATIONS = ("profile.create",)
+BOOTSTRAP_PREVIEW_OPERATIONS = ("bootstrap.preview",)
 WORKSPACE_PREVIEW_OPERATIONS = ("workspace.invitation_preview",)
 WORKSPACE_JOIN_OPERATIONS = ("workspace.join",)
 WORKSPACE_PROMPT_JOIN_OPERATIONS = ("workspace.join_prompt",)
@@ -328,6 +329,13 @@ def _parse_request(value, operations):
         if (not isinstance(params, dict) or set(params) != {"display_name"}
                 or not isinstance(params["display_name"], str)
                 or not 1 <= len(params["display_name"].strip()) <= 80):
+            raise ApiFailure("invalid_request")
+        return operation, params
+    if operation in BOOTSTRAP_PREVIEW_OPERATIONS:
+        if (set(params) != {"kind", "document"}
+                or params["kind"] not in {"personal", "workspace", "device_link"}
+                or not isinstance(params["document"], str)
+                or not 1 <= len(params["document"].encode("utf-8")) <= 1048576):
             raise ApiFailure("invalid_request")
         return operation, params
     if operation in APPLICATION_OPERATIONS:
@@ -1474,6 +1482,7 @@ COMPONENT_OPERATIONS = (
     + APPLICATION_OPERATIONS
     + NATIVE_COMMAND_OPERATIONS
     + PROFILE_CREATE_OPERATIONS
+    + BOOTSTRAP_PREVIEW_OPERATIONS
     + WORKSPACE_PREVIEW_OPERATIONS
     + WORKSPACE_JOIN_OPERATIONS
     + WORKSPACE_PROMPT_JOIN_OPERATIONS
