@@ -1304,17 +1304,16 @@ M5 - supported reusable core
       messaging and the rest of the UI remain legacy.
 - [x] Desktop direct-text send resolves the contact destination to a peer
       handle, enqueues through the facade with an idempotency key, and refreshes
-      the authoritative snapshot. Mobile or a pre-accept failure falls back to
-      the legacy command; a successful facade send never falls back.
+      the authoritative snapshot. The legacy send command is retired.
 - [x] Desktop new-contact acceptance resolves the peer handle and calls
       `peer.approve` through the facade, falling back before acceptance only.
 - [x] The UI state refresh reads `application.snapshot` through the facade, so
       direct-message display is facade-backed. Legacy fallback applies only when
       the facade pipe is unavailable.
-- [x] The desktop renderer command surface is routed through the owner-scoped
-      `application.command` adapter, which dispatches only the shared renderer
+- [x] The desktop renderer native bridge is routed through the owner-scoped
+      `native.command` adapter, which dispatches only the native/platform
       allowlist and keeps the service as the policy owner. State reads use
-      `application.snapshot`.
+      `application.snapshot`; no service-facing command remains.
 - [x] The facade dispatcher resolves profiles, workspace scopes, workspace channels and idempotency keys through helpers; workspace operations are split into query, access-mutation and resource-mutation handlers, leaving _execute a 50-line cross-cutting dispatcher.
 - [x] Reconnect start/stop use typed connection.start/connection.stop with the profile destination, falling back only when Core is unavailable.
 - [x] pplication.snapshot adds caller-scoped core_handle fields to contacts, groups and workspaces, allowing aggregate UI state to drive typed operations without internal IDs.
@@ -1354,9 +1353,15 @@ M5 - supported reusable core
 - [x] Pairing invitation creation uses peer.pairing_create with all existing connection modes and returns file, link, text, expiry and optional host session; the UI falls back only when the facade is unavailable.
 - [x] Contact approval, blocking, unblocking and deletion use typed peer operations (peer.approve, peer.revoke, peer.unblock, peer.delete) with caller-scoped handles and pre-acceptance fallback only.
 - [x] The Android Tauri plugin binds the same-process `MeshCoreApiService` and
-      sends renderer commands through `application.command`; it falls back to
+      sends native/platform commands through `native.command`; it falls back to
       its legacy Python bridge only when the Core exchange is unavailable or a
       snapshot exceeds the Binder frame budget.
+- [x] All service-facing renderer compatibility commands are retired: every
+      domain action uses a typed facade operation, and the 58 remaining
+      `native.command` entries are native/platform plumbing only.
+- [x] Shared dialog, button, workspace-creation, connection, workspace, call,
+      settings, recovery and message UI live in extracted modules; App.tsx is an
+      orchestrator rather than the home of every feature component.
 - [x] Calls, groups, settings, drafts, reactions and workspace administration
       typed as first-class facade operations. The compatibility adapter remains
       only as an unavailable-Core fallback.
