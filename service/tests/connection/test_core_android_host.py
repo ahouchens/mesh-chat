@@ -67,6 +67,22 @@ def test_the_caller_table_is_bounded_and_can_be_detached(host):
     assert call(service, "com.example.overflow", "runtime.capabilities")["ok"]
 
 
+def test_publication_retirement_detaches_immediately_and_old_callback_cannot_detach_new(host):
+    service = host()
+    caller = "com.example.retirement"
+    assert call(service, caller, "runtime.capabilities")["ok"]
+    android_host.retire(service)
+    assert android_host.active_callers() == []
+    assert not service._store_closed  # Supervisor still owns drain/store close.
+    assert call(service, caller, "runtime.capabilities")["error"]["code"] == "unavailable"
+    service.close()
+    replacement = host()
+    assert call(replacement, caller, "runtime.capabilities")["ok"]
+    android_host.retire(service)
+    assert android_host.active_callers() == [caller]
+    assert call(replacement, caller, "runtime.capabilities")["ok"]
+
+
 def test_mobile_bridge_forwards_frames_only_with_a_running_service(host, monkeypatch):
     encoded = base64.b64encode(frame("runtime.capabilities")).decode("ascii")
     monkeypatch.setattr(mobile_bridge, "_service", None)

@@ -16,6 +16,7 @@ export class NodeStreamTransport implements LineTransport {
   constructor(readonly socket: Duplex) {
     socket.on("data", chunk => this.#data(Buffer.from(chunk)));
     socket.on("error", () => this.#fail(new TransportClosedError()));
+    socket.on("end", () => this.#fail(new TransportClosedError()));
     socket.on("close", () => this.#fail(new TransportClosedError()));
   }
 

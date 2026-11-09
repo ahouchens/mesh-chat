@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -15,8 +16,11 @@ PACKAGE = ROOT / "sdk/python"
 
 
 def run(args, cwd, env):
-    return subprocess.run(args, cwd=cwd, env=env, check=True, text=True,
-                          capture_output=True, timeout=120).stdout
+    result = subprocess.run(args, cwd=cwd, env=env, text=True,
+                            capture_output=True, timeout=120)
+    if result.returncode:
+        raise RuntimeError(f"SDK build/install exited {result.returncode}\n" + result.stdout[-3000:] + result.stderr[-3000:])
+    return result.stdout
 
 
 def verify(wheel):
@@ -46,8 +50,11 @@ def stage(output):
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="mesh-core-python-distribution-") as temporary:
         work = Path(temporary)
-        env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "PIP_CACHE_DIR": str(work / "cache")}
-        run([sys.executable, "-m", "pip", "wheel", str(PACKAGE), "--no-deps", "--no-build-isolation",
+        env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "PIP_CACHE_DIR": str(work / "cache"),
+               "PIP_DISABLE_PIP_VERSION_CHECK": "1"}
+        source = work / "package"
+        shutil.copytree(PACKAGE, source, ignore=shutil.ignore_patterns("build", "dist", "*.egg-info", "__pycache__", ".pytest_cache"))
+        run([sys.executable, "-m", "pip", "wheel", str(source), "--no-index", "--no-deps", "--no-build-isolation",
              "--wheel-dir", str(output)], work, env)
         wheels = list(output.glob("mesh_chat_core_client-0.3.0.dev0-*.whl"))
         if len(wheels) != 1:

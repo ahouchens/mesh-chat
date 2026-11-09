@@ -96,6 +96,22 @@ def close_all():
         _service = None
 
 
+def retire(service):
+    """Host publication hook: detach immediately when this instance retires.
+
+    A delayed retirement callback for an old instance cannot detach a newer one.
+    This does not close the store; the supervisor still owns worker drain.
+    """
+    global _service
+    if service is None:
+        raise ValueError("An exact retiring service is required")
+    with _lock:
+        _retired_services.add(service)
+        if _service is service:
+            _detach_sessions()
+            _service = None
+
+
 def _detach_sessions():
     sessions = tuple(_sessions.values())
     _sessions.clear()
