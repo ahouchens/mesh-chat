@@ -10,6 +10,17 @@ composer state, independent SDK distributions and upgrades, supervisor-owned
 native lifecycle/pairing, and the remaining packaged transport/fault matrix.
 The ledger records exact scope; this is not full M2–M5 completion.
 
+The current repaired checkpoint is `32cc1d5`, pushed for full manual CI
+`42704405112`. All 3,463 required local policy cases and nine Windows boundary
+cases pass without skips; the App/Core boundary at `986815f` passes 670 Python
+plus 12 rendered cases. Group inventory, rendered retry/recovery and composer
+retirement repairs are complete locally. Full packaged and native CI remains
+pending. The independent Android consumer `cd08903` is the next separate source
+checkpoint, not part of this run. Protected pending-action recovery and personal
+direct-IP consent remain reviewed proposals, not implemented qualifications.
+
+The following paragraphs retain earlier checkpoint history.
+
 Current public pairing source `787b6aa` passes 79 actor/installed-SDK checks and
 50 TypeScript SDK tests, but its full policy run fails nine inventory checks
 (3,359 pass). Repairs must pass the complete gate. Android exact peer/channel

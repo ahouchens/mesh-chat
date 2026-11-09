@@ -2,6 +2,40 @@
 
 ## Integration revalidation (2026-11-09)
 
+### Repaired group checkpoint dispatched
+
+Full manual workflow [42704405112](https://github.com/ahouchens/mesh-chat/actions/runs/42704405112)
+is running at source `32cc1d5765a1ae1a3ad91e752e341b95cbce2e40`, tree
+`cae703b3360004bdd0bf2d0b55793fed7efafe08`. Duplicate PR run `42704390818`
+was canceled. All 143 retained validator source files are pinned to this source.
+There is no CI success claim yet.
+
+Exact SDK staging passes. The full required local policy passes **3,463 tests,
+zero failures/skips**, in 365.09s; qualification ID
+`9328e6cfe05c44c8aff5572e7bfbd497`. Exact Windows boundary passes **nine cases,
+zero failures/skips**, in 2.50s, XML SHA-256
+`549c7ff85d7c703a5958de2836e3c649927e7fc4354118549ebcc0ed985d62ea`.
+These cover in-process policy and Windows named-pipe/DPAPI components, not
+frozen/EFS execution or independent peer receipts.
+
+At ancestor `986815f`, the exact App/Core boundary passes **670 Python plus
+12 rendered cases**, zero failures/skips, in 56.66s. Python XML SHA-256:
+`06c18bbbf3ffb6be41a034fc53f670b34c290d033d46ac037b3b6884cbd2e4ef`;
+rendered XML: `22c3ee116023b415b80da6a4d2ceb6d83f21fe0ea85b6d3556322c322d8dc514`.
+Only the static Binder guard changes between that source and the dispatched
+checkpoint. Actual-source Kotlin SDK checks pass **24 JVM tests** in 0.124s.
+Windows writable-settings/consumer controls pass 160 cases; repaired Binder
+guards pass seven cases. The earlier full policy at `4da0ccf` had 3,460 passes
+and one stale Binder guard failure. An earlier disk-full attempt was aborted
+and supplies no qualification result.
+
+The dispatched checkpoint includes D's group vectors and real rendered durable
+composer cases (`03f1ac3`), public writable Windows settings (`7d0c055`), Binder
+guard repair (`69ef1c8`) and C's public Activity dependency export (`53225a1`).
+D's independent Android consumer `cd08903` is deliberately excluded, pending a
+separate checkpoint. It has source-level tests and C review only; no built
+publication, installed Android, OS credential or cross-platform receipt claim.
+
 ### Atomic group integration and completed profile CI
 
 Subsequent lead source `a175ae5` integrates C's standalone Android host

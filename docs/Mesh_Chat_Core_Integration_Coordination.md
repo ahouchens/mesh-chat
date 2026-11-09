@@ -11,7 +11,26 @@ reports. Exact evidence and limits are in the ledger. Wave 2 is activated below.
 Existing human authorization covers continued implementation, integration and
 worker follow-ups without another permission request.
 
-The shared feature branch remains `5ea2949`; lead integration is `a175ae5`.
+The shared feature branch is now `32cc1d5765a1ae1a3ad91e752e341b95cbce2e40`
+(tree `cae703b3360004bdd0bf2d0b55793fed7efafe08`). Full manual CI
+`42704405112` is running; duplicate PR run `42704390818` was canceled.
+The complete local policy passes 3,463 cases and the exact Windows boundary
+passes nine cases, all without failures/skips. The App/Core boundary at ancestor
+`986815f` passes 670 Python plus 12 rendered cases; the intervening source change
+only repairs the static Binder guard. All 24 actual-source Kotlin SDK tests pass.
+The group inventory/fixture, queued-send retirement, writable Windows settings,
+standalone host dependency and Binder guard repairs are integrated. The first
+complete policy attempt at `4da0ccf` had 3,460 passes and one stale Binder guard
+failure; the repaired full run above supersedes that result.
+
+D's independent Android consumer `cd08903` remains a separate next checkpoint,
+with C's source review accepted. Its actual publication, APK build and two
+installed lifecycle cases have not run. A/C's personal direct-consent proposal
+and B's protected pending-action recovery proposal remain read-only design work.
+No Wave 2 acceptance or release promotion follows from this dispatch.
+
+Earlier checkpoint history follows. At `a175ae5`, the feature branch was
+`5ea2949`.
 CI `42693457737` has three known failures, repaired locally: Windows empty
 identity assertion (`e8f73e0`), separate Android instrumentation module compile
 (`d23452c`) and exact CSS-selector/layout guards (`706df7f`). The exact repaired

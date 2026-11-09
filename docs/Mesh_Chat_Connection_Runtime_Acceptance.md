@@ -20,6 +20,17 @@ and scenario rows below to complete; their named remaining obligations still
 apply, including packaged cross-platform transport and unavailable physical
 qualification.
 
+Latest repaired source `32cc1d5` is under full manual qualification
+`42704405112`. Its required local policy passes 3,463 tests and exact Windows
+boundary passes nine tests with no skips. The App/Core boundary at `986815f`
+passes 670 Python plus 12 rendered cases; only a static Binder guard repair
+intervenes. These supersede the earlier group inventory/fixture failures and
+queued-send retirement gap below. They do not establish packaged/device or
+independent cross-platform acceptance. The new independent Android consumer is
+excluded from this run and still needs actual publication and installed tests.
+
+Earlier checkpoint evidence follows.
+
 Latest public pairing integration `787b6aa` has 79 passing actor/installed-SDK
 controls and 50 passing TypeScript SDK tests. Its full policy run remains failed
 with nine inventory defects and 3,359 passes. Native channel disposal and
