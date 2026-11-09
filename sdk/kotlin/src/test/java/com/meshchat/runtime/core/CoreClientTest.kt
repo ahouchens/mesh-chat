@@ -273,7 +273,7 @@ class CoreClientTest {
             ),
         )
         val client = CoreClient.open(transport)
-        client.workspaceJoin(PROFILE, "invitation")
+        client.workspaceJoin(PROFILE, "invitation", "workspace-join-key-0001")
         val join = JSONObject(transport.written[1])
         assertEquals("workspace.join", join.getString("operation"))
         assertFalse(join.has("idempotency_key"))

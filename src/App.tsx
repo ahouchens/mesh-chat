@@ -1,3 +1,4 @@
+import { CallDialog, IncomingCallPrompt, type CallPeer } from "./CallDialog";
 import { workspaceConnectivityLabel, workspaceStateLabel, workspaceSyncIssueLabel } from "./workspaceLabels";
 import { contactTrustDescription, contactTrustLabel, groupComposerState, groupInvitationBanner, groupInviteDeliveryLabel, groupPolicyLabel, pluralize } from "./groupLabels";
 import { canPrepareDirectHost, directActionLabel, directPhaseLabel, directFailureReport, directReasonLabel, sanitizedDoctorSummary } from "./directLabels";
@@ -5,9 +6,6 @@ import { errorMessage } from "./errors";
 import { DirectMessageComposer } from "./DirectMessageComposer";
 import { newOperationId } from "./operationId";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
-import { createPortal } from "react-dom";
-import { connectionPath, waitForCandidates } from "./webrtc-peer";
-import { acquireCallAudio, releaseCallAudio } from "./call-audio";
 import {
   BookUser,
   Bell,
@@ -32,10 +30,8 @@ import {
   Megaphone,
   MessageCircleMore,
   Mic,
-  MicOff,
   Moon,
   Phone,
-  PhoneOff,
   Pencil,
   Plus,
   QrCode,
@@ -53,7 +49,6 @@ import {
   UserRoundPlus,
   Users,
   Video,
-  VideoOff,
   WifiOff,
   X,
 } from "lucide-react";
@@ -64,15 +59,12 @@ import {
   coreApiCreateInvitation,
   coreApiCreateProfile,
   coreApiCreateWorkspace,
-  loadCallIceServers,
   loadCallSettings,
   saveCallSettings,
   saveNetworkSettings,
   coreApiPeerForDestination,
   coreApiRequest,
   coreApiCloseGroup,
-  coreApiCallMedia,
-  coreApiCallControl,
   coreApiGroupInvitation,
   coreApiGroupDraftSet,
   coreApiWorkspaceDraftSet,
@@ -147,7 +139,6 @@ import {
   openNotificationSettings,
   openBatterySettings,
   requestNotificationPermission,
-  requestMediaPermission,
   runtimePlatform,
   setNativeTheme,
   setNativeBackgroundAvailability,
@@ -186,8 +177,6 @@ import { InvitationImportActions, InvitationQrCode } from "./InvitationTransfer"
 import { classifyInvitationInput, InvitationTransferError, normalizeInvitationInput } from "./invitation-transfer";
 import packageInfo from "../package.json";
 import type {
-  CallIceConfiguration,
-  CallMedia,
   CallSettings,
   CallSummary,
   BackgroundAvailability,
@@ -346,29 +335,6 @@ function groupDeliveryLabel(message: GroupMessage): string {
   return `Sending to ${total}`;
 }
 
-async function callControl(
-  action: string,
-  params: Record<string, unknown>,
-  _legacyCommand: string,
-): Promise<Record<string, unknown>> {
-  return await coreApiCallControl(action, params, newOperationId());
-}
-
-async function fetchCallMedia(
-  call: { id: string; core_handle?: string } | undefined,
-  callId = call?.id,
-): Promise<CallMedia> {
-  if (call?.core_handle) {
-    try {
-      return await coreApiCallMedia(call.core_handle) as unknown as CallMedia;
-    } catch (reason) {
-      if (!String(reason).includes("core_api_unavailable")) throw reason;
-    }
-  }
-  if (!callId) throw new Error("call_not_found");
-  return serviceCommand<CallMedia>("call_media", { call_id: callId });
-}
-
 async function fetchWorkspaceTimeline(
   workspace: { id: string; core_handle?: string },
   view: "threads" | "thread_messages" | "mentions" | "search" | "channel_messages" | "direct_messages",
@@ -382,7 +348,6 @@ async function mutateWorkspaceTimeline(
   workspace: { id: string; core_handle?: string },
   action: "thread_reply" | "thread_read" | "mentions_read" | "notification_preference" | "workspace_read" | "direct_read" | "channel_message" | "direct_message" | "message_edit" | "message_delete" | "reaction_set",
   params: Record<string, unknown>,
-  fallbackCommand: string,
   operationId?: string,
 ): Promise<Record<string, unknown>> {
   return await coreApiTimelineMutation(
@@ -398,7 +363,6 @@ async function fetchWorkspaceAccessRecommendation(
   workspace: { id: string; core_handle?: string },
   action: string,
   params: Record<string, unknown>,
-  fallbackCommand: string,
   key?: string,
 ): Promise<Record<string, unknown>> {
   return await coreApiWorkspaceAccessRecommendation(
@@ -409,7 +373,6 @@ async function fetchWorkspaceHistory(
   workspace: { id: string; core_handle?: string },
   action: string,
   params: Record<string, unknown>,
-  fallbackCommand: string,
   key?: string,
 ): Promise<Record<string, unknown>> {
   return await coreApiWorkspaceHistory(
@@ -420,7 +383,6 @@ async function fetchWorkspaceConnection(
   workspace: { id: string; core_handle?: string } | null,
   action: string,
   params: Record<string, unknown>,
-  fallbackCommand: string,
   key?: string,
 ): Promise<Record<string, unknown>> {
   return await coreApiWorkspaceConnection(
@@ -428,48 +390,23 @@ async function fetchWorkspaceConnection(
 }
 
 async function fetchBackgroundStatus(): Promise<BackgroundAvailability> {
-  try {
-    return await coreApiRuntimeQuery("background") as unknown as BackgroundAvailability;
-  } catch (reason) {
-    if (!String(reason).includes("core_api_unavailable")) throw reason;
-    throw new Error("core_api_unavailable");
-  }
+  return await coreApiRuntimeQuery("background") as unknown as BackgroundAvailability;
 }
 
 async function setBackgroundAvailability(enabled: boolean): Promise<BackgroundAvailability> {
-  try {
-    return await coreApiRuntimeMutate("background_set", { enabled }, newOperationId()) as unknown as BackgroundAvailability;
-  } catch (reason) {
-    if (!String(reason).includes("core_api_unavailable")) throw reason;
-    throw new Error("core_api_unavailable");
-  }
+  return await coreApiRuntimeMutate("background_set", { enabled }, newOperationId()) as unknown as BackgroundAvailability;
 }
 
 async function fetchNotificationState(): Promise<WorkspaceNotificationState> {
-  try {
-    return await coreApiRuntimeQuery("notifications") as unknown as WorkspaceNotificationState;
-  } catch (reason) {
-    if (!String(reason).includes("core_api_unavailable")) throw reason;
-    throw new Error("core_api_unavailable");
-  }
+  return await coreApiRuntimeQuery("notifications") as unknown as WorkspaceNotificationState;
 }
 
 async function setNotificationPreviews(hidden: boolean): Promise<WorkspaceNotificationState> {
-  try {
-    return await coreApiRuntimeMutate("notification_previews", { hidden }, newOperationId()) as unknown as WorkspaceNotificationState;
-  } catch (reason) {
-    if (!String(reason).includes("core_api_unavailable")) throw reason;
-    throw new Error("core_api_unavailable");
-  }
+  return await coreApiRuntimeMutate("notification_previews", { hidden }, newOperationId()) as unknown as WorkspaceNotificationState;
 }
 
 async function openNotificationTarget(notificationId: string): Promise<NotificationOpenTarget> {
-  try {
-    return await coreApiRuntimeMutate("notification_open", { notification_id: notificationId }, newOperationId()) as unknown as NotificationOpenTarget;
-  } catch (reason) {
-    if (!String(reason).includes("core_api_unavailable")) throw reason;
-    throw new Error("core_api_unavailable");
-  }
+  return await coreApiRuntimeMutate("notification_open", { notification_id: notificationId }, newOperationId()) as unknown as NotificationOpenTarget;
 }
 
 
@@ -745,652 +682,6 @@ function ConnectionDocumentShare({ formats, kind, onShared }: { formats: Connect
     <p className="invite-feedback" aria-live="polite">{feedback}</p>
     <InvitationQrCode document={formats.file} destination={kind === "reply" ? "connection reply" : "reconnect update"} />
   </section>;
-}
-
-function callFingerprint(sdp: string): string {
-  for (const line of sdp.split(/\r?\n/)) {
-    if (line.startsWith("a=fingerprint:")) return line.slice("a=fingerprint:".length).trim();
-  }
-  throw new Error("The call could not be secured (no DTLS fingerprint).");
-}
-
-function callHasNetworkCandidate(sdp: string): boolean {
-  return /(?:^|\r?\n)a=candidate:/u.test(sdp);
-}
-
-type CallPeer = { id: string; display_name: string };
-
-function IncomingCallPrompt({ call, name, onReview, onChanged }: {
-  call: CallSummary; name: string; onReview: () => void; onChanged: () => Promise<void>;
-}) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const decline = async () => {
-    if (busy) return;
-    setBusy(true);
-    setError("");
-    try {
-      await callControl("end", { call_id: call.id, reason: "declined" }, "end_call");
-      await onChanged();
-    } catch {
-      setError("The call could not be dismissed. Try again.");
-    } finally {
-      setBusy(false);
-    }
-  };
-  // Keep the alert above Settings and an invitation dialog which may still be
-  // open. Receiving an invitation never starts microphone or camera capture.
-  return createPortal(<Dialog title={`Incoming ${call.media === "video" ? "video" : "audio"} call`} onClose={() => void decline()}>
-    <p>{name} is calling.</p>
-    {error && <p className="form-error" role="alert">{error}</p>}
-    <div className="dialog-actions">
-      <Button variant="secondary" disabled={busy} onClick={() => void decline()}>Decline</Button>
-      <Button disabled={busy} onClick={onReview}>Review</Button>
-    </div>
-  </Dialog>, document.body);
-}
-
-function CallDialog({
-  contact,
-  initialCall,
-  onClose,
-  onChanged,
-}: {
-  contact: CallPeer;
-  initialCall?: CallSummary;
-  onClose: () => void;
-  onChanged: () => Promise<void>;
-}) {
-  const [call, setCall] = useState<CallSummary | undefined>(initialCall);
-  const [media, setMedia] = useState<CallMedia | null>(null);
-  const [phase, setPhase] = useState<"idle" | "preparing" | "calling" | "ringing" | "connecting" | "in_call" | "ended" | "error">(
-    initialCall?.direction === "inbound" && initialCall.state === "ringing" ? "ringing" : "idle",
-  );
-  const [muted, setMuted] = useState(false);
-  const [cameraEnabled, setCameraEnabled] = useState(initialCall?.media === "video");
-  const [path, setPath] = useState<"direct" | "relay" | "unknown">("unknown");
-  const [quality, setQuality] = useState<"good" | "fair" | "poor" | "unknown">("unknown");
-  const [error, setError] = useState("");
-  const pcRef = useRef<RTCPeerConnection | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const remoteStreamRef = useRef<MediaStream | null>(null);
-  const restartTimerRef = useRef<number | null>(null);
-  const qualityTimerRef = useRef<number | null>(null);
-  const audioOwnerRef = useRef<object | null>(null);
-  const mediaOperationRef = useRef(0);
-  const mediaOperationPendingRef = useRef(false);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const localVideoRef = useRef<HTMLVideoElement | null>(null);
-  const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
-  const callIdRef = useRef<string | undefined>(initialCall?.id);
-  const roleRef = useRef<"caller" | "callee" | undefined>(initialCall?.role);
-  const remoteSetRef = useRef(false);
-  const pollRef = useRef<number | null>(null);
-  const pollBusyRef = useRef<object | null>(null);
-  const restartInFlightRef = useRef(false);
-  const restartAnswerInFlightRef = useRef(false);
-  const lastRestartOfferRef = useRef("");
-  const lastRestartAnswerRef = useRef("");
-  const restartRef = useRef<() => void>(() => undefined);
-
-  const cleanup = useCallback(() => {
-    mediaOperationRef.current += 1;
-    mediaOperationPendingRef.current = false;
-    pollBusyRef.current = null;
-    restartInFlightRef.current = false;
-    restartAnswerInFlightRef.current = false;
-    if (pollRef.current !== null) {
-      window.clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
-    streamRef.current?.getTracks().forEach((track) => track.stop());
-    streamRef.current = null;
-    remoteStreamRef.current = null;
-    for (const timer of [restartTimerRef, qualityTimerRef]) {
-      if (timer.current !== null) window.clearTimeout(timer.current);
-      timer.current = null;
-    }
-    const pc = pcRef.current;
-    pcRef.current = null;
-    if (pc) {
-      pc.ontrack = null;
-      pc.onconnectionstatechange = null;
-      pc.close();
-    }
-    if (audioRef.current) audioRef.current.srcObject = null;
-    if (localVideoRef.current) localVideoRef.current.srcObject = null;
-    if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
-    if (audioOwnerRef.current) {
-      const owner = audioOwnerRef.current;
-      audioOwnerRef.current = null;
-      void releaseCallAudio(owner).catch(() => undefined);
-    }
-  }, []);
-
-  const failCall = useCallback((message: string) => {
-    const callId = callIdRef.current;
-    cleanup();
-    if (callId) {
-      void callControl("end", { call_id: callId, reason: "cancelled" }, "end_call").catch(() => undefined);
-    }
-    setError(message);
-    setPhase("error");
-  }, [cleanup]);
-
-  useEffect(() => cleanup, [cleanup]);
-
-  useEffect(() => {
-    if (phase !== "ringing" || !call?.id) return;
-    let active = true;
-    let busy = false;
-    const timer = window.setInterval(async () => {
-      if (busy) return;
-      busy = true;
-      try {
-        const latest = await fetchCallMedia(call);
-        if (!active) return;
-        if (["ended", "declined", "busy", "no_answer", "failed"].includes(latest.state)) {
-          cleanup();
-          setPhase(latest.state === "failed" ? "error" : "ended");
-          if (latest.state === "failed") setError("The call ended unexpectedly.");
-        }
-      } catch {
-        // Keep the invitation visible through a transient service read error.
-      } finally {
-        busy = false;
-      }
-    }, 1000);
-    return () => { active = false; window.clearInterval(timer); };
-  }, [call?.id, cleanup, phase]);
-
-  useEffect(() => {
-    const onOnline = () => {
-      const pc = pcRef.current;
-      if (!callIdRef.current || !pc) return;
-      if (restartTimerRef.current !== null) window.clearTimeout(restartTimerRef.current);
-      restartTimerRef.current = window.setTimeout(() => {
-        restartTimerRef.current = null;
-        if (pcRef.current === pc) restartRef.current();
-      }, 1000);
-    };
-    window.addEventListener("online", onOnline);
-    return () => window.removeEventListener("online", onOnline);
-  }, []);
-
-  const inspectPath = useCallback(async (pc: RTCPeerConnection) => {
-    const path = await connectionPath(pc);
-    if (pcRef.current === pc) setPath(path === "relayed" ? "relay" : path);
-  }, []);
-
-  const inspectQuality = useCallback(async (pc: RTCPeerConnection) => {
-    try {
-      const stats = await pc.getStats();
-      if (pcRef.current !== pc) return;
-      let lost = 0;
-      let received = 0;
-      let jitter = 0;
-      stats.forEach((report) => {
-        const value = report as unknown as Record<string, unknown>;
-        if (value.type !== "inbound-rtp") return;
-        lost += Number(value.packetsLost ?? 0);
-        received += Number(value.packetsReceived ?? 0);
-        jitter = Math.max(jitter, Number(value.jitter ?? 0));
-      });
-      const total = lost + received;
-      const loss = total > 0 ? lost / total : 0;
-      setQuality(loss > 0.08 || jitter > 0.08 ? "poor" : loss > 0.02 || jitter > 0.03 ? "fair" : total > 0 ? "good" : "unknown");
-    } catch {
-      if (pcRef.current === pc) setQuality("unknown");
-    }
-  }, []);
-
-  const attachPeer = useCallback((configuration: CallIceConfiguration) => {
-    const pc = new RTCPeerConnection({
-      iceServers: configuration.iceServers,
-      iceTransportPolicy: configuration.iceTransportPolicy,
-    });
-    pc.ontrack = (event) => {
-      if (pcRef.current !== pc) return;
-      const stream = remoteStreamRef.current ?? event.streams[0] ?? new MediaStream();
-      if (!stream.getTracks().includes(event.track)) stream.addTrack(event.track);
-      remoteStreamRef.current = stream;
-      if (audioRef.current) {
-        audioRef.current.srcObject = stream;
-        void audioRef.current.play().catch(() => undefined);
-      }
-      if (event.track.kind === "video" && remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = stream;
-        void remoteVideoRef.current.play().catch(() => undefined);
-      }
-    };
-    pc.onconnectionstatechange = () => {
-      if (pcRef.current !== pc) return;
-      if (pc.connectionState === "connected") {
-        if (restartTimerRef.current !== null) window.clearTimeout(restartTimerRef.current);
-        restartTimerRef.current = null;
-        setPhase("in_call");
-        setError("");
-        void inspectPath(pc);
-        void inspectQuality(pc);
-        if (qualityTimerRef.current !== null) window.clearTimeout(qualityTimerRef.current);
-        qualityTimerRef.current = window.setTimeout(() => {
-          qualityTimerRef.current = null;
-          if (pcRef.current === pc) void inspectQuality(pc);
-        }, 3000);
-      }
-      if (pc.connectionState === "disconnected") {
-        setPhase("connecting");
-        if (restartTimerRef.current === null) {
-          restartTimerRef.current = window.setTimeout(() => {
-            restartTimerRef.current = null;
-            if (pcRef.current === pc) restartRef.current();
-          }, 1500);
-        }
-      }
-      if (pc.connectionState === "failed") {
-        failCall("The media path could not be established.");
-      }
-    };
-    pcRef.current = pc;
-    return pc;
-  }, [failCall, inspectPath, inspectQuality]);
-
-  const startPolling = useCallback((callId: string) => {
-    if (pollRef.current !== null) window.clearInterval(pollRef.current);
-    pollRef.current = window.setInterval(async () => {
-      const pc = pcRef.current;
-      if (!pc || callIdRef.current !== callId || pollBusyRef.current) return;
-      const operation = mediaOperationRef.current;
-      const current = () => pcRef.current === pc && callIdRef.current === callId && mediaOperationRef.current === operation;
-      const poll = {};
-      pollBusyRef.current = poll;
-      try {
-        let latest: CallMedia;
-        try {
-          latest = await fetchCallMedia(undefined, callId);
-        } catch {
-          // A transient service read can be retried on the next poll.
-          return;
-        }
-        if (!current()) return;
-        setMedia(latest);
-        setCall((current) => current ? { ...current, ...latest } : current);
-        if (["ended", "declined", "busy", "no_answer", "failed"].includes(latest.state)) {
-          cleanup();
-          setPhase(latest.state === "failed" ? "error" : "ended");
-          if (latest.state === "failed") setError("The call ended unexpectedly.");
-          return;
-        }
-        if (
-          latest.restart_answer &&
-          lastRestartAnswerRef.current !== latest.restart_answer &&
-          pc.signalingState === "have-local-offer"
-        ) {
-          await pc.setRemoteDescription({ type: "answer", sdp: latest.restart_answer });
-          if (!current()) return;
-          lastRestartAnswerRef.current = latest.restart_answer;
-          remoteSetRef.current = true;
-          setPhase(pc.connectionState === "connected" ? "in_call" : "connecting");
-          void inspectPath(pc);
-        }
-        if (
-          latest.restart_offer &&
-          roleRef.current === "callee" &&
-          lastRestartOfferRef.current !== latest.restart_offer &&
-          !restartAnswerInFlightRef.current
-        ) {
-          restartAnswerInFlightRef.current = true;
-          try {
-            if (current()) {
-              await pc.setRemoteDescription({ type: "offer", sdp: latest.restart_offer });
-              if (!current()) return;
-              const answer = await pc.createAnswer();
-              if (!current()) return;
-              await pc.setLocalDescription(answer);
-              if (!current()) return;
-              await waitForCandidates(pc);
-              if (!current()) return;
-              const sdp = pc.localDescription?.sdp;
-              if (sdp) {
-                await callControl("answer_restart", {
-                  call_id: callId,
-                  sdp,
-                  dtls_fingerprint: callFingerprint(sdp),
-                }, "answer_call_restart");
-                if (!current()) return;
-                lastRestartOfferRef.current = latest.restart_offer;
-                setPhase(pc.connectionState === "connected" ? "in_call" : "connecting");
-              }
-            }
-          } catch (reason) {
-            if (current()) failCall(errorMessage(reason));
-            return;
-          } finally {
-            if (current()) restartAnswerInFlightRef.current = false;
-          }
-        }
-        if (latest.remote_sdp && !remoteSetRef.current && pc.signalingState === "have-local-offer") {
-          await pc.setRemoteDescription({ type: "answer", sdp: latest.remote_sdp });
-          if (!current()) return;
-          remoteSetRef.current = true;
-          setPhase(pc.connectionState === "connected" ? "in_call" : "connecting");
-        }
-        if (latest.state === "in_call" && pc.connectionState === "connected") setPhase("in_call");
-      } catch (reason) {
-        if (current()) failCall(errorMessage(reason));
-      } finally {
-        if (pollBusyRef.current === poll) pollBusyRef.current = null;
-      }
-    }, 1000);
-  }, [cleanup, failCall, inspectPath]);
-
-  const prepareMedia = useCallback(async (media: "audio" | "video") => {
-    if (!navigator.mediaDevices?.getUserMedia) {
-      throw new Error("This device does not expose a microphone to Mesh Chat.");
-    }
-    if (await runtimePlatform() !== "desktop") {
-      const permission = await requestMediaPermission(media);
-      if (!permission.audio || (media === "video" && !permission.camera)) {
-        throw new Error(media === "video" ? "Microphone and camera access are required for a video call." : "Microphone access is required for an audio call.");
-      }
-    }
-    return navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-      video: media === "video" ? { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } } : false,
-    });
-  }, []);
-
-  const attemptRestart = useCallback(async () => {
-    const callId = callIdRef.current;
-    const pc = pcRef.current;
-    if (!callId || !pc || restartInFlightRef.current) return;
-    if (roleRef.current !== "caller" || pc.signalingState !== "stable" ||
-        !["disconnected", "failed"].includes(pc.connectionState)) return;
-    const operation = mediaOperationRef.current;
-    const current = () => pcRef.current === pc && callIdRef.current === callId && mediaOperationRef.current === operation;
-    restartInFlightRef.current = true;
-    try {
-      setPhase("connecting");
-      const offer = await pc.createOffer({ iceRestart: true });
-      if (!current()) return;
-      await pc.setLocalDescription(offer);
-      if (!current()) return;
-      await waitForCandidates(pc);
-      if (!current()) return;
-      const sdp = pc.localDescription?.sdp;
-      if (!sdp) throw new Error("The reconnecting call offer could not be created.");
-      if (!callHasNetworkCandidate(sdp)) throw new Error("No call network candidate was found. Check the connection or configure TURN.");
-      await callControl("restart", {
-        call_id: callId,
-        sdp,
-        dtls_fingerprint: callFingerprint(sdp),
-      }, "restart_call");
-      if (!current()) return;
-      setPhase(pc.connectionState === "connected" ? "in_call" : "connecting");
-    } catch (reason) {
-      if (current()) failCall(errorMessage(reason));
-    } finally {
-      if (current()) restartInFlightRef.current = false;
-    }
-  }, [failCall, waitForCandidates]);
-  restartRef.current = () => { void attemptRestart(); };
-
-  const configureVideoSender = useCallback(async (pc: RTCPeerConnection, stream: MediaStream) => {
-    const track = stream.getVideoTracks()[0];
-    if (!track) return;
-    const sender = pc.getSenders().find((candidate) => candidate.track === track);
-    if (!sender) return;
-    try {
-      const capabilities = RTCRtpSender.getCapabilities("video");
-      if (capabilities) {
-        const codecs = [...capabilities.codecs].sort((left, right) => {
-          const score = (mime: string) => mime === "video/VP8" ? 0 : mime === "video/VP9" ? 1 : 2;
-          return score(left.mimeType) - score(right.mimeType);
-        });
-        pc.getTransceivers().find((transceiver) => transceiver.sender === sender)?.setCodecPreferences(codecs);
-      }
-    } catch {
-      // The platform may not expose codec preferences; keep its default.
-    }
-    try {
-      const parameters = sender.getParameters();
-      if (parameters.encodings[0]) {
-        parameters.encodings[0].maxBitrate = 500_000;
-        await sender.setParameters(parameters);
-      }
-    } catch {
-      // Bitrate shaping is best-effort; the call still proceeds.
-    }
-  }, []);
-
-  const startCall = useCallback(async (media: "audio" | "video") => {
-    if (mediaOperationPendingRef.current) return;
-    mediaOperationPendingRef.current = true;
-    const operation = ++mediaOperationRef.current;
-    const current = () => operation === mediaOperationRef.current;
-    let stream: MediaStream | null = null;
-    const audioOwner = {};
-    callIdRef.current = undefined;
-    roleRef.current = undefined;
-    remoteSetRef.current = false;
-    lastRestartOfferRef.current = "";
-    lastRestartAnswerRef.current = "";
-    setCall(undefined);
-    setMedia(null);
-    setMuted(false);
-    setPath("unknown");
-    setQuality("unknown");
-    setError("");
-    setPhase("preparing");
-    try {
-      const capturedStream = await prepareMedia(media);
-      stream = capturedStream;
-      if (!current()) throw new Error("Call cancelled.");
-      streamRef.current = capturedStream;
-      if (localVideoRef.current) localVideoRef.current.srcObject = capturedStream;
-      audioOwnerRef.current = audioOwner;
-      const focus = await acquireCallAudio(audioOwner, media);
-      if (!current()) throw new Error("Call cancelled.");
-      if (!focus.granted) throw new Error("Android could not take call-audio focus.");
-      const configuration = await loadCallIceServers() as unknown as CallIceConfiguration;
-      if (!current()) throw new Error("Call cancelled.");
-      const pc = attachPeer(configuration);
-      capturedStream.getTracks().forEach((track) => pc.addTrack(track, capturedStream));
-      void configureVideoSender(pc, capturedStream);
-      const offer = await pc.createOffer();
-      if (!current()) throw new Error("Call cancelled.");
-      await pc.setLocalDescription(offer);
-      if (!current()) throw new Error("Call cancelled.");
-      await waitForCandidates(pc);
-      if (!current()) throw new Error("Call cancelled.");
-      const sdp = pc.localDescription?.sdp;
-      if (!sdp) throw new Error("The call offer could not be created.");
-      if (!callHasNetworkCandidate(sdp)) throw new Error("No call network candidate was found. Check the connection or configure TURN.");
-      const result = await callControl("start", {
-        contact_id: contact.id,
-        media,
-        sdp,
-        dtls_fingerprint: callFingerprint(sdp),
-      }, "start_call") as unknown as CallSummary;
-      if (!current()) {
-        await callControl("end", { call_id: result.id, reason: "cancelled" }, "end_call").catch(() => undefined);
-        throw new Error("Call cancelled.");
-      }
-      callIdRef.current = result.id;
-      roleRef.current = result.role;
-      setCall(result);
-      setCameraEnabled(media === "video");
-      setPhase(pc.connectionState === "connected" ? "in_call" : "calling");
-      startPolling(result.id);
-      await onChanged().catch(() => undefined);
-    } catch (reason) {
-      if (!current()) {
-        stream?.getTracks().forEach((track) => track.stop());
-        void releaseCallAudio(audioOwner).catch(() => undefined);
-        return;
-      }
-      failCall(errorMessage(reason));
-    } finally {
-      if (current()) mediaOperationPendingRef.current = false;
-    }
-  }, [attachPeer, configureVideoSender, contact.id, failCall, onChanged, prepareMedia, startPolling, waitForCandidates]);
-
-  const acceptCall = useCallback(async () => {
-    if (!call || mediaOperationPendingRef.current) return;
-    mediaOperationPendingRef.current = true;
-    const operation = ++mediaOperationRef.current;
-    const current = () => operation === mediaOperationRef.current;
-    let stream: MediaStream | null = null;
-    const audioOwner = {};
-    setError("");
-    setPhase("preparing");
-    try {
-      const details = await fetchCallMedia(call);
-      if (!current()) throw new Error("Call cancelled.");
-      if (!details.remote_sdp) throw new Error("This call invitation has no media description.");
-      const capturedStream = await prepareMedia(call.media);
-      stream = capturedStream;
-      if (!current()) throw new Error("Call cancelled.");
-      streamRef.current = capturedStream;
-      if (localVideoRef.current) localVideoRef.current.srcObject = capturedStream;
-      audioOwnerRef.current = audioOwner;
-      const focus = await acquireCallAudio(audioOwner, call.media);
-      if (!current()) throw new Error("Call cancelled.");
-      if (!focus.granted) throw new Error("Android could not take call-audio focus.");
-      const configuration = await loadCallIceServers() as unknown as CallIceConfiguration;
-      if (!current()) throw new Error("Call cancelled.");
-      const pc = attachPeer(configuration);
-      await pc.setRemoteDescription({ type: "offer", sdp: details.remote_sdp });
-      if (!current()) throw new Error("Call cancelled.");
-      capturedStream.getTracks().forEach((track) => pc.addTrack(track, capturedStream));
-      void configureVideoSender(pc, capturedStream);
-      const answer = await pc.createAnswer();
-      if (!current()) throw new Error("Call cancelled.");
-      await pc.setLocalDescription(answer);
-      if (!current()) throw new Error("Call cancelled.");
-      await waitForCandidates(pc);
-      if (!current()) throw new Error("Call cancelled.");
-      const sdp = pc.localDescription?.sdp;
-      if (!sdp) throw new Error("The call answer could not be created.");
-      if (!callHasNetworkCandidate(sdp)) throw new Error("No call network candidate was found. Check the connection or configure TURN.");
-      const result = await callControl("answer", {
-        call_id: call.id,
-        sdp,
-        dtls_fingerprint: callFingerprint(sdp),
-      }, "answer_call") as unknown as CallSummary;
-      if (!current()) throw new Error("Call cancelled.");
-      setCall(result);
-      roleRef.current = result.role;
-      setMedia(details);
-      setCameraEnabled(call.media === "video");
-      setPhase(pc.connectionState === "connected" ? "in_call" : "connecting");
-      startPolling(call.id);
-      await onChanged().catch(() => undefined);
-    } catch (reason) {
-      if (!current()) {
-        stream?.getTracks().forEach((track) => track.stop());
-        void releaseCallAudio(audioOwner).catch(() => undefined);
-        return;
-      }
-      failCall(errorMessage(reason));
-    } finally {
-      if (current()) mediaOperationPendingRef.current = false;
-    }
-  }, [attachPeer, call, configureVideoSender, failCall, onChanged, prepareMedia, startPolling, waitForCandidates]);
-
-  const hangup = useCallback(async (reason: "completed" | "declined" | "cancelled") => {
-    const callId = callIdRef.current;
-    cleanup();
-    setPhase("ended");
-    if (callId) {
-      try {
-        await callControl("end", { call_id: callId, reason }, "end_call");
-        await onChanged();
-      } catch {
-        // The call may already have ended on the other side.
-      }
-    }
-    onClose();
-  }, [cleanup, onChanged, onClose]);
-
-  const closeCall = useCallback(() => {
-    if (phase === "idle" || phase === "ended" || phase === "error") {
-      cleanup();
-      onClose();
-      return;
-    }
-    void hangup("cancelled");
-  }, [cleanup, hangup, onClose, phase]);
-
-  const toggleMute = useCallback(() => {
-    const next = !muted;
-    streamRef.current?.getAudioTracks().forEach((track) => { track.enabled = !next; });
-    setMuted(next);
-  }, [muted]);
-
-  const toggleCamera = useCallback(() => {
-    const next = !cameraEnabled;
-    streamRef.current?.getVideoTracks().forEach((track) => { track.enabled = next; });
-    setCameraEnabled(next);
-  }, [cameraEnabled]);
-
-  const incoming = call?.direction === "inbound";
-  const active = phase === "in_call";
-
-  return createPortal(
-    <Dialog title={incoming ? `Call from ${contact.display_name}` : `Call ${contact.display_name}`} onClose={closeCall}>
-      <div className="stack">
-        <audio ref={audioRef} autoPlay playsInline hidden />
-        <video ref={localVideoRef} className="call-video call-video--local" autoPlay muted playsInline hidden={!cameraEnabled || phase === "ended" || phase === "error"} />
-        <video ref={remoteVideoRef} className="call-video" autoPlay muted playsInline hidden={call?.media !== "video" || phase === "ended" || phase === "error"} />
-        {phase === "idle" && (
-          <>
-            <p className="muted">Audio and video are sent directly to {contact.display_name} over the authenticated call path. Your microphone and camera start only after you choose a call.</p>
-            <div className="dialog-actions">
-              <Button variant="secondary" onClick={onClose}>Cancel</Button>
-              <Button onClick={() => void startCall("audio")}><Phone size={17} /> Audio call</Button>
-              <Button onClick={() => void startCall("video")}><Video size={17} /> Video call</Button>
-            </div>
-          </>
-        )}
-        {phase === "ringing" && (
-          <>
-            <p className="direct-host-status" role="status"><Phone size={17} /> Incoming {call?.media === "video" ? "video" : "audio"} call</p>
-            <p className="muted">Your microphone and camera stay off until you accept.</p>
-            <div className="dialog-actions">
-              <Button variant="danger" onClick={() => void hangup("declined")}>Decline</Button>
-              <Button onClick={() => void acceptCall()}><Phone size={17} /> Accept</Button>
-            </div>
-          </>
-        )}
-        {(phase === "preparing" || phase === "calling" || phase === "connecting") && (
-          <>
-            <p className="direct-host-status" role="status">
-              <RefreshCw size={17} /> {phase === "preparing" ? "Preparing media…" : phase === "calling" ? "Calling and waiting for an answer…" : "Connecting the media path…"}
-            </p>
-            <p className="muted">The call uses the signed Reticulum signaling path; the media path is direct when the network allows it.</p>
-            <div className="dialog-actions">
-              <Button variant="secondary" onClick={() => void hangup("cancelled")}>Cancel</Button>
-            </div>
-          </>
-        )}
-        {active && (
-          <>
-            <p className="direct-host-status" role="status"><Phone size={17} /> In call · {path === "relay" ? "Relayed via TURN" : path === "direct" ? "Direct media" : "Checking media path"} · {quality === "unknown" ? "Measuring quality" : quality === "good" ? "Good quality" : quality === "fair" ? "Fair quality" : "Poor quality"}</p>
-            <div className="dialog-actions">
-              <Button variant="secondary" onClick={toggleMute}>{muted ? <MicOff size={17} /> : <Mic size={17} />} {muted ? "Unmute" : "Mute"}</Button>
-              {call?.media === "video" && <Button variant="secondary" onClick={toggleCamera}>{cameraEnabled ? <Video size={17} /> : <VideoOff size={17} />} {cameraEnabled ? "Camera off" : "Camera on"}</Button>}
-              <Button variant="danger" onClick={() => void hangup("completed")}><PhoneOff size={17} /> Hang up</Button>
-            </div>
-          </>
-        )}
-        {phase === "ended" && <><p className="muted">Call ended.</p><div className="dialog-actions"><Button onClick={closeCall}>Close</Button></div></>}
-        {phase === "error" && <p className="form-error" role="alert">{error || "The call could not connect."}</p>}
-        {media && active && <p className="muted">{media.candidate_count} network candidate{media.candidate_count === 1 ? "" : "s"} exchanged.</p>}
-        {phase === "error" && <div className="dialog-actions">{call && <Button onClick={() => void startCall(call.media)}>Try again</Button>}<Button variant="secondary" onClick={closeCall}>Close</Button></div>}
-      </div>
-    </Dialog>, document.body
-  );
 }
 
 function Onboarding({
@@ -2248,36 +1539,17 @@ function ContactsDialog({
     setReconnectFormats(null);
   }, [selected?.id, selected?.display_name]);
 
-  const run = async (command: string) => {
+  const run = async (command: "verify_contact" | "unverify_contact" | "block_contact" | "unblock_contact") => {
     if (!selected || busy) return;
     setBusy(true);
     setError("");
     try {
-      let handled = false;
       if (command === "verify_contact" || command === "unverify_contact") {
-        try {
-          await coreApiUpdatePeer(
-            selected.destination_hash,
-            command === "verify_contact" ? "verify" : "unverify");
-          handled = true;
-        } catch (reason) {
-          if (!String(reason).includes("core_api_unavailable")) throw reason;
-        }
-      }
-      if (command === "block_contact" || command === "unblock_contact") {
-        try {
-          const target = await coreApiPeerForDestination(selected.destination_hash);
-          await coreApiRequest(command === "block_contact" ? "peer.revoke" : "peer.unblock",
-            { profile: target.profile, peer: target.peer });
-          handled = true;
-        } catch { /* Fall back only when the facade did not accept the change. */ }
-      }
-      if (!handled) {
-        if (command === "block_contact" || command === "unblock_contact"
-            || command === "verify_contact" || command === "unverify_contact") {
-          throw new Error("core_api_unavailable");
-        }
-        await serviceCommand(command, { contact_id: selected.id });
+        await coreApiUpdatePeer(selected.destination_hash, command === "verify_contact" ? "verify" : "unverify");
+      } else {
+        const target = await coreApiPeerForDestination(selected.destination_hash);
+        await coreApiRequest(command === "block_contact" ? "peer.revoke" : "peer.unblock",
+          { profile: target.profile, peer: target.peer });
       }
       setConfirm(null);
       await onChanged();
@@ -2531,9 +1803,9 @@ function RemoteConnectionsSettings({ initial, onChanged, onEditStateChange }: { 
     const result = await coreApiRemoteProfiles() as { profiles?: RemoteProfile[] };
     setProfiles(result.profiles ?? []);
   };
-  const run = async (command: string, profileId: string) => {
+  const run = async (action: "test" | "retry" | "approve_propagation" | "remove_propagation" | "remove", profileId: string) => {
     setBusy(profileId); setError("");
-    try { await serviceCommand(command, { profile_id: profileId }); await reload(); await onChanged(); }
+    try { await coreApiRemoteProfile(action, { remote_profile_id: profileId }, newOperationId()); await reload(); await onChanged(); }
     catch (reason) { setError(errorMessage(reason)); }
     finally { setBusy(null); }
   };
@@ -2553,7 +1825,7 @@ function RemoteConnectionsSettings({ initial, onChanged, onEditStateChange }: { 
     } catch (reason) { setError(errorMessage(reason)); }
     finally { setBusy(null); }
   };
-  return <section className="settings-section remote-connections" aria-labelledby="remote-connections-title"><div className="settings-section__heading"><h3 id="remote-connections-title">Approved access points</h3><p>Internet invitations first try a temporary path hosted by the inviter. Add an operator-supplied Reticulum access point only as an explicit fallback when the inviter's device or router cannot accept an inbound connection.</p></div><p className="muted">Operators can observe IP addresses, timing, packet sizes, connection duration, and Reticulum routing identifiers. They cannot decrypt or forge valid MeshChat content.</p>{profiles.map((profile) => <article className="remote-profile-row" key={profile.id}><span><strong>{profile.label}</strong><small role="status">{remoteStateLabel(profile)}</small><small>{profile.ratchet_ready ? "Encrypted recipient ready" : profile.path_available ? "Known peer path; awaiting ratchet" : "Path discovery occurs when an invitation is used"} · {profile.offline_delivery_available ? "Offline delivery node connected" : profile.offline_delivery_approved ? "Offline delivery approved; node unavailable" : profile.offline_delivery_recommended ? "Offline delivery available after separate approval" : "Live delivery only"}</small></span><div><Button variant="secondary" disabled={busy === profile.id || profile.state === "expired"} onClick={() => void run("test_remote_profile", profile.id)}>Test</Button><Button variant="ghost" disabled={busy === profile.id || profile.state === "expired"} onClick={() => void run("retry_remote_profile", profile.id)}>Retry</Button>{profile.offline_delivery_recommended && <Button variant="ghost" disabled={busy === profile.id} onClick={() => void run(profile.offline_delivery_approved ? "remove_remote_propagation" : "approve_remote_propagation", profile.id)}>{profile.offline_delivery_approved ? "Remove offline delivery" : "Approve offline delivery"}</Button>}<Button variant="danger" disabled={busy === profile.id || profile.offline_delivery_approved} title={profile.offline_delivery_approved ? "Remove offline delivery approval first" : undefined} onClick={() => void run("remove_remote_profile", profile.id)}>Remove</Button></div>{profile.offline_delivery_recommended && !profile.offline_delivery_approved && <p>Optional node {profile.propagation_identifier} stores recipient-encrypted objects and routing metadata. Storage is not endpoint or human receipt. Android may not retrieve messages until Mesh Chat runs again.</p>}</article>)}{profiles.length === 0 && <p className="muted">No access point is configured. Internet invitations still try a direct path to the online inviter.</p>}{adding ? <div className="remote-profile-form"><label>Profile name<input value={label} maxLength={64} onChange={(event) => setLabel(event.target.value)} /></label><label>TCP hostname or address<input value={host} autoCapitalize="off" autoCorrect="off" spellCheck={false} onChange={(event) => setHost(event.target.value)} /></label><label>TCP port<input value={port} inputMode="numeric" onChange={(event) => setPort(event.target.value)} /></label><label>Recommended LXMF propagation destination <small>Optional, 32 hexadecimal characters</small><input value={propagation} maxLength={32} autoCapitalize="off" autoCorrect="off" spellCheck={false} onChange={(event) => setPropagation(event.target.value)} /></label><label className="checkbox-line"><input type="checkbox" checked={allowPrivate} onChange={(event) => setAllowPrivate(event.target.checked)} /> Advanced: allow a private-network endpoint. This can expose local services and must only be used with an operator you trust.</label><div className="dialog-actions"><Button variant="ghost" onClick={() => setAdding(false)}>Cancel</Button><Button disabled={busy === "new" || !label.trim() || !host.trim()} onClick={() => void add()}>{busy === "new" ? "Connecting…" : "Approve and connect"}</Button></div></div> : <Button variant="secondary" disabled={profiles.length >= 4} onClick={() => setAdding(true)}>Add remote connection</Button>}{error && <p className="form-error" role="alert">{error}</p>}</section>;
+  return <section className="settings-section remote-connections" aria-labelledby="remote-connections-title"><div className="settings-section__heading"><h3 id="remote-connections-title">Approved access points</h3><p>Internet invitations first try a temporary path hosted by the inviter. Add an operator-supplied Reticulum access point only as an explicit fallback when the inviter's device or router cannot accept an inbound connection.</p></div><p className="muted">Operators can observe IP addresses, timing, packet sizes, connection duration, and Reticulum routing identifiers. They cannot decrypt or forge valid MeshChat content.</p>{profiles.map((profile) => <article className="remote-profile-row" key={profile.id}><span><strong>{profile.label}</strong><small role="status">{remoteStateLabel(profile)}</small><small>{profile.ratchet_ready ? "Encrypted recipient ready" : profile.path_available ? "Known peer path; awaiting ratchet" : "Path discovery occurs when an invitation is used"} · {profile.offline_delivery_available ? "Offline delivery node connected" : profile.offline_delivery_approved ? "Offline delivery approved; node unavailable" : profile.offline_delivery_recommended ? "Offline delivery available after separate approval" : "Live delivery only"}</small></span><div><Button variant="secondary" disabled={busy === profile.id || profile.state === "expired"} onClick={() => void run("test", profile.id)}>Test</Button><Button variant="ghost" disabled={busy === profile.id || profile.state === "expired"} onClick={() => void run("retry", profile.id)}>Retry</Button>{profile.offline_delivery_recommended && <Button variant="ghost" disabled={busy === profile.id} onClick={() => void run(profile.offline_delivery_approved ? "remove_propagation" : "approve_propagation", profile.id)}>{profile.offline_delivery_approved ? "Remove offline delivery" : "Approve offline delivery"}</Button>}<Button variant="danger" disabled={busy === profile.id || profile.offline_delivery_approved} title={profile.offline_delivery_approved ? "Remove offline delivery approval first" : undefined} onClick={() => void run("remove", profile.id)}>Remove</Button></div>{profile.offline_delivery_recommended && !profile.offline_delivery_approved && <p>Optional node {profile.propagation_identifier} stores recipient-encrypted objects and routing metadata. Storage is not endpoint or human receipt. Android may not retrieve messages until Mesh Chat runs again.</p>}</article>)}{profiles.length === 0 && <p className="muted">No access point is configured. Internet invitations still try a direct path to the online inviter.</p>}{adding ? <div className="remote-profile-form"><label>Profile name<input value={label} maxLength={64} onChange={(event) => setLabel(event.target.value)} /></label><label>TCP hostname or address<input value={host} autoCapitalize="off" autoCorrect="off" spellCheck={false} onChange={(event) => setHost(event.target.value)} /></label><label>TCP port<input value={port} inputMode="numeric" onChange={(event) => setPort(event.target.value)} /></label><label>Recommended LXMF propagation destination <small>Optional, 32 hexadecimal characters</small><input value={propagation} maxLength={32} autoCapitalize="off" autoCorrect="off" spellCheck={false} onChange={(event) => setPropagation(event.target.value)} /></label><label className="checkbox-line"><input type="checkbox" checked={allowPrivate} onChange={(event) => setAllowPrivate(event.target.checked)} /> Advanced: allow a private-network endpoint. This can expose local services and must only be used with an operator you trust.</label><div className="dialog-actions"><Button variant="ghost" onClick={() => setAdding(false)}>Cancel</Button><Button disabled={busy === "new" || !label.trim() || !host.trim()} onClick={() => void add()}>{busy === "new" ? "Connecting…" : "Approve and connect"}</Button></div></div> : <Button variant="secondary" disabled={profiles.length >= 4} onClick={() => setAdding(true)}>Add remote connection</Button>}{error && <p className="form-error" role="alert">{error}</p>}</section>;
 }
 
 const I2P_ROUTER_LABEL: Record<string, string> = {
@@ -3600,15 +2872,14 @@ function JoinWorkspaceDialog({ initialValue = "", promptId, promptWorkspaceName,
       const isDeviceLink = classifyInvitationInput(normalized) === "workspace_device";
       if (isDeviceLink) {
         const checked = await fetchWorkspaceConnection(null, "device_link_preview",
-          { device_link: normalized }, "preview_workspace_device_link") as unknown as WorkspaceDeviceLinkPreview;
+          { device_link: normalized }) as unknown as WorkspaceDeviceLinkPreview;
         if (generation !== reviewGeneration.current) return;
         setDevicePreview(checked);
         setPreview(null);
         setRemoteConsent(false); setI2PConsent(false);
       } else {
         const checked = promptId
-          ? await fetchWorkspaceConnection(null, "prompt_preview", { prompt_id: promptId },
-              "preview_workspace_invitation_prompt") as unknown as WorkspaceInvitationPreview
+          ? await fetchWorkspaceConnection(null, "prompt_preview", { prompt_id: promptId }) as unknown as WorkspaceInvitationPreview
           : await coreApiPreviewWorkspaceInvitation(normalized) as WorkspaceInvitationPreview;
         if (generation !== reviewGeneration.current) return;
         setPreview(checked);
@@ -3790,7 +3061,7 @@ function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles,
     setContactBusy(true); setContactFeedback(""); setContactError("");
     try {
       const result = await fetchWorkspaceConnection(workspace, "invite_contact",
-        { contact_id: contactId }, "invite_contact_to_workspace") as unknown as { sent: boolean; message_state?: string; invitation: WorkspaceInvitationFormats };
+        { contact_id: contactId }) as unknown as { sent: boolean; message_state?: string; invitation: WorkspaceInvitationFormats };
       if (result.invitation) {
         setExisting((current) => [...current, { ...result.invitation, offered_manifest_digest: "", state: "active", created_at: Date.now() / 1000, contact_id: contactId, contact_display_name: selectedContact?.display_name, delivery_state: result.message_state }]);
       }
@@ -4133,8 +3404,7 @@ export function WorkspaceAccessSettingsContent({ workspace, onSaved }: { workspa
   const owner = workspace.local_role === "owner" && workspace.local_device_id === workspace.authority_device_id && workspace.state === "active";
   const loadReceived = async () => {
     try {
-      const value = await fetchWorkspaceAccessRecommendation(workspace, "list", {},
-        "list_workspace_access_recommendations") as unknown as { recommendations: WorkspaceAccessRecommendationSummary[] };
+      const value = await fetchWorkspaceAccessRecommendation(workspace, "list", {}) as unknown as { recommendations: WorkspaceAccessRecommendationSummary[] };
       setReceived(value.recommendations ?? []);
     } catch {
       setReceived([]);
@@ -4156,8 +3426,7 @@ export function WorkspaceAccessSettingsContent({ workspace, onSaved }: { workspa
     setBusy(true); setError(""); setNotice("");
     try {
       const result = await fetchWorkspaceAccessRecommendation(workspace, "create",
-        { remote_profile_id: profileId, lifetime_days: 7 },
-        "create_workspace_access_recommendation") as unknown as WorkspaceAccessRecommendation;
+        { remote_profile_id: profileId, lifetime_days: 7 }) as unknown as WorkspaceAccessRecommendation;
       setCreated(result);
       setRecommendation(result.text);
       setNotice("Recommendation created. Share the complete text with members.");
@@ -4168,7 +3437,7 @@ export function WorkspaceAccessSettingsContent({ workspace, onSaved }: { workspa
     setBusy(true); setError(""); setNotice("");
     try {
       const result = await fetchWorkspaceAccessRecommendation(workspace, "send",
-        { recommendation: created.text }, "send_workspace_access_recommendation",
+        { recommendation: created.text },
         newOperationId()) as unknown as { sent_devices: number };
       setNotice(`Queued the recommendation for ${result.sent_devices} active member device${result.sent_devices === 1 ? "" : "s"}. Delivery remains retryable.`);
     } catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); }
@@ -4177,7 +3446,7 @@ export function WorkspaceAccessSettingsContent({ workspace, onSaved }: { workspa
     setBusy(true); setError(""); setNotice(""); setReceivedPreview(null); setReceivedConsent(false);
     try {
       const result = await fetchWorkspaceAccessRecommendation(workspace, "preview_by_id",
-        { recommendation_id: id }, "preview_workspace_access_recommendation_by_id") as unknown as WorkspaceAccessPreview;
+        { recommendation_id: id }) as unknown as WorkspaceAccessPreview;
       setReceivedPreview(result); setReceivedId(id);
     } catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); }
   };
@@ -4186,8 +3455,7 @@ export function WorkspaceAccessSettingsContent({ workspace, onSaved }: { workspa
     setBusy(true); setError(""); setNotice("");
     try {
       const result = await fetchWorkspaceAccessRecommendation(workspace, "apply_by_id",
-        { recommendation_id: receivedId, consent: receivedConsent },
-        "apply_workspace_access_recommendation_by_id") as unknown as WorkspaceAccessApplyResult;
+        { recommendation_id: receivedId, consent: receivedConsent }) as unknown as WorkspaceAccessApplyResult;
       setNotice(`Attached “${result.profile.label}” to this workspace.`);
       setReceivedPreview(null); setReceivedId(null); setReceivedConsent(false);
       await loadReceived();
@@ -4198,16 +3466,14 @@ export function WorkspaceAccessSettingsContent({ workspace, onSaved }: { workspa
     setBusy(true); setError(""); setNotice(""); setPreview(null); setConsent(false);
     try {
       setPreview(await fetchWorkspaceAccessRecommendation(workspace, "preview",
-        { recommendation: recommendation.trim() },
-        "preview_workspace_access_recommendation") as unknown as WorkspaceAccessPreview);
+        { recommendation: recommendation.trim() }) as unknown as WorkspaceAccessPreview);
     } catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); }
   };
   const apply = async () => {
     setBusy(true); setError(""); setNotice("");
     try {
       const result = await fetchWorkspaceAccessRecommendation(workspace, "apply",
-        { recommendation: recommendation.trim(), consent },
-        "apply_workspace_access_recommendation") as unknown as WorkspaceAccessApplyResult;
+        { recommendation: recommendation.trim(), consent }) as unknown as WorkspaceAccessApplyResult;
       setNotice(`Attached “${result.profile.label}” to this workspace.`);
       setPreview(null); setConsent(false);
       await onSaved();
@@ -4232,8 +3498,7 @@ function WorkspaceReconnectSettings({ workspace, coordinator }: { workspace: Wor
   const [notice, setNotice] = useState("");
   const load = async () => {
     try {
-      const value = await fetchWorkspaceConnection(workspace, "reconnect_status", {},
-        "workspace_reconnect_status") as unknown as WorkspaceReconnectStatus;
+      const value = await fetchWorkspaceConnection(workspace, "reconnect_status", {}) as unknown as WorkspaceReconnectStatus;
       if (typeof value?.enabled !== "boolean" || typeof value?.peer_count !== "number") return;
       setStatus(value);
       setAutoReconnect(value.enabled);
@@ -4246,7 +3511,7 @@ function WorkspaceReconnectSettings({ workspace, coordinator }: { workspace: Wor
     try {
       const value = await fetchWorkspaceConnection(workspace, "reconnect_consent",
         { auto_reconnect: autoReconnect, allow_direct_ip_disclosure: allowDirect,
-          relay_consent_scope: "workspace" }, "workspace_reconnect_consent_set") as unknown as WorkspaceReconnectStatus;
+          relay_consent_scope: "workspace" }) as unknown as WorkspaceReconnectStatus;
       setStatus(value);
       setAutoReconnect(value.enabled);
       setAllowDirect(value.allow_direct_ip_disclosure);
@@ -4422,7 +3687,7 @@ export function WorkspaceHistorySettingsContent({ workspace, conversationId, con
     try {
       setHistoryError("");
       setHistory(await fetchWorkspaceHistory(workspace, "status",
-        { conversation: conversationId }, "get_workspace_history_status") as unknown as WorkspaceHistoryStatus);
+        { conversation: conversationId }) as unknown as WorkspaceHistoryStatus);
     } catch (reason) { setHistoryError(errorMessage(reason)); }
   }, [conversationId, workspace.id]);
   useEffect(() => { void loadHistory(); }, [loadHistory]);
@@ -4430,7 +3695,7 @@ export function WorkspaceHistorySettingsContent({ workspace, conversationId, con
     if (!conversationId) return;
     setHistoryBusy(true); setHistoryError("");
     try {
-      await fetchWorkspaceHistory({ id: workspace.id, core_handle: workspace.core_handle }, command === "start_workspace_history" ? "start" : "cancel", { conversation: conversationId }, command, newOperationId());
+      await fetchWorkspaceHistory({ id: workspace.id, core_handle: workspace.core_handle }, command === "start_workspace_history" ? "start" : "cancel", { conversation: conversationId }, newOperationId());
       await loadHistory();
     } catch (reason) { setHistoryError(errorMessage(reason)); }
     finally { setHistoryBusy(false); }
@@ -4547,7 +3812,7 @@ function WorkspaceMessageCard({
         event_id: message.id,
         cursor: append ? revisionPage?.next_cursor ?? null : null,
         limit: 50,
-      }, "list_workspace_message_revisions") as unknown as WorkspaceRevisionPage;
+      }) as unknown as WorkspaceRevisionPage;
       setRevisionPage((current) => append && current
         ? { ...next, revisions: [...current.revisions, ...next.revisions] }
         : next);
@@ -4629,7 +3894,7 @@ function WorkspaceTombstoneDialog({ workspace, conversationId, onClose }: { work
         conversation: conversationId,
         cursor: append ? page?.next_cursor ?? null : null,
         limit: 50,
-      }, "list_workspace_tombstones") as unknown as WorkspaceTombstonePage;
+      }) as unknown as WorkspaceTombstonePage;
       setPage((current) => append && current
         ? { ...next, tombstones: [...current.tombstones, ...next.tombstones] }
         : next);
@@ -5382,8 +4647,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
         selectedWorkspaceDirect ? "direct_read" : "workspace_read",
         selectedWorkspaceDirect
           ? { conversation: selectedWorkspaceDirect.id, high_water: page.high_water }
-          : { channel: selectedWorkspaceChannel!.id, high_water: page.high_water },
-        selectedWorkspaceDirect ? "mark_workspace_direct_read" : "mark_workspace_read");
+          : { channel: selectedWorkspaceChannel!.id, high_water: page.high_water });
       }
     } catch (reason) { setWorkspaceError(errorMessage(reason)); }
     finally { workspacePageInFlight.current = false; setWorkspacePageLoading(false); }
@@ -5506,7 +4770,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
         await mutateWorkspaceTimeline(selectedWorkspace, "thread_read", {
           thread_root: workspaceThreadRootId,
           high_water: page.high_water,
-        }, "mark_workspace_thread_read");
+        });
         setWorkspaceThreadPage((current) => current ? { ...current, unread_count: 0 } : current);
         void refresh(true);
       }
@@ -6313,17 +5577,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
           }
         }
       }
-      if (!handled) {
-        if (command === "approve_workspace_device_link" || command === "decline_workspace_device_link"
-            || command === "request_workspace_device_removal"
-            || command === "approve_workspace_device_removal"
-            || command === "decline_workspace_device_removal") throw new Error("core_api_unavailable");
-        await serviceCommand(command, {
-          operation_id: newOperationId(),
-          workspace_id: selectedWorkspace.id,
-          ...payload,
-        });
-      }
+      if (!handled) throw new Error("core_api_unavailable");
       await refresh(true);
     } catch (reason) { setWorkspaceActionError(errorMessage(reason)); }
     finally { setWorkspaceActionBusy(false); }
@@ -6355,7 +5609,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     try {
       const result = await fetchWorkspaceHistory(selectedWorkspace, "prune", {
         max_events: 500,
-      }, "prune_workspace_history", newOperationId()) as unknown as WorkspaceRetentionPruneResult;
+      }, newOperationId()) as unknown as WorkspaceRetentionPruneResult;
       await refresh(true);
       if (result.pruned_this_batch) {
         setWorkspacePage(null);
@@ -6537,25 +5791,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
           }
         }
       }
-      const result = await serviceCommand<WorkspaceChannel | { channel_id?: string }>(command, {
-        operation_id: newOperationId(),
-        workspace_id: selectedWorkspace.id,
-        ...payload,
-      });
-      if (command === "create_workspace_channel" && "id" in result) {
-        setWorkspaceSelectedChannelId(result.id);
-        setWorkspaceSelectedDirectId(null);
-        setWorkspaceMentionsOpen(false);
-        setWorkspaceThreadsOpen(false);
-        setWorkspaceThreadRootId(null);
-        setWorkspaceCreateChannelOpen(false);
-        setWorkspaceBrowseOpen(false);
-        setMobileSidebarOpen(false);
-      }
-      if (command === "update_workspace_channel" && "id" in result && result.state === "archived") {
-        setWorkspaceManageChannelOpen(false);
-      }
-      await refresh(true);
+      throw new Error("core_api_unavailable");
     } catch (reason) { setWorkspaceActionError(errorMessage(reason)); }
     finally { setWorkspaceActionBusy(false); }
   };
@@ -6568,7 +5804,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     try {
       await mutateWorkspaceTimeline(selectedWorkspace, "notification_preference", {
         conversation: conversationId, mode,
-      }, "set_workspace_notification_preference");
+      });
       await refresh(true);
     } catch (reason) { setWorkspaceActionError(errorMessage(reason)); }
     finally { setWorkspaceActionBusy(false); }
@@ -6630,7 +5866,6 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
         kind === "direct" ? "direct_message" : "channel_message",
         { conversation: conversationId, text, event_id: durable.eventId,
           mention_member_ids: durable.mentionMemberIds },
-        kind === "direct" ? "send_workspace_direct_message" : "send_workspace_message",
         durable.operationId,
       ) as unknown as WorkspaceMessage;
     } catch (reason) {
@@ -6697,7 +5932,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
         conversation: durable.conversationId,
         thread_root: durable.threadRootId,
         text: durable.text,
-      }, "send_workspace_thread_reply", durable.operationId) as unknown as WorkspaceMessage;
+      }, durable.operationId) as unknown as WorkspaceMessage;
     } catch (reason) {
       setWorkspaceError(`${errorMessage(reason)} Your reply is still in the composer; retrying will reuse the same durable message ID.`);
       workspaceSendInFlight.current = false;
@@ -6741,7 +5976,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     setWorkspaceActionBusy(true); setWorkspaceError("");
     try {
       await fetchWorkspaceHistory(selectedWorkspace, "hide_direct",
-        { conversation: selectedWorkspaceDirect.id }, "hide_workspace_direct", newOperationId());
+        { conversation: selectedWorkspaceDirect.id }, newOperationId());
       setWorkspaceSelectedDirectId(null);
       await refresh(true);
     } catch (reason) { setWorkspaceError(errorMessage(reason)); }
@@ -6753,7 +5988,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     try {
       await mutateWorkspaceTimeline(selectedWorkspace, "mentions_read", {
         high_water: workspaceMentionPage.high_water,
-      }, "mark_workspace_mentions_read");
+      });
       setWorkspaceMentionPage((current) => current ? {
         ...current,
         unread_count: 0,
@@ -6824,7 +6059,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     setWorkspaceError("");
     try {
       await fetchWorkspaceHistory(selectedWorkspace, "hide_message",
-        { event_id: eventId }, "hide_workspace_message", newOperationId());
+        { event_id: eventId }, newOperationId());
       if (workspaceThreadRootId === eventId) {
         setWorkspaceThreadRootId(null);
         setWorkspaceThreadPage(null);
@@ -6851,7 +6086,6 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
           ...(command === "edit_workspace_message"
             ? { text, mention_member_ids: mentionMemberIds } : {}),
         },
-        command,
         newOperationId(),
       ) as unknown as WorkspaceMessage;
       setWorkspacePage((current) => current ? {
@@ -6878,8 +6112,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       const updated = await mutateWorkspaceTimeline(
         selectedWorkspace, "reaction_set",
         { event_id: messageId, emoji: validation.emoji, active,
-          mutation_event_id: newOperationId() },
-        "set_workspace_reaction", newOperationId(),
+          mutation_event_id: newOperationId() }, newOperationId(),
       ) as unknown as WorkspaceMessage;
       setWorkspacePage((current) => current ? {
         ...current,
@@ -7134,8 +6367,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     setContactInviteDismissBusy(promptId);
     setContactInviteDismissError(null);
     try {
-      await fetchWorkspaceConnection(null, "prompt_dismiss", { prompt_id: promptId },
-        "dismiss_workspace_invitation_prompt");
+      await fetchWorkspaceConnection(null, "prompt_dismiss", { prompt_id: promptId });
       setDismissedContactInviteIds((current) => new Set(current).add(promptId));
       void refresh(true).catch(() => undefined);
     } catch {

@@ -7,7 +7,7 @@ import pytest
 
 
 SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "connection_ci.py"
-KOTLIN_CLIENT = "plugins/tauri-plugin-mesh-runtime/android/src/main/java/com/meshchat/runtime/core/"
+KOTLIN_CLIENT = "sdk/kotlin/src/main/java/com/meshchat/runtime/core/"
 spec = importlib.util.spec_from_file_location("connection_ci", SCRIPT)
 ci = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ci)

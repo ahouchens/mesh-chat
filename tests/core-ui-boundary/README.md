@@ -79,6 +79,32 @@ five clean process exits. It remains control/resource-lifecycle evidence;
 product pairing, Windows-Android delivery, authenticated receipts, selected
 paths, impairment and media coexistence require their own actual evidence.
 
+The staged native topology uses concurrent Windows and Linux KVM jobs after
+both source-bound packages are available. `native_interop_rendezvous.py` and
+`native_interop_artifacts.py` bound setup/control to repository, source commit,
+workflow run, run attempt, workflow-owned publishing role and phase. Each runner
+keeps an ephemeral X25519 private key in memory; only its public key and
+HKDF/AES-GCM sealed setup/control bundles can be uploaded. Key lifetime is two
+hours, each sealed phase lasts ten minutes, and each phase is single-use. The
+official artifact SDK is pinned in `scripts/native-interop-artifact`; the
+publisher requires the expected `GITHUB_JOB` and rejects unknown/plaintext fields
+before writing an upload file. Producer job is a checked bundle declaration
+under trusted workflow code; GitHub REST does not independently attest its job
+of origin. REST authenticates the repository/run/source; attempt is bound in
+artifact names and bodies. Downloads rehash the immutable archive against
+authenticated same-run REST metadata before reading one
+bounded JSON member. Repository bearer credentials are not forwarded to signed
+blob URLs; transient bundles and raw SDK errors are not retained.
+
+Artifacts carry setup/control only. Production encrypted mailbox signaling and
+native transport message/authenticated-receipt delivery remain separate required
+paths. Production broker/mailbox probes return only availability and advertised
+transport types, which do not prove allocation or selected TURN TCP/TLS. The
+preflight and crypto/artifact tests are controller component evidence until the
+actual packaged peer jobs execute. GitHub supports artifact exchange while a
+workflow is running; see the [official artifact toolkit](https://github.com/actions/toolkit/blob/main/packages/artifact/README.md)
+and [artifact REST provenance/digest fields](https://docs.github.com/en/rest/actions/artifacts).
+
 For development, run `python tests/core-ui-boundary/run_python.py --source <HEAD SHA> --junit .test-tmp/boundary.xml`
 or `vitest run --config tests/core-ui-boundary/vitest.config.ts` directly.
 `MESH_BOUNDARY_PYTHON` selects the Python interpreter; the default is the local
@@ -136,3 +162,22 @@ identity across vault reopen. The script fails when Windows is unavailable, clea
 success, checks the complete collected case inventory and writes exact-source
 JUnit/hash evidence. It runs in the Windows CI host job before native builds.
 It does not claim packaged, cross-process media, or physical qualification.
+
+## Frozen Windows runtime materials
+
+`native_runtime_materials.py` stages installed, exact-lock dependency metadata
+and available wheel notices into the PyInstaller archive. After freezing, the
+required Windows job opens the actual executable's CArchive and embedded PYZ,
+rehashes every staged notice, requires aiortc/aioice/PyAV code, inventories every
+DLL/PYD, and requires every DLL from the installed PyAV wheel to survive staging.
+The retained report binds the same source, build manifest and executable digest
+as the native control/lifecycle runs. The final gate rejects missing, changed or
+partial materials evidence.
+
+The inventory preserves declared Python-package licenses and identifies native
+files by their actual wheel-byte owner. It explicitly lists native files with
+no matched wheel owner. A PyAV wheel notice does not establish licensing or
+corresponding-source completeness for its bundled FFmpeg and codec libraries;
+the report makes no redistribution/legal approval claim. Component regressions
+include an actual small CArchive/PYZ fixture, not execution of the production
+frozen Windows application. That archive inspection remains mandatory in CI.

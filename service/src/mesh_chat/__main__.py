@@ -303,6 +303,7 @@ def main() -> int:
     desktop_transport = None
     native_webrtc = None
     core_api_endpoint = None
+    qualification_control = None
     requests = None
     stage = "read_initial"
     command = "initialize"
@@ -319,14 +320,22 @@ def main() -> int:
                 desktop_transport = DesktopTransportHost(writer.write,
                     lambda *event: service.native_webrtc_event(*event) if service is not None else None)
                 service = _initialize(initial, writer, desktop_transport=desktop_transport)
-            elif sys.argv[1:] == ["--native-webrtc"]:
+            elif sys.argv[1:] in (["--native-webrtc"], ["--qualification-native-webrtc"]):
                 if os.name != "nt":
                     raise ValidationError("Native WebRTC messaging requires Windows")
+                qualification = sys.argv[1:] == ["--qualification-native-webrtc"]
+                if qualification:
+                    from .core_api.qualification_host import reserve_fresh_profile
+                    reserve_fresh_profile(initial)
                 from .native_windows_webrtc import WindowsNativeWebRTCHost
                 # Trusted launcher mode only; JSON initialization cannot select it.
                 native_webrtc = WindowsNativeWebRTCHost(
                     lambda *event: service.native_webrtc_event(*event) if service is not None else None)
                 service = _initialize(initial, writer, native_webrtc_host=native_webrtc)
+                if qualification:
+                    from .core_api.qualification_host import QualificationControl, mark_initialized_profile
+                    mark_initialized_profile(initial)
+                    qualification_control = QualificationControl(lambda: service)
             else:
                 service = _initialize(initial, writer)
             stage = "write_response"
@@ -353,7 +362,11 @@ def main() -> int:
             command = request.get("command")
             try:
                 stage = "dispatch"
-                result, should_stop = service.dispatch(request)
+                if qualification_control is not None and command in {"qualification.inventory", "qualification.path_evidence"}:
+                    result = {"ok": True, "result": qualification_control.dispatch(command, request.get("payload"))}
+                    should_stop = False
+                else:
+                    result, should_stop = service.dispatch(request)
                 stage = "write_response"
                 writer.write({"type": "response", "id": command_id, **result})
                 if should_stop:

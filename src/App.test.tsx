@@ -38,8 +38,10 @@ const api = vi.hoisted(() => {
       : action === "restart" ? "restart_call"
       : action === "answer_restart" ? "answer_call_restart"
       : "end_call";
-    return serviceCommand(command, params);
+    const result = await serviceCommand(command, params) as Record<string, unknown>;
+    return { ...result, ...(typeof result?.id === "string" ? { core_handle: `call-${result.id}` } : {}) };
   }),
+  coreApiCallMedia: vi.fn(async (handle: string): Promise<unknown> => serviceCommand("call_media", { call_id: handle.slice(5) })),
   coreApiSubmitDeviceLink: vi.fn(async (..._args: unknown[]): Promise<never> => { throw new Error("core_api_unavailable"); }),
   coreApiCreateWorkspaceDeviceLink: vi.fn(async (..._args: unknown[]): Promise<{ id: string; workspace_id: string; link: string; text: string; value: string; expires_at: number }> => { throw new Error("core_api_unavailable"); }),
   coreApiWorkspaceInvitationRevoke: vi.fn(async (_handle: string, invitationHandle: string, key: string): Promise<unknown> => serviceCommand("revoke_workspace_invitation", { workspace_id: workspace.id, invitation_id: invitationHandle, operation_id: key })),
@@ -163,7 +165,10 @@ const api = vi.hoisted(() => {
     serviceCommand("accept_workspace_channel_transfer", { workspace_id: workspace.id, channel_id: channelHandle, transfer_id: "transfer-local", operation_id: key })),
   coreApiUpdateWorkspaceChannel: vi.fn(async (_handle: string, channelHandle: string, name: string, topic: string, archived: boolean, key: string): Promise<unknown> =>
     serviceCommand("update_workspace_channel", { workspace_id: workspace.id, channel_id: channelHandle === "channel-handle-field" ? "55555555-5555-4555-8555-555555555555" : workspaceChannel.id, name, topic, archived, operation_id: key })),
-  coreApiSnapshot: vi.fn(async (): Promise<unknown> => serviceCommand("snapshot")),
+  coreApiSnapshot: vi.fn(async (): Promise<unknown> => {
+    const result = await serviceCommand("snapshot") as Snapshot;
+    return { ...result, calls: result?.calls?.map((call) => ({ ...call, core_handle: `call-${call.id}` })) };
+  }),
   coreApiPreviewInvitation: vi.fn(async (document: string): Promise<unknown> => serviceCommand("preview_invitation", { invitation: document })),
   coreApiPreviewWorkspaceInvitation: vi.fn(async (document: string): Promise<unknown> => serviceCommand("preview_workspace_invitation", { invitation: document })),
   coreApiRemoteProfiles: vi.fn(async (): Promise<unknown> => serviceCommand("list_remote_profiles")),
@@ -2128,9 +2133,10 @@ describe("remote connection settings", () => {
     expect(within(dialog).getByText("Connected · 1/1 endpoints")).toBeTruthy();
     expect(within(dialog).queryByText(/relay\.example/i)).toBeNull();
     fireEvent.click(within(dialog).getByRole("button", { name: "Approve offline delivery" }));
-    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith(
-      "approve_remote_propagation",
-      { profile_id: remoteProfile.id },
+    await waitFor(() => expect(api.coreApiRemoteProfile).toHaveBeenCalledWith(
+      "approve_propagation",
+      { remote_profile_id: remoteProfile.id },
+      expect.any(String),
     ));
   });
 });
@@ -4705,7 +4711,7 @@ describe("small private groups", () => {
   });
 
   it.each(["desktop", "android"] as const)("shows removal failures and updates member status after retry on %s", async (platform) => {
-    const member = { ...workspace.members[0], id: "member-to-remove", display_name: "Android member", role: "member" as const, status: "active" as const };
+    const member = { ...workspace.members[0], id: "member-to-remove", core_handle: "member-to-remove", display_name: "Android member", role: "member" as const, status: "active" as const };
     const current: Snapshot = { ...snapshot(), workspaces: [{ ...workspace, members: [...workspace.members, member] }], workspace_channels: [workspaceChannel] };
     let rejectRemoval = true;
     api.runtimePlatform.mockResolvedValue(platform);
@@ -6482,6 +6488,7 @@ describe("desktop workspaces", () => {
   it("exposes manager update, transfer, terminal archive, and owner recovery commands", async () => {
     const member = {
       id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      core_handle: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       display_name: "Bailey",
       role: "member" as const,
       status: "active" as const,

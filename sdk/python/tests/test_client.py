@@ -1,0 +1,88 @@
+"""Standalone client unit boundaries; production hosts are tested separately."""
+from collections import deque
+import json
+from pathlib import Path
+import sys
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from mesh_chat_core_client import CoreClient, CoreClientError
+
+
+def response(identifier, result):
+    return json.dumps({"api_version": 1, "request_id": identifier, "ok": True, "result": result}).encode() + b"\n"
+
+
+CAP = {"api_major": 1, "api_minor": 0, "operations": ["runtime.capabilities"], "profiles": ["p" * 64], "limits": {}}
+
+
+class Scripted:
+    def __init__(self, *responses):
+        self.responses, self.written, self.closed = deque(responses), [], False
+
+    def write(self, value):
+        self.written.append(value)
+
+    def read(self, limit):
+        return self.responses.popleft() if self.responses else b""
+
+    def close(self):
+        self.closed = True
+
+
+def test_missing_feature_and_missing_caller_keys_never_write_a_mutation():
+    stream = Scripted(response("client:1", CAP))
+    client = CoreClient.open(stream.read, stream.write, stream.close)
+    with pytest.raises(CoreClientError, match="unsupported_operation"):
+        client.enqueue_draft("p" * 64, "q" * 64, "a" * 64)
+    for call in [lambda: client.create_profile("Example"),
+                 lambda: client.workspace_join("p" * 64, "signed"),
+                 lambda: client.workspace_admission_grant_list("p" * 64, "w" * 64)]:
+        with pytest.raises(ValueError, match="caller-provided"):
+            call()
+    assert len(stream.written) == 1
+
+
+def test_repaired_helpers_preserve_supplied_keys_without_inventing_any():
+    stream = Scripted(response("client:1", CAP), *(response(f"client:{i}", {}) for i in range(2, 5)))
+    client = CoreClient.open(stream.read, stream.write)
+    key = "explicit-caller-key-0001"
+    client.create_profile("Example", key)
+    client.workspace_join("p" * 64, "signed", key)
+    client.workspace_admission_grant_list("p" * 64, "w" * 64, key)
+    assert all(json.loads(value)["idempotency_key"] == key for value in stream.written[1:])
+
+
+def test_short_writes_complete_the_same_frame_before_read():
+    stream = Scripted(response("client:1", CAP))
+    data = bytearray()
+
+    def write(value):
+        count = min(7, len(value))
+        data.extend(value[:count])
+        return count
+    client = CoreClient.open(stream.read, write)
+    assert client.capabilities == CAP
+    assert json.loads(data)["operation"] == "runtime.capabilities"
+    assert data.count(b"\n") == 1
+
+
+def test_uncorrelated_admission_preserves_typed_failure_and_detaches():
+    failure = {"api_version": 1, "request_id": None, "ok": False,
+               "error": {"code": "unavailable", "retry_after_ms": 1000}}
+    stream = Scripted(json.dumps(failure).encode() + b"\n")
+    with pytest.raises(CoreClientError) as raised:
+        CoreClient.open(stream.read, stream.write, stream.close)
+    assert raised.value.code == "unavailable" and raised.value.retry_after_ms == 1000
+    assert stream.closed and len(stream.written) == 1
+
+
+def test_close_detaches_only_the_owned_stream():
+    stream = Scripted(response("client:1", CAP))
+    client = CoreClient.open(stream.read, stream.write, stream.close)
+    client.close()
+    with pytest.raises(CoreClientError, match="transport_closed"):
+        client.profile()
+    assert stream.closed
+    assert len(stream.written) == 1

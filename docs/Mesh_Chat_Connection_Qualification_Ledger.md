@@ -2,6 +2,23 @@
 
 ## Integration revalidation (2026-11-09)
 
+### Wave 2 profile transitions and package evidence checkpoint
+
+Source `cabf71fc198dd478b10cd783dd11fa1bb57ff94d` integrates the standalone SDK
+batch, runtime archive inventory/license checks and trusted profile lifecycle.
+The lead ran 154 combined profile-transition, selected-path, runtime-material,
+call-replay and aggregate-evidence cases: all passed, zero skips, 8.94 seconds.
+JUnit and the execution log are retained as `.test-tmp/lifecycle-materials.*`.
+The lifecycle tests include deferred worker shutdown, failed publication,
+committed selection reply loss and old-host replay fences.
+
+These are component and evidence-validator checks. No newly frozen executable,
+Android package or Windows–Android path has been qualified by this run. The
+TypeScript archive passed isolated installation/import; Python wheel staging
+failed with a stale source build directory and awaits a temporary-source build
+fix. Neither that failure nor partial SDK execution counts as a passing installed
+consumer gate. Shared feature source `174728e` remains the accepted CI baseline.
+
 ### Wave 2 composer storage checkpoint
 
 Source `30392040a79eb9048ce4ed4ab3164c16451d34d3` integrates A's
@@ -54,6 +71,27 @@ Inspector cleanup `9df4b1a` and Android sampler `aec8946` were integrated at
 Android observes libwebrtc's selected-pair and relay-protocol statistics and
 explicitly reports the outer TURN socket unavailable. Its packaged qualification
 remains pending; advertised TURN URLs never establish the selected protocol.
+
+The corrected combined UI boundary passed at
+`8950053cd904458369d1eaf6245cd003fda0b745`, tree
+`d732fec4210721bb3050ee6c26aafd6f6db19096`: 420 Python and all eight rendered
+cases, zero failures/skips, 25.74 seconds. D's `8c496ad` repairs the substituted
+host's missing peer-destination lookup by using actual Core profile/peer queries,
+waits for editable live fields and injects reply loss after the actual atomic
+draft enqueue commits. It retains same-vault reopen, same-revision retry,
+one-message and no-legacy-fallback assertions. This supersedes the failed
+`b2df9ae` rendered checkpoint, without turning substituted Tauri invocation into
+packaged-host evidence. Only pytest's cache provider was disabled for the local
+ACL issue; collection and required case inventories were unchanged.
+
+This source also includes the standalone Kotlin source move `d308c83`, host
+dependency/settings wiring through `7f502fb`, and D's bounded encrypted CI
+rendezvous helpers through `8358ba4`. The lead's 27 Kotlin distribution-policy
+and compatibility cases passed at `ea0dc29` in 1.14 seconds. Kotlin compilation
+and actual cross-runner transport remain unqualified. The artifact helper
+rejects plaintext payload shapes at publication; REST metadata authenticates
+repository/run/source provenance, while producer-role enforcement relies on
+trusted workflow code and is not independent server attestation of the job.
 
 ### Wave 1 accepted at the fully qualified combined source
 

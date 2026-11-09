@@ -11,11 +11,21 @@ reports. Exact evidence and limits are in the ledger. Wave 2 is activated below.
 Existing human authorization covers continued implementation, integration and
 worker follow-ups without another permission request.
 
-Wave 2 local checkpoint: `3039204` integrates the concrete composer storage and
-migration fences. The lead's 43 composer checks (including 11 independent framed
-cases) and 15 platform-applicable vault cases pass. Rendered restart recovery and
-combined packaged qualification remain pending. C's lifecycle batch remains in
-review until deferred constructor cleanup retains its exact retiring runtime.
+Wave 2 local checkpoint: `8950053` passes 420 Python and all eight rendered
+boundary cases, including same-vault reopen and uncertain-send recovery. The
+earlier full policy gate passed 2,630 cases at `6e97db5`. Composer storage,
+migration fences, retained deferred cleanup and selected-path inspector code
+are integrated. Full combined packaged qualification remains pending.
+
+The next integrated checkpoint is `cabf71f`: standalone SDK staging (`7bc9fea`),
+frozen runtime archive/material verification (`9844419`, `27f1236`), and trusted
+profile lifecycle transitions (`da18ef3`). The lead's 154 combined lifecycle,
+path, package-evidence and call-replay checks pass without skips. Python SDK
+staging needs the pending temporary-source build correction before installed
+consumer verification; the TypeScript isolated package check passed. B's retained
+call-operation ticket is under review, including the incoming-call cleanup guard.
+Private host bindings, key release after worker drain, pairing policy, upgrade
+checks and actual cross-platform topology qualification remain active work.
 
 ## Active Wave 2 handoff
 
@@ -63,6 +73,16 @@ baseline Python 0.2 is the actual service-carried client, not an invented older
 standalone wheel. Full defaults/legacy-loop retirement remain gated on their
 replacement's packaged/emulator qualification. No publication or physical-device
 claim is authorized by this handoff.
+
+C's additional C2 paths are assigned exclusively: connection `model.py`,
+`reducer.py`, `ports.py`, `commands.py`, new `adapters/pairing.py` and
+`test_pairing_runtime.py`; new `native_profile_lifecycle.py` and
+`test_profile_runtime_lifecycle.py`. Existing C service/mobile/Android lifecycle
+ownership continues, including the plugin's standalone `settings.gradle` wiring.
+A retains Core host lifecycle/inspector bindings and vault semantics. Strict
+model/reducer typechecking and qualification before default promotion remain
+required. A separately audits mutations outside the prior 92 keyed-action
+inventory and records domain-hook ownership needs before edits.
 
 ## Historical Wave 1 ownership and gate
 

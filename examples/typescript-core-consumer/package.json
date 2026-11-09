@@ -1,0 +1,6 @@
+{
+  "name": "mesh-core-distribution-consumer",
+  "private": true,
+  "type": "module",
+  "description": "Install the staged SDK tarball before running; no source aliases."
+}

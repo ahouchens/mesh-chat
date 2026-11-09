@@ -20,7 +20,7 @@ test("the package is private, experimental and version-bound to the contract", (
 });
 
 test("every declared entry point ships from dist", () => {
-  assert.deepEqual(packageJson.files, ["dist"]);
+  assert.ok(packageJson.files.includes("!dist/**/*.test.js"));
   const entryPoints = [
     packageJson.main,
     packageJson.types,

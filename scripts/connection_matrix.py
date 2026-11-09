@@ -11,6 +11,7 @@ from android_qualification import APKS, CORE_APKS, CONSUMER_ARTIFACTS, ROOT, cas
 from connection_evidence import evidence as policy_evidence
 from core_boundary_evidence import UI_LEVEL, WINDOWS_LEVEL, ui_evidence, windows_evidence
 from native_windows_evidence import verify_report as native_evidence
+from native_runtime_materials import verify_report as runtime_materials_evidence
 from direct_qualification import SUITES as DIRECT_SUITES, read_suite as direct_suite
 from test_desktop_transport import PYTHON_SOURCES, verified_report as desktop_evidence
 from test_packaged_lifecycle import verify_report as packaged_evidence
@@ -240,6 +241,15 @@ def collect(directory: Path, source: str, tree: str, required):
         if (native_records[0]["build_manifest_sha256"] != native_records[1]["build_manifest_sha256"]
                 or len({record["run_id"] for record in (*native_records, packaged, transport, pairing)}) != 5):
             raise ValueError("Native packaged runs require the same build manifest and distinct run identities")
+        path = directory / "desktop/native-runtime-materials.json"
+        record = runtime_materials_evidence(read(path), source, tree)
+        bindings = ("sidecar_sha256", "build_input_sha256", "build_manifest_sha256")
+        if any(record[field] != native_records[0][field] for field in bindings):
+            raise ValueError("Runtime materials do not describe the tested frozen native sidecar")
+        reports["windows_runtime_materials"] = path
+        suites.append(suite_record("windows_runtime_materials", record["evidence_level"], source, tree,
+                                   report="windows_runtime_materials", checks=record["inventory"]["notice_files_verified"],
+                                   artifacts={field: record[field] for field in bindings}))
     if "android" in required:
         for record in android["suites"]:
             suites.append(suite_record("android_" + record["suite"], android["evidence_level"], source, tree,

@@ -15,6 +15,7 @@ import sys
 import threading
 import time
 from contextlib import contextmanager
+from functools import wraps
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -33,6 +34,17 @@ MAX_SCHEMA_VERSION = 2
 COMMAND_CACHE_MAX_ROWS = 512
 COMMAND_CACHE_MAX_AGE_SECONDS = 8 * 24 * 60 * 60
 MAX_PROJECTIONS = 4
+
+
+def _open_crypto(method):
+    """Serialize crypto with close; a retained closed store has no key authority."""
+    @wraps(method)
+    def invoke(self, *args, **kwargs):
+        with self._lock:
+            if self._key is None:
+                raise StorageUnavailable("Vault is closed")
+            return method(self, *args, **kwargs)
+    return invoke
 
 
 class RecordConflict(ValidationError):
@@ -455,6 +467,7 @@ class VaultStore:
     def _aad(kind: str, record_id: str) -> bytes:
         return f"mesh-chat:v1:{kind}:{record_id}".encode("utf-8")
 
+    @_open_crypto
     def _seal(self, kind: str, record_id: str, value: dict[str, Any]) -> bytes:
         plaintext = json.dumps(
             value, ensure_ascii=False, separators=(",", ":"), sort_keys=True
@@ -466,6 +479,7 @@ class VaultStore:
         nonce = os.urandom(12)
         return nonce + self._cipher.encrypt(nonce, plaintext, aad)
 
+    @_open_crypto
     def _open(self, kind: str, record_id: str, sealed: bytes) -> dict[str, Any]:
         try:
             aad = self._aad(kind, record_id)
@@ -659,6 +673,7 @@ class VaultStore:
             self._write_records_locked((kind, record_id, values[(kind, record_id)]) for kind, record_id in keys)
         return values
 
+    @_open_crypto
     def opaque_id(self, namespace: str, *parts: str) -> str:
         """Return a local keyed identifier safe to expose to SQLite indexes."""
 
@@ -673,6 +688,7 @@ class VaultStore:
             self._key, b"mesh-chat:opaque-id:v1:" + material, hashlib.sha256
         ).hexdigest()
 
+    @_open_crypto
     def seal_cursor(self, value: dict[str, Any]) -> str:
         body = json.dumps(
             value, ensure_ascii=False, separators=(",", ":"), sort_keys=True
@@ -706,6 +722,7 @@ class VaultStore:
             raise ValidationError("Private cursor is invalid")
         return self._open("private_cursor", scope, sealed)
 
+    @_open_crypto
     def open_cursor(self, token: str) -> dict[str, Any]:
         if not isinstance(token, str) or not 1 <= len(token) <= 8192:
             raise ValidationError("Cursor is invalid")
@@ -892,6 +909,11 @@ class VaultStore:
     def close(self) -> None:
         with self._lock:
             self._db.close()
+            # Service invokes close only after workers drain. Drop references;
+            # immutable Python bytes/backend memory are not zeroization promises.
+            self._key = None
+            self._cipher = None
+            self._token_type = None
         self._profile_lock.close()
 
     def __enter__(self) -> "VaultStore":
