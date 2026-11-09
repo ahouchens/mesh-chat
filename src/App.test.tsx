@@ -15,6 +15,9 @@ const api = vi.hoisted(() => {
   });
   return {
   beginCallAudio: vi.fn(async () => ({ granted: true })),
+  coreApiBootstrapPreview: vi.fn(async (kind: string, document: string): Promise<unknown> =>
+    serviceCommand(kind === "personal" ? "preview_invitation" : kind === "workspace" ? "preview_workspace_invitation" : "preview_workspace_device_link",
+      kind === "device_link" ? { device_link: document } : { invitation: document })),
   coreApiAcceptInvitation: vi.fn(async (invitation: string, i2pConsent = false): Promise<unknown> => serviceCommand("accept_invitation", { invitation, ...(i2pConsent ? { i2p_consent: true } : {}) })),
   coreApiDraftGet: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiDraftSet: vi.fn(async (_destination: string, text: string): Promise<unknown> => serviceCommand("save_draft", { contact_id: approved.id, text })),

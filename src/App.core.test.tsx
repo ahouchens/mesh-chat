@@ -51,11 +51,16 @@ const root: WorkspaceMessage = {
   sequence: 1, event_digest: "88".repeat(32), created_at: 100,
 };
 const profileHandle = "c".repeat(40);
+const personalPreview = {
+  display_name: "Taylor", identity_hash: contact.identity_hash, destination_hash: contact.destination_hash,
+  fingerprint: contact.fingerprint, hints: [], expires_at: 2_000_000_000,
+};
 let current: Snapshot;
 let snapshotsFail: boolean;
 let send: (params: Record<string, unknown>) => Promise<unknown>;
 let mutation: (params: Record<string, unknown>) => Promise<unknown>;
 let createProfile: (params: Record<string, unknown>) => Promise<unknown>;
+let bootstrapPreview: (params: Record<string, unknown>) => Promise<unknown>;
 
 const requests = (operation: string) => host.invoke.mock.calls
   .filter(([command, payload]) => command === "core_api_request" && payload.operation === operation)
@@ -75,6 +80,7 @@ beforeEach(() => {
     current = { ...current, profile };
     return { display_name: profile.display_name };
   };
+  bootstrapPreview = async () => { throw JSON.stringify({ code: "unsupported_operation", retry_after_ms: null }); };
   mutation = async (params) => ({ ...root, id: params.event_id, direction: "outbound", text: params.text, reply_count: 0 });
   host.invoke.mockImplementation(async (command: string, payload: Record<string, unknown> = {}) => {
     if (command === "initialize_service") return current;
@@ -94,6 +100,8 @@ beforeEach(() => {
         return current;
       }
       if (payload.operation === "profile.create") return createProfile(params);
+      if (payload.operation === "bootstrap.preview") return bootstrapPreview(params);
+      if (payload.operation === "peer.pairing_accept") return { profile: profileHandle, peer: "d".repeat(40), trust: "awaiting_consent" };
       if (payload.operation === "workspace.timeline_query") {
         if (params.view === "thread_messages") return { result: {
           root, replies: [], next_cursor: null, high_water: 1, unread_count: 1,
@@ -242,7 +250,7 @@ describe("Core application serialization", () => {
     "MESHCHAT2:pending-consent",
     "MESHWORKSPACE4:pending-consent",
     "MESHWORKSPACEDEVICE1:pending-consent",
-  ])("keeps pre-profile %s without effects when scoped preview is unavailable", async (document) => {
+  ])("keeps pre-profile %s without effects when bootstrap verification is unavailable", async (document) => {
     current = { ...current, profile: null };
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Join a chat" }));
@@ -251,13 +259,95 @@ describe("Core application serialization", () => {
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     await screen.findByRole("alert");
     expect((invitation as HTMLTextAreaElement).value).toBe(document);
-    expect(host.invoke).toHaveBeenCalledWith("core_api_profile", undefined);
+    const kind = document.startsWith("MESHWORKSPACEDEVICE") ? "device_link" : document.startsWith("MESHWORKSPACE") ? "workspace" : "personal";
+    expect(requests("bootstrap.preview")).toEqual([{ operation: "bootstrap.preview", params: { kind, document }, idempotencyKey: null }]);
+    expect(host.invoke.mock.calls.some(([command]) => command === "core_api_profile")).toBe(false);
     expect(requests("profile.create")).toHaveLength(0);
     expect(requests("peer.pairing_accept")).toHaveLength(0);
     expect(requests("workspace.join")).toHaveLength(0);
     expect(requests("workspace.device_link_submit")).toHaveLength(0);
     expect(host.invoke.mock.calls.filter(([command]) => command === "initialize_service")).toHaveLength(1);
     expect(host.invoke.mock.calls.some(([command]) => command === "service_command")).toBe(false);
+  });
+
+  it.each([
+    ["MESHCHAT2:verified-document", "personal", "Connect to Taylor"],
+    ["MESHWORKSPACE4:verified-document", "workspace", "Set up this device for Lakewatcher"],
+    ["MESHWORKSPACEDEVICE1:verified-document", "device_link", "Set up this device for Lakewatcher"],
+  ] as const)("reviews pre-profile %s through the exact trusted verification envelope", async (document, kind, heading) => {
+    current = { ...current, profile: null };
+    bootstrapPreview = async () => ({ kind, preview: kind === "personal" ? personalPreview
+      : kind === "workspace" ? { name: "Lakewatcher", description: "Field coordination", owner_fingerprint: "AAAA BBBB", member_count: 1, retention_days: 90, expires_at: 2_000_000_000 }
+        : { name: "Lakewatcher", member_display_name: "Alex", sponsor_fingerprint: "AAAA BBBB", device_count: 1, expires_at: 2_000_000_000 } });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Join a chat" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Invitation" }), { target: { value: document } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await screen.findByRole("heading", { name: heading });
+    expect(requests("bootstrap.preview")).toEqual([{ operation: "bootstrap.preview", params: { kind, document }, idempotencyKey: null }]);
+    expect(requests("profile.create")).toHaveLength(0);
+    expect(requests("peer.pairing_accept")).toHaveLength(0);
+    expect(requests("workspace.join")).toHaveLength(0);
+    expect(requests("workspace.device_link_submit")).toHaveLength(0);
+    expect(host.invoke.mock.calls.some(([command]) => command === "core_api_profile")).toBe(false);
+    expect(requests("peer.pairing_preview")).toHaveLength(0);
+    expect(requests("workspace.invitation_preview")).toHaveLength(0);
+    expect(requests("workspace.connection")).toHaveLength(0);
+  });
+
+  it("requires both verified remote and I2P consent before creation or personal acceptance", async () => {
+    const document = "MESHI2P1:verified-remote-document";
+    current = { ...current, profile: null };
+    bootstrapPreview = async () => ({ kind: "personal", preview: {
+      ...personalPreview, requires_network_consent: true, requires_i2p_consent: true,
+      remote_profile: { id: "remote", label: "Field relay", endpoint_count: 1, expires_at: 2_000_000_000,
+        capabilities: ["reticulum_tcp"], private_endpoint_warning: false, propagation_identifier: null,
+        privacy_disclosure: "The operator can observe connection metadata." },
+      i2p_access_point: { b32: "a".repeat(52) + ".b32.i2p", label: "Approved relay", relay: "i2p" },
+    } });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Join a chat" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Invitation" }), { target: { value: document } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    const submit = await screen.findByRole("button", { name: "Create profile and connect" });
+    fireEvent.change(screen.getByRole("textbox", { name: "Your display name" }), { target: { value: "Alex" } });
+    fireEvent.submit(submit.closest("form")!);
+    expect(requests("profile.create")).toHaveLength(0);
+    fireEvent.click(screen.getByRole("checkbox", { name: /Connect to this access point/ }));
+    fireEvent.submit(submit.closest("form")!);
+    expect(requests("profile.create")).toHaveLength(0);
+    expect(requests("peer.pairing_accept")).toHaveLength(0);
+    fireEvent.click(screen.getByRole("checkbox", { name: /Use this I2P access point/ }));
+    fireEvent.click(submit);
+    await waitFor(() => expect(requests("peer.pairing_accept")).toHaveLength(1));
+    expect(requests("profile.create")[0]).toEqual({ operation: "profile.create", params: { display_name: "Alex" }, idempotencyKey: expect.any(String) });
+    expect(requests("peer.pairing_accept")[0]).toEqual({ operation: "peer.pairing_accept", params: {
+      profile: profileHandle, document, i2p_consent: true,
+    }, idempotencyKey: null });
+    const operations = host.invoke.mock.calls.filter(([command]) => command === "core_api_request").map(([, payload]) => payload.operation);
+    expect(operations.indexOf("bootstrap.preview")).toBeLessThan(operations.indexOf("profile.create"));
+    expect(operations.indexOf("profile.create")).toBeLessThan(operations.indexOf("peer.pairing_accept"));
+  });
+
+  it("ignores an older verification result after the invitation document changes", async () => {
+    current = { ...current, profile: null };
+    let finishOld!: (value: unknown) => void;
+    const oldPreview = new Promise((resolve) => { finishOld = resolve; });
+    bootstrapPreview = async (params) => params.document === "MESHCHAT2:older-document" ? oldPreview
+      : { kind: "personal", preview: { ...personalPreview, display_name: "Blair" } };
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Join a chat" }));
+    const input = screen.getByRole("textbox", { name: "Invitation" });
+    fireEvent.change(input, { target: { value: "MESHCHAT2:older-document" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() => expect(requests("bootstrap.preview")).toHaveLength(1));
+    fireEvent.change(input, { target: { value: "MESHCHAT2:newer-document" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await screen.findByRole("heading", { name: "Connect to Blair" });
+    await act(async () => finishOld({ kind: "personal", preview: personalPreview }));
+    expect(screen.queryByRole("heading", { name: "Connect to Taylor" })).toBeNull();
+    expect(requests("profile.create")).toHaveLength(0);
+    expect(requests("peer.pairing_accept")).toHaveLength(0);
   });
 
   it("reuses the exact pending send after Core commits but its reply is lost", async () => {
