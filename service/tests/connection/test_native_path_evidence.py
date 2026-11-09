@@ -72,6 +72,52 @@ def test_private_inventory_and_evidence_bind_resource_profile_and_owner_without_
     assert value["pair"]["bytes_sent"] is None and not value["availability"]["pair_bytes"]
     assert "native_webrtc_path_evidence" not in service.COMMANDS
     assert "native_webrtc_inspection_resources" not in service.COMMANDS
+    assert not inventory["host_accounting"]["complete"]
+    assert inventory["host_accounting"]["reserved_count"] is None
+
+
+def accounting():
+    counts = dict(capacity=16, reserved_count=2, creating_count=1, allocated_count=2, active_count=1, retiring_count=1)
+    return {"v": 1, "complete": True, "semantics": "native_allocation_leases", **counts,
+            "availability": dict.fromkeys(counts, True)}
+
+
+def test_inventory_keeps_actual_native_disposal_reservation_counts_separate_from_live_service_rows(inspection):
+    service, native, _ = inspection
+    value = accounting()
+    native.resourceAccounting = lambda: json.dumps({"ok": True, "result": value})
+    result = service.native_webrtc_inspection_resources()
+    assert len(result["resources"]) == 1
+    assert result["host_accounting"] == value
+    assert result["host_accounting"]["retiring_count"] == 1
+    assert "resourceAccounting" not in service.COMMANDS
+
+
+@pytest.mark.parametrize("change", ["unavailable_zero", "lying_complete", "secret", "inconsistent", "boolean_count", "over_budget"])
+def test_accounting_cannot_claim_unknown_zeros_or_export_unbounded_host_fields(inspection, change):
+    service, native, _ = inspection
+    value = accounting()
+    if change == "unavailable_zero": value["availability"]["reserved_count"] = False
+    elif change == "lying_complete": value["complete"] = False
+    elif change == "secret": value["sdp"] = "must-not-export"
+    elif change == "inconsistent": value["allocated_count"] = 0
+    elif change == "boolean_count": value["reserved_count"] = True
+    else: value["capacity"] = 17
+    native.resourceAccounting = lambda: json.dumps({"ok": True, "result": value})
+    with pytest.raises(NativeUnavailable):
+        service.native_webrtc_inspection_resources()
+
+
+def test_windows_empty_routing_map_is_explicitly_incomplete_physical_accounting():
+    host = WindowsNativeWebRTCHost(lambda *_: None)
+    try:
+        value = json.loads(host.resourceAccounting())["result"]
+        assert value["routable_count"] == value["creation_reservations_count"] == 0
+        assert not value["complete"] and value["retiring_count"] is None
+        assert not value["availability"]["retiring_count"]
+        assert value["reserved_count"] is None
+    finally:
+        host.shutdown()
 
 
 @pytest.mark.parametrize("change", ["physical", "incarnation", "identity", "host", "shutdown"])
