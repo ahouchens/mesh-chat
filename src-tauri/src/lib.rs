@@ -1317,6 +1317,12 @@ async fn core_api_request(
     params: Value,
     idempotency_key: Option<String>,
 ) -> Result<Value, String> {
+    #[cfg(target_os = "android")]
+    if operation == "profile.unlock" {
+        // Construction/retirement can require private native responses before
+        // the new service is published or its Core request returns.
+        mobile_direct::start(&app);
+    }
     mobile_core_command(&app, "request", serde_json::json!({
         "operation": operation, "params": params, "idempotencyKey": idempotency_key,
     }))
@@ -1589,14 +1595,18 @@ fn mobile_result(response: NativeResponse) -> PendingResult {
 #[cfg(mobile)]
 #[tauri::command]
 async fn initialize_service(app: AppHandle, display_name: Option<String>) -> PendingResult {
+    #[cfg(target_os = "android")]
+    mobile_direct::start(&app);
     let response = app
         .mesh_runtime()
         .initialize(InitializeRequest { display_name })
         .map_err(|_| "service_start_failed".to_string())?;
-    let result = mobile_result(response)?;
+    let result = mobile_result(response);
     #[cfg(target_os = "android")]
-    mobile_direct::start(&app);
-    Ok(result)
+    if result.is_ok() || result.as_ref().err().is_some_and(|error| error == "locked") {
+        mobile_direct::start(&app);
+    }
+    result
 }
 
 #[cfg(mobile)]
@@ -1622,6 +1632,12 @@ async fn service_command(app: AppHandle, command: String, payload: Value) -> Pen
 #[cfg(mobile)]
 #[tauri::command]
 async fn lock_service(app: AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    let response = app
+        .mesh_runtime()
+        .lock_profile()
+        .map_err(|_| "service_stopped".to_string())?;
+    #[cfg(not(target_os = "android"))]
     let response = app
         .mesh_runtime()
         .shutdown()
@@ -1632,6 +1648,24 @@ async fn lock_service(app: AppHandle) -> Result<(), String> {
     #[cfg(target_os = "android")]
     mobile_direct::stop(&app);
     Ok(())
+}
+
+#[tauri::command]
+async fn core_api_unlock_credential(app: AppHandle, profile: String) -> PendingResult {
+    if profile.is_empty() || profile.len() > 128 {
+        return Err(serde_json::json!({"code": "invalid_request"}).to_string());
+    }
+    #[cfg(target_os = "android")]
+    {
+        let response = app.mesh_runtime().authorize_profile_unlock(&profile).await
+            .map_err(|_| serde_json::json!({"code": "unavailable"}).to_string())?;
+        mobile_result(response)
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        Err(serde_json::json!({"code": "unsupported_operation"}).to_string())
+    }
 }
 
 #[cfg(mobile)]
@@ -2013,6 +2047,7 @@ pub fn run() {
             initialize_service,
             service_command,
             core_api_capabilities,
+            core_api_unlock_credential,
             core_api_profile,
             core_api_peer_for_destination,
             core_api_draft_get,

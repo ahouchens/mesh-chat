@@ -46,6 +46,11 @@ pub struct CallMediaRequest {
     pub media: String,
 }
 
+#[derive(Debug, Serialize)]
+pub struct ProfileUnlockRequest {
+    pub profile: String,
+}
+
 #[derive(Debug, Default, Deserialize)]
 pub struct NativeResponse {
     pub json: String,

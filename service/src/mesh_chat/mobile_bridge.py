@@ -73,10 +73,28 @@ _service_binding: tuple | None = None
 _event_incarnation: str | None = None
 _retiring_service: MeshChatService | None = None
 _retiring_channel: NativeChannel | None = None
+_opening_channel: NativeChannel | None = None
 _events: deque[dict[str, Any]] = deque(maxlen=256)
 _event_overflow = False
 _profile_host = None
 _profile_install_lock = threading.RLock()
+
+
+class _StoreRetirement:
+    """Exact custody when a store opened but no service could be constructed."""
+    def __init__(self, store):
+        self.store = store
+        self._shutdown = threading.Event()
+        self._shutdown.set()
+        self._store_closed = False
+        self._runtime_incarnation = uuid.uuid4().hex
+        self._lock = threading.Lock()
+
+    def close(self):
+        with self._lock:
+            if not self._store_closed:
+                self.store.close()
+                self._store_closed = True
 
 
 def _loads(raw: str, *, maximum=MAX_JSON_BYTES) -> dict[str, Any]:
@@ -146,6 +164,10 @@ def _profile_host_event(value):
     with _service_lock:
         if _retiring_service is not None and _retiring_service._store_closed:
             _retiring_service = _retiring_channel = None
+    host = _profile_host
+    publish = getattr(host.provider, "publicationChanged", None) if host is not None else None
+    if callable(publish):
+        publish(_dumps(value))
     _emit(value)
 
 
@@ -169,23 +191,43 @@ def _publish_profile_service(service):
 
 
 def _open_profile_slot(directory, key):
-    global _retiring_service, _retiring_channel
+    global _retiring_service, _retiring_channel, _opening_channel
     from .direct_bootstrap_mobile import AndroidBootstrapProcess
     from .service import NativeStartupIncomplete
     with _service_lock:
-        if _service is not None or (_retiring_service is not None and not _retiring_service._store_closed):
+        if (_service is not None or _opening_channel is not None
+                or (_retiring_service is not None and not _retiring_service._store_closed)):
             raise NativeUnavailable("Previous mobile profile is still retiring")
     channel, incarnation = NativeChannel(), uuid.uuid4().hex
     store = VaultStore(directory, key, native_mobile_protection="android")
     service = None
     try:
+        host = _profile_host
+        if host is not None:
+            from .mobile_profile_host import PROFILE_SLOT
+            if bytes.fromhex(store.opaque_id("core-api-handle-key", "v1")) != host.core.profiles[PROFILE_SLOT].handle_key:
+                raise NativeUnavailable("Native key slot authority changed")
+        with _service_lock:
+            if _retiring_service is not None and _retiring_service._store_closed:
+                _retiring_service = _retiring_channel = None
+            _opening_channel = channel
+        # The app's native dispatcher may still hold keyless transport objects
+        # from the previous profile. Acknowledge its reset before any service
+        # worker can allocate or restore resources for this profile.
+        channel.request("reset")
         service = MeshChatService(store, directory, lambda value: _emit(value, incarnation=incarnation),
                                   direct_native=channel, connection_policy="shared-native")
         service._direct_bootstrap_factory = AndroidBootstrapProcess
     except Exception as error:
         failed = getattr(error, "retiring_service", service)
         if failed is None:
-            store.close()
+            try:
+                store.close()
+            except Exception:
+                failed = _StoreRetirement(store)
+                with _service_lock:
+                    _retiring_service, _retiring_channel = failed, channel
+                raise NativeStartupIncomplete(failed) from error
         else:
             failed._mobile_channel = channel
             failed._mobile_event_incarnation = incarnation
@@ -200,6 +242,10 @@ def _open_profile_slot(directory, key):
                     _retiring_service, _retiring_channel = failed, channel
                 raise NativeStartupIncomplete(failed) from error
         raise
+    finally:
+        with _service_lock:
+            if _opening_channel is channel:
+                _opening_channel = None
     service._mobile_channel, service._mobile_event_incarnation = channel, incarnation
     service._mobile_binding = (str(directory), hashlib.sha256(key).digest(), "android", "shared-native")
     return service
@@ -227,17 +273,18 @@ def initialize_native_host(provider, display_name=None):
             catalog = VaultStore(directory.parent / "host-v1", native_key(str(provider.catalogKey())),
                                  native_mobile_protection="android")
             if catalog.get("host_profile", PROFILE_SLOT) is None and _service is None:
-                request = {"profile_dir": str(directory), "vault_key": str(provider.profileKey()),
-                           "platform": "android"}
-                if display_name is not None:
-                    request["display_name"] = display_name
                 try:
-                    response = json.loads(initialize_native(_dumps(request)))
-                finally:
-                    request.clear()
-                if not response.get("ok"):
-                    raise NativeUnavailable("Native profile bootstrap is unavailable")
-                created_profile = True
+                    active = _open_profile_slot(directory, native_key(str(provider.profileKey())))
+                    created_profile = True
+                    _publish_profile_service(active)
+                    if display_name is not None and active.store.get("profile", "local") is None:
+                        active.create_profile(display_name)
+                except Exception as error:
+                    failed = getattr(error, "retiring_service", None)
+                    if failed is not None:
+                        # The opener itself already retained its response channel.
+                        created_profile = True
+                    raise
             active = _service
             if active is not None:
                 active._mobile_channel, active._mobile_event_incarnation = _native_channel, _event_incarnation
@@ -431,7 +478,7 @@ def direct_exchange(raw: str) -> str:
         if (set(request) != {"responses"} or not isinstance(request["responses"], list)
                 or len(request["responses"]) > 8):
             raise ValidationError("Direct exchange is invalid")
-        channel = _native_channel or _retiring_channel
+        channel = _native_channel or _retiring_channel or _opening_channel
         if channel is None:
             return _dumps({"ok": True, "result": []})
         for response in request["responses"]:
@@ -529,7 +576,7 @@ def shutdown() -> str:
         with _service_lock:
             _close_service()
             if (_service is not None or _native_channel is not None
-                    or _retiring_service is not None or _retiring_channel is not None):
+                    or _retiring_service is not None or _retiring_channel is not None or _opening_channel is not None):
                 raise NativeUnavailable("Mobile runtime retirement is incomplete")
         return _dumps({"ok": True, "result": None})
     except Exception as exc:
