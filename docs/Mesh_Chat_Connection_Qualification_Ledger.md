@@ -2,6 +2,23 @@
 
 ## Integration revalidation (2026-11-09)
 
+### Wave 2 composer storage checkpoint
+
+Source `30392040a79eb9048ce4ed4ab3164c16451d34d3` integrates A's
+`edc0e78` production composer and D's `75d6185` independent requirements.
+The lead ran 43 composer contract, storage, migration and real framed boundary
+cases: all passed, zero skips, 2.90 seconds. This includes the 11 independent
+cases previously failing at capability admission on `1344a1a`. Fifteen
+Windows-applicable vault tests also passed in 0.51 seconds; the Linux `/sys`
+device-node case was explicitly deselected, not counted as qualified.
+
+Composer updates and draft-bound enqueue now persist atomically with their
+receipts; replay preserves newer text and rechecks authority. First use raises
+the vault format floor to 2 and persistently fences migrated legacy writes.
+These are local durability checks. The eight required rendered-App cases,
+packaged upgrade fixtures and combined Wave 2 CI remain pending. The accepted
+Wave 1 source and its evidence below remain unchanged.
+
 ### Wave 1 accepted at the fully qualified combined source
 
 The combined implementation is `174728edad62aae6ef16e95b075183d06c5cdda3`,

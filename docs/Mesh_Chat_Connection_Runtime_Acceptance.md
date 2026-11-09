@@ -22,18 +22,21 @@ qualification.
 
 The rows below summarize historical evidence, not qualification of baseline
 `435b497150e5f0d12cb1c5dc7b4602da7a66ec4c` or subsequent integration commits.
-The baseline audit supplied to this integration found 25 passing schema tests
+The historical baseline audit supplied to this integration found 25 passing schema tests
 but only 84 accepted component examples and 40 rejections/errors through the
 production request parser. Parser parameter access, mutation idempotency
 admission, UI workspace field translation, mobile Core stubs and direct-send
-retry/refresh handling require repair and combined revalidation.
+retry/refresh handling required repair and combined revalidation. Those bounded
+Wave 1 repairs passed at `174728e`; remaining restart and lifecycle obligations
+are assigned in Wave 2.
 
 Consequently the checked UI/Core migration items in the roadmap establish
-implementation intent, not application acceptance. Wave 1 must exercise the
+implementation intent, not blanket application acceptance. Wave 1 exercised the
 actual Windows and Android routes through serialization and production Core,
 including workspace state, messaging, settings and call control. See the
 [ownership and gate inventory](Mesh_Chat_Core_Integration_Coordination.md).
-No historical `local`, `component` or `workflow` label below closes that gate.
+The exact-source ledger closes that bounded gate; historical `local`, `component`
+or `workflow` labels below do not establish broader current-source completion.
 
 ## Environment limits
 
