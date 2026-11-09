@@ -10,7 +10,7 @@ from time import monotonic
 from .effects import BoundedEffectRunner, CleanupResult
 from .model import (
     ConnectionState, ContextChanged, Desired, Execution, Failed,
-    Failure, Policy, Retire, Work,
+    Failure, Policy, Result, Retire, Work,
 )
 from .projection import snapshot
 from .reconcile import authority, authority_signature, connection_key, desired
@@ -19,7 +19,7 @@ from .supervisor import CapacityExceeded, ConnectionSupervisor
 
 class ConnectionRuntime:
     def __init__(self, runtime_epoch, executor_factory, *, profiles, execution,
-                 activate, policy=Policy(), now=monotonic, prepare=None):
+                 activate, policy=Policy(), now=monotonic, prepare=None, handoff=None):
         self.owner = ConnectionSupervisor(runtime_epoch, policy)
         self.profiles = profiles
         self.execution = execution
@@ -44,6 +44,7 @@ class ConnectionRuntime:
         self._failure = None
         self._quarantined = False
         self._prepare = prepare
+        self._handoff = handoff
         self.executor = executor_factory(self.owner.is_current, self.profile)
         self.runner = BoundedEffectRunner(self.executor, policy, now=now)
 
@@ -160,7 +161,7 @@ class ConnectionRuntime:
             raise CapacityExceeded("Connection profile budget exceeded")
         # Explicit opt-outs are never activated by reconciliation.
         for profile in values:
-            if (profile.get("state") != "stopped" and not profile.get("active")
+            if (profile.get("scope_kind") != "pairing" and profile.get("state") != "stopped" and not profile.get("active")
                     and not profile.get("manual_carrier_authorized")
                     and authority(profile, 0).authorized):
                 key = connection_key(profile)
@@ -211,7 +212,11 @@ class ConnectionRuntime:
             else:
                 if isinstance(event, Failed):
                     event = replace(event, jitter=self._random())
-                self.owner.dispatch(event.operation.key, event)
+                state = self.owner.dispatch(event.operation.key, event)
+                if (isinstance(event, Result) and event.handoff and event.allocated is not None
+                        and state.reason == "pairing_ready"):
+                    if self._handoff is None or not self._handoff(event.operation, event.allocated):
+                        self._pending[Retire(event.allocated)] = None
 
     def _effects(self):
         for effect in self.owner.drain():

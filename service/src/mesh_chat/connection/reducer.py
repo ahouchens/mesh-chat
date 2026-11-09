@@ -62,8 +62,11 @@ def _failure(state: ConnectionState, now: float, reason: str,
         carrier = state.carrier
         state = replace(state, carrier=replace(carrier, health=Health.SUSPECT,
                         observed_at=carrier.observed_at if carrier.health is Health.SUSPECT else now))
+    pairing = state.key.scope == "pairing"
     return Transition(replace(state, negotiation=None, failures=state.failures + 1,
                               retry_at=now + max(delay, retry_after), blocked=blocked,
+                              pairing_terminal=pairing or state.pairing_terminal,
+                              desired=Desired.STOPPED if pairing else state.desired,
                               reason=reason), effects, reason)
 
 
@@ -115,6 +118,8 @@ def _context(state: ConnectionState, event: ContextChanged) -> Transition:
     changed = {name: getattr(event, name) for name in
                ("authority", "desired", "execution", "network_available")
                if getattr(event, name) is not None}
+    if state.key.scope == "pairing" and state.pairing_terminal:
+        changed["desired"] = Desired.STOPPED
     new = replace(state, **changed)
     authority_changed = new.authority != state.authority
     if not _eligible(new):
@@ -179,12 +184,17 @@ def _result(state: ConnectionState, event: Result | Failed | Adopted) -> Transit
     if isinstance(event, Failed):
         return _failure(state, event.now, event.failure.value,
                         event.failure in BLOCKING_FAILURES, event.retry_after, event.jitter)
+    if event.handoff and (state.key.scope != "pairing" or step.phase is not Phase.CHECKING):
+        return _failure(state, event.now, "invalid_handoff", blocked=True)
     if step.phase is Phase.DISCOVER:
         if not state.network_available or not state.authority.signaling_available:
             reason = "network_unavailable" if not state.network_available else "signaling_unavailable"
             return Transition(replace(state, negotiation=None, reason=reason,
                               retry_at=event.now + state.policy.poll_interval), reason=reason)
-        phase = Phase.REQUEST if state.authority.preferred else Phase.WAIT_REQUEST
+        if state.key.scope == "pairing":
+            phase = Phase.GATHER_OFFER if state.authority.preferred else Phase.GATHER_ANSWER
+        else:
+            phase = Phase.REQUEST if state.authority.preferred else Phase.WAIT_REQUEST
         return _work(state, phase, step.resource, event.now)
     if step.phase is Phase.INSPECT:
         if event.observed_health is None or event.observed_bridge is None:
@@ -200,6 +210,15 @@ def _result(state: ConnectionState, event: Result | Failed | Adopted) -> Transit
     if step.phase is Phase.CHECKING:
         if not event.verified or event.allocated != step.resource:
             return _failure(state, event.now, "unverified_resource", blocked=True)
+        if state.key.scope == "pairing":
+            if not event.handoff:
+                return _failure(state, event.now, "missing_handoff", blocked=True)
+            # Initial pairing grants no messaging bridge. Release the actor's
+            # lease only after private domain approval/capability verification;
+            # the normal reconnect actor must then adopt and prove ATTACH/PATH.
+            return Transition(replace(state, negotiation=None, carrier=None,
+                              desired=Desired.STOPPED, pairing_terminal=True,
+                              reason="pairing_ready"), reason="pairing_ready")
         state = replace(state, carrier=Carrier(step.resource, state.authority.revision,
                         Health.OPEN, Bridge.ATTACHING, event.now))
     if step.phase is Phase.ATTACH:

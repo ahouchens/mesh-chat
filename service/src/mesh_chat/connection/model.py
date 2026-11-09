@@ -164,6 +164,7 @@ class ConnectionState:
     retry_at: float = 0
     inspect_at: float = 0
     blocked: bool = False
+    pairing_terminal: bool = False
     reason: str = "idle"
     policy: Policy = Policy()
 
@@ -192,6 +193,7 @@ class Result:
     verified: bool = False
     observed_health: Health | None = None
     observed_bridge: Bridge | None = None
+    handoff: bool = False
 
 
 @dataclass(frozen=True)
