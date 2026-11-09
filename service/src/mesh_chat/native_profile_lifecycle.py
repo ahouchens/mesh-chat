@@ -42,6 +42,7 @@ class ProfileRuntimeLifecycle:
         self._pending = None
         self._last = None
         self._revision = 0
+        self._provider_fault = False
         self._incarnation = uuid4().hex
         self._lock = RLock()
         self._transition_lock = Lock()
@@ -59,7 +60,8 @@ class ProfileRuntimeLifecycle:
         with self._lock:
             current = self._active
             state = "unlocked" if self._usable(current) else "locked"
-            if self._retiring is not None or (current is not None and not current._store_closed and not self._usable(current)):
+            if (self._provider_fault or self._retiring is not None
+                    or (current is not None and not current._store_closed and not self._usable(current))):
                 state = "retiring"
             return {"v": 1, "host_incarnation": self._incarnation, "revision": self._revision,
                     "selected_profile": self._selected, "profiles": sorted(self._slots), "state": state,
@@ -146,6 +148,8 @@ class ProfileRuntimeLifecycle:
         return True
 
     def _advance(self, *, authorized):
+        if self._provider_fault:
+            raise NativeUnavailable("Profile opener violated its ownership contract")
         request = self._pending
         if request is None:
             self._drain_retirement()
@@ -181,6 +185,13 @@ class ProfileRuntimeLifecycle:
                     if self._retiring is not None:
                         self._retiring._shutdown.set()
                 raise NativeUnavailable("Profile opening is incomplete") from error
+            if (opened is None or not callable(getattr(opened, "close", None))
+                    or not callable(getattr(getattr(opened, "_shutdown", None), "is_set", None))
+                    or type(getattr(opened, "_store_closed", None)) is not bool
+                    or not isinstance(getattr(opened, "_runtime_incarnation", None), str)):
+                with self._lock:
+                    self._provider_fault = True
+                raise NativeUnavailable("Profile opener violated its ownership contract")
             if not self._usable(opened):
                 with self._lock:
                     self._retiring = opened

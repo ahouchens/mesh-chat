@@ -269,3 +269,17 @@ def test_existing_profile_outbox_recovery_failure_closes_unpublished_network_and
     failed, = captured
     assert shutdown == [True]
     assert failed._store_closed and failed._identity is None and failed.network is None
+
+
+def test_malformed_trusted_opener_fails_typed_and_cannot_repeat_unknown_open(profiles):
+    manager, _, opened, _, _ = profiles
+    manager.mutate(**request(manager, "lock"))
+    calls = []
+    manager._slots["alpha"] = ProfileSlot("alpha", lambda: calls.append(True))
+    intent = request(manager, "unlock")
+    with pytest.raises(NativeUnavailable, match="ownership contract"):
+        manager.mutate(**intent)
+    assert manager.query()["state"] == "retiring" and manager.active is None
+    with pytest.raises(NativeUnavailable): manager.mutate(**intent)
+    with pytest.raises(NativeUnavailable): manager.reconcile()
+    assert calls == [True] and len(opened) == 1
