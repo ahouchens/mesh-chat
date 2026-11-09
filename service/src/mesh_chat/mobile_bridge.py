@@ -8,6 +8,7 @@ CPython and calls this small JSON boundary on a dedicated worker thread.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import threading
 import uuid
@@ -15,7 +16,7 @@ from collections import deque
 from pathlib import Path
 from typing import Any
 
-from .errors import MeshChatError, ValidationError, WORKSPACE_ALREADY_KNOWN_REASONS, WorkspaceAlreadyKnown
+from .errors import MeshChatError, NativeUnavailable, ValidationError, WORKSPACE_ALREADY_KNOWN_REASONS, WorkspaceAlreadyKnown
 from .direct_native import NativeChannel
 from .network import install_embedded_runtime_guards
 from .service import MeshChatService
@@ -68,6 +69,10 @@ _service_lock = threading.RLock()
 _events_lock = threading.Lock()
 _service: MeshChatService | None = None
 _native_channel: NativeChannel | None = None
+_service_binding: tuple | None = None
+_event_incarnation: str | None = None
+_retiring_service: MeshChatService | None = None
+_retiring_channel: NativeChannel | None = None
 _events: deque[dict[str, Any]] = deque(maxlen=256)
 _event_overflow = False
 
@@ -99,13 +104,16 @@ def _error(exc: Exception) -> str:
     return _dumps({"ok": False, "error": error})
 
 
-def _emit(value: dict[str, Any]) -> None:
+def _emit(value: dict[str, Any], *, incarnation: str | None = None) -> None:
     # Network callbacks can emit from an RNS worker while a renderer command is
     # executing.  Keep event delivery independent from the service lifecycle
     # lock so a command waiting for that worker cannot deadlock the bridge.
     global _event_overflow
     overflow = False
+    service = _service
     with _events_lock:
+        if incarnation is not None and incarnation != _event_incarnation:
+            return
         overflow = len(_events) == _events.maxlen
         _events.append(value)
         if overflow:
@@ -114,15 +122,21 @@ def _emit(value: dict[str, Any]) -> None:
         # Persist the gap after releasing the event lock. A renderer refresh
         # can then request bounded authoritative reconciliation instead of
         # treating a coalesced/dequeued event stream as complete.
-        service = _service
-        if service is not None:
+        shutdown = getattr(service, "_shutdown", None)
+        if (service is not None and service is _service and not (shutdown is not None and shutdown.is_set())
+                and (incarnation is None or incarnation == _event_incarnation)):
             service._mark_workspace_invalidation_overflow()
+
+
+def initialize_native(raw: str) -> str:
+    """Trusted host entry; JSON cannot opt into a different connection owner."""
+    return initialize(raw, connection_policy="shared-native")
 
 
 def initialize(raw: str, *, connection_policy="legacy") -> str:
     """Start from an app-private directory; policy is a trusted host option only."""
 
-    global _service, _native_channel
+    global _service, _native_channel, _service_binding, _event_incarnation, _retiring_service, _retiring_channel
     try:
         if connection_policy not in {"legacy", "shared-native"}:
             raise ValidationError("Mobile connection policy is invalid")
@@ -147,23 +161,34 @@ def initialize(raw: str, *, connection_policy="legacy") -> str:
             vault_key = base64.b64decode(key_value, validate=True)
         except Exception as exc:
             raise ValidationError("Vault key is invalid") from exc
+        if len(vault_key) != 32:
+            raise ValidationError("Vault key is invalid")
+        profile_dir = Path(profile_value).resolve()
+        binding = (str(profile_dir), hashlib.sha256(vault_key).digest(), platform_value, connection_policy)
 
         with _service_lock:
+            if _retiring_service is not None:
+                _close_service()
+                if _retiring_service is not None:
+                    raise NativeUnavailable("Previous mobile runtime is still retiring")
             if _service is not None:
-                if _service._connection_policy != connection_policy:
-                    raise ValidationError("Mobile connection policy cannot change while running")
+                if _service_binding != binding or _service._shutdown.is_set():
+                    raise ValidationError("Mobile runtime binding cannot change while running")
                 return _dumps({"ok": True, "result": _service.snapshot()})
             install_embedded_runtime_guards()
-            profile_dir = Path(profile_value).resolve()
             store = VaultStore(
                 profile_dir,
                 vault_key,
                 native_mobile_protection=platform_value,
             )
             service = None
+            incarnation = uuid.uuid4().hex
+            with _events_lock:
+                _event_incarnation = incarnation
             try:
                 channel = NativeChannel()
-                service = MeshChatService(store, profile_dir, _emit, direct_native=channel,
+                service = MeshChatService(store, profile_dir,
+                                          lambda value: _emit(value, incarnation=incarnation), direct_native=channel,
                                           connection_policy=connection_policy)
                 if platform_value == "android":
                     from .direct_bootstrap_mobile import AndroidBootstrapProcess
@@ -172,14 +197,20 @@ def initialize(raw: str, *, connection_policy="legacy") -> str:
                     service._direct_bootstrap_factory = None
                 if display_name is not None and service.store.get("profile", "local") is None:
                     service.create_profile(display_name)
-            except Exception:
-                if service is not None:
-                    service.close()
+            except Exception as error:
+                with _events_lock:
+                    _event_incarnation = None
+                    _events.clear()
+                failed_service = getattr(error, "retiring_service", service)
+                if failed_service is not None:
+                    _retiring_service, _retiring_channel = failed_service, channel
+                    _close_service()
                 else:
                     store.close()
                 raise
             _service = service
             _native_channel = channel
+            _service_binding = binding
             return _dumps({"ok": True, "result": service.snapshot()})
     except Exception as exc:
         return _error(exc)
@@ -212,8 +243,7 @@ def command(raw: str) -> str:
             }
             response, should_stop = _service.dispatch(envelope)
             if should_stop:
-                _service.close()
-                _service = None
+                _close_service()
             return _dumps(response)
     except Exception as exc:
         return _error(exc)
@@ -243,7 +273,7 @@ def direct_exchange(raw: str) -> str:
         if (set(request) != {"responses"} or not isinstance(request["responses"], list)
                 or len(request["responses"]) > 8):
             raise ValidationError("Direct exchange is invalid")
-        channel = _native_channel
+        channel = _native_channel or _retiring_channel
         if channel is None:
             return _dumps({"ok": True, "result": []})
         for response in request["responses"]:
@@ -300,17 +330,31 @@ def core_exchange(caller: str, frame_b64: str, scope: str = "consumer") -> str:
         })).decode("ascii")
 
 
+def _close_service() -> None:
+    global _service, _native_channel, _service_binding, _event_incarnation, _event_overflow
+    global _retiring_service, _retiring_channel
+    if _service is not None:
+        _retiring_service, _service = _service, None
+        _retiring_channel, _native_channel = _native_channel, None
+        _service_binding = None
+    with _events_lock:
+        _event_incarnation = None
+        _events.clear()
+        _event_overflow = False
+    service = _retiring_service
+    if service is not None:
+        service._shutdown.set()
+        try:
+            service.close()
+        finally:
+            if service._store_closed:
+                _retiring_service = _retiring_channel = None
+
+
 def shutdown() -> str:
-    global _service, _event_overflow, _native_channel
     try:
         with _service_lock:
-            if _service is not None:
-                _service.close()
-                _service = None
-            _native_channel = None
-        with _events_lock:
-            _events.clear()
-            _event_overflow = False
+            _close_service()
         return _dumps({"ok": True, "result": None})
     except Exception as exc:
         return _error(exc)

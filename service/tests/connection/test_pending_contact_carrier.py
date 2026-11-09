@@ -25,7 +25,7 @@ def carrier():
     return value, service, contact
 
 
-@pytest.mark.parametrize("change", ["blocked", "identity_changed", "locked", "shutdown", "retired", "replacement", "peer", "expired", "scope"])
+@pytest.mark.parametrize("change", ["blocked", "identity_changed", "locked", "shutdown", "retired", "replacement", "peer", "expired", "scope", "incarnation"])
 def test_pending_authority_cannot_survive_revocation_or_resource_replacement(carrier, change):
     value, service, contact = carrier
     assert value.current()
@@ -36,6 +36,7 @@ def test_pending_authority_cannot_survive_revocation_or_resource_replacement(car
     elif change == "replacement": service._native_resources.current = lambda *_: False
     elif change == "peer": service._native_webrtc_peers["session"] = "22" * 16
     elif change == "expired": value.deadline = time.monotonic() - 1
+    elif change == "incarnation": service._runtime_incarnation = "replacement-profile"
     else: service._pending_contact_carriers.clear()
     assert not value.current()
 

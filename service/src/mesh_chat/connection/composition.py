@@ -72,7 +72,8 @@ def native_runtime(service):
         with service._dispatch_lock:
             service._carrier_recovery_pending = False
 
-    runtime = ConnectionRuntime(uuid4().hex, factory, profiles=profiles, execution=execution,
+    runtime = ConnectionRuntime(getattr(service, "_runtime_incarnation", None) or uuid4().hex,
+                                factory, profiles=profiles, execution=execution,
                                 activate=activate,
                                 prepare=prepare if getattr(service, "_carrier_recovery_pending", False) else None)
     return runtime
