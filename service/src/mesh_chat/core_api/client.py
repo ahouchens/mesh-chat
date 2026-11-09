@@ -76,8 +76,8 @@ class CoreClient:
             raise CoreClientError("protocol", request_id)
         raise CoreClientError(failure["code"], request_id, failure.get("retry_after_ms"))
 
-    def application_command(self, command, payload):
-        return self.request("application.command", {"command": command, "payload": payload})
+    def native_command(self, command, payload):
+        return self.request("native.command", {"command": command, "payload": payload})
 
     def application_snapshot(self):
         return self.request("application.snapshot", {})

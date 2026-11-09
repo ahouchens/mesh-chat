@@ -59,7 +59,7 @@ object CoreApiBridge {
                 .also { client = it }
         }
         return try {
-            val result = current.applicationCommand(command, payload)
+            val result = current.nativeCommand(command, payload)
             JSONObject().put("ok", true).put("result", result).toString()
         } catch (error: CoreException) {
             if (command == "snapshot" || command == "workspace_snapshot") {

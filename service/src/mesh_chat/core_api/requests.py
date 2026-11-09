@@ -33,7 +33,8 @@ CONTACT_INVITATION_OPERATIONS = ("contact.invitation",)
 REQUEST_OPERATIONS = ("peer.pairing_request",)
 INVITATION_OPERATIONS = ("peer.pairing_create",)
 STOP_OPERATIONS = ("runtime.stop",)
-APPLICATION_OPERATIONS = ("application.snapshot", "application.command")
+APPLICATION_OPERATIONS = ("application.snapshot",)
+NATIVE_COMMAND_OPERATIONS = ("native.command",)
 PROFILE_CREATE_OPERATIONS = ("profile.create",)
 WORKSPACE_PREVIEW_OPERATIONS = ("workspace.invitation_preview",)
 WORKSPACE_JOIN_OPERATIONS = ("workspace.join",)
@@ -208,10 +209,11 @@ def parse_request(value, operations):
         return operation, params
     if operation in APPLICATION_OPERATIONS:
         params = value["params"]
-        if operation == "application.snapshot":
-            if params != {}:
-                raise ApiFailure("invalid_request")
-            return operation, {}
+        if params != {}:
+            raise ApiFailure("invalid_request")
+        return operation, {}
+    if operation in NATIVE_COMMAND_OPERATIONS:
+        params = value["params"]
         if (not isinstance(params, dict) or set(params) != {"command", "payload"}
                 or not isinstance(params["command"], str)
                 or not 1 <= len(params["command"]) <= 80
@@ -1335,6 +1337,7 @@ COMPONENT_OPERATIONS = (
     + INVITATION_OPERATIONS
     + STOP_OPERATIONS
     + APPLICATION_OPERATIONS
+    + NATIVE_COMMAND_OPERATIONS
     + PROFILE_CREATE_OPERATIONS
     + WORKSPACE_PREVIEW_OPERATIONS
     + WORKSPACE_JOIN_OPERATIONS

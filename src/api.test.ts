@@ -50,7 +50,7 @@ it("routes other service commands through the application adapter", async () => 
   await expect(serviceCommand("send_message", { contact_id: "contact-1", text: "hello" }))
     .resolves.toEqual(saved);
   expect(tauri.invoke).toHaveBeenCalledWith("core_api_request", {
-    operation: "application.command",
+    operation: "native.command",
     params: { command: "send_message", payload: { contact_id: "contact-1", text: "hello" } },
     idempotencyKey: null,
   });

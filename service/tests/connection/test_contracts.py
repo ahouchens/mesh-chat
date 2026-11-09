@@ -67,7 +67,7 @@ def test_each_designed_operation_has_an_executable_request_vector_and_permission
     handle = "callerScopedHandle1"
     examples = {
         "runtime.capabilities": {}, "runtime.stop": {}, "application.snapshot": {},
-        "application.command": {"command": "snapshot", "payload": {}},
+        "native.command": {"command": "workspace_snapshot", "payload": {}},
         "profile.create": {"display_name": "Alex"},
         "workspace.create": {"name": "Lake", "description": ""}, "profile.select": {},
         "profile.unlock": {"credential_handle": handle}, "profile.lock": {}, "profile.query": {},

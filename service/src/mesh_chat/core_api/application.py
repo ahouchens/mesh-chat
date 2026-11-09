@@ -2,7 +2,7 @@
 
 from uuid import uuid4
 
-from .application_commands import APPLICATION_COMMANDS
+from .native_commands import NATIVE_COMMANDS
 from .session import ApiFailure
 
 
@@ -24,7 +24,7 @@ class ServiceApplication:
 
 
     def command(self, command, payload):
-        if command not in APPLICATION_COMMANDS:
+        if command not in NATIVE_COMMANDS:
             raise ApiFailure("forbidden")
         if not isinstance(payload, dict):
             raise ApiFailure("invalid_request")

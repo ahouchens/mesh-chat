@@ -141,11 +141,11 @@ def test_session_permissions_match_the_operation_contract():
 
 def test_application_allowlist_matches_the_desktop_renderer_allowlist():
     import re
-    from mesh_chat.core_api.application_commands import APPLICATION_COMMANDS
+    from mesh_chat.core_api.native_commands import NATIVE_COMMANDS
 
     root = Path(__file__).resolve().parents[3]
     source = (root / "src-tauri" / "src" / "lib.rs").read_text(encoding="utf-8")
     body = re.search(r"fn allowed_renderer_command\(command: &str\) -> bool \{(.*?)\n\}",
                      source, re.S).group(1)
     expected = frozenset(re.findall(r'"([a-z0-9_]+)"', body))
-    assert APPLICATION_COMMANDS == expected
+    assert NATIVE_COMMANDS == expected

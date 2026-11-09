@@ -80,7 +80,7 @@
           "items": {
             "enum": [
               "application.snapshot",
-              "application.command",
+              "native.command",
               "runtime.capabilities",
               "profile.query",
               "connection.snapshot",

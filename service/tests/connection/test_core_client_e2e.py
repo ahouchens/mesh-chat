@@ -220,22 +220,22 @@ def test_facade_call_settings_round_trip(host):
         owner.close()
 
 
-def test_application_command_is_owner_only_and_allowlisted(host):
+def test_native_command_is_owner_only_and_allowlisted(host):
     service = host()
     owner = HostedClient(service, frozenset({"observe", "read", "approve"}))
     try:
         client = CoreClient.open(owner.reader.readline, owner.writer.write)
-        snapshot = client.application_command("workspace_snapshot", {})
+        snapshot = client.native_command("workspace_snapshot", {})
         assert isinstance(snapshot, dict)
         with pytest.raises(CoreClientError):
-            client.application_command("arbitrary_shell", {})
+            client.native_command("arbitrary_shell", {})
     finally:
         owner.close()
     consumer = HostedClient(service)
     try:
         client = CoreClient.open(consumer.reader.readline, consumer.writer.write)
         with pytest.raises(CoreClientError) as raised:
-            client.application_command("workspace_snapshot", {})
+            client.native_command("workspace_snapshot", {})
         assert raised.value.code == "forbidden"
     finally:
         consumer.close()

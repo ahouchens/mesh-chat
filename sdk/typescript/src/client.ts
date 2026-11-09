@@ -186,8 +186,8 @@ export class CoreClient {
     }
   }
 
-  async applicationCommand(command: string, payload: Record<string, unknown> = {}): Promise<unknown> {
-    return this.request<unknown>("application.command", { command, payload });
+  async nativeCommand(command: string, payload: Record<string, unknown> = {}): Promise<unknown> {
+    return this.request<unknown>("native.command", { command, payload });
   }
 
   async applicationSnapshot(): Promise<Record<string, unknown>> {

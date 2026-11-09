@@ -45,7 +45,7 @@ from .diagnostic_views import diagnostics_view
 from .requests import (
     CURSOR, DIAGNOSTIC_OPERATIONS, INTENT_OPERATIONS, MESSAGE_OPERATIONS, OPERATIONS,
     INVITATION_OPERATIONS, PAIRING_OPERATIONS, PAIRING_PREVIEW_OPERATIONS, CONTACT_INVITATION_OPERATIONS, RECEIVED_OPERATIONS, RECOVERY_OPERATIONS, RECOVERY_TRANSFER_OPERATIONS,
-    APPLICATION_OPERATIONS, PROFILE_CREATE_OPERATIONS, CALL_OPERATIONS, CALL_CONTROL_OPERATIONS, COMPONENT_OPERATIONS, DRAFT_OPERATIONS,
+    APPLICATION_OPERATIONS, NATIVE_COMMAND_OPERATIONS, PROFILE_CREATE_OPERATIONS, CALL_OPERATIONS, CALL_CONTROL_OPERATIONS, COMPONENT_OPERATIONS, DRAFT_OPERATIONS,
     GROUP_OPERATIONS, GROUP_DRAFT_OPERATIONS, REACTION_OPERATIONS, RELATIONSHIP_OPERATIONS, SETTINGS_OPERATIONS, REQUEST_OPERATIONS, STOP_OPERATIONS,
     WORKSPACE_APPROVE_OPERATIONS, WORKSPACE_DECLINE_OPERATIONS, WORKSPACE_JOIN_OPERATIONS, WORKSPACE_PROMPT_JOIN_OPERATIONS, WORKSPACE_CREATE_OPERATIONS,
     WORKSPACE_CHANNEL_ARCHIVE_OPERATIONS, WORKSPACE_CHANNEL_CREATE_OPERATIONS,
@@ -137,7 +137,7 @@ PERMISSION_BY_OPERATION = {
     "profile.query": "observe",
     "application.snapshot": "approve",
     "profile.create": "profile_owner",
-    "application.command": "approve",
+    "native.command": "approve",
     "runtime.capabilities": "observe",
     "runtime.stop": "runtime_owner",
     "workspace.channel_archive": "approve",
@@ -316,6 +316,7 @@ class CoreSession:
             (INVITATION_OPERATIONS, self._invitations),
             (STOP_OPERATIONS, self._lifecycle),
             (APPLICATION_OPERATIONS, self._application),
+            (NATIVE_COMMAND_OPERATIONS, self._application),
             (PROFILE_CREATE_OPERATIONS, self._application),
             (WORKSPACE_PREVIEW_OPERATIONS, self._workspace),
             (WORKSPACE_JOIN_OPERATIONS, self._workspace),
@@ -557,11 +558,13 @@ class CoreSession:
                 raise ApiFailure("unavailable")
             result = self._application.create_profile(params["display_name"].strip())
             return {"display_name": result.get("display_name", params["display_name"].strip())}
-        if operation in APPLICATION_OPERATIONS:
+        if operation == "application.snapshot":
             if self._application is None:
                 raise ApiFailure("unavailable")
-            if operation == "application.snapshot":
-                return self._owner_snapshot(grant, self._application.snapshot())
+            return self._owner_snapshot(grant, self._application.snapshot())
+        if operation in NATIVE_COMMAND_OPERATIONS:
+            if self._application is None:
+                raise ApiFailure("unavailable")
             return self._application.command(params["command"], params["payload"])
         profile = self._profile_target(profiles, params)
         if operation == "diagnostics.query":

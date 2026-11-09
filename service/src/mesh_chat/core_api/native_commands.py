@@ -4,7 +4,7 @@ Generated from the desktop renderer allowlist. The service remains the policy
 owner; this list only prevents the facade from becoming an arbitrary RPC.
 """
 
-APPLICATION_COMMANDS = frozenset({
+NATIVE_COMMANDS = frozenset({
     "workspace_snapshot",
     "i2p_status",
     "connect_using_reply",

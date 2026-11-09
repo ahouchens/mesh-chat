@@ -8,7 +8,7 @@
     "runtime.capabilities",
     "profile.query",
     "connection.snapshot",
-    "application.command",
+    "native.command",
     "application.snapshot",
     "call.ice_servers",
     "call.media_query",
@@ -148,7 +148,7 @@
       "idempotency": "query"
     },
     {
-      "operation": "application.command",
+      "operation": "native.command",
       "permission": "approve",
       "scope": "runtime",
       "mutation": true,

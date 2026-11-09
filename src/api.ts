@@ -129,7 +129,7 @@ export async function serviceCommand<T>(
     if (command === "snapshot") {
       return await coreApiRequest<T>("application.snapshot");
     }
-    return await coreApiRequest<T>("application.command", { command, payload });
+    return await coreApiRequest<T>("native.command", { command, payload });
   } catch (reason) {
     if (!String(reason).includes("core_api_unavailable")) throw reason;
   }
