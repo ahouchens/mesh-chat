@@ -4,7 +4,17 @@
 
 ### AGP repair and timing diagnostics: full CI dispatched
 
-The current shared feature checkpoint is `677b6bf9e9ea0f50d4465e04cca9f79038632187`
+The shared feature branch now contains `d411eb5e8a2bd72e36254011f26c4cbc992ce4a9`
+(tree `830d3af24ffb5299a8d76dd48c34d069c338249f`). Its only implementation delta
+is D's selected network health diagnostics: `network_present` and a fixed
+`service_error` enum from existing snapshots, preserving observation subphase.
+No requests, request order, deadlines or public APIs change. The lead passes
+**367 focused cases**, zero skips, in 18.02s. Existing broad/Windows CI
+[42720210733](https://github.com/ahouchens/mesh-chat/actions/runs/42720210733)
+is running to observe frozen startup; duplicate PR run `42720186216` was canceled.
+This diagnostic run is not full combined qualification.
+
+The preceding full-qualification checkpoint is `677b6bf9e9ea0f50d4465e04cca9f79038632187`
 (tree `0e2516336d33d0febd5b152a25ab9b6972f7212b`). Full manual qualification
 [42716355520](https://github.com/ahouchens/mesh-chat/actions/runs/42716355520)
 is running. Retained selection independently confirms all six suite families and
@@ -15,8 +25,9 @@ plus 12 rendered App/Core cases**, and **nine Windows component cases**, with
 zero failures and skips. It integrates C's public AGP DSL receiver fix `595b1bf`
 and D's bounded stage timing/read-count/provenance diagnostics `1f177e4`.
 The independent Android build and two installed cases remain unqualified;
-Windows pairing's cause remains unproven. All workers hold source while the lead
-validates platform reports. No release, default or scenario promotion.
+Windows pairing's cause remains unproven. C repairs Android generated-source
+registration; A reviews frozen main-network startup offline. B/D hold source.
+No release, default or scenario promotion.
 
 Current CI independently passes all 3,554 policy cases and the 670/12 boundary;
 broad verification also passes. Windows public pairing fails again, but its new
@@ -26,9 +37,16 @@ snapshot reads** before failure at 240,072 ms; no clipping occurs and its entry
 deadline flag is false. The final offerer snapshot is explicitly from that wait
 and contains zero contacts. Both final pairing probes are retired, not expired.
 This establishes a real post-accept observation period without the required
-request; it does not establish delivery failure or retirement cause. C reviews
-frozen-runtime/bootstrap differences offline; A/D audit existing public request
-state observations. Android and direct results remain pending.
+request; it does not establish delivery failure or retirement cause.
+
+Android independently passes all 50 existing emulator cases, seven APK/AAR
+hash bindings and 62 JVM cases. The DSL receiver repair clears the earlier cast;
+configuration now rejects a Provider passed to the legacy source-set API at
+`runtime-host/build.gradle.kts:33`. Its two new independent cases never build or
+run. C will use the generated-source Variant API with task dependencies intact.
+Linux direct transport/recovery/setup independently pass 25/10/12 cases with
+zero skips; Windows direct evidence remains pending. No overall Android or
+combined platform acceptance is claimed.
 
 Local policy qualification is `5d82b74d14c549c1a01aa6bd7316bf33`, 360.88s
 wall time (352.138s summed case durations). Exact App/Core wall time is 44.33s;
