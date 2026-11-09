@@ -1,6 +1,6 @@
 import { CallDialog, IncomingCallPrompt, type CallPeer } from "./CallDialog";
 import { CallRecoveryNotice } from "./CallRecoveryNotice";
-import { ProfileLifetime, ProfileLifetimeContext, ProfileRetiredError, useProfileLifetime, useProfileRequestAdmission } from "./profile-lifetime";
+import { ProfileLifetime, ProfileLifetimeContext, ProfileRetiredError, useProfileLifetime, useProfileRequestAdmission, useProfileEffectScope } from "./profile-lifetime";
 import { admitCoreRequest, type CoreRequestAdmission } from "./core-admission";
 import { prepareKeyedGroupCreation, submitKeyedGroupCreation, prepareKeyedGroupSend, submitKeyedGroupSend, type GroupCreationTicket, type GroupSendTicket } from "./core-groups";
 import { workspaceConnectivityLabel, workspaceStateLabel, workspaceSyncIssueLabel } from "./workspaceLabels";
@@ -4228,6 +4228,7 @@ type WorkspaceMessageInvalidations = Record<string, {
 }>;
 
 function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageInvalidations, notificationTarget, onNotificationHandled, onLock, initialInvitation, onInvitationHandled, initialPairingCode = "", initialWebRTCJoin = false, onWebRTCJoinHandled, onPairingHandled }: { snapshot: Snapshot; theme: Theme; onThemeChange: (theme: Theme) => void; refresh: (afterCurrent?: boolean) => Promise<Snapshot>; workspaceMessageInvalidations: WorkspaceMessageInvalidations; notificationTarget: NotificationOpenTarget | null; onNotificationHandled: () => void; onLock: () => Promise<void>; initialInvitation: string; onInvitationHandled: () => void; initialPairingCode?: string; initialWebRTCJoin?: boolean; onWebRTCJoinHandled?: () => void; onPairingHandled?: () => void }) {
+  const profileEffects = useProfileEffectScope();
   const admitProfileRequest = useProfileRequestAdmission();
   const lifetime = useProfileLifetime();
   const [profileGeneration] = useState(() => lifetime?.capture());
@@ -4300,7 +4301,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
   const refreshRef = useRef(refresh);
   useEffect(() => { refreshRef.current = refresh; }, [refresh]);
   const [reconnectCoordinator] = useState(() => createReconnectCoordinator({
-    admit: admitProfileRequest,
+    ...profileEffects,
     refresh: async () => { await refreshRef.current(true); },
     onSession: (path) => {
       setWebRtcSessionActive(true);
