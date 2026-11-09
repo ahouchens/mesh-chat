@@ -67,6 +67,7 @@ chaquopy.sourceSets.getByName("main") {
 
 dependencies {
     implementation(project(":tauri-android"))
+    implementation(project(":mesh-core-client"))
     implementation("androidx.activity:activity-ktx:1.10.1")
     implementation("androidx.core:core-ktx:1.15.0")
     // Native data-channel transport for the opt-in background availability
