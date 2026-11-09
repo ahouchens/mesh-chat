@@ -1418,6 +1418,12 @@ function Onboarding({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(() => initialWorkspacePrefixOnly ? incompleteWorkspacePrefixMessage(initialInvitation) : "");
   const previewGeneration = useRef(0);
+  const profileCreationInFlight = useRef(false);
+  const profileCreationOperations = useRef(new Map<string, {
+    key: string;
+    attempted: boolean;
+    accepted: boolean;
+  }>());
 
   const inspectInvitation = useCallback(async (candidate: string) => {
     const generation = ++previewGeneration.current;
@@ -1494,26 +1500,49 @@ function Onboarding({
   }, [initialPairingCode]);
 
   const createProfile = async () => {
+    const displayName = name.trim();
+    if (!displayName || profileCreationInFlight.current) return;
+    if (mode === "join" && (!preview
+      || Boolean(preview.remote_profile) && !remoteConsent
+      || Boolean(preview.i2p_access_point) && !i2pConsent)) return;
+    const hasPriorAttempt = [...profileCreationOperations.current.values()].some((operation) => operation.attempted);
+    const operation = profileCreationOperations.current.get(displayName)
+      ?? { key: newOperationId(), attempted: false, accepted: false };
+    profileCreationOperations.current.set(displayName, operation);
+    profileCreationInFlight.current = true;
     setBusy(true);
     setError("");
+    let ready: Snapshot | null = null;
     try {
-      await coreApiCreateProfile(name);
-      const ready = await coreApiSnapshot() as unknown as Snapshot;
+      // Resolve an uncertain response before another explicit submission,
+      // including one where the user edited the proposed display name.
+      ready = hasPriorAttempt ? await coreApiSnapshot() as unknown as Snapshot : null;
+      if (ready?.profile && ready.profile.display_name !== displayName) {
+        setError(`This device already has a profile named ${ready.profile.display_name}. Use that name to continue, or reopen Mesh Chat.`);
+        return;
+      }
+      if (!ready?.profile) {
+        if (operation.accepted) throw new Error("profile_snapshot_pending");
+        operation.attempted = true;
+        await coreApiCreateProfile(displayName, operation.key);
+        operation.accepted = true;
+        ready = await coreApiSnapshot() as unknown as Snapshot;
+      }
+      if (!ready.profile) throw new Error("profile_snapshot_pending");
+      operation.accepted = true;
       if (mode === "join") {
-        try {
-          await coreApiAcceptInvitation(invitation,
-            Boolean(preview?.i2p_access_point && i2pConsent));
-        } catch (reason) {
-          if (!String(reason).includes("core_api_unavailable")) throw reason;
-          await coreApiAcceptInvitation(invitation, Boolean(preview?.i2p_access_point && i2pConsent));
-        }
+        await coreApiAcceptInvitation(invitation,
+          Boolean(preview?.i2p_access_point && i2pConsent));
         onReady(ready);
       } else {
         onReady(ready, pendingWorkspaceInvitation || undefined, webRTCJoin);
       }
     } catch (reason) {
-      setError(errorMessage(reason));
+      setError(operation.accepted && !ready?.profile
+        ? "Your profile was created. Try again to load it; this will not create another profile."
+        : errorMessage(reason));
     } finally {
+      profileCreationInFlight.current = false;
       setBusy(false);
     }
   };

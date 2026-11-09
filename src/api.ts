@@ -213,8 +213,10 @@ export async function coreApiCreateInvitation(
   return coreApiRequest("peer.pairing_create", { ...options, profile: profile.profile });
 }
 
-export async function coreApiCreateProfile(displayName: string): Promise<Record<string, unknown>> {
-  return await coreApiRequest("profile.create", { display_name: displayName }) as Record<string, unknown>;
+export async function coreApiCreateProfile(
+  displayName: string, idempotencyKey: string,
+): Promise<Record<string, unknown>> {
+  return await coreApiRequest("profile.create", { display_name: displayName }, idempotencyKey) as Record<string, unknown>;
 }
 
 export async function coreApiCreateWorkspace(
