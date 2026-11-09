@@ -393,7 +393,8 @@ def test_full_private_history_capacity_recovers_without_freeing_active_or_uncert
     assert service.store.get("participant_host_intent", uncertain["id"]) == uncertain
 
 
-def test_retirement_retries_listener_detach_without_repeating_mapping_cleanup(hosts, monkeypatch):
+@pytest.mark.parametrize("retain_local_snapshot", [False, True])
+def test_retirement_retries_listener_detach_without_repeating_mapping_cleanup(hosts, monkeypatch, retain_local_snapshot):
     open_host, _, removed, _, _ = hosts
     service = open_host()
     intent = reserve(service)
@@ -410,8 +411,49 @@ def test_retirement_retries_listener_detach_without_repeating_mapping_cleanup(ho
     with pytest.raises(ParticipantReservationUnavailable):
         service.materialize_participant_host_intent(intent["id"], intent["input_digest"])
     monkeypatch.setattr(service.network, "apply_participant_interfaces", original)
-    service.retire_participant_host_intent(intent["id"], intent["input_digest"])
+    assert service.store.get("participant_host", intent["host_session_id"]) is None
+    if not retain_local_snapshot:
+        service._participant_retired_intents = {}
+    service.reconcile_participant_access()
     assert service.network.listeners == {} and len(removed) == 1
+    assert not service.store.get("participant_host_intent", intent["id"]).get("retirement_pending")
+
+
+@pytest.mark.parametrize("retain_local_snapshot", [False, True])
+def test_ordinary_reconcile_recovers_cleanup_without_host_row_and_preserves_completed_handles(hosts, monkeypatch, retain_local_snapshot):
+    open_host, _, removed, _, _ = hosts
+    service = open_host()
+    intent = reserve(service)
+    service.materialize_participant_host_intent(intent["id"], intent["input_digest"])
+    record = service.store.get("participant_host", intent["host_session_id"])
+    mapping = record["mapping"]
+    pinhole = {**mapping, "external_port": mapping["external_port"] + 1}
+    record["pinhole"] = pinhole
+    service.store.put("participant_host", record["id"], record)
+    original = participant_service.remove_port_mapping
+    failed = False
+
+    def fail_once(value):
+        nonlocal failed
+        if value == mapping and not failed:
+            failed = True
+            raise OSError("mapping cleanup unavailable")
+        original(value)
+
+    monkeypatch.setattr(participant_service, "remove_port_mapping", fail_once)
+    with pytest.raises(OSError, match="mapping cleanup"):
+        service.retire_participant_host_intent(intent["id"], intent["input_digest"])
+    assert service.store.get("participant_host", record["id"]) is None
+    assert removed == [pinhole]
+    if not retain_local_snapshot:
+        service._participant_retired_intents = {}
+    service.reconcile_participant_access()
+    assert removed == [pinhole, mapping]
+    retired = service.store.get("participant_host_intent", intent["id"])
+    assert not retired.get("cleanup") and not retired.get("retirement_pending")
+    assert service.network.listeners == {}
+    service.reconcile_participant_access()
+    assert removed == [pinhole, mapping]
 
 
 def test_changed_payload_conflicts_before_new_allocation(hosts):

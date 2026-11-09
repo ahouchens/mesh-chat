@@ -84,6 +84,7 @@ class ParticipantAccessServiceMixin:
             if (now <= max(safe_after, float(intent.get("uncertain_lease_until", 0)))
                     or self.store.get("participant_host", intent["host_session_id"]) is not None
                     or intent.get("cleanup") or local.get("cleanup")
+                    or intent.get("retirement_pending") or local.get("retirement_pending")
                     or intent["host_session_id"] in getattr(self, "_participant_pending_resources", {})):
                 continue
             if self.store.operation_result(operation, intent["input_digest"]) != self._participant_intent_receipt(operation):
@@ -222,7 +223,7 @@ class ParticipantAccessServiceMixin:
         def matches(item):
             return (item is not None and item.get("reservation_operation_id") == intent["id"]
                     and item.get("reservation_epoch") == intent["runtime_epoch"])
-        retired = {**intent, "state": "retired"}
+        retired = {**intent, "state": "retired", "retirement_pending": True}
         if intent.get("state") == "allocating" and (resource is None or not resource.get("access")):
             # The router lease can outlive the signed access document. An
             # unknown allocation reply must hold capacity for the whole lease.
@@ -245,7 +246,7 @@ class ParticipantAccessServiceMixin:
                 self.store.delete("participant_host", session)
             except Exception as error:
                 errors.append(error)
-        if matches(resource) or matches(host) or local is not None:
+        if matches(resource) or matches(host) or local is not None or intent.get("retirement_pending"):
             try:
                 self._apply_participant_interfaces()
             except Exception as error:
@@ -263,9 +264,12 @@ class ParticipantAccessServiceMixin:
             getattr(self, "_participant_pending_resources", {}).pop(session, None)
             if not any(isinstance(retired["cleanup"].get(key), dict) for key in ("mapping", "pinhole", "firewall")):
                 retired.pop("cleanup", None)
+        if not errors:
+            retired.pop("retirement_pending", None)
         try:
             self.store.put("participant_host_intent", intent["id"], retired)
         except Exception as error:
+            retired["retirement_pending"] = True
             errors.append(error)
         if errors:
             raise errors[0]
@@ -278,6 +282,21 @@ class ParticipantAccessServiceMixin:
             if intent.get("input_digest") != input_digest:
                 raise ValidationError("Operation ID was already used with different input")
             self._retire_participant_intent(intent)
+
+    def _reconcile_participant_retirements(self) -> None:
+        """Retry bounded cleanup intents independently of deleted host rows."""
+        with self._dispatch_lock:
+            pending = {intent["id"]: intent for intent in self.store.list("participant_host_intent")
+                       if intent.get("state") == "retired"
+                       and (intent.get("retirement_pending") or intent.get("cleanup"))}
+            pending.update({operation: intent for operation, intent in self._participant_retirements().items()
+                            if intent.get("retirement_pending") or intent.get("cleanup")
+                            or self.store.get("participant_host", intent["host_session_id"]) is not None})
+            for intent in pending.values():
+                try:
+                    self._retire_participant_intent(intent)
+                except Exception:
+                    pass
 
     def _participant_reserved_access(self, intent):
         record = self.store.get("participant_host", intent["host_session_id"])
@@ -1151,16 +1170,12 @@ class ParticipantAccessServiceMixin:
         self.store.put("participant_host", record["id"], record)
 
     def reconcile_participant_access(self) -> None:
+        self._reconcile_participant_retirements()
         self.reconcile_prepared_participant_access()
         now = time.time()
         changed = False
         for record in list(self._participant_hosts()):
             if record.get("reservation_operation_id") in self._participant_retirements():
-                intent = self._participant_retirements()[record["reservation_operation_id"]]
-                try:
-                    self._retire_participant_intent(intent)
-                except Exception:
-                    pass
                 continue
             if float(record.get("expires_at", 0)) <= now:
                 self.stop_participant_host(record["id"])
