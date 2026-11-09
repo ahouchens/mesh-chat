@@ -216,7 +216,7 @@ def test_message_results_and_requests_match_contracts(host):
     Draft202012Validator(json.loads((root / "observation-result-v1.schema.json").read_text())).validate(cap)
     manifest = json.loads((root / "operations-v1.json").read_text())
     declared = [operation for operation in manifest["experimental_component_operations"]
-                if operation not in manifest["bootstrap_operations"] + manifest["runtime_host_operations"]]
+                if operation not in manifest["bootstrap_operations"] + manifest["runtime_host_operations"] + manifest["call_recovery_operations"]]
     # Order is not significant; membership is the contract.
     assert sorted(cap["result"]["operations"]) == sorted(declared)
     assert len(cap["result"]["operations"]) == len(set(cap["result"]["operations"]))

@@ -195,6 +195,8 @@ def request_vectors():
         "call.ice_servers": {},
         "call.media_query": {"call": handle},
         "call.control": {"action": "end", "call_id": "c" * 20, "reason": "completed"},
+        "call.operation_list": {}, "call.operation_query": {"operation": handle},
+        "call.operation_abandon": {"operation": handle},
         "call.settings_update": {"settings": {"relay_only": True}},
         "settings.query": {},
         "settings.update": {"settings": {}},

@@ -47,7 +47,7 @@ class ServiceObservations:
 
 def bind_service_session(service, authenticated_grant, *, private_native=False,
                          private_profile_bootstrap=False, private_composer_legacy=False,
-                         handle_key=None):
+                         handle_key=None, call_retirement=None):
     """Trusted host entry point, never a client-supplied identity or grant."""
     if type(private_native) is not bool:
         raise ValueError("Private native binding must be a host boolean")
@@ -81,6 +81,7 @@ def bind_service_session(service, authenticated_grant, *, private_native=False,
                               if hasattr(service, "list_workspace_threads") else None)
         runtime = (ServiceApplicationRuntime(service)
                    if hasattr(service, "background_availability_status") else None)
+        calls = ServiceCallSettings(service, call_retirement)
         ports = Ports(messages=messages, composer=composer, recovery=recovery,
                       diagnostics=ServiceDiagnostics(service, messages), received=received,
                       intent=intent, relationship=relationship, pairing=pairing,
@@ -92,7 +93,8 @@ def bind_service_session(service, authenticated_grant, *, private_native=False,
                       native_commands=ServiceNativeCommands(service) if private_native else None,
                       profile_bootstrap=ServiceProfileBootstrap(service) if private_profile_bootstrap else None,
                       drafts=ServiceDrafts(service, legacy=private_composer_legacy),
-                      calls=ServiceCallSettings(service),
+                      calls=calls,
+                      call_recovery=calls if calls.recovery_operations else None,
                       settings=ServiceNetworkSettings(service),
                       reactions=ServiceReactions(service),
                       groups=ServiceGroups(service))
@@ -101,9 +103,10 @@ def bind_service_session(service, authenticated_grant, *, private_native=False,
 
 
 def bind_service_stream(service, authenticated_grant, *, private_native=False,
-                        private_profile_bootstrap=False, private_composer_legacy=False):
+                        private_profile_bootstrap=False, private_composer_legacy=False, call_retirement=None):
     """Private host binding; raw frames can never select the grant callback."""
     return FramedSession(bind_service_session(service, authenticated_grant,
                                               private_native=private_native,
                                               private_profile_bootstrap=private_profile_bootstrap,
-                                              private_composer_legacy=private_composer_legacy))
+                                              private_composer_legacy=private_composer_legacy,
+                                              call_retirement=call_retirement))

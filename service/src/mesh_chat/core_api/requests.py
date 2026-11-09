@@ -19,6 +19,7 @@ RELATIONSHIP_OPERATIONS = ("peer.approve", "peer.revoke", "peer.unblock", "peer.
 DRAFT_OPERATIONS = ("peer.draft_get", "peer.draft_set")
 COMPOSER_OPERATIONS = ("peer.composer_query", "peer.composer_update", "message.enqueue_draft")
 CALL_CONTROL_OPERATIONS = ("call.control",)
+CALL_RECOVERY_OPERATIONS = ("call.operation_list", "call.operation_query", "call.operation_abandon")
 CALL_OPERATIONS = ("call.settings_query", "call.settings_update", "call.ice_servers",
                     "call.media_query")
 SETTINGS_OPERATIONS = ("settings.query", "settings.update")
@@ -206,7 +207,7 @@ CURSOR = re.compile(r"[A-Za-z0-9_-]{16,1024}\Z")
 # tests bind this inventory to operations-v1.json, including composite operations.
 KEYED_OPERATIONS = frozenset({
     "peer.composer_update", "message.enqueue_draft",
-    "call.control",
+    "call.control", "call.operation_abandon",
     "connection.retry",
     "events.ack",
     "message.enqueue",
@@ -1371,6 +1372,13 @@ def _parse_request(value, operations):
                     and not isinstance(params["settings"], dict))):
             raise ApiFailure("invalid_request")
         return operation, params
+    if operation in CALL_RECOVERY_OPERATIONS:
+        params = value["params"]
+        expected = {"profile"} if operation == "call.operation_list" else {"profile", "operation"}
+        if (not isinstance(params, dict) or set(params) != expected
+                or any(not isinstance(params[field], str) or HANDLE.fullmatch(params[field]) is None for field in expected)):
+            raise ApiFailure("invalid_request")
+        return operation, params
     if operation in CALL_CONTROL_OPERATIONS:
         params = value["params"]
         action = params.get("action") if isinstance(params, dict) else None
@@ -1523,6 +1531,7 @@ COMPONENT_OPERATIONS = (
     + COMPOSER_OPERATIONS
     + CALL_OPERATIONS
     + CALL_CONTROL_OPERATIONS
+    + CALL_RECOVERY_OPERATIONS
     + SETTINGS_OPERATIONS
     + REACTION_OPERATIONS
     + GROUP_OPERATIONS

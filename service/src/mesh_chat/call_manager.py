@@ -145,6 +145,26 @@ class CallManager:
         for record in mutation.records:
             self._memory[record["id"]] = deepcopy(record)
 
+    def reload_committed(self, call_id):
+        """Refresh a signaling cache after an uncertain durable commit return."""
+        if not self.persist:
+            return self._get(call_id)
+        record = self.store.get("call", call_id)
+        if record is None:
+            self._memory.pop(call_id, None)
+        else:
+            self._memory[call_id] = deepcopy(record)
+        return record
+
+    def reconcile_abandonment(self, call_id, accepted_at):
+        """Apply a committed cleanup intent to memory without another signal."""
+        record = self.reload_committed(call_id)
+        if record is not None:
+            record = deepcopy(record)
+            record["state"] = "ended"
+            record["updated_at"] = max(record.get("updated_at", 0), accepted_at)
+            self._memory[call_id] = record
+
     def _write(self, record: dict[str, Any]) -> None:
         self._memory[record["id"]] = record
         if self.persist:

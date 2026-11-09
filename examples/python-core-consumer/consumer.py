@@ -26,7 +26,15 @@ def main():
             print(json.dumps(report), file=sys.stderr)
             return 0
         profile = client.capabilities["profiles"][0]
-        if "--exercise-keyed-group-create" in sys.argv:
+        if "--recover-call" in sys.argv:
+            operation = client.call_operation_list(profile)["operations"][0]["operation"]
+            queried = client.call_operation_query(profile, operation)["operation"]
+            abandoned = client.call_operation_abandon(profile, operation, "sdk-call-abandon-key-0001")["operation"]
+            repeated = client.call_operation_abandon(profile, operation, "sdk-call-abandon-key-0001")["operation"]
+            report.update(recovered=queried["operation"] == operation,
+                          cleanup_pending=abandoned["disposition"] == "cleanup_pending",
+                          replacement_blocked=not abandoned["replacement_safe"], same_operation=repeated == abandoned)
+        elif "--exercise-keyed-group-create" in sys.argv:
             peer = client.profile(profile)["peers"][0]
             result = client.create_group(profile, "SDK qualification group", "members", [peer], "sdk-group-create-key-0001")
             repeated = client.create_group(profile, "SDK qualification group", "members", [peer], "sdk-group-create-key-0001")
