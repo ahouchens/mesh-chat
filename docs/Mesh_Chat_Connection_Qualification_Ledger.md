@@ -56,7 +56,7 @@ mutation durability are also open, with A/B ownership recorded in coordination.
 
 The feature branch was fast-forward pushed to `29a5606`. Full workflow dispatch
 [42630080557](https://github.com/ahouchens/mesh-chat/actions/runs/42630080557)
-is running for that exact head with all five suite families selected. The
+completed for that exact head with all five suite families selected. The
 redundant PR-triggered run was canceled to avoid duplicate runner consumption.
 Neither dispatch nor the local boundary results establish Wave 1 acceptance.
 
@@ -98,9 +98,18 @@ encoding; package binary hashes remain runner-generated claims in those reports.
 The first CI Verify job failed because a test matched composer text before the
 thread mutation arrived. D's integrated correction holds the send deliberately,
 waits for a rendered message article, and queries its durable ID/content through
-Core. Later source still requires full CI. Call replay after an intervening state
-change, remaining keyed domain actions, and the restart-safe composer remain
-open; these passing slices do not close Wave 1 or M2–M5.
+Core. Every platform, direct-transport, policy and layout job passed; Verify and
+the final aggregate gate failed. Later source still requires full CI.
+
+At `2f3cbbdba4b07eeb4db32cae286bd58ff165a30b`, remote-profile mutations commit
+records, receipts and runtime intent before reconciliation. Call replay returns
+the current call projection, including an intervening end or ring expiry,
+without another signal. The lead ran 73 focused call/remote cases successfully;
+the optional remote-network case initially skipped, then passed separately with
+its required opt-in (22.34 seconds). That test runs real isolated clients through
+an outbound TCP relay, covering personal and workspace admission and delivery.
+Remaining keyed domain actions and the restart-safe composer remain open; these
+passing slices do not close Wave 1 or M2–M5.
 
 ### Baseline findings (historical audit)
 

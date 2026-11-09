@@ -108,3 +108,12 @@ handling. A supplies the trusted private bootstrap on an already-started empty
 service, without widening ordinary public-owner grants. B's Core-owned composer
 revision/CAS and atomic draft-bound enqueue proposal is the accepted Wave 2
 design direction; implementation remains gated on Wave 1.
+
+Further Wave 1 transfer: C exclusively owns
+`service/src/mesh_chat/reconnect_service.py` and the new
+`service/tests/connection/test_reconnect_prepared_mutations.py`, alongside its
+remote-profile files. C prepares remote approval and reconnect device/profile
+writes without storage or network effects. A retains `workspace_service.py`
+and `service.py`, composes parent records and operation receipts into the atomic
+commit, then reconciles current consent. D independently audits supported keyed
+mutations and required host inventories. General Wave 2 remains inactive.
