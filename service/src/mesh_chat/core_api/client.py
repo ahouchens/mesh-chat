@@ -143,6 +143,33 @@ class CoreClient:
     def application_snapshot(self):
         return self.request("application.snapshot", {})
 
+    def _require_profile_runtime(self):
+        operations = {"profile.catalog", "profile.lock", "profile.select", "profile.unlock"}
+        limits = ("profile_slots", "profile_lifecycle_keys_per_host", "profile_lifecycle_keys_per_caller_profile", "profile_unlock_credentials")
+        caps = self.capabilities
+        supported = caps.get("operations")
+        if (caps.get("api_minor", 0) < 1 or not isinstance(supported, list)
+                or not all(isinstance(name, str) for name in supported)
+                or not isinstance(caps.get("limits"), dict) or not operations <= set(supported)
+                or any(type(caps.get("limits", {}).get(name)) is not int or not 0 < caps["limits"][name] <= 9007199254740991 for name in limits)):
+            raise CoreClientError("unsupported_operation")
+
+    def profile_catalog(self):
+        self._require_profile_runtime()
+        return self.request("profile.catalog", {})
+
+    def lock_profile(self, profile, key):
+        self._require_profile_runtime()
+        return self.request("profile.lock", {"profile": profile}, idempotency_key=key)
+
+    def select_profile(self, profile, key):
+        self._require_profile_runtime()
+        return self.request("profile.select", {"profile": profile}, idempotency_key=key)
+
+    def unlock_profile(self, profile, credential_handle, key):
+        self._require_profile_runtime()
+        return self.request("profile.unlock", {"profile": profile, "credential_handle": credential_handle}, idempotency_key=key)
+
     def profile(self, handle=None):
         profile = handle or self.capabilities["profiles"][0]
         return self.request("profile.query", {"profile": profile})

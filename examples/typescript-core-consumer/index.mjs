@@ -12,6 +12,14 @@ try {
     installed_package: import.meta.resolve("@mesh-chat/core-client").includes("node_modules"), sdk_only: true };
   if (process.argv.includes("--create-profile")) {
     report.created = (await client.createProfile("SDK qualification", "sdk-create-profile-key-0001")).display_name === "SDK qualification";
+  } else if (process.argv.includes("--exercise-profile-lock")) {
+    const selected = (await client.profileCatalog()).selected_profile;
+    const result = await client.lockProfile(selected, "sdk-profile-lock-key-0001");
+    report.locked = result.profiles.find(row => row.profile === selected).state === "locked";
+  } else if (process.argv.includes("--exercise-profile-unlock")) {
+    const selected = (await client.profileCatalog()).selected_profile;
+    const result = await client.unlockProfile(selected, process.env.MESH_CORE_TEST_UNLOCK_CREDENTIAL, "sdk-profile-unlock-key-0001");
+    report.unlocked = result.profiles.find(row => row.profile === selected).state === "unlocked";
   } else if (process.argv.includes("--keyed-owner")) {
     await client.createWorkspace(profile, "SDK qualification", "", "sdk-workspace-create-key-0001");
     const workspace = (await client.workspaceList(profile)).workspaces[0].workspace;

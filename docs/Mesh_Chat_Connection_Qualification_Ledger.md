@@ -2,6 +2,62 @@
 
 ## Integration revalidation (2026-11-09)
 
+### Wave 2 interim CI and packaging repairs
+
+Full workflow `42665862417` targets source
+`dcac85ef30a0ff60f51d7862ad03c3fe692b0299`, tree
+`5271a0f95e3f33d20a99cb23ac0a2363d46dede5`. The lead independently reconstructed
+the retained policy report using that source's validators: 2,871 collected,
+executed and passed, zero failures or skips, qualification ID
+`517aba734b0f4586bb04929837e5688f`. This is simulated/in-process evidence.
+The workflow is not accepted: Windows failed frozen-material verification;
+broad verification passed 4,075 tests but failed one stale frontend history
+assertion (51 environment-specific skips); Android instrumentation compilation
+could not resolve its transitive Binder SDK dependency. Direct jobs were still
+running when this checkpoint was recorded.
+
+Read-only inspection of the retained Windows executable confirmed SHA-256
+`1b9d37786c8c626fcd28c4d9e8021480c95e63c9c070255798a87fe4927df8b2` and identified
+the declaration basename mismatch and repository CRLF/LF inconsistency. Worker D
+also checked 34 notice/metadata files across 17 distributions, 161 DLL/PYD files,
+all 36 PyAV wheel DLL hashes, and required PYZ modules. This diagnosis neither
+runs the executable nor qualifies repaired source. The lead retained the archive
+hash index and build manifest, then removed its temporary executable copy.
+
+Source `67ff95bd346771e1a6d62205a5ecb612c0da6a39` integrates basename and canonical
+repository-byte repairs plus prepared reaction/invitation hooks. The lead ran
+225 focused domain, legacy behavior, archive and aggregate cases: all passed,
+zero skips, 12.30 seconds. Invitation preparation does not itself establish atomic
+personal adoption/workspace join; parent integration remains required. Runtime
+profile host binding and actual Windows–Android topology remain pending.
+
+### Wave 2 combined policy and upgrade checkpoint
+
+Source `538ba22692657c8af557e0095dd27dc1d23541e9` passes the complete required
+policy inventory: 2,815 collected and executed, zero failures/skips, 263.90 seconds
+pytest elapsed time. Strict model/reducer typechecking also passes. Reports are
+`dist/reports/policy-wave2-sdk.*`, run `af675894f03841c0aaed53e547f10ba0`.
+Warnings concern JUnit properties and the existing upstream LXMF deprecation.
+The lead also ran 62 focused call-operation, incoming-call and API tests, all
+passing. The preceding exact UI boundary at `7dd1034` passes 471 Python and all
+eight rendered-App cases, zero skips, 48.11 seconds. Windows pipe checks at
+`6a7656c` pass all three cases without skips in 1.81 seconds.
+
+Source `7b4dc3f58d8bbc5aefbf8720807b31a60665da5f` then integrates pinned upgrade
+fixtures and packaged peer-controller code. All 37 upgrade/peer-driver cases
+pass without skips in 17.46 seconds (`.test-tmp/upgrade-peer.*`). The eight upgrade
+cases install rebuilt source-pinned API 1.0 artifacts, test both client/host
+directions, preserve format-1 data through migration and require the old reader's
+specific schema refusal after format 2. Wrong keys and corrupt storage cannot
+qualify as downgrade refusal. The other 29 cases verify controller framing,
+deadlines and exact cleanup ownership, including blocked OS-pipe readers.
+
+These upgrades use rebuilt component artifacts from `174728e`, tree `239d041`;
+they do not qualify an installed native executable or Android package upgrade.
+The new peer drivers have not yet established Windows–Android interoperability,
+authenticated receipts, impairment budgets or the 100-iteration matrix. The full
+policy result belongs to `538ba226`, not the later fixture/driver source.
+
 ### Wave 2 profile transitions and package evidence checkpoint
 
 Source `cabf71fc198dd478b10cd783dd11fa1bb57ff94d` integrates the standalone SDK
@@ -18,6 +74,20 @@ TypeScript archive passed isolated installation/import; Python wheel staging
 failed with a stale source build directory and awaits a temporary-source build
 fix. Neither that failure nor partial SDK execution counts as a passing installed
 consumer gate. Shared feature source `174728e` remains the accepted CI baseline.
+
+Follow-up at `f61d480b383ca9d3f6c0fca83664ea32a89a2445` corrects source build
+pollution and Windows consumer cleanup, adds private packaged inspector admission
+and releases vault crypto references after successful database close. The lead's
+combined installed-SDK, private-host, Android retirement, profile lifecycle and
+vault run passes 70 cases in 7.90 seconds, including all 12 installed consumer
+cases. One existing Linux `/sys` device-node test is skipped on Windows; this is
+not a zero-skip policy qualification. Reports are `.test-tmp/sdk-host-vault.*`.
+
+Source `d8d47ce6a94a26ef7c8fd9c097e654c0d2211c6b` adds CI staging prerequisites.
+Actual source-bound staging passes for tree `dd2aac53bc3f393f590ae50f0ddb1b7a8bca774c`;
+118 staging/selector cases and 47 TypeScript SDK tests pass without skips. These
+packages remain experimental and unpublished; packaged transport, old/new upgrade
+and cross-platform receipt qualification are still required.
 
 ### Wave 2 composer storage checkpoint
 

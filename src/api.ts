@@ -133,7 +133,8 @@ export function setNativeTheme(theme: "dark" | "light"): Promise<void> {
 }
 
 export async function initializeService(displayName?: string): Promise<Snapshot> {
-  return invoke<Snapshot>("initialize_service", { displayName: displayName ?? null });
+  await invoke("initialize_service", { displayName: displayName ?? null });
+  return await coreApiSnapshot() as unknown as Snapshot;
 }
 
 export async function serviceCommand<T>(
@@ -328,10 +329,10 @@ export async function coreApiCallControl(
   return result.result;
 }
 
-export async function coreApiCallMedia(call: string): Promise<Record<string, unknown>> {
-  const profile = await coreApiProfile();
+export async function coreApiCallMedia(call: string, scope?: string): Promise<Record<string, unknown>> {
+  const profile = scope ?? (await coreApiProfile()).profile;
   const result = await coreApiRequest("call.media_query", {
-    profile: profile.profile,
+    profile,
     call,
   }) as { media?: Record<string, unknown> };
   return result.media ?? {};

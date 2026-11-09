@@ -70,6 +70,29 @@ class CoreClient private constructor(private val transport: CoreTransport) {
 
     fun applicationSnapshot(): JSONObject = request("application.snapshot", JSONObject())
 
+    private fun requireProfileRuntime() {
+        val operations = capabilities.optJSONArray("operations") ?: throw CoreException("unsupported_operation")
+        val supported = (0 until operations.length()).map { operations.optString(it) }.toSet()
+        val limits = capabilities.optJSONObject("limits") ?: throw CoreException("unsupported_operation")
+        val names = listOf("profile_slots", "profile_lifecycle_keys_per_host", "profile_lifecycle_keys_per_caller_profile", "profile_unlock_credentials")
+        val minor = capabilities.opt("api_minor")
+        if (minor !is Number || minor.toDouble() < 1 || !minor.toDouble().isFinite() || minor.toDouble() % 1.0 != 0.0 ||
+            !supported.containsAll(listOf("profile.catalog", "profile.lock", "profile.select", "profile.unlock")) ||
+            names.any { name -> val value = limits.opt(name); value !is Number || !value.toDouble().isFinite() ||
+                value.toDouble() <= 0 || value.toDouble() > 9007199254740991.0 || value.toDouble() % 1.0 != 0.0 }) throw CoreException("unsupported_operation")
+    }
+
+    fun profileCatalog(): JSONObject { requireProfileRuntime(); return request("profile.catalog", JSONObject()) }
+    fun lockProfile(profile: String, idempotencyKey: String): JSONObject {
+        requireProfileRuntime(); return dispatch("profile.lock", JSONObject().put("profile", profile), idempotencyKey)
+    }
+    fun selectProfile(profile: String, idempotencyKey: String): JSONObject {
+        requireProfileRuntime(); return dispatch("profile.select", JSONObject().put("profile", profile), idempotencyKey)
+    }
+    fun unlockProfile(profile: String, credentialHandle: String, idempotencyKey: String): JSONObject {
+        requireProfileRuntime(); return dispatch("profile.unlock", JSONObject().put("profile", profile).put("credential_handle", credentialHandle), idempotencyKey)
+    }
+
     fun profileQuery(profile: String): JSONObject =
         request("profile.query", JSONObject().put("profile", profile))
 

@@ -98,10 +98,10 @@ def materials_report(source, tree):
                 "wheel_distributions": ["av"]}], "notice_files_verified": sum(len(item["notice_files"]) for item in packages),
                 "required_modules_verified": declaration["required_modules"], "notice_limits": declaration["wheel_native_notice_limit"],
                 "native_files_without_wheel_owner": [], "release_approval": False,
-                "project_license_sha256": digest(matrix.ROOT / "LICENSE")}
+                "project_license_sha256": runtime_materials.digest(runtime_materials.text_bytes(matrix.ROOT / "LICENSE"))}
     return {"v": 1, "passed": True, "evidence_level": runtime_materials.LEVEL, "source_commit": source, "source_tree": tree,
             "sidecar_sha256": "d" * 64, "build_input_sha256": "e" * 64, "build_manifest_sha256": "f" * 64,
-            "inventory": inventory, "scope": declaration["scope"], "declaration_sha256": digest(runtime_materials.DECLARATION)}
+            "inventory": inventory, "scope": declaration["scope"], "declaration_sha256": runtime_materials.digest(runtime_materials.text_bytes(runtime_materials.DECLARATION))}
 
 
 def boundary_reports(directory, source, tree):

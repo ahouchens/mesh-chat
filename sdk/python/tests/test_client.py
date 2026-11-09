@@ -36,6 +36,10 @@ def test_missing_feature_and_missing_caller_keys_never_write_a_mutation():
     client = CoreClient.open(stream.read, stream.write, stream.close)
     with pytest.raises(CoreClientError, match="unsupported_operation"):
         client.enqueue_draft("p" * 64, "q" * 64, "a" * 64)
+    with pytest.raises(CoreClientError, match="unsupported_operation"):
+        client.profile_catalog()
+    with pytest.raises(CoreClientError, match="unsupported_operation"):
+        client.lock_profile("p" * 64, "caller-profile-key-0001")
     for call in [lambda: client.create_profile("Example"),
                  lambda: client.workspace_join("p" * 64, "signed"),
                  lambda: client.workspace_admission_grant_list("p" * 64, "w" * 64)]:

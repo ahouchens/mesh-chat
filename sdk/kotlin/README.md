@@ -63,6 +63,12 @@ Python's first standalone wheel uses PEP440 version0.3.0.dev0 for this cohort.
 Android ABI/API-level and actual packaged evidence belong to each CI artifact
 manifest; staging declares no supported upgrade window.
 
+Profile catalog/lock/select/unlock helpers require all four lifecycle operations
+and four positive profile limits. Only the runtime-level host advertises them.
+Unlock accepts an expiring, single-use opaque credential reference from trusted
+platform authentication. The SDK never issues credentials or reads Keystore
+keys. Selection and reconciliation do not unlock a profile implicitly.
+
 The [independent example](../../examples/android-core-consumer/README.md) compiles
 outside the checkout against this AAR. CI records its APKs, SDK digest, and
 cross-UID Binder checks. Durable peer messaging, restart/partition recovery,

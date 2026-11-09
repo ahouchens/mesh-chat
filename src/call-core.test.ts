@@ -6,14 +6,15 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 vi.mock("@tauri-apps/plugin-deep-link", () => ({ getCurrent: vi.fn(), onOpenUrl: vi.fn() }));
 vi.mock("@tauri-apps/api/app", () => ({ onBackButtonPress: vi.fn() }));
 
-import { callControl, fetchCallMedia } from "./call-core";
+import { prepareCallControl, submitCallControl, fetchCallMedia } from "./call-core";
 
 afterEach(() => host.invoke.mockReset());
 
 it("unwraps the actual call control envelope and sends one keyed mutation", async () => {
   host.invoke.mockImplementation(async (command: string) => command === "core_api_profile"
     ? { profile: "profile-handle" } : { profile: "profile-handle", result: { id: "local-call", state: "dialing" } });
-  await expect(callControl("start", { contact_id: "contact", media: "audio" }))
+  const ticket = await prepareCallControl("start", { contact_id: "contact", media: "audio" });
+  await expect(submitCallControl(ticket))
     .resolves.toEqual({ id: "local-call", state: "dialing" });
   expect(host.invoke.mock.calls).toEqual([
     ["core_api_profile", undefined],

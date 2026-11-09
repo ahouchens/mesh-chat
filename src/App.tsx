@@ -1,4 +1,5 @@
 import { CallDialog, IncomingCallPrompt, type CallPeer } from "./CallDialog";
+import { CallRecoveryNotice } from "./CallRecoveryNotice";
 import { workspaceConnectivityLabel, workspaceStateLabel, workspaceSyncIssueLabel } from "./workspaceLabels";
 import { contactTrustDescription, contactTrustLabel, groupComposerState, groupInvitationBanner, groupInviteDeliveryLabel, groupPolicyLabel, pluralize } from "./groupLabels";
 import { canPrepareDirectHost, directActionLabel, directPhaseLabel, directFailureReport, directReasonLabel, sanitizedDoctorSummary } from "./directLabels";
@@ -6432,6 +6433,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
         </> : null}
         <footer className="sidebar__footer" title={networkAvailable ? "The local network service is running. This does not confirm that another device is reachable." : undefined}><span className={`network-dot ${networkAvailable ? "network-dot--on" : ""}`} />{networkAvailable ? "Network service active" : "Networking unavailable"}</footer>
       </aside>
+      <CallRecoveryNotice />
       <div ref={mainPaneRef} className="main-pane" aria-hidden={settings || workspaceSettingsSection ? true : undefined}>
         {snapshot.service_error && (
           <div className="service-warning" role="alert">

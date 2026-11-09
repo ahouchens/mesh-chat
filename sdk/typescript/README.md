@@ -51,3 +51,10 @@ packaged-platform qualification, each of which must retain source/artifact hashe
 Run `node scripts/check_typescript_distribution.mjs` after compilation to pack,
 install outside the checkout and inspect the archive. The independent example
 under `examples/typescript-core-consumer` imports only the installed package.
+
+`profileCatalog`, `lockProfile`, `selectProfile` and `unlockProfile` require the
+four advertised lifecycle operations and four positive profile limits. Only a
+runtime-level host exposes this feature; a profile service alone does not.
+Unlock uses an opaque, expiring, single-use credential reference issued by the
+trusted platform host. The SDK never creates it or reads an OS key slot.
+Selection and reconciliation do not unlock implicitly.

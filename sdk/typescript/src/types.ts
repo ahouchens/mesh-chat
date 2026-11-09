@@ -22,6 +22,12 @@ export interface Capabilities {
   limits: Record<string, number>;
 }
 
+export interface ProfileCatalog {
+  profiles: { profile: string; display_name: string; selected: boolean; state: "locked" | "unlocked" | "retiring" }[];
+  selected_profile: string | null;
+  revision: number;
+}
+
 export interface ProfileView {
   profile: string;
   display_name: string;

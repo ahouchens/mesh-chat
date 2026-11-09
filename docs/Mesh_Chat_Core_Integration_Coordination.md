@@ -27,6 +27,31 @@ call-operation ticket is under review, including the incoming-call cleanup guard
 Private host bindings, key release after worker drain, pairing policy, upgrade
 checks and actual cross-platform topology qualification remain active work.
 
+Follow-up `7e7249a` is integrated at `f61d480`: temporary-source SDK builds,
+private packaged inspector bindings and release of vault crypto references after
+successful close. All 12 installed SDK cases pass on the combined source; the
+broader run passes 70 cases with one existing Linux-only test skipped on Windows.
+CI staging prerequisites are integrated at `d8d47ce` and exact-source staging
+passes. Pairing handoff review and incoming-call profile/cleanup guards remain
+pending before the next combined policy and packaged qualification run.
+
+The combined policy checkpoint `538ba226` passes all 2,815 required tests without
+skips and strict model/reducer typing. Call recovery and incoming profile guards
+are integrated; exact UI boundary `7dd1034` passes 471 Python and eight rendered
+cases. Subsequent `7b4dc3f` integrates reviewed upgrade fixtures and bounded peer
+drivers; 37 focused cases pass. Concrete pairing composition, private profile
+host admission, remaining mutation-key extensions and actual topology execution
+remain active. Only Wave 1 has complete accepted packaged CI evidence.
+
+Interim CI `42665862417` at `dcac85e` passed the independently reconstructed
+2,871-case policy gate, but exposed Windows archive verification, Android test
+dependency and stale frontend history assertion failures. B owns the narrow
+`service/tests/test_frontend_layout.py` correction; D coordinates the Android
+instrumentation repair with C's Gradle ownership. Archive repairs and B's pure
+reaction/invitation hooks are integrated at `67ff95b` (225 focused passes, no
+skips). A's runtime profile host remains under review for persisted-selection
+versus active-vault authority. No new packaged acceptance is claimed.
+
 ## Active Wave 2 handoff
 
 All workers merge the current lead branch before edits. Source `174728e` is the
@@ -83,6 +108,19 @@ A retains Core host lifecycle/inspector bindings and vault semantics. Strict
 model/reducer typechecking and qualification before default promotion remain
 required. A separately audits mutations outside the prior 92 keyed-action
 inventory and records domain-hook ownership needs before edits.
+
+C additionally owns `connection/supervisor.py` for atomic pairing handoff and
+stale-completion retirement fences. A additionally owns `group_service.py` and
+new `test_group_operation_idempotency.py` for additive explicit-key mutation
+support, preserving declared legacy request behavior. D independently verifies
+the new capability and replay/authority contract after A supplies it.
+
+B additionally owns `reactions.py`, `contact_invitations.py`, and new
+`test_reaction_keyed_preparation.py` / `test_contact_invitation_keyed_preparation.py`
+for prepared domain writes and post-commit effects coordinated with A's caller
+receipt transaction. A additionally owns `direct_recovery.py` for import/export
+resource intents. C retains `service.py`, reconnect and participant glue; current
+pairing work stays first. No owner silently changes another owner's files.
 
 ## Historical Wave 1 ownership and gate
 

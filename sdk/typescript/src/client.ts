@@ -14,6 +14,7 @@ import type {
   Acceptance,
   Acknowledgment,
   Capabilities,
+  ProfileCatalog,
   ConnectionView,
   DiagnosticsView,
   EventPage,
@@ -219,6 +220,31 @@ export class CoreClient {
 
   async applicationSnapshot(): Promise<Record<string, unknown>> {
     return this.request<Record<string, unknown>>("application.snapshot", {});
+  }
+
+  #requireProfileRuntime(): void {
+    const names = ["profile.catalog", "profile.lock", "profile.select", "profile.unlock"];
+    const limits = ["profile_slots", "profile_lifecycle_keys_per_host", "profile_lifecycle_keys_per_caller_profile", "profile_unlock_credentials"];
+    if (this.capabilities.api_minor < 1 || !names.every(name => this.capabilities.operations.includes(name)) ||
+        !limits.every(name => Number.isSafeInteger(this.capabilities.limits[name]) && this.capabilities.limits[name]! > 0)) {
+      throw new CoreError("unsupported_operation", null, null);
+    }
+  }
+
+  async profileCatalog(): Promise<ProfileCatalog> {
+    this.#requireProfileRuntime(); return this.request("profile.catalog", {});
+  }
+
+  async lockProfile(profile: string, idempotencyKey: string): Promise<ProfileCatalog> {
+    this.#requireProfileRuntime(); return this.request("profile.lock", { profile }, { idempotencyKey });
+  }
+
+  async selectProfile(profile: string, idempotencyKey: string): Promise<ProfileCatalog> {
+    this.#requireProfileRuntime(); return this.request("profile.select", { profile }, { idempotencyKey });
+  }
+
+  async unlockProfile(profile: string, credentialHandle: string, idempotencyKey: string): Promise<ProfileCatalog> {
+    this.#requireProfileRuntime(); return this.request("profile.unlock", { profile, credential_handle: credentialHandle }, { idempotencyKey });
   }
 
   async profileQuery(profile: string): Promise<ProfileView> {
