@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from ..errors import ContactNotApproved, NativeUnavailable
 from .adapters.reconnect import NativePort, ReconnectExecutor, SignalingPort
+from .adapters.pairing import PairingAndReconnectExecutor, PairingExecutor, PairingPort
 from .model import Execution, Resource
 from .reconcile import authority_signature, connection_key
 from .runtime import ConnectionRuntime
@@ -14,10 +15,15 @@ def native_runtime(service):
     def profiles():
         with service._dispatch_lock:
             payload = service.reconnect_profiles()
+            def projected(profile):
+                if service._native_pairing_blocks_profile(profile):
+                    return {**profile, "active": False, "manual_carrier_authorized": False,
+                            "effective": {"ready": False, "reasons": ["pairing_pending"]}}
+                return {**profile, "manual_carrier_authorized": service.native_manual_carrier_authorized(profile["id"])}
             return {**payload, "profiles": [
-                {**profile, "manual_carrier_authorized": service.native_manual_carrier_authorized(profile["id"])}
+                projected(profile)
                 for profile in payload["profiles"]
-            ]}
+            ] + service._native_pairing_profiles()}
 
     def execution():
         if service._shutdown.is_set():
@@ -61,9 +67,18 @@ def native_runtime(service):
             bindings.attach, bindings.close,
             lambda key: _claim_carrier(service, key),
         )
-        return ReconnectExecutor(signaling, native, profile=fresh_profile,
+        reconnect = ReconnectExecutor(signaling, native, profile=fresh_profile,
                     ice=service.call_ice_servers, path=service.reconnect_path_status,
                     current=current, now=monotonic, wall_time=time)
+        pairing = PairingExecutor(PairingPort(
+            service._native_pairing_context, service._native_pairing_reserve,
+            lambda context: service._native_pairing_fetch(context, "offer"),
+            service._native_pairing_gather, service._native_pairing_gather,
+            service._native_pairing_publish, service._native_pairing_publish,
+            lambda context: service._native_pairing_fetch(context, "answer"),
+            service._native_pairing_apply, service._native_pairing_ready,
+            service._native_pairing_retire), current=current, now=monotonic)
+        return PairingAndReconnectExecutor(pairing, reconnect)
 
     def prepare():
         from ..carrier_recovery import reconcile_carriers
@@ -75,6 +90,7 @@ def native_runtime(service):
     runtime = ConnectionRuntime(getattr(service, "_runtime_incarnation", None) or uuid4().hex,
                                 factory, profiles=profiles, execution=execution,
                                 activate=activate,
+                                handoff=service._native_pairing_handoff,
                                 prepare=prepare if getattr(service, "_carrier_recovery_pending", False) else None)
     return runtime
 
