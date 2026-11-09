@@ -29,6 +29,12 @@ queued-send retirement gap below. They do not establish packaged/device or
 independent cross-platform acceptance. The new independent Android consumer is
 excluded from this run and still needs actual publication and installed tests.
 
+That CI run cannot pass: policy and broad verification fail collecting the group
+Python SDK test because its standalone import setup is missing. The local policy
+command supplied an extra SDK search path, so its result does not prove clean
+runner compatibility. A tracked repair and clean rerun are required. The separate
+Android integration at `75b7719` has 401 focused passes and no platform claim.
+
 Earlier checkpoint evidence follows.
 
 Latest public pairing integration `787b6aa` has 79 passing actor/installed-SDK

@@ -10,6 +10,20 @@ is running at source `32cc1d5765a1ae1a3ad91e752e341b95cbce2e40`, tree
 was canceled. All 143 retained validator source files are pinned to this source.
 There is no CI success claim yet.
 
+The selection artifact independently confirms all six required families and
+native workload `full`: artifact `13711994100`, archive SHA-256
+`43f3a22b282768059cb72ed56293fff4e11e0b38738c4940ac0b1e30e97e43de`.
+Policy and broad verification subsequently **fail test collection** because
+`test_core_group_composer_sdk.py` imports the standalone Python SDK without
+tracked import setup. The local policy command below explicitly added
+`sdk/python/src` to `PYTHONPATH`, masking this clean-run defect. Its executed
+results remain valid only for that environment; they do not qualify clean CI.
+The failed policy archive `13712074019` has SHA-256
+`9c23a28ee7a0de7742ecebc0d103a066a4edd4e30ddfbccba766f1306afd429d`;
+verification `13713062285` has SHA-256
+`c827efcf494eb32d8ad7b3430786054d7aad30bc20bac2b98f2ad1481844b8fb`.
+Neither contains a passing suite execution. A owns the isolated setup repair.
+
 Exact SDK staging passes. The full required local policy passes **3,463 tests,
 zero failures/skips**, in 365.09s; qualification ID
 `9328e6cfe05c44c8aff5572e7bfbd497`. Exact Windows boundary passes **nine cases,
@@ -35,6 +49,13 @@ guard repair (`69ef1c8`) and C's public Activity dependency export (`53225a1`).
 D's independent Android consumer `cd08903` is deliberately excluded, pending a
 separate checkpoint. It has source-level tests and C review only; no built
 publication, installed Android, OS credential or cross-platform receipt claim.
+
+The independent Android source is subsequently integrated at `75b7719`.
+Lead verification passes **401 consumer, matrix, CI selection, interop controller
+and Android report cases**, zero skips, in 22.73s. The required Android inventory
+now includes 52 cases and 17 artifact hashes, preserving the previous 50 cases.
+C's source review is accepted. Actual Maven publication, APK assembly and the
+two installed lifecycle cases remain pending a separate CI checkpoint.
 
 ### Atomic group integration and completed profile CI
 

@@ -29,6 +29,15 @@ installed lifecycle cases have not run. A/C's personal direct-consent proposal
 and B's protected pending-action recovery proposal remain read-only design work.
 No Wave 2 acceptance or release promotion follows from this dispatch.
 
+CI update: both policy and broad verification fail collection of
+`test_core_group_composer_sdk.py`: the clean runner cannot import the standalone
+Python SDK. The lead's local command added `sdk/python/src` to `PYTHONPATH`,
+masking this missing tracked setup. A owns the narrow test repair; the next full
+local run must omit that addition. Windows, Android and direct jobs continue.
+D's independent Android checkpoint is now integrated separately at `75b7719`;
+401 consumer, matrix, selection, controller and Android report checks pass with
+zero skips in 22.73s. That integration is not tested by CI `42704405112`.
+
 Earlier checkpoint history follows. At `a175ae5`, the feature branch was
 `5ea2949`.
 CI `42693457737` has three known failures, repaired locally: Windows empty

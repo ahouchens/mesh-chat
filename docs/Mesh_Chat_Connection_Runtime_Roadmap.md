@@ -19,6 +19,12 @@ pending. The independent Android consumer `cd08903` is the next separate source
 checkpoint, not part of this run. Protected pending-action recovery and personal
 direct-IP consent remain reviewed proposals, not implemented qualifications.
 
+CI policy and broad verification now fail collection on the group Python SDK
+test's missing import setup; the local command's extra SDK path masked it.
+A repairs tracked setup before a clean-environment rerun. The next independent
+Android source is integrated at `75b7719` with 401 focused passes; actual build
+and installed tests remain pending and are excluded from the current CI run.
+
 The following paragraphs retain earlier checkpoint history.
 
 Current public pairing source `787b6aa` passes 79 actor/installed-SDK checks and
