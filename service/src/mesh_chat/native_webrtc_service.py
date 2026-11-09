@@ -643,6 +643,7 @@ class NativeWebRTCServiceMixin(NativeWebRTCControlMixin):
                     self._native_resources.confirm_closed(session_id, physical)
         finally:
             with self._dispatch_lock, self._native_webrtc_lock:
+                getattr(self, "_native_path_sequences", {}).pop(physical, None)
                 if self._native_resources.current(session_id, physical):
                     if checkpoint_retired:
                         self._release_native_session(session_id)
@@ -667,3 +668,81 @@ class NativeWebRTCServiceMixin(NativeWebRTCControlMixin):
             )
             stats["session_id"] = session_id
         return stats
+
+    def native_webrtc_path_evidence(self, logical_session: str, expected_physical: str) -> dict[str, Any]:
+        """Private qualification port. Never register in a JSON command table."""
+        from hashlib import sha256
+        from .native_path_evidence import MAX_BYTES, SAMPLE_TIMEOUT, validate_observation
+        if (not isinstance(logical_session, str) or not 1 <= len(logical_session) <= 128
+                or not isinstance(expected_physical, str) or not 1 <= len(expected_physical) <= 128):
+            raise ValidationError("Native inspection resource is invalid")
+        with self._dispatch_lock, self._native_webrtc_lock:
+            self._require_native_work()
+            if (self._identity is None or logical_session not in self._native_webrtc_live
+                    or not self._native_resources.current(logical_session, expected_physical)):
+                raise NativeUnavailable("Native inspection resource is no longer current")
+            if self._shared_native_session(logical_session):
+                self._require_native_bridge_authority(logical_session)
+            incarnation, identity = self._runtime_incarnation, self._identity
+            host = self._native_webrtc_host()
+            inspect = getattr(host, "pathEvidence", None)
+            if not callable(inspect):
+                raise NativeUnavailable("Native path inspection is unsupported")
+        started = time.monotonic()
+        raw = inspect(expected_physical)
+        elapsed = time.monotonic() - started
+        if not isinstance(raw, str) or len(raw.encode("utf-8")) > MAX_BYTES or elapsed > SAMPLE_TIMEOUT + 0.25:
+            raise NativeUnavailable("Native path inspection exceeded its budget")
+        try:
+            envelope = json.loads(raw)
+            if not isinstance(envelope, dict) or envelope.get("ok") is not True:
+                raise ValueError
+            value = validate_observation(envelope.get("result"), expected_physical)
+        except (ValueError, TypeError) as error:
+            raise NativeUnavailable("Native path inspection is unavailable") from error
+        with self._dispatch_lock, self._native_webrtc_lock:
+            self._require_native_work()
+            if (self._identity is not identity or self._runtime_incarnation != incarnation
+                    or self._native_webrtc_host() is not host
+                    or logical_session not in self._native_webrtc_live
+                    or not self._native_resources.current(logical_session, expected_physical)):
+                raise NativeUnavailable("Native inspection completed after its resource was retired")
+            if self._shared_native_session(logical_session):
+                self._require_native_bridge_authority(logical_session)
+            if not hasattr(self, "_native_path_sequences"):
+                self._native_path_sequences = {}
+            previous = self._native_path_sequences.get(expected_physical)
+            if previous is not None and (previous[0] != value["adapter_epoch"] or previous[1] >= value["sample_sequence"]):
+                raise NativeUnavailable("Native path inspection is stale")
+            self._native_path_sequences[expected_physical] = value["adapter_epoch"], value["sample_sequence"]
+            value.update(service_incarnation=incarnation,
+                         profile_incarnation=sha256((incarnation + identity.hash.hex()).encode("ascii")).hexdigest()[:32],
+                         logical_session=logical_session, qualification_only=True,
+                         valid_for_ms=int(SAMPLE_TIMEOUT * 1000), sample_elapsed_ms=int(elapsed * 1000),
+                         adopted=self._shared_native_session(logical_session),
+                         attached=self._native_bridge_attached(logical_session))
+            runtime = getattr(self, "_connection_runtime", None)
+            snapshots = runtime.snapshots() if callable(getattr(runtime, "snapshots", None)) else {}
+            profile = next((profile for profile, session in self._native_webrtc_profile_sessions.items()
+                            if session == logical_session), None)
+            value["messaging_ready"] = bool(value["adopted"] and value["attached"]
+                                             and snapshots.get(profile, {}).get("messaging_ready"))
+            if len(json.dumps(value, separators=(",", ":")).encode("utf-8")) > MAX_BYTES:
+                raise NativeUnavailable("Native path inspection exceeded its budget")
+            return value
+
+    def native_webrtc_inspection_resources(self) -> dict[str, Any]:
+        """Private discovery for the same protected qualification inspector."""
+        from hashlib import sha256
+        with self._dispatch_lock, self._native_webrtc_lock:
+            self._require_native_work()
+            if self._identity is None:
+                raise NativeUnavailable("Local profile is unavailable")
+            incarnation = self._runtime_incarnation
+            return {"v": 1, "service_incarnation": incarnation, "qualification_only": True,
+                    "profile_incarnation": sha256((incarnation + self._identity.hash.hex()).encode("ascii")).hexdigest()[:32],
+                    "resources": [{"logical_session": session,
+                                   "physical_resource": self._native_resources.require(session),
+                                   "adopted": self._shared_native_session(session)}
+                                  for session in sorted(self._native_webrtc_live)
+                                  if self._native_resources.physical(session) is not None]}

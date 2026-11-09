@@ -161,6 +161,7 @@ export async function coreApiCapabilities(): Promise<{
   stability: string;
   operations: string[];
   profiles: string[];
+  limits?: Record<string, number>;
 }> {
   return invokeCoreCommand("core_api_capabilities");
 }

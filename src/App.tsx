@@ -2,6 +2,7 @@ import { workspaceConnectivityLabel, workspaceStateLabel, workspaceSyncIssueLabe
 import { contactTrustDescription, contactTrustLabel, groupComposerState, groupInvitationBanner, groupInviteDeliveryLabel, groupPolicyLabel, pluralize } from "./groupLabels";
 import { canPrepareDirectHost, directActionLabel, directPhaseLabel, directFailureReport, directReasonLabel, sanitizedDoctorSummary } from "./directLabels";
 import { errorMessage } from "./errors";
+import { DirectMessageComposer } from "./DirectMessageComposer";
 import { newOperationId } from "./operationId";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -63,8 +64,6 @@ import {
   coreApiCreateInvitation,
   coreApiCreateProfile,
   coreApiCreateWorkspace,
-  coreApiDraftGet,
-  coreApiDraftSet,
   loadCallIceServers,
   loadCallSettings,
   saveCallSettings,
@@ -138,7 +137,6 @@ import {
   coreApiRetryGroupInvitation,
   coreApiRemoveGroupMember,
   coreApiSendGroupMessage,
-  coreApiSendMessage,
   initializeService,
   lockService,
   notificationCapability,
@@ -3278,7 +3276,7 @@ function MessageReactions({
   );
 }
 
-function Conversation({ contact, messages, draft, sendError, sending, detailsOpen, reactionTargetId, reactionCatalogOpen, reactionBusyEmoji, reactionError, onDetailsOpenChange, onToggleReactionPicker, onReactionCatalogOpenChange, onCloseReactionPicker, onSetReaction, onDraft, onSend, onHelp, onConnectionSettings, onBack, onDelete, onCall }: { contact: Contact; messages: ChatMessage[]; draft: string; sendError: string; sending: boolean; detailsOpen: boolean; reactionTargetId: string | null; reactionCatalogOpen: boolean; reactionBusyEmoji: string | null; reactionError: string; onDetailsOpenChange: (open: boolean) => void; onToggleReactionPicker: (messageId: string) => void; onReactionCatalogOpenChange: (messageId: string, open: boolean) => void; onCloseReactionPicker: () => void; onSetReaction: (messageId: string, emoji: string, active: boolean) => void; onDraft: (value: string) => void; onSend: () => void; onHelp: () => void; onConnectionSettings: () => void; onBack: () => void; onDelete: () => void; onCall: () => void }) {
+function Conversation({ contact, messages, composer, sending, detailsOpen, reactionTargetId, reactionCatalogOpen, reactionBusyEmoji, reactionError, onDetailsOpenChange, onToggleReactionPicker, onReactionCatalogOpenChange, onCloseReactionPicker, onSetReaction, onHelp, onConnectionSettings, onBack, onDelete, onCall }: { contact: Contact; messages: ChatMessage[]; composer: ReactNode; sending: boolean; detailsOpen: boolean; reactionTargetId: string | null; reactionCatalogOpen: boolean; reactionBusyEmoji: string | null; reactionError: string; onDetailsOpenChange: (open: boolean) => void; onToggleReactionPicker: (messageId: string) => void; onReactionCatalogOpenChange: (messageId: string, open: boolean) => void; onCloseReactionPicker: () => void; onSetReaction: (messageId: string, emoji: string, active: boolean) => void; onHelp: () => void; onConnectionSettings: () => void; onBack: () => void; onDelete: () => void; onCall: () => void }) {
   const messageListRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const messageList = messageListRef.current;
@@ -3321,7 +3319,7 @@ function Conversation({ contact, messages, draft, sendError, sending, detailsOpe
           </article>
         ))}
       </div>
-      <form className="composer" aria-busy={sending} onSubmit={(event) => { event.preventDefault(); onSend(); }}>{sendError && <p className="composer__error" role="alert">{sendError}</p>}<label className="sr-only" htmlFor="message-composer">Message {contact.display_name}</label><textarea id="message-composer" rows={1} value={draft} readOnly={sending} enterKeyHint="send" onChange={(event) => onDraft(event.target.value)} placeholder={`Message ${contact.display_name}`} maxLength={16384} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); onSend(); } }} /><button type="submit" disabled={sending || !draft.trim()} aria-label="Send message"><Send size={19} /></button></form>
+      {composer}
     </section>
   );
 }
@@ -4864,7 +4862,7 @@ type ConversationSelection = { kind: "contact" | "group"; id: string } | null;
 type ReactionTarget = { kind: "direct" | "group" | "workspace"; messageId: string; layer: "quick" | "catalog" } | null;
 
 type DraftWrite = {
-  command: "save_draft" | "save_group_draft" | "save_workspace_draft" | "save_workspace_direct_draft" | "save_workspace_thread_draft";
+  command: "save_group_draft" | "save_workspace_draft" | "save_workspace_direct_draft" | "save_workspace_thread_draft";
   payload: Record<string, unknown>;
 };
 
@@ -4947,7 +4945,6 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
   const [query, setQuery] = useState("");
   const [showDeletedConversations, setShowDeletedConversations] = useState(false);
   const [conversationDetailsOpen, setConversationDetailsOpen] = useState(false);
-  const [drafts, setDrafts] = useState<Record<string, string>>(() => Object.fromEntries(snapshot.drafts.map((draft) => [draft.contact_id, draft.text])));
   const [groupDrafts, setGroupDrafts] = useState<Record<string, string>>(() => Object.fromEntries((snapshot.group_drafts ?? []).map((draft) => [draft.group_id, draft.text])));
   const [newChat, setNewChat] = useState(false);
   const [newChatStartTab, setNewChatStartTab] = useState<"invite" | "join">("invite");
@@ -5164,17 +5161,8 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
   const [groupInvitationError, setGroupInvitationError] = useState("");
   const [workspaceJoinRequestError, setWorkspaceJoinRequestError] = useState("");
   const [sendError, setSendError] = useState("");
-  // A successful send command returns the message only after its encrypted
-  // record is durable. Keep that authoritative result visible until a later
-  // snapshot contains it. This is particularly important on mobile, where a
-  // separate draft-cleanup or snapshot bridge call can be delayed behind the
-  // single native worker even though the send itself has already succeeded.
-  const [locallySavedMessages, setLocallySavedMessages] = useState<Record<string, ChatMessage>>({});
   const [directSendBusy, setDirectSendBusy] = useState(false);
   const [groupSendBusy, setGroupSendBusy] = useState(false);
-  const directSendInFlight = useRef(false);
-  const pendingDirectSends = useRef(new Map<string, string>());
-  const acceptedDirectDrafts = useRef(new Map<string, string>());
   const groupSendInFlight = useRef(false);
   const reactionInFlight = useRef(false);
   const reactionInteractionGeneration = useRef(0);
@@ -5224,21 +5212,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     }
   }, []);
 
-  useEffect(() => {
-    const persistedIds = new Set(snapshot.messages.map((message) => message.id));
-    setLocallySavedMessages((current) => {
-      const entries = Object.entries(current).filter(([id]) => !persistedIds.has(id));
-      return entries.length === Object.keys(current).length ? current : Object.fromEntries(entries);
-    });
-  }, [snapshot.messages]);
-
-  const directMessages = useMemo(() => {
-    const persistedIds = new Set(snapshot.messages.map((message) => message.id));
-    return [
-      ...snapshot.messages,
-      ...Object.values(locallySavedMessages).filter((message) => !persistedIds.has(message.id)),
-    ].sort((left, right) => left.created_at - right.created_at);
-  }, [locallySavedMessages, snapshot.messages]);
+  const directMessages = snapshot.messages;
 
   const normalizedQuery = query.trim().toLowerCase();
   const revealDeletedConversations = showDeletedConversations || Boolean(normalizedQuery);
@@ -5261,21 +5235,6 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
   const hasForegroundRequest = Boolean(incomingRequest || foregroundGroupInvitation || foregroundWorkspaceJoinWorkspace);
   const networkAvailable = Boolean(snapshot.network?.interface_available) && !snapshot.service_error;
   const selectedContact = selection?.kind === "contact" ? snapshot.contacts.find((contact) => contact.id === selection.id) ?? null : null;
-  useEffect(() => {
-    const contact = selectedContact;
-    if (!contact) return;
-    let active = true;
-    void (async () => {
-      try {
-        const saved = await coreApiDraftGet(contact.destination_hash) as { text?: unknown };
-        if (active && typeof saved.text === "string"
-          && acceptedDirectDrafts.current.get(contact.id) !== saved.text) {
-          setDrafts((current) => current[contact.id] ? current : { ...current, [contact.id]: saved.text as string });
-        }
-      } catch { /* Snapshot drafts remain available when Core is unavailable. */ }
-    })();
-    return () => { active = false; };
-  }, [selectedContact?.id, selectedContact?.destination_hash]);
   const selectedGroup = selection?.kind === "group" ? groups.find((group) => group.id === selection.id) ?? null : null;
   const selectedWorkspace = activeSpaceId === "personal" ? null : workspaces.find((workspace) => workspace.id === activeSpaceId) ?? null;
   const selectedApprovedContact = !selectedWorkspace && selectedContact &&
@@ -5673,13 +5632,6 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
   };
   const enqueueDraftWrite = (slot: DraftWriteSlot, write: DraftWrite): Promise<void> => {
     const result = slot.tail.then(async () => {
-      const contactId = write.payload.contact_id;
-      if (write.command === "save_draft" && typeof contactId === "string") {
-        const contact = snapshot.contacts.find((item) => item.id === contactId);
-        if (!contact) throw new Error("core_api_unavailable");
-        await coreApiDraftSet(contact.destination_hash, String(write.payload.text ?? ""));
-        return;
-      }
       if ((write.command === "save_workspace_draft"
            || write.command === "save_workspace_direct_draft"
            || write.command === "save_workspace_thread_draft")
@@ -5739,22 +5691,14 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     if (!deleteTarget || deleteBusy) return;
     const target = deleteTarget;
     const kind = target.kind === "contact" ? "direct" : "group";
-    const draftKey = `${target.kind}:${target.id}`;
     setDeleteBusy(true);
     setDeleteError("");
     try {
-      // Prevent a delayed draft write from recreating content after the vault
-      // has committed the deletion.
-      await cancelPendingDraftWrite(draftKey);
+      // Direct composer tickets are retired by the Core deletion transaction.
+      // The group writer still needs its pending keystrokes canceled here.
+      if (target.kind === "group") await cancelPendingDraftWrite(`group:${target.id}`);
       await coreApiConversation("delete", kind, target.id);
-      if (target.kind === "contact") {
-        setDrafts((current) => {
-          const next = { ...current };
-          delete next[target.id];
-          return next;
-        });
-        setLocallySavedMessages((current) => Object.fromEntries(Object.entries(current).filter(([, message]) => message.contact_id !== target.id)));
-      } else {
+      if (target.kind === "group") {
         setGroupDrafts((current) => {
           const next = { ...current };
           delete next[target.id];
@@ -5770,14 +5714,6 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     } finally {
       setDeleteBusy(false);
     }
-  };
-  const saveDraft = (contactId: string, text: string) => {
-    acceptedDirectDrafts.current.delete(contactId);
-    setDrafts((current) => ({ ...current, [contactId]: text }));
-    scheduleDraftWrite(`contact:${contactId}`, {
-      command: "save_draft",
-      payload: { contact_id: contactId, text },
-    });
   };
   const saveGroupDraft = (groupId: string, text: string) => {
     setGroupDrafts((current) => ({ ...current, [groupId]: text }));
@@ -5807,70 +5743,6 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       command: "save_workspace_thread_draft",
       payload: { operation_id: newOperationId(), workspace_id: workspaceId, conversation_id: conversationId, thread_root_id: threadRootId, text, mention_member_ids: mentionMemberIds },
     });
-  };
-  const send = async () => {
-    if (!selectedContact || directSendInFlight.current) return;
-    const text = drafts[selectedContact.id] ?? "";
-    if (!text.trim()) return;
-    const contactId = selectedContact.id;
-    const destination = selectedContact.destination_hash;
-    const priorMessageIds = new Set(snapshot.messages.map((message) => message.id));
-    const draftKey = `contact:${contactId}`;
-    const pendingKey = JSON.stringify([destination, text]);
-    const operationId = pendingDirectSends.current.get(pendingKey) ?? newOperationId();
-    pendingDirectSends.current.set(pendingKey, operationId);
-    directSendInFlight.current = true;
-    setDirectSendBusy(true);
-    setSendError("");
-    setDrafts((current) => ({ ...current, [contactId]: "" }));
-    // Drop every not-yet-started keystroke save and wait for the sole active
-    // save, if any. The send and final empty-draft write then have a strict
-    // order even on Android's single native Python worker.
-    let accepted: Partial<ChatMessage>;
-    try {
-      await cancelPendingDraftWrite(draftKey);
-      accepted = await coreApiSendMessage(destination, text, operationId) as Partial<ChatMessage>;
-    } catch (reason) {
-      setDrafts((current) => current[contactId] ? current : { ...current, [contactId]: text });
-      scheduleDraftWrite(draftKey, {
-        command: "save_draft",
-        payload: { contact_id: contactId, text },
-      });
-      setSendError(`${errorMessage(reason)} Your text is still in the composer. Retrying unchanged text will check the same send without creating another message.`);
-      directSendInFlight.current = false;
-      setDirectSendBusy(false);
-      return;
-    }
-    pendingDirectSends.current.delete(pendingKey);
-    acceptedDirectDrafts.current.set(contactId, text);
-    if (accepted.direction === "outbound" && accepted.id) {
-      const confirmed = accepted as ChatMessage;
-      setLocallySavedMessages((current) => ({ ...current, [confirmed.id]: confirmed }));
-    }
-    try {
-      await writeDraftNow(draftKey, {
-        command: "save_draft",
-        payload: { contact_id: contactId, text: "" },
-      });
-    } catch {
-      // The durable send already succeeded. Do not restore the text and imply
-      // that it is safe to submit again merely because draft cleanup failed.
-      setSendError("Your message was saved, but its saved draft could not be cleared. It may reappear after reopening Mesh Chat.");
-    }
-    try {
-      // A state-change event may already have started a snapshot before the
-      // send committed. Queue a new snapshot behind it instead of reusing it.
-      const refreshed = await refresh(true);
-      if (!accepted.id && !refreshed.messages.some((message) => !priorMessageIds.has(message.id)
-        && message.contact_id === contactId && message.direction === "outbound" && message.text === text)) {
-        setSendError((current) => `${current || "Your message was saved. The conversation has not updated yet."} Saved text: ${text}`);
-      }
-    } catch {
-      setSendError((current) => `${current || "Your message was saved. The conversation could not refresh yet, but it will appear when Mesh Chat updates."} Saved text: ${text}`);
-    } finally {
-      directSendInFlight.current = false;
-      setDirectSendBusy(false);
-    }
   };
   const sendGroupMessage = async () => {
     if (!selectedGroup || groupSendInFlight.current) return;
@@ -7521,8 +7393,9 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
           <Conversation
             contact={selectedContact}
             messages={messages}
-            draft={drafts[selectedContact.id] ?? ""}
-            sendError={sendError}
+            composer={<DirectMessageComposer key={selectedContact.destination_hash}
+              destination={selectedContact.destination_hash} displayName={selectedContact.display_name}
+              onAccepted={() => refresh(true)} onSendingChange={setDirectSendBusy} />}
             sending={directSendBusy}
             detailsOpen={conversationDetailsOpen}
             reactionTargetId={reactionTarget?.kind === "direct" ? reactionTarget.messageId : null}
@@ -7534,8 +7407,6 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
             onReactionCatalogOpenChange={(messageId, open) => setReactionCatalogOpen("direct", messageId, open)}
             onCloseReactionPicker={closeReactionPicker}
             onSetReaction={(messageId, emoji, active) => void setMessageReaction("direct", messageId, emoji, active)}
-            onDraft={(value) => { setSendError(""); saveDraft(selectedContact.id, value); }}
-            onSend={() => void send()}
             onHelp={() => void connectionHelp()}
             onConnectionSettings={() => { setContactsInitialId(selectedContact.id); setContactsOpen(true); }}
             onBack={() => selectConversation(null)}
@@ -7618,7 +7489,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       {webrtcOnboardingOpen && <WebRTCOnboardingDialog initialPairingCode={initialPairingCode || (resumePairingOpen ? resumePairingCode : "")} onClose={() => { setWebRtcOnboardingOpen(false); setResumePairingOpen(false); onPairingHandled?.(); }} onConnected={(path) => { setWebRtcSessionActive(true); setWebRtcSessionCount(getWebRTCSessionCount()); setWebrtcPath(path); }} onFallback={() => { setNewChatStartTab("invite"); setNewChat(true); }} onChanged={async () => { await refresh(true); }} workspaces={(snapshot.workspaces ?? []).map((workspace) => ({ id: workspace.id, name: workspace.name }))} />}
       {newChat && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><NewChatDialog initialInvitation={initialInvitation} initialTab={newChatStartTab} initialConnection={newChatTransport} remoteProfiles={snapshot.remote_profiles ?? []} onClose={() => { setNewChat(false); onInvitationHandled(); }} onChanged={async () => { await refresh(true); }} onWorkspaceInvitation={(value) => { setNewChat(false); setJoinWorkspaceValue(value); setJoinWorkspaceOpen(true); }} /></div>}
       {newGroup && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><CreateGroupDialog contacts={snapshot.contacts} onClose={() => setNewGroup(false)} onCreated={async (created) => { const refreshed = await refresh(true); const group = "id" in created ? created : refreshed.groups?.find((item) => item.title === created.name); if (group) selectConversation({ kind: "group", id: group.id }); setNewGroup(false); }} /></div>}
-      {contactsOpen && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><ContactsDialog initialContactId={contactsInitialId} contacts={snapshot.contacts.filter((contact) => contact.trust !== "pending_request")} reconnect={reconnectCoordinator} onClose={() => setContactsOpen(false)} onChanged={async () => { await refresh(true); }} onOpenConversation={async (contact) => { const hidden = hiddenConversationKeys.has(`direct:${contact.id}`); setContactsOpen(false); await restoreAndSelect({ kind: "contact", id: contact.id }, hidden); }} onDeleted={async (contactId) => { if (selection?.kind === "contact" && selection.id === contactId) setSelection(null); setDrafts((current) => { const next = { ...current }; delete next[contactId]; return next; }); setLocallySavedMessages((current) => Object.fromEntries(Object.entries(current).filter(([, message]) => message.contact_id !== contactId))); await refresh(true); }} /></div>}
+      {contactsOpen && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><ContactsDialog initialContactId={contactsInitialId} contacts={snapshot.contacts.filter((contact) => contact.trust !== "pending_request")} reconnect={reconnectCoordinator} onClose={() => setContactsOpen(false)} onChanged={async () => { await refresh(true); }} onOpenConversation={async (contact) => { const hidden = hiddenConversationKeys.has(`direct:${contact.id}`); setContactsOpen(false); await restoreAndSelect({ kind: "contact", id: contact.id }, hidden); }} onDeleted={async (contactId) => { if (selection?.kind === "contact" && selection.id === contactId) setSelection(null); await refresh(true); }} /></div>}
       {settings && <div className={`settings-page-slot ${hasForegroundRequest ? "dialog-suspended" : ""}`} aria-hidden={hasForegroundRequest ? true : undefined}><SettingsPage snapshot={snapshot} theme={theme} onThemeChange={onThemeChange} onClose={() => setSettings(false)} onBackHandlerChange={registerSettingsBackHandler} onSaved={async () => { await refresh(true); }} /></div>}
       {notificationTarget && !notificationTarget.available && <Dialog title="Notification unavailable" onClose={onNotificationHandled}><div className="form-stack"><p>{notificationTarget.message ?? "This notification is no longer available or authorized on this device."}</p><p className="muted">Mesh Chat did not open stale content or change any read state.</p><Button onClick={onNotificationHandled}>Done</Button></div></Dialog>}
       {deleteTarget && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><DeleteConversationDialog kind={deleteTarget.kind === "contact" ? "direct" : "group"} name={deleteTargetName} busy={deleteBusy} error={deleteError} onCancel={() => { if (!deleteBusy) { setDeleteError(""); setDeleteTarget(null); } }} onConfirm={() => void deleteConversation()} /></div>}
