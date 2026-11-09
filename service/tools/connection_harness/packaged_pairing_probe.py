@@ -53,12 +53,14 @@ def approved_path(controller, fixtures):
     except TimeoutError:
         # Keep both strings within the existing host's 64-character, identifier
         # only diagnostic boundary. No raw stats, identities, SDP or paths leave
-        # this process. dN is data-channel state; aN is attachment (1/0/u);
-        # cN counts host close
+        # this process. dN is channel state (wait/close/missing abbreviations);
+        # aN is attachment (1/0/u), cN counts host close calls, sN is the one
+        # outbound contact_accept state (q/s/r/d/f/e/n/m/u: queued/sending/
+        # endpoint/delivered/failed/expired/none/multiple/unknown).
         # calls. The error code retains authoritative carrier/bridge categories.
         states, native = [], []
         for slot, session in enumerate(("manual-peer-zero", "manual-peer-one")):
-            carrier, bridge, channel, attached, closes = "unknown", "unknown", "unknown", "u", "u"
+            carrier, bridge, channel, attached, closes, acceptance = "unknown", "unknown", "unknown", "u", "u", "u"
             try:
                 profiles = controller.call(slot, "reconnect_profiles")["profiles"]
                 profile = next((item for item in profiles if item.get("contact_id") == fixtures[slot][2]), {})
@@ -78,11 +80,24 @@ def approved_path(controller, fixtures):
                 if type(count) is int and count >= 0: closes = str(min(count, 999))
             except Exception:
                 pass
+            try:
+                messages = controller.call(slot, "snapshot")["messages"]
+                accepts = [item for item in messages if item.get("kind") == "contact_accept" and item.get("direction") == "outbound"]
+                if not accepts: acceptance = "n"
+                elif len(accepts) > 1: acceptance = "m"
+                else:
+                    state = accepts[0].get("state")
+                    if isinstance(state, str):
+                        acceptance = {"queued": "q", "sending": "s", "received_by_endpoint": "r",
+                            "delivered": "d", "failed": "f", "expired": "e"}.get(state, "u")
+            except Exception:
+                pass
             if not isinstance(carrier, str) or carrier not in {"absent", "open", "suspect", "closing"}: carrier = "unknown"
             if not isinstance(bridge, str) or bridge not in {"detached", "attaching", "path_pending", "ready", "restoring"}: bridge = "unknown"
             if not isinstance(channel, str) or channel not in {"open", "connecting", "closing", "closed", "unavailable"}: channel = "unknown"
+            channel = {"connecting": "wait", "closing": "close", "unavailable": "missing"}.get(channel, channel)
             states.append(f"p{slot}_{carrier}_{bridge}")
-            native.append(f"d{slot}{channel}_a{slot}{attached}_c{slot}{closes}")
+            native.append(f"d{slot}{channel}_a{slot}{attached}_c{slot}{closes}_s{slot}{acceptance}")
         controller.phase = "approved_path_" + "_".join(native)
         controller.error_code = "_".join(states)
         raise

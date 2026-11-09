@@ -88,6 +88,9 @@ def test_approved_path_timeout_remains_failure_with_bounded_content_free_native_
                 # A foreign first profile must not supply another peer's state.
                 return {"profiles": [{"contact_id": "foreign", "connection": {"carrier": "closing", "bridge": "restoring"}},
                     {"contact_id": "peer", "connection": {"carrier": "absent", "bridge": "detached"}}]}
+            if command == "snapshot":
+                return {"messages": [{"kind": "contact_accept", "direction": "outbound", "text": "RAW signed private document",
+                    "state": ["RAW secret"] if fault == "raw_fields" else "received_by_endpoint" if slot == 0 else "queued"}]}
             assert command == "native_webrtc_stats"
             if fault == "retired": raise RuntimeError("native_unavailable")
             return {"data_channel_state": ["RAW SDP"] if fault == "raw_fields" else "open",
@@ -103,6 +106,6 @@ def test_approved_path_timeout_remains_failure_with_bounded_content_free_native_
     for value in (controller.phase, controller.error_code):
         assert len(value) <= 64 and value.isidentifier() and "RAW" not in value
     if fault is None:
-        assert controller.phase == "approved_path_d0open_a00_c0999_d1open_a10_c1999"
+        assert controller.phase == "approved_path_d0open_a00_c0999_s0r_d1open_a10_c1999_s1q"
         assert controller.error_code == "p0_absent_detached_p1_absent_detached"
-    if fault == "retired": assert "unavailable" in controller.phase
+    if fault == "retired": assert "missing" in controller.phase
