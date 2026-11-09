@@ -58,6 +58,7 @@ import {
 } from "lucide-react";
 import {
   coreApiAcceptInvitation,
+  coreApiBootstrapPreview,
   coreApiCreateGroup,
   coreApiCreateInvitation,
   coreApiCreateProfile,
@@ -1445,8 +1446,7 @@ function Onboarding({
           return;
         }
         if (kind === "workspace_device") {
-          const checked = await fetchWorkspaceConnection(null, "device_link_preview",
-            { device_link: normalized }, "preview_workspace_device_link") as unknown as WorkspaceDeviceLinkPreview;
+          const checked = await coreApiBootstrapPreview("device_link", normalized);
           if (generation !== previewGeneration.current) return;
           setWorkspaceContext({
             kind: "device",
@@ -1454,7 +1454,7 @@ function Onboarding({
             memberDisplayName: checked.member_display_name,
           });
         } else {
-          const checked = await coreApiPreviewWorkspaceInvitation(normalized) as WorkspaceInvitationPreview;
+          const checked = await coreApiBootstrapPreview("workspace", normalized);
           if (generation !== previewGeneration.current) return;
           setWorkspaceContext({
             kind: "workspace",
@@ -1466,7 +1466,7 @@ function Onboarding({
         setMode("start");
         return;
       }
-      const checked = await coreApiPreviewInvitation(normalized) as unknown as InvitationPreview;
+      const checked = await coreApiBootstrapPreview("personal", normalized);
       if (generation !== previewGeneration.current) return;
       setPreview(checked);
       setRemoteConsent(false); setI2PConsent(false);
