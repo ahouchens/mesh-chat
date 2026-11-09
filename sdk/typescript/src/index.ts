@@ -14,6 +14,8 @@ export type {
   CallOperation,
   CallOperationCatalog,
   CallOperationResult,
+  PairingIntent,
+  PairingBeginOptions,
   Composer,
   ComposerUpdate,
   ComposerSendOutcome,

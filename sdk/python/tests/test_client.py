@@ -99,6 +99,50 @@ def test_call_recovery_preserves_explicit_abandon_key_without_retry():
     assert frame["idempotency_key"] == "explicit-abandon-key00" and frame["params"] == {"profile": "p" * 64, "operation": "o" * 64}
 
 
+def pairing_capabilities():
+    return {**CAP, "api_minor": 1, "operations": ["peer.pairing_begin", "peer.pairing_query", "peer.pairing_cancel"],
+            "limits": {name: 2048 for name in ("pairing_intents_per_runtime", "pairing_active_intents", "pairing_intent_seconds",
+                "pairing_code_utf8_bytes", "pairing_key_idempotency_seconds", "pairing_keys_per_caller_profile", "pairing_keys_per_vault")}}
+
+
+@pytest.mark.parametrize("damage", ["old", "missing_operation", "missing_limit", "boolean_limit"])
+def test_pairing_helpers_require_complete_advertised_feature_before_io(damage):
+    caps = pairing_capabilities()
+    if damage == "old": caps["api_minor"] = 0
+    if damage == "missing_operation": caps["operations"] = caps["operations"][:-1]
+    if damage == "missing_limit": del caps["limits"]["pairing_active_intents"]
+    if damage == "boolean_limit": caps["limits"]["pairing_active_intents"] = True
+    stream = Scripted(response("client:1", caps))
+    client = CoreClient.open(stream.read, stream.write)
+    for invoke in [lambda: client.pairing_begin("p" * 64, "offer", "caller-begin-key-0001"),
+                   lambda: client.pairing_query("p" * 64, "q" * 64),
+                   lambda: client.pairing_cancel("p" * 64, "q" * 64, "caller-cancel-key-001")]:
+        with pytest.raises(CoreClientError, match="unsupported_operation"): invoke()
+    assert len(stream.written) == 1
+
+
+def test_pairing_helpers_preserve_keys_role_and_explicit_disclosure_consent():
+    stream = Scripted(response("client:1", pairing_capabilities()), *(response(f"client:{i}", {}) for i in range(2, 6)))
+    client = CoreClient.open(stream.read, stream.write)
+    for invoke in [lambda: client.pairing_begin("p" * 64, "offer", "bad"),
+                   lambda: client.pairing_begin("p" * 64, "answer", "caller-begin-key-0001"),
+                   lambda: client.pairing_begin("p" * 64, "offer", "caller-begin-key-0001", pairing_code="forbidden"),
+                   lambda: client.pairing_begin("p" * 64, "answer", "caller-begin-key-0001", pairing_code="é" * 1025),
+                   lambda: client.pairing_begin("p" * 64, "offer", "caller-begin-key-0001", allow_direct_ip_disclosure=None),
+                   lambda: client.pairing_cancel("p" * 64, "q" * 64, "bad")]:
+        with pytest.raises(ValueError): invoke()
+    assert len(stream.written) == 1
+    client.pairing_begin("p" * 64, "offer", "caller-begin-key-0001")
+    client.pairing_begin("p" * 64, "answer", "caller-answer-key001", pairing_code="synthetic-code", allow_direct_ip_disclosure=True)
+    client.pairing_query("p" * 64, "q" * 64)
+    client.pairing_cancel("p" * 64, "q" * 64, "caller-cancel-key-001")
+    frames = [json.loads(frame) for frame in stream.written[1:]]
+    assert frames[0]["params"] == {"profile": "p" * 64, "role": "offer", "allow_direct_ip_disclosure": False}
+    assert frames[1]["params"]["pairing_code"] == "synthetic-code" and frames[1]["params"]["allow_direct_ip_disclosure"] is True
+    assert "idempotency_key" not in frames[2]
+    assert frames[3]["idempotency_key"] == "caller-cancel-key-001"
+
+
 def test_optional_group_key_requires_complete_capability_and_valid_key():
     caps = {**CAP, "api_minor": 1, "operations": ["runtime.capabilities", "group.create"],
             "optional_keyed_operations": ["group.create"], "limits": {"optional_key_idempotency_seconds": 604800,

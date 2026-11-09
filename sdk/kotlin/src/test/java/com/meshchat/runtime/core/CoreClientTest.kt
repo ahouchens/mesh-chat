@@ -51,6 +51,32 @@ private fun capabilities(major: Int = 1): JSONObject = JSONObject()
 
 class CoreClientTest {
     @Test
+    fun publicPairingRequiresAdvertisedActorAndPreservesBothCallerKeys() {
+        val unsupported = Scripted(success("client:1", capabilities()))
+        val old = CoreClient.open(unsupported)
+        val error = runCatching { old.pairingBegin(PROFILE, "offer", "caller-begin-key-0001") }.exceptionOrNull()
+        assertEquals("unsupported_operation", (error as CoreException).code)
+        assertEquals(1, unsupported.written.size)
+        val caps = capabilities().put("api_minor", 1).put("operations", org.json.JSONArray(listOf(
+            "peer.pairing_begin", "peer.pairing_query", "peer.pairing_cancel")))
+        for (name in listOf("pairing_intents_per_runtime", "pairing_active_intents", "pairing_intent_seconds", "pairing_code_utf8_bytes",
+                "pairing_key_idempotency_seconds", "pairing_keys_per_caller_profile", "pairing_keys_per_vault")) caps.getJSONObject("limits").put(name, 2048)
+        val transport = Scripted(success("client:1", caps), success("client:2", JSONObject()), success("client:3", JSONObject()))
+        val client = CoreClient.open(transport)
+        assertTrue(runCatching { client.pairingBegin(PROFILE, "answer", "caller-begin-key-0001") }.isFailure)
+        assertTrue(runCatching { client.pairingBegin(PROFILE, "offer", "caller-begin-key-0001", "forbidden") }.isFailure)
+        assertTrue(runCatching { client.pairingBegin(PROFILE, "answer", "caller-begin-key-0001", "é".repeat(1025)) }.isFailure)
+        assertEquals(1, transport.written.size)
+        client.pairingBegin(PROFILE, "offer", "caller-begin-key-0001")
+        client.pairingCancel(PROFILE, PEER, "caller-cancel-key-001")
+        val begin = JSONObject(transport.written[1])
+        assertEquals("caller-begin-key-0001", begin.getString("idempotency_key"))
+        assertFalse(begin.getJSONObject("params").getBoolean("allow_direct_ip_disclosure"))
+        assertFalse(begin.getJSONObject("params").has("pairing_code"))
+        assertEquals("caller-cancel-key-001", JSONObject(transport.written[2]).getString("idempotency_key"))
+    }
+
+    @Test
     fun callRecoveryRequiresCapabilitiesAndPreservesExplicitAbandonKey() {
         val unsupported = Scripted(success("client:1", capabilities()))
         val oldClient = CoreClient.open(unsupported)

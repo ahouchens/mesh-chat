@@ -85,6 +85,28 @@ def test_runtime_preserves_existing_handles_and_only_actual_host_advertises_life
         Draft202012Validator(json.loads((ROOT / "contracts/core-api" / schema).read_text())).validate(response)
 
 
+def test_async_authority_revocation_does_not_detach_or_wait_for_renderer_request_lock(runtime):
+    from threading import Thread
+    r = runtime
+    assert r["invoke"]("profile.query", {"profile": r["profiles"]["alpha"]})["ok"]
+    outer = r["stream"]._session
+    current_grant = outer._inner._authorize
+    r["grants"][0] = replace(r["grants"][0], caller="different-current-caller")
+    results = []
+    def resolve():
+        with r["first"]._dispatch_lock:
+            results.append(current_grant())
+    with outer._lock:
+        worker = Thread(target=resolve)
+        worker.start()
+        worker.join(timeout=1)
+        completed_without_request_lock = not worker.is_alive()
+    worker.join(timeout=2)
+    assert completed_without_request_lock and results == [None]
+    assert not outer._closed  # The callback only reports authority; it cannot detach.
+    assert r["invoke"]("profile.query", {"profile": r["profiles"]["alpha"]})["error"]["code"] == "unauthenticated"
+
+
 def test_lock_keeps_runtime_binding_alive_and_unlock_reads_original_slot_fresh(runtime):
     r = runtime
     invoke, profile = r["invoke"], r["profiles"]["alpha"]

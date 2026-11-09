@@ -135,7 +135,10 @@
     "profile.unlock",
     "call.operation_list",
     "call.operation_query",
-    "call.operation_abandon"
+    "call.operation_abandon",
+    "peer.pairing_begin",
+    "peer.pairing_query",
+    "peer.pairing_cancel"
   ],
   "private_host_operations": [
     "native.command",
@@ -1141,6 +1144,27 @@
       "scope": "profile",
       "mutation": true,
       "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "peer.pairing_begin",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "peer.pairing_query",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "peer.pairing_cancel",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
     }
   ],
   "limits": {
@@ -1185,7 +1209,14 @@
     "call_operations_per_vault": 4096,
     "call_operation_retention_seconds": 604800,
     "call_operation_keys_per_caller_profile": 4096,
-    "call_operation_keys_per_vault": 65536
+    "call_operation_keys_per_vault": 65536,
+    "pairing_intents_per_runtime": 32,
+    "pairing_active_intents": 1,
+    "pairing_intent_seconds": 300,
+    "pairing_code_utf8_bytes": 2048,
+    "pairing_key_idempotency_seconds": 604800,
+    "pairing_keys_per_caller_profile": 4096,
+    "pairing_keys_per_vault": 65536
   },
   "optional_keyed_operations": [
     "group.create",
@@ -1195,5 +1226,10 @@
     "call.operation_list",
     "call.operation_query",
     "call.operation_abandon"
+  ],
+  "pairing_intent_operations": [
+    "peer.pairing_begin",
+    "peer.pairing_query",
+    "peer.pairing_cancel"
   ]
 }

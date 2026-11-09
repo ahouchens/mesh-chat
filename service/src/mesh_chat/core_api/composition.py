@@ -26,6 +26,7 @@ from .service_settings import ServiceNetworkSettings
 from .service_drafts import ServiceDrafts
 from .service_composer import ServiceComposer
 from .service_relationship import ServiceRelationship
+from .service_pairing_intents import ServicePairingIntents
 from .wire import FramedSession
 
 
@@ -82,6 +83,7 @@ def bind_service_session(service, authenticated_grant, *, private_native=False,
         runtime = (ServiceApplicationRuntime(service)
                    if hasattr(service, "background_availability_status") else None)
         calls = ServiceCallSettings(service, call_retirement)
+        pairing_intents = ServicePairingIntents(service, current_grant)
         ports = Ports(messages=messages, composer=composer, recovery=recovery,
                       diagnostics=ServiceDiagnostics(service, messages), received=received,
                       intent=intent, relationship=relationship, pairing=pairing,
@@ -95,6 +97,7 @@ def bind_service_session(service, authenticated_grant, *, private_native=False,
                       drafts=ServiceDrafts(service, legacy=private_composer_legacy),
                       calls=calls,
                       call_recovery=calls if calls.recovery_operations else None,
+                      pairing_intents=pairing_intents if pairing_intents.available else None,
                       settings=ServiceNetworkSettings(service),
                       reactions=ServiceReactions(service),
                       groups=ServiceGroups(service))
