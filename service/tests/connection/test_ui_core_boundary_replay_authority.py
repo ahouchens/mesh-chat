@@ -64,3 +64,18 @@ def test_replay_rechecks_signed_membership_before_returning_prior_success(remove
     replay = exchange(operation, params, key)
     assert replay["ok"] is False, replay
     assert replay["error"]["code"] == "forbidden"
+
+
+def test_channel_sync_replay_rechecks_signed_workspace_membership(removed_member):
+    exchange, revoke, scope, _ = removed_member
+    params = {**scope, "action": "sync"}
+    key = "channel-state-removal-key-0001"
+    accepted = exchange("workspace.channel_state", params, key)
+    assert accepted["ok"], accepted
+    revoke()
+    fresh = exchange("workspace.channel_state", params, key + "-new")
+    assert fresh["ok"] is False, fresh
+    assert fresh["error"]["code"] == "forbidden", fresh
+    replay = exchange("workspace.channel_state", params, key)
+    assert replay["ok"] is False, replay
+    assert replay["error"]["code"] == "forbidden", replay
