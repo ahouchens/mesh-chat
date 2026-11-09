@@ -36,10 +36,12 @@ CI update: the required policy independently passes **3,529 cases**, and broad
 verification passes. Retained boundary XML independently confirms **670 Python
 and 12 rendered cases**, zero skips. Windows public pairing fails after 245.79s
 at **pending_request_wait**: an invitation reached the answerer and its accept
-call returned, but offerer snapshots remained empty. Both fresh public pairing
-probes report `retired` with `expired: false`. This localizes the missing contact
-request; it does not identify the retirement cause. A/C/D investigate the Core
-operation, actual actor/bootstrap delivery, and consumer ordering respectively.
+call returned. The last retained offerer snapshot is empty, but it may predate
+acceptance: the wait checks the shared deadline before its first read, so no
+post-accept poll is proven. Both fresh public pairing probes report `retired`
+with `expired: false`. These observations identify the failed public substep,
+not acceptance duration, request delivery, or retirement cause. A/C/D investigate
+the Core operation, actor/bootstrap timing and delivery, and consumer diagnostics.
 Normal Windows bootstrap with actual DPAPI/EFS and nine components independently
 pass against the retained executable. Later packaged gates did not run. Android
 and direct jobs continue; this full run cannot pass because Windows failed.
