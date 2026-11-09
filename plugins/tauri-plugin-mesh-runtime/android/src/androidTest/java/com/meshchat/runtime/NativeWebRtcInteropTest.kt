@@ -232,6 +232,7 @@ class NativeWebRtcInteropTest {
         val ice = JSONObject().put("iceTransportPolicy", "all").put("iceServers", JSONArray().put(
             JSONObject().put("urls", JSONArray().put("stun:192.0.2.1:3478"))))
         val pending = worker.submit<String> { NativeWebRtcHost.createOffer(id, ice.toString(), channels.toString()) }
+        var failure: Throwable? = null
         try {
             // Observe registration without waiting for stats(), which shares
             // the SDP lifetime lock. No production-only testing hook is used.
@@ -244,16 +245,41 @@ class NativeWebRtcInteropTest {
             val duplicate = JSONObject(NativeWebRtcHost.createOffer(id, ice.toString(), channels.toString()))
             assertFalse("Duplicate creation replaced a live native resource", duplicate.optBoolean("ok"))
             assertSame(original, sessions[id])
+            assertFalse("Cancellation must overlap native creation", pending.isDone)
             val started = System.nanoTime()
-            instrumentation.runOnMainSync { NativeWebRtcHost.close(id) }
+            instrumentation.runOnMainSync {
+                try {
+                    NativeWebRtcHost.close(id)
+                } catch (pendingCleanup: IllegalStateException) {
+                    // Main-thread cancellation is nonblocking, but outstanding
+                    // native custody must not be reported as successful close.
+                    assertEquals("native_webrtc_cleanup_pending", pendingCleanup.message)
+                }
+            }
             assertTrue("Closing during ICE gathering blocked the Android main thread",
                 System.nanoTime() - started < TimeUnit.SECONDS.toNanos(1))
             assertFalse("Cancelled creation reported success",
                 JSONObject(pending.get(35, TimeUnit.SECONDS)).optBoolean("ok"))
-            assertFalse(JSONObject(NativeWebRtcHost.stats(id)).optBoolean("ok"))
-        } finally {
+            // Creation unwinding and absence from stats are not disposal ACKs.
             NativeWebRtcHost.close(id)
-            worker.shutdownNow()
+            val accounting = JSONObject(NativeWebRtcHost.resourceAccounting()).getJSONObject("result")
+            assertTrue(accounting.getBoolean("complete"))
+            for (name in listOf("reserved_count", "creating_count", "allocated_count", "retiring_count")) {
+                assertEquals("Cancellation retained native custody: $name", 0, accounting.getInt(name))
+            }
+            assertFalse(JSONObject(NativeWebRtcHost.stats(id)).optBoolean("ok"))
+        } catch (error: Throwable) {
+            failure = error
+            throw error
+        } finally {
+            try {
+                NativeWebRtcHost.close(id)
+            } catch (cleanupError: Throwable) {
+                if (failure == null) throw cleanupError
+                failure.addSuppressed(cleanupError)
+            } finally {
+                worker.shutdownNow()
+            }
         }
     }
 
@@ -355,6 +381,7 @@ class NativeWebRtcInteropTest {
             }
             fail("The native ICE failure callback was not processed")
         }
+        var failure: Throwable? = null
         try {
             instrumentation.runOnMainSync {
                 browser = WebView(context)
@@ -534,12 +561,27 @@ class NativeWebRtcInteropTest {
             command("snapshot")
             if (nativeOffers) assertCloseDoesNotBlockTheMainThread(channels)
             js("pc.close()")
+        } catch (error: Throwable) {
+            failure = error
+            throw error
         } finally {
-            NativeWebRtcHost.closeAll()
-            module.callAttr("shutdown")
-            instrumentation.runOnMainSync {
-                try { browser.destroy() } catch (_: UninitializedPropertyAccessException) { }
+            var cleanupFailure: Throwable? = failure
+            fun clean(operation: () -> Unit) {
+                try {
+                    operation()
+                } catch (error: Throwable) {
+                    val previous = cleanupFailure
+                    if (previous == null) cleanupFailure = error else previous.addSuppressed(error)
+                }
             }
+            clean { NativeWebRtcHost.closeAll() }
+            clean { module.callAttr("shutdown") }
+            clean {
+                instrumentation.runOnMainSync {
+                    try { browser.destroy() } catch (_: UninitializedPropertyAccessException) { }
+                }
+            }
+            if (failure == null) cleanupFailure?.let { throw it }
         }
     }
 }
