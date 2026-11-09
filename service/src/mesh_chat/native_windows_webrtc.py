@@ -15,6 +15,7 @@ import base64
 import json
 import re
 import threading
+import inspect
 from dataclasses import dataclass, field
 import time
 from importlib.metadata import version
@@ -150,7 +151,7 @@ class WindowsNativeWebRTCHost:
         self._sessions = {}
         self._reservations = set()
         self._adapter_epoch = uuid4().hex
-        self._sampling = set()
+        self._sampling = {}
         self._loop = asyncio.new_event_loop()
         self._closed = False
         self._thread = threading.Thread(target=self._run, name="mesh-chat-native-webrtc",
@@ -171,7 +172,8 @@ class WindowsNativeWebRTCHost:
             self._loop.close()
 
     def _submit(self, coroutine, timeout=OPERATION_TIMEOUT):
-        if self._closed:
+        if self._closed or self._loop.is_closed() or not self._thread.is_alive():
+            coroutine.close()
             raise _HostFailure("native_webrtc_unavailable")
         future = asyncio.run_coroutine_threadsafe(coroutine, self._loop)
         try:
@@ -402,19 +404,32 @@ class WindowsNativeWebRTCHost:
 
     def pathEvidence(self, resource):
         """Private current mechanism evidence, separate from ordinary stats."""
+        coroutine = token = None
         try:
             session = self._require(resource)
             with self._lock:
                 if resource in self._sampling:
                     raise _HostFailure("native_webrtc_inspection_busy")
-                self._sampling.add(resource)
-            return self._submit(self._path_evidence(session), timeout=SAMPLE_TIMEOUT)
+                token = self._sampling[resource] = object()
+            coroutine = self._path_evidence(session, token)
+            return self._submit(coroutine, timeout=SAMPLE_TIMEOUT)
         except _HostFailure as failure:
+            if failure.code != "native_webrtc_timeout":
+                self._release_unscheduled_sample(resource, token, coroutine)
             return _error(failure.code)
         except Exception:
+            self._release_unscheduled_sample(resource, token, coroutine)
             return _error("native_webrtc_inspection_failed")
 
-    async def _path_evidence(self, session):
+    def _release_unscheduled_sample(self, resource, token, coroutine):
+        if coroutine is not None and inspect.getcoroutinestate(coroutine) == inspect.CORO_CREATED:
+            coroutine.close()
+        if coroutine is None or inspect.getcoroutinestate(coroutine) == inspect.CORO_CLOSED:
+            with self._lock:
+                if self._sampling.get(resource) is token:
+                    self._sampling.pop(resource, None)
+
+    async def _path_evidence(self, session, token):
         try:
             if not self._current(session):
                 raise _HostFailure("native_webrtc_session_missing")
@@ -448,7 +463,8 @@ class WindowsNativeWebRTCHost:
             return json.dumps({"ok": True, "result": validate_observation(value, session.resource)}, separators=(",", ":"))
         finally:
             with self._lock:
-                self._sampling.discard(session.resource)
+                if self._sampling.get(session.resource) is token:
+                    self._sampling.pop(session.resource, None)
 
     def _selected_pair(self, session, pair):
         if not pair.nominated or pair.state.name != "SUCCEEDED":

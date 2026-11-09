@@ -35,7 +35,25 @@ tests passed on that combined source, zero skips, 30.22 seconds. The inspector
 reports current resource/incarnation-bound path observations and marks unavailable
 measurements explicitly. These checks do not prove a relay path, cross-platform
 traffic or fault budgets; those require the active topology qualification.
-Submission-failure cleanup and Android stats sampling remain follow-up work.
+At that checkpoint, submission-failure cleanup and Android sampling remained open.
+
+The full required policy inventory subsequently passed at `6e97db5`: 2,630
+executed, zero failures/skips, 244.28 seconds, with the upstream LXMF deprecation
+warning. JUnit, collected inventory and validated policy report are retained.
+This source precedes the composer UI merge.
+
+At `b2df9ae`, the combined composer UI boundary executed all required cases:
+359 Python cases passed, while five of eight rendered cases failed (zero skips).
+Both newly added remount cases were among the failures. Three actual Windows
+pipe boundary cases passed in 1.65 seconds. Rendered failures are assigned to D
+and B for diagnosis; neither frontend unit success nor policy success closes
+this boundary gate. A local pytest-cache ACL warning did not skip cases.
+
+Inspector cleanup `9df4b1a` and Android sampler `aec8946` were integrated at
+`0bf8d04`. All 34 Python inspector/Windows cases passed, zero skips, 3.08 seconds.
+Android observes libwebrtc's selected-pair and relay-protocol statistics and
+explicitly reports the outer TURN socket unavailable. Its packaged qualification
+remains pending; advertised TURN URLs never establish the selected protocol.
 
 ### Wave 1 accepted at the fully qualified combined source
 
