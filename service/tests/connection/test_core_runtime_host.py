@@ -224,13 +224,19 @@ def test_superseded_or_old_host_epoch_receipt_never_reopens(runtime):
 
 
 @pytest.mark.parametrize("language", ["python", "typescript"])
-def test_actual_pinned_old_sdk_negotiates_runtime_host_capabilities_and_enqueues(runtime, pinned_install, language):
+@pytest.mark.parametrize("selected", ["alpha", "beta"])
+def test_actual_pinned_old_sdk_negotiates_runtime_host_capabilities_and_enqueues(runtime, pinned_install, language, selected):
     r = runtime
+    if selected == "beta":
+        profile = r["profiles"]["beta"]
+        assert r["invoke"]("profile.select", {"profile": profile}, "runtime-old-sdk-select-key-0001")["ok"]
+        credential = r["host"].issue_unlock_credential(r["grants"][0].caller, "beta")
+        assert r["invoke"]("profile.unlock", {"profile": profile, "credential_handle": credential}, "runtime-old-sdk-unlock-key-0001")["ok"]
     stream = r["host"].bind(lambda: r["grants"][0])
     report = run_consumer(old_consumer(pinned_install, language), None, "--old", session=stream)
     assert report["accepted"] and report["api_minor"] == 1
-    assert len(r["first"].store.list("message")) == 1
-    assert not r["first"]._store_closed
+    assert len(r["host"].lifecycle.active.store.list("message")) == 1
+    assert not r["host"].lifecycle.active._store_closed
 
 
 def test_credential_cannot_cross_an_intervening_lifecycle_revision(runtime):

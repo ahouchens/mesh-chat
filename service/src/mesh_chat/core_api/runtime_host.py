@@ -310,7 +310,9 @@ class RuntimeSession:
                     if self.host.lifecycle.active is not None and self.host.lifecycle.query()["selected_profile"] in grant.profiles:
                         result = dict(self._current_inner(grant).request(value)["result"])
                         result["operations"] = sorted(set(result["operations"]) | set(RUNTIME_OPERATIONS))
-                    result["profiles"] = [row["profile"] for row in self.host.catalog(grant)["profiles"]]
+                    catalog = self.host.catalog(grant)
+                    result["profiles"] = ([catalog["selected_profile"]] if catalog["selected_profile"] is not None else []) + [
+                        row["profile"] for row in catalog["profiles"] if row["profile"] != catalog["selected_profile"]]
                     result["limits"] = {**result["limits"], "profile_slots": 8, "profile_lifecycle_keys_per_host": MAX_HOST_OPERATIONS,
                         "profile_lifecycle_keys_per_caller_profile": MAX_CALLER_OPERATIONS, "profile_unlock_credentials": MAX_CREDENTIALS}
                 elif operation == "profile.catalog":
