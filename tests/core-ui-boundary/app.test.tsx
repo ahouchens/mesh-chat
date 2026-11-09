@@ -16,12 +16,14 @@ let host: FacadeHost;
 let loseNextSendReply = false;
 let failRefreshAfterEnqueue = false;
 let enqueueAccepted = false;
+let beforeThreadReply: (() => Promise<void>) | null = null;
 
 beforeEach(async () => {
   host = new FacadeHost();
   loseNextSendReply = false;
   failRefreshAfterEnqueue = false;
   enqueueAccepted = false;
+  beforeThreadReply = null;
   window.localStorage.clear();
   transport.invoke.mockReset();
   transport.invoke.mockImplementation(async (command: string, args: Record<string, unknown> = {}) => {
@@ -30,6 +32,8 @@ beforeEach(async () => {
     if (command === "notification_capability") return { supported: false, platform: "desktop", permission_state: "unsupported" };
     if (command === "core_api_request" && args.operation === "application.snapshot"
       && enqueueAccepted && failRefreshAfterEnqueue) throw new Error("fixture_snapshot_unavailable");
+    if (command === "core_api_request" && args.operation === "workspace.timeline_mutation"
+      && (args.params as Record<string, unknown>).action === "thread_reply") await beforeThreadReply?.();
     const result = await host.invoke(command, args);
     if (command === "core_api_send_message") {
       enqueueAccepted = true;
@@ -99,7 +103,7 @@ describe("rendered UI through the production framed Core session", () => {
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Workspace Boundary Team" }));
     const conversation = await screen.findByLabelText("Workspace channel general");
-    await within(conversation).findByText("Boundary root message");
+    await within(conversation).findByText("Boundary root message", { selector: "article p" });
     const composer = within(conversation).getByRole("textbox", { name: "Message general" });
     fireEvent.change(composer, { target: { value: "Workspace boundary hello" } });
     fireEvent.click(within(conversation).getByRole("button", { name: "Send workspace message" }));
@@ -110,24 +114,45 @@ describe("rendered UI through the production framed Core session", () => {
       expect(call![1].params).toHaveProperty("conversation");
       expect(call![1].params).not.toHaveProperty("conversation_id");
     });
-    await within(conversation).findByText("Workspace boundary hello");
+    await within(conversation).findByText("Workspace boundary hello", { selector: "article p" });
     fireEvent.click(within(conversation).getAllByRole("button", { name: "Thread" })[0]);
     const thread = await screen.findByLabelText("Thread in Boundary Team");
-    await within(thread).findByText("Boundary root message");
+    await within(thread).findByText("Boundary root message", { selector: "article p" });
     const query = transport.invoke.mock.calls.find(([command, args]) => command === "core_api_request"
       && args.operation === "workspace.timeline_query" && args.params.view === "thread_messages");
     expect(query![1].params).toHaveProperty("thread_root");
     expect(query![1].params).not.toHaveProperty("thread_root_id");
-    fireEvent.change(within(thread).getByRole("textbox", { name: "Reply in thread" }),
+    const threadComposer = within(thread).getByRole("textbox", { name: "Reply in thread" }) as HTMLTextAreaElement;
+    fireEvent.change(threadComposer,
       { target: { value: "Boundary thread reply" } });
-    fireEvent.click(within(thread).getByRole("button", { name: "Send thread reply" }));
-    await within(thread).findByText("Boundary thread reply");
+    const sendReply = within(thread).getByRole("button", { name: "Send thread reply" });
+    await waitFor(() => expect(sendReply.hasAttribute("disabled")).toBe(false));
+    let releaseReply!: () => void;
+    const heldReply = new Promise<void>((resolve) => { releaseReply = resolve; });
+    beforeThreadReply = () => heldReply;
+    fireEvent.click(sendReply);
+    try {
+      await waitFor(() => expect(transport.invoke.mock.calls.some(([command, args]) => command === "core_api_request"
+        && args.operation === "workspace.timeline_mutation" && args.params.action === "thread_reply")).toBe(true));
+      expect(threadComposer.value).toBe("Boundary thread reply");
+      expect(within(thread).queryByText("Boundary thread reply", { selector: "article p" })).toBeNull();
+    } finally {
+      releaseReply();
+    }
+    await within(thread).findByText("Boundary thread reply", { selector: "article p" });
     const reply = transport.invoke.mock.calls.find(([command, args]) => command === "core_api_request"
       && args.operation === "workspace.timeline_mutation" && args.params.action === "thread_reply");
+    expect(reply).toBeDefined();
     expect(reply![1].params).toHaveProperty("thread_root");
     expect(reply![1].params).toHaveProperty("conversation");
     expect(reply![1].params).not.toHaveProperty("thread_root_id");
     expect(reply![1].params).not.toHaveProperty("conversation_id");
+    const saved = await coreApiTimelineQuery(query![1].params.workspace, "thread_messages", {
+      thread_root: query![1].params.thread_root, cursor: null, limit: 50,
+    }) as { replies: { id: string; text: string; thread_root: string }[] };
+    expect(saved.replies).toEqual([expect.objectContaining({
+      id: reply![1].params.event_id, text: "Boundary thread reply", thread_root: query![1].params.thread_root,
+    })]);
   });
 
   it("serializes thread_root to a real timeline query without legacy field aliases", async () => {
