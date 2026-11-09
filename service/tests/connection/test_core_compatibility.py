@@ -40,9 +40,9 @@ def test_declared_compatibility_matches_the_contract_inventory():
     kotlin = (ROOT / "sdk/kotlin/build.gradle.kts").read_text()
     assert f'version = "{declaration["kotlin_client"]["version"]}"' in kotlin
     assert declaration["kotlin_client"] == {"exists": True,
-        "status": "experimental_component", "version": "0.2.0-experimental",
+        "status": "experimental_component", "version": "0.3.0-experimental",
         "packaged": True, "published": False,
-        "artifact": "com.meshchat:core-client:0.2.0-experimental"}
+        "artifact": "com.meshchat:core-client:0.3.0-experimental"}
     assert declaration["incompatible_combination"] == "reject_before_side_effects"
 
 
@@ -97,7 +97,7 @@ def test_component_versions_match_the_compatibility_declaration():
 
     declaration = json.loads((ROOT / "contracts/core-api/compatibility-v1.json").read_text())
     package = json.loads((ROOT / "sdk/typescript/package.json").read_text())
-    kotlin = (ROOT / "plugins/tauri-plugin-mesh-runtime/android/src/main/java/com/meshchat/runtime/core/CoreClient.kt").read_text()
+    kotlin = (ROOT / "sdk/kotlin/src/main/java/com/meshchat/runtime/core/CoreClient.kt").read_text()
     assert declaration["python_client"]["version"] == __version__
     assert declaration["typescript_client"]["version"] == package["version"]
     assert f'const val VERSION = "{declaration["kotlin_client"]["version"]}"' in kotlin
@@ -120,7 +120,7 @@ def test_component_clients_cover_every_advertised_operation():
     clients = {
         "python": root / "service" / "src" / "mesh_chat" / "core_api" / "client.py",
         "typescript": root / "sdk" / "typescript" / "src" / "client.ts",
-        "kotlin": (root / "plugins" / "tauri-plugin-mesh-runtime" / "android" / "src"
+        "kotlin": (root / "sdk" / "kotlin" / "src"
                    / "main" / "java" / "com" / "meshchat" / "runtime" / "core"
                    / "CoreClient.kt"),
     }

@@ -1,9 +1,15 @@
 # Experimental Android client
 
-`com.meshchat:core-client:0.2.0-experimental` packages `CoreClient`,
+`com.meshchat:core-client:0.3.0-experimental` packages `CoreClient`,
 `CoreExchangeTransport`, and the public `IMeshCoreApi` Binder interface. The AAR
 contains no Python runtime, native transport, vault, or host implementation.
 It is an unpublished component, not yet a supported M5 release.
+
+Client and AIDL sources now live entirely under this SDK directory. The runtime
+host consumes the client module as a dependency. Its package names and Binder
+exchange interface remain compatible with 0.2 clients. Composer methods require
+API minor 1, all three composer operations and the nine positive composer limits;
+an older host returns local `unsupported_operation` before a mutation is sent.
 
 With the generated Android Gradle project initialized, build and stage locally:
 
