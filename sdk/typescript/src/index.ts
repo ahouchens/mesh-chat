@@ -10,6 +10,7 @@ export type {
   Acceptance,
   Acknowledgment,
   Capabilities,
+  ProfileCatalog,
   Composer,
   ComposerUpdate,
   ComposerSendOutcome,

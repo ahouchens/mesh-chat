@@ -77,7 +77,7 @@
           "type": "array",
           "uniqueItems": true,
           "minItems": 3,
-          "maxItems": 125,
+          "maxItems": 256,
           "items": {
             "enum": [
               "application.snapshot",
@@ -204,7 +204,11 @@
               "diagnostics.query",
               "peer.composer_query",
               "peer.composer_update",
-              "message.enqueue_draft"
+              "message.enqueue_draft",
+              "profile.catalog",
+              "profile.lock",
+              "profile.select",
+              "profile.unlock"
             ]
           }
         },
@@ -326,6 +330,22 @@
             "composer_send_keys_per_vault": {
               "type": "integer",
               "const": 65536
+            },
+            "profile_slots": {
+              "type": "integer",
+              "const": 8
+            },
+            "profile_lifecycle_keys_per_host": {
+              "type": "integer",
+              "const": 4096
+            },
+            "profile_lifecycle_keys_per_caller_profile": {
+              "type": "integer",
+              "const": 256
+            },
+            "profile_unlock_credentials": {
+              "type": "integer",
+              "const": 128
             }
           }
         }
@@ -570,6 +590,56 @@
                   "composer_send_idempotency_seconds",
                   "composer_send_keys_per_caller_profile",
                   "composer_send_keys_per_vault"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operations": {
+                "contains": {
+                  "const": "profile.catalog"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "api_minor": {
+                "minimum": 1
+              },
+              "operations": {
+                "allOf": [
+                  {
+                    "contains": {
+                      "const": "profile.catalog"
+                    }
+                  },
+                  {
+                    "contains": {
+                      "const": "profile.lock"
+                    }
+                  },
+                  {
+                    "contains": {
+                      "const": "profile.select"
+                    }
+                  },
+                  {
+                    "contains": {
+                      "const": "profile.unlock"
+                    }
+                  }
+                ]
+              },
+              "limits": {
+                "required": [
+                  "profile_slots",
+                  "profile_lifecycle_keys_per_host",
+                  "profile_lifecycle_keys_per_caller_profile",
+                  "profile_unlock_credentials"
                 ]
               }
             }

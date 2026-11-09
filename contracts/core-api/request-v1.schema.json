@@ -6741,6 +6741,36 @@
           "pattern": "^[0-9a-f]{64}$"
         }
       }
+    },
+    {
+      "type": "object",
+      "properties": {
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "profile.catalog"
+        },
+        "params": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
+      "additionalProperties": false
     }
   ]
 }
