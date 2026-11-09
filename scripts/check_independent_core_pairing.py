@@ -37,7 +37,8 @@ SUBPHASES = {
 }
 PAIRING_STATES = {"reserved", "offer_ready", "awaiting_approval", "transferred", "retiring", "retired", "unknown"}
 SNAPSHOT_COUNTS = {"contacts", "invitations", "pending_invitations", "pending_requests", "approved_contacts"}
-SNAPSHOT_FLAGS = {"matching_pending_request", "matching_approved_contact", "counts_capped"}
+SNAPSHOT_FLAGS = {"matching_pending_request", "matching_approved_contact", "counts_capped", "network_present"}
+SERVICE_ERRORS = {None, "network_start_failed", "network_interface_unavailable", "unknown"}
 CONNECTION_COUNTS = {"total", "checked", "ready"}
 TIMING_FIELDS = ("invitation_accept_started", "invitation_accept_returned", "pending_request_wait_entered", "failure_observed")
 ERROR_CODES = {"invalid_request", "incompatible_version", "negotiation_required", "unsupported_operation",
@@ -108,9 +109,12 @@ def failure_details(value):
         if not isinstance(peer, dict) or not peer or set(peer) - {"last_snapshot", "last_pairing", "last_connections"}:
             raise ValueError("Pairing failure peer observations are invalid")
         if "last_snapshot" in peer:
-            bounded_observation(peer["last_snapshot"], SNAPSHOT_COUNTS, SNAPSHOT_FLAGS, {"observed_subphase"})
+            bounded_observation(peer["last_snapshot"], SNAPSHOT_COUNTS, SNAPSHOT_FLAGS, {"observed_subphase", "service_error"})
             if peer["last_snapshot"]["observed_subphase"] not in set().union(*SUBPHASES.values()):
                 raise ValueError("Snapshot observation subphase is invalid")
+            service_error = peer["last_snapshot"]["service_error"]
+            if (service_error is not None and not isinstance(service_error, str)) or service_error not in SERVICE_ERRORS:
+                raise ValueError("Snapshot service error is not selected")
         if "last_connections" in peer:
             bounded_observation(peer["last_connections"], CONNECTION_COUNTS, {"counts_capped"})
             connections = peer["last_connections"]

@@ -11,6 +11,7 @@ Date.now = () => started + (expired ? 300000 : elapsed);
 Object.defineProperty(performance, "now", {value: () => expired ? 300000 : elapsed});
 const fault = process.env.PAIRING_DIAGNOSTIC_FAULT;
 const probeMode = process.env.PAIRING_DIAGNOSTIC_PROBE;
+const networkMode = process.env.PAIRING_DIAGNOSTIC_NETWORK;
 function log(value) {
   if (process.env.PAIRING_DIAGNOSTIC_LOG) appendFileSync(process.env.PAIRING_DIAGNOSTIC_LOG, JSON.stringify(value) + "\n");
 }
@@ -48,7 +49,10 @@ globalThis.__diagnosticFixture = {
           return {state: "transferred", expires_at: started / 1000 - 1, pairing_code: "PRIVATE_CODE", sdp: "PRIVATE_SDP"};
         }
         if (operation === "runtime.capabilities") return { profiles: ["PRIVATE_PROFILE"] };
-        if (operation === "profile.create") { created = true; return {}; }
+        if (operation === "profile.create") {
+          if (fault === "pre_profile_absence") throw new CoreError("forbidden");
+          created = true; return {};
+        }
         if (operation === "profile.query") return { destination: destination(role), connections: ["PRIVATE_CONNECTION"] };
         if (operation === "settings.update") return {};
         if (operation === "settings.query") return { settings: { nearby_discovery: false, lan_fallback: false, help_route: false } };
@@ -77,7 +81,15 @@ globalThis.__diagnosticFixture = {
             if (role === "offerer" && approved && fault === "offerer_relationship_wait") { target = "PRIVATE_UNEXPECTED"; halt(fault); }
             contacts = [{ trust, destination_hash: target, core_handle: "PRIVATE_CONTACT", sdp: "PRIVATE_SDP" }];
           }
-          return { profile: created ? { destination: destination(role) } : null,
+          let network = created ? {address: "PRIVATE_ADDRESS", urls: ["PRIVATE_URL"]} : null;
+          let serviceError = null;
+          if (created && networkMode === "missing") { network = null; serviceError = "network_start_failed"; }
+          if (created && networkMode === "unavailable") serviceError = "network_interface_unavailable";
+          if (created && networkMode === "unexpected_error") serviceError = "PRIVATE_ERROR";
+          if (created && networkMode === "error_object") serviceError = {path: "PRIVATE_PATH"};
+          if (created && networkMode === "invalid_string") network = "PRIVATE_ADDRESS";
+          if (created && networkMode === "invalid_array") network = ["PRIVATE_ADDRESS"];
+          return { profile: created ? { destination: destination(role) } : null, network, service_error: serviceError,
             contacts, contact_invitations: invitations, messages: [] };
         }
         if (operation === "contact.invitation") {

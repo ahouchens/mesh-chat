@@ -128,6 +128,87 @@ def test_actual_node_pairing_producer_reports_safe_specific_failure_observations
         assert peers[role]["last_connections"] == {"total": 1, "checked": 1, "ready": 0, "counts_capped": False}
 
 
+@pytest.mark.parametrize("mode,present,error", [("pre_profile_absence", False, None),
+    ("missing", False, "network_start_failed"), ("unavailable", True, "network_interface_unavailable"),
+    ("healthy", True, None), ("unexpected_error", True, "unknown"), ("error_object", True, "unknown"),
+    ("invalid_string", False, "unknown"), ("invalid_array", False, "unknown")])
+def test_actual_node_snapshot_selects_network_presence_without_extra_requests(tmp_path, mode, present, error):
+    node, _ = staging.tools()
+    log = tmp_path / "events.jsonl"
+    pre_profile = mode == "pre_profile_absence"
+    completed = subprocess.run([node, "--import", (staging.ROOT /
+        "tests/core-ui-boundary/pairing_diagnostic_fixture.mjs").as_uri(),
+        str(staging.APPLICATION / "pairing-check.mjs"), "--runtime", "unused", "--data-directory", "unused"],
+        cwd=staging.ROOT, env={**os.environ, "PAIRING_DIAGNOSTIC_FAULT": mode if pre_profile else "pending_request_wait",
+            "PAIRING_DIAGNOSTIC_NETWORK": mode, "PAIRING_DIAGNOSTIC_LOG": str(log)},
+        capture_output=True, text=True, timeout=15)
+    assert completed.returncode == 1 and len(completed.stdout.encode()) <= 4096
+    assert "private" not in (completed.stdout + completed.stderr).lower()
+    details = pairing.failure_details(json.loads(completed.stdout))
+    observed = details["diagnostics"]["peers"]["offerer"]["last_snapshot"]
+    assert observed["network_present"] is present and observed["service_error"] == error
+    assert observed["observed_subphase"] == ("offerer_create" if pre_profile else "pending_request_wait")
+    events = [json.loads(line) for line in log.read_text().splitlines()]
+    snapshots = [(event["role"], event["operation"]) for event in events
+                 if event["event"] == "request" and event["operation"] == "application.snapshot"]
+    if pre_profile:
+        assert details["application_phase"] == "fresh_profiles" and details["error_code"] == "forbidden"
+        assert snapshots == [("offerer", "application.snapshot")]
+        assert details["diagnostics"]["failure_probe"] == {}
+    else:
+        assert details["application_phase"] == "explicit_approval" and details["error_code"] == "unavailable"
+        assert snapshots == [(role, "application.snapshot") for role in
+                             ("offerer", "offerer", "answerer", "answerer", "answerer", "answerer", "offerer")]
+        assert details["diagnostics"]["post_accept_reads"] == {"attempts": 1, "completed": 1,
+            "clipped": False, "deadline_exhausted_at_entry": False}
+        assert [event["operation"] for event in events if event["event"] == "request"][-2:] == ["peer.pairing_query", "peer.pairing_query"]
+    assert [event["role"] for event in events if event["event"] == "stop"] == (["offerer"] if pre_profile else ["offerer", "answerer"])
+
+
+def test_network_projection_never_reads_members_and_safely_marshals_invalid_shapes():
+    node, _ = staging.tools()
+    script = """
+import {pairingDiagnostics} from './examples/typescript-independent-consumer/pairing-diagnostics.mjs';
+const network = {};
+Object.defineProperty(network,'address',{enumerable:true,get(){throw new Error('PRIVATE_ADDRESS_READ');}});
+const values = [];
+for (const value of [network,null,'PRIVATE_ADDRESS',[],42,undefined]) {
+  const diagnostics = pairingDiagnostics();
+  diagnostics.snapshot('offerer',{network:value,service_error:null,contacts:[],contact_invitations:[]});
+  const snapshot = diagnostics.failure().peers.offerer.last_snapshot;
+  values.push({network_present:snapshot.network_present,service_error:snapshot.service_error});
+}
+console.log(JSON.stringify(values));
+"""
+    completed = subprocess.run([node, "--input-type=module", "-e", script], cwd=staging.ROOT,
+        capture_output=True, text=True, check=True, timeout=15)
+    assert "PRIVATE" not in completed.stdout + completed.stderr
+    assert json.loads(completed.stdout) == [{"network_present": True, "service_error": None},
+        {"network_present": False, "service_error": None}] + [{"network_present": False, "service_error": "unknown"}] * 4
+
+
+@pytest.mark.parametrize("fault", ["integer_presence", "object_presence", "error_string", "error_object", "error_array",
+    "missing_presence", "missing_error", "raw_network", "raw_address"])
+def test_strict_failure_parser_rejects_unselected_network_or_error_values(fault):
+    snapshot = {**{key: 0 for key in pairing.SNAPSHOT_COUNTS}, **{key: False for key in pairing.SNAPSHOT_FLAGS},
+        "observed_subphase": "offerer_create", "service_error": None}
+    observed = {"passed": False, "phase": "fresh_profiles", "error_code": "unavailable", "diagnostics": {
+        "subphase": "offerer_create", "deadline_exhausted": False,
+        "stage_timing": {"offsets_ms": {"failure_observed": 0}, "clipped": False},
+        "peers": {"offerer": {"last_snapshot": snapshot}}}}
+    pairing.failure_details(copy.deepcopy(observed))
+    if fault == "integer_presence": snapshot["network_present"] = 1
+    elif fault == "object_presence": snapshot["network_present"] = {"address": "PRIVATE_ADDRESS"}
+    elif fault == "error_string": snapshot["service_error"] = "PRIVATE_ERROR"
+    elif fault == "error_object": snapshot["service_error"] = {"path": "PRIVATE_PATH"}
+    elif fault == "error_array": snapshot["service_error"] = ["PRIVATE_ERROR"]
+    elif fault == "missing_presence": snapshot.pop("network_present")
+    elif fault == "missing_error": snapshot.pop("service_error")
+    elif fault == "raw_network": snapshot["network"] = {"address": "PRIVATE_ADDRESS"}
+    else: snapshot["address"] = "PRIVATE_ADDRESS"
+    with pytest.raises(ValueError): pairing.failure_details(observed)
+
+
 @pytest.mark.parametrize("fault,completed,entry_expired,failure_ms", [
     ("late_accept", 0, True, 240100), ("pending_read_reject", 0, False, 1500),
     ("pending_read_in_flight", 0, False, 1500), ("pending_request_wait", 1, False, 300000)])
@@ -310,7 +391,8 @@ def test_timing_read_count_and_snapshot_provenance_contract_rejects_unsafe_field
         "post_accept_reads": {"attempts": 1, "completed": 1, "clipped": False, "deadline_exhausted_at_entry": False},
         "peers": {"offerer": {"last_snapshot": {"contacts": 0, "invitations": 0, "pending_invitations": 0,
             "pending_requests": 0, "approved_contacts": 0, "matching_pending_request": False,
-            "matching_approved_contact": False, "counts_capped": False, "observed_subphase": "pending_request_wait"}}}}}
+            "matching_approved_contact": False, "counts_capped": False, "observed_subphase": "pending_request_wait",
+            "network_present": True, "service_error": None}}}}}
     pairing.failure_details(copy.deepcopy(observed))
     diagnostics = observed["diagnostics"]
     offsets = diagnostics["stage_timing"]["offsets_ms"]

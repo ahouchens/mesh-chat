@@ -12,6 +12,7 @@ export const ERROR_CODES = new Set(["invalid_request", "incompatible_version", "
   "unsupported_operation", "unauthenticated", "forbidden", "not_found", "locked", "conflict",
   "idempotency_conflict", "idempotency_expired", "resync_required", "resource_exhausted", "rate_limited", "unavailable", "internal"]);
 const ROLES = new Set(["offerer", "answerer"]);
+const SERVICE_ERRORS = new Set(["network_start_failed", "network_interface_unavailable"]);
 const bound = value => Math.min(value, 256);
 
 export function pairingDiagnostics(monotonicNow = () => performance.now()) {
@@ -63,8 +64,13 @@ export function pairingDiagnostics(monotonicNow = () => performance.now()) {
       const invitations = value.contact_invitations;
       const pending = contacts.filter(item => item.trust === "pending_request");
       const approved = contacts.filter(item => ["approved", "verified"].includes(item.trust));
+      const networkPresent = value.network !== null && typeof value.network === "object" && !Array.isArray(value.network);
+      const validNetwork = value.network === null || networkPresent;
       peer(role).last_snapshot = {
         observed_subphase: subphase,
+        network_present: networkPresent,
+        service_error: validNetwork && (value.service_error === null || SERVICE_ERRORS.has(value.service_error))
+          ? value.service_error : "unknown",
         contacts: bound(contacts.length), invitations: bound(invitations.length),
         pending_invitations: bound(invitations.filter(item => item.state === "pending").length),
         pending_requests: bound(pending.length), approved_contacts: bound(approved.length),
