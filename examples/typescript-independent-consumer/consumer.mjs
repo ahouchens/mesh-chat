@@ -3,6 +3,7 @@ import { CoreClient, CoreError } from "@mesh-chat/core-client";
 import { connectNamedPipe } from "@mesh-chat/core-client/node";
 import { once } from "node:events";
 import { TextDecoder } from "node:util";
+import { launchRuntime } from "./runtime.mjs";
 
 const MAX_FRAME = 256 * 1024;
 process.stdout.on("error", () => process.exit(1));
@@ -58,9 +59,15 @@ async function reply(value) {
 
 async function main() {
   const args = process.argv.slice(2);
-  if (args.length !== 2 || args[0] !== "--pipe") throw new Error("explicit_host_pipe_required");
-  const client = await CoreClient.open(await connectNamedPipe(args[1]), { requestTimeoutMs: 30000 });
+  let runtime, client;
   try {
+    let pipe;
+    if (args.length === 2 && args[0] === "--pipe") pipe = args[1];
+    else if (args.length === 4 && args[0] === "--runtime" && args[2] === "--data-directory") {
+      runtime = await launchRuntime(args[1], args[3]);
+      pipe = runtime.pipe;
+    } else throw new Error("explicit_host_bootstrap_required");
+    client = await CoreClient.open(await connectNamedPipe(pipe), { requestTimeoutMs: 30000 });
     for await (const value of frames(process.stdin)) {
       const command = request(value);
       try {
@@ -76,7 +83,8 @@ async function main() {
     }
   } finally {
     // Closing this SDK client detaches; it does not stop or replace its host.
-    client.close();
+    try { client?.close(); }
+    finally { if (runtime) await runtime.stop(); }
   }
 }
 

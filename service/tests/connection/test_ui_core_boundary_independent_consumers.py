@@ -5,11 +5,22 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import subprocess
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 import stage_independent_core_consumers as staging
+
+
+def test_application_owned_runtime_framing_and_retirement_use_real_subprocesses():
+    node, _ = staging.tools()
+    result = subprocess.run([node, "--test", "--test-reporter=tap",
+                             str(staging.ROOT / "tests/core-ui-boundary/app_owned_runtime.test.mjs")],
+                            cwd=staging.ROOT, capture_output=True, text=True, timeout=45)
+    assert result.returncode == 0, result.stdout[-4000:] + result.stderr[-1000:]
+    assert "# tests 11" in result.stdout
+    assert "# pass 11" in result.stdout and "# fail 0" in result.stdout and "# skipped 0" in result.stdout
 
 
 def staged_input(tmp_path):
