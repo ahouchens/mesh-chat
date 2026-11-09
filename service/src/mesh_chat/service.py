@@ -1875,7 +1875,7 @@ class MeshChatService(
                 if (replay.get("runtime_epoch") != self._core_call_epoch
                         or self.calls._get(replay["result"]["id"]) is None):
                     raise CallOutcomeRequiresResync("Call command belongs to an earlier resource view")
-                return replay["result"]
+                return self.calls.get(replay["result"]["id"])
             prepared = self.calls.prepare_control(identity, contact, action, params, operation_id)
             records = [("call", record["id"], record) for record in prepared.records] if self.calls.persist else []
             deletions = [("call", identifier) for identifier in prepared.deletions] if self.calls.persist else []
