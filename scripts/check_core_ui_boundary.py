@@ -24,6 +24,8 @@ PYTHON_SELECTION = (
     "service/tests/connection/test_ui_core_boundary_rendezvous.py",
     "service/tests/connection/test_ui_core_boundary_interop_artifacts.py",
     "service/tests/connection/test_ui_core_boundary_interop_preflight.py",
+    "service/tests/connection/test_ui_core_boundary_runtime_materials.py",
+    "service/tests/connection/test_ui_core_boundary_sdk_staging.py",
 )
 RENDERED_CASES = {("tests/core-ui-boundary/app.test.tsx",
                    "rendered UI through the production framed Core session > " + name) for name in (

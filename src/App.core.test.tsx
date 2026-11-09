@@ -206,13 +206,14 @@ describe("Core application serialization", () => {
       throw JSON.stringify({ code: "unavailable", retry_after_ms: null });
     };
     const name = await openProfileSetup();
+    const snapshotsBeforeCreate = requests("application.snapshot").length;
     fireEvent.change(name, { target: { value: "Alex" } });
     fireEvent.click(screen.getByRole("button", { name: "Create my invite" }));
     await screen.findByRole("alert");
     fireEvent.click(screen.getByRole("button", { name: "Create my invite" }));
     await screen.findByRole("textbox", { name: "Message Taylor" });
     expect(requests("profile.create")).toHaveLength(1);
-    expect(requests("application.snapshot")).toHaveLength(1);
+    expect(requests("application.snapshot")).toHaveLength(snapshotsBeforeCreate + 1);
   });
 
   it("does not recreate a confirmed profile when the following snapshot failed", async () => {
@@ -249,6 +250,7 @@ describe("Core application serialization", () => {
   it("waits for outcome reconciliation when a retry snapshot is unavailable", async () => {
     createProfile = async () => { throw JSON.stringify({ code: "unavailable", retry_after_ms: null }); };
     const name = await openProfileSetup();
+    const snapshotsBeforeCreate = requests("application.snapshot").length;
     fireEvent.change(name, { target: { value: "Alex" } });
     fireEvent.click(screen.getByRole("button", { name: "Create my invite" }));
     await screen.findByRole("alert");
@@ -256,7 +258,7 @@ describe("Core application serialization", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create my invite" }));
     await screen.findByRole("alert");
     expect(requests("profile.create")).toHaveLength(1);
-    expect(requests("application.snapshot")).toHaveLength(1);
+    expect(requests("application.snapshot")).toHaveLength(snapshotsBeforeCreate + 1);
   });
 
   it("does not create under an edited name if the earlier uncertain creation succeeded", async () => {

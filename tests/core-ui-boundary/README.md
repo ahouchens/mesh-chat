@@ -162,3 +162,22 @@ identity across vault reopen. The script fails when Windows is unavailable, clea
 success, checks the complete collected case inventory and writes exact-source
 JUnit/hash evidence. It runs in the Windows CI host job before native builds.
 It does not claim packaged, cross-process media, or physical qualification.
+
+## Frozen Windows runtime materials
+
+`native_runtime_materials.py` stages installed, exact-lock dependency metadata
+and available wheel notices into the PyInstaller archive. After freezing, the
+required Windows job opens the actual executable's CArchive and embedded PYZ,
+rehashes every staged notice, requires aiortc/aioice/PyAV code, inventories every
+DLL/PYD, and requires every DLL from the installed PyAV wheel to survive staging.
+The retained report binds the same source, build manifest and executable digest
+as the native control/lifecycle runs. The final gate rejects missing, changed or
+partial materials evidence.
+
+The inventory preserves declared Python-package licenses and identifies native
+files by their actual wheel-byte owner. It explicitly lists native files with
+no matched wheel owner. A PyAV wheel notice does not establish licensing or
+corresponding-source completeness for its bundled FFmpeg and codec libraries;
+the report makes no redistribution/legal approval claim. Component regressions
+include an actual small CArchive/PYZ fixture, not execution of the production
+frozen Windows application. That archive inspection remains mandatory in CI.

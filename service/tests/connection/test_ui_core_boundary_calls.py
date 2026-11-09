@@ -81,6 +81,33 @@ def test_android_call_control_fixture_asserts_signed_start_and_end(android_fixtu
     assert android_fixture.assert_call_ended(started["id"]) is True
 
 
+@pytest.mark.parametrize("rebind", [False, True])
+def test_lost_committed_call_start_resolves_original_ticket_then_cancels_once(android_fixture, rebind):
+    handle = profile()
+    fingerprint = "sha-256 " + ":".join(["AB"] * 32)
+    sdp = f"v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=fingerprint:{fingerprint}\r\n"
+    params = {"profile": handle, "action": "start", "contact_id": "android-call-peer",
+              "media": "audio", "sdp": sdp, "dtls_fingerprint": fingerprint}
+    key = "independent-lost-start-key-0001"
+    # Lose the reply only after the real Core parser/session/domain committed.
+    committed = result("call.control", params, key)["result"]
+    assert android_fixture.assert_call_started(committed["id"]) is True
+    if rebind:
+        android_fixture.close_all()
+        assert profile() == handle
+    recovered = result("call.control", params, key)["result"]
+    assert recovered["id"] == committed["id"] and recovered["state"] == "dialing"
+    assert android_fixture.assert_call_started(committed["id"]) is True
+    conflict = exchange("call.control", {**params, "sdp": sdp + "a=sendrecv\r\n"}, key)
+    assert conflict["error"]["code"] == "idempotency_conflict"
+    cancel = {"profile": handle, "action": "end", "call_id": recovered["id"], "reason": "completed"}
+    end_key = "independent-cancel-resolved-call-0001"
+    ended = result("call.control", cancel, end_key)["result"]
+    assert ended["id"] == committed["id"] and ended["state"] == "ended"
+    assert result("call.control", cancel, end_key)["result"]["id"] == committed["id"]
+    assert android_fixture.assert_call_ended(committed["id"]) is True
+
+
 @pytest.mark.parametrize("android_fixture", [False], indirect=True)
 def test_android_fresh_profile_fixture_creates_only_through_keyed_core(android_fixture):
     assert android_fixture.assert_profile_absent() is True
