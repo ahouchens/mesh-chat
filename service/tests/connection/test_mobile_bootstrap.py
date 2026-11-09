@@ -111,14 +111,18 @@ def test_deferred_mobile_close_blocks_replacement_until_store_and_workers_finish
     service = mobile_bridge._service
     released = threading.Event()
     service._pending_contact_carriers = {"pending": SimpleNamespace(close=lambda: None, wait=released.wait)}
-    assert json.loads(mobile_bridge.shutdown())["ok"]
+    assert json.loads(mobile_bridge.shutdown()) == {"ok": False, "error": {"code": "native_unavailable"}}
     assert mobile_bridge._retiring_service is service
+    assert mobile_bridge._retiring_channel is not None and service.store._key is not None
+    assert not json.loads(mobile_bridge.shutdown())["ok"]
     assert not json.loads(mobile_bridge.initialize(mobile_request))["ok"]
     assert mobile_bridge._service is None
     assert not service._store_closed
     released.set()
     service._close_finalizer.join(3)
-    assert service._store_closed
+    assert service._store_closed and service.store._key is None
+    assert json.loads(mobile_bridge.shutdown())["ok"]
+    assert mobile_bridge._retiring_service is None and mobile_bridge._retiring_channel is None
     assert json.loads(mobile_bridge.initialize(mobile_request))["ok"]
     assert mobile_bridge._service is not service
 

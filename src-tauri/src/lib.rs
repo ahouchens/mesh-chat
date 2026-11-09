@@ -1626,9 +1626,12 @@ async fn lock_service(app: AppHandle) -> Result<(), String> {
         .mesh_runtime()
         .shutdown()
         .map_err(|_| "service_stopped".to_string())?;
+    // A retiring worker may still need native responses to release its vault.
+    // Preserve that pump until Python acknowledges completed cleanup.
+    mobile_result(response)?;
     #[cfg(target_os = "android")]
     mobile_direct::stop(&app);
-    mobile_result(response).map(|_| ())
+    Ok(())
 }
 
 #[cfg(mobile)]
