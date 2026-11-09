@@ -117,6 +117,7 @@ import {
   coreApiRouteUpdate,
   coreApiUpdatePeer,
   coreApiConversation,
+  coreApiConversationReaction,
   coreApiDecidePeerRequest,
   coreApiContactInvitation,
   coreApiConnectionSupport,
@@ -5712,7 +5713,10 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     setReactionBusy({ kind, messageId, emoji: validation.emoji });
     setReactionError("");
     try {
-      await serviceCommand("set_message_reaction", { kind, message_id: messageId, emoji: validation.emoji, active });
+      const target = kind === "direct" ? selectedContact?.id : selectedGroup?.id;
+      if (!target) throw new Error("core_api_unavailable");
+      await coreApiConversationReaction(
+        kind, target, messageId, validation.emoji, active);
       await refresh(true);
       if (reactionInteractionGeneration.current === interactionGeneration) {
         setReactionTarget((current) => current?.kind === kind && current.messageId === messageId ? null : current);

@@ -387,9 +387,15 @@ class CoreClient private constructor(private val transport: CoreTransport) {
             .put("provider", provider).put("identifier", identifier), null)
 
     fun conversation(profile: String, action: String, kind: String,
-                     targetId: String): JSONObject =
-        dispatch("conversation.mutate", JSONObject().put("profile", profile)
-            .put("action", action).put("kind", kind).put("target_id", targetId), null)
+                     targetId: String, extra: JSONObject? = null): JSONObject {
+        val payload = JSONObject().put("profile", profile).put("action", action)
+            .put("kind", kind).put("target_id", targetId)
+        if (extra != null) {
+            val keys = extra.keys()
+            while (keys.hasNext()) { val key = keys.next(); payload.put(key, extra.get(key)) }
+        }
+        return dispatch("conversation.mutate", payload, null)
+    }
 
     fun peerUpdate(profile: String, peer: String, action: String,
                    displayName: String? = null): JSONObject {

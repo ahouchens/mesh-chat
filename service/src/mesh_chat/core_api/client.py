@@ -309,10 +309,10 @@ class CoreClient:
                             {"profile": handle, "provider": provider,
                              "identifier": identifier})
 
-    def conversation(self, handle, action, kind, target_id):
+    def conversation(self, handle, action, kind, target_id, **params):
         return self.request("conversation.mutate",
                             {"profile": handle, "action": action, "kind": kind,
-                             "target_id": target_id})
+                             "target_id": target_id, **params})
 
     def peer_update(self, handle, peer, action, display_name=None):
         params = {"profile": handle, "peer": peer, "action": action}

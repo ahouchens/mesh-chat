@@ -2750,9 +2750,12 @@
           "type": "object",
           "properties": {
             "profile": {"": "#//handle"},
-            "action": {"enum": ["delete", "restore"]},
+            "action": {"enum": ["delete", "restore", "reaction_set"]},
             "kind": {"enum": ["direct", "group"]},
-            "target_id": {"type": "string", "minLength": 1, "maxLength": 160}
+            "target_id": {"type": "string", "minLength": 1, "maxLength": 160},
+            "message_id": {"type": "string", "minLength": 1, "maxLength": 160},
+            "emoji": {"type": "string", "minLength": 1, "maxLength": 16},
+            "active": {"type": "boolean"}
           },
           "required": ["profile", "action", "kind", "target_id"],
           "additionalProperties": false

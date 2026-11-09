@@ -1142,7 +1142,7 @@ class CoreSession:
             if target is None:
                 raise ApiFailure("forbidden")
             result = self._workspace_admin.conversation(
-                target, params["action"], params["kind"], params["target_id"])
+                target, params["action"], params["kind"], params["target_id"], params)
             return {"conversation": result}
         if operation in ROUTE_UPDATE_OPERATIONS:
             target = profiles.get(params["profile"])

@@ -118,6 +118,7 @@ const api = vi.hoisted(() => {
   coreApiContactInvitation: vi.fn(async (action: string, params: Record<string, unknown>): Promise<unknown> => serviceCommand(action === "decide" ? "decide_contact_invitation" : "receive_contact_invitation", action === "decide" ? { invitation_id: params.invitation, accept: params.accept } : { document: params.document, peer_destination: params.peer, ...(params.workspace_document ? { workspace_document: params.workspace_document } : {}) })),
   coreApiDecidePeerRequest: vi.fn(async (_destination: string, accept: boolean): Promise<unknown> =>
     api.serviceCommand(accept ? "approve_request" : "decline_request", { contact_id: approved.id })),
+  coreApiConversationReaction: vi.fn(async (kind: string, _target: string, messageId: string, emoji: string, active: boolean): Promise<unknown> => serviceCommand("set_message_reaction", { kind, message_id: messageId, emoji, active })),
   coreApiConversation: vi.fn(async (action: string, kind: string, targetId: string): Promise<unknown> => serviceCommand(action === "delete" ? "delete_conversation" : "restore_conversation", { kind, id: targetId })),
   coreApiUpdatePeer: vi.fn(async (destination: string, action: string, displayName?: string): Promise<unknown> => {
     const target = await api.coreApiPeerForDestination(destination);

@@ -935,6 +935,18 @@ export async function coreApiDecidePeerRequest(
     { profile: target.profile, peer: target.peer, accept });
 }
 
+export async function coreApiConversationReaction(
+  kind: "direct" | "group", targetId: string, messageId: string,
+  emoji: string, active: boolean,
+): Promise<Record<string, unknown>> {
+  const profile = await coreApiProfile();
+  const result = await coreApiRequest("conversation.mutate", {
+    profile: profile.profile, action: "reaction_set", kind,
+    target_id: targetId, message_id: messageId, emoji, active,
+  }) as { conversation?: Record<string, unknown> };
+  return result.conversation ?? {};
+}
+
 export async function coreApiConversation(
   action: "delete" | "restore", kind: "direct" | "group", targetId: string,
 ): Promise<Record<string, unknown>> {

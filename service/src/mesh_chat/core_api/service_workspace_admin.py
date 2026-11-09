@@ -1231,7 +1231,7 @@ class ServiceWorkspaceAdmin:
             raise ApiFailure("invalid_request")
 
 
-    def conversation(self, profile, action, kind, target_id):
+    def conversation(self, profile, action, kind, target_id, params=None):
         self._require_local(profile)
         with storage_errors():
             try:
@@ -1239,6 +1239,9 @@ class ServiceWorkspaceAdmin:
                     return dict(self._service.delete_conversation(kind, target_id))
                 if action == "restore":
                     return dict(self._service.restore_conversation(kind, target_id))
+                if action == "reaction_set":
+                    return dict(self._service.set_message_reaction(
+                        kind, params["message_id"], params["emoji"], params["active"]))
             except ValidationError as error:
                 raise ApiFailure("invalid_request") from error
             raise ApiFailure("invalid_request")

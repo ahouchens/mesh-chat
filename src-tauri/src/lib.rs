@@ -719,7 +719,6 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "webrtc_onboarding_answer"
             | "verify_webrtc_onboarding_offer"
             | "verify_webrtc_onboarding_answer"
-            | "set_message_reaction"
             | "search"
             | "create_workspace"
             | "prepare_direct_offer"

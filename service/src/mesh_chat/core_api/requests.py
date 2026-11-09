@@ -722,13 +722,21 @@ def parse_request(value, operations):
         return operation, params
     if operation in CONVERSATION_OPERATIONS:
         params = value["params"]
+        expected = {"profile", "action", "kind", "target_id"}
+        if params.get("action") == "reaction_set" if isinstance(params, dict) else False:
+            expected |= {"message_id", "emoji", "active"}
         if (not isinstance(params, dict)
-                or set(params) != {"profile", "action", "kind", "target_id"}
-                or params["action"] not in {"delete", "restore"}
+                or set(params) != expected
+                or params["action"] not in {"delete", "restore", "reaction_set"}
                 or params["kind"] not in {"direct", "group"}
                 or not isinstance(params["profile"], str)
                 or HANDLE.fullmatch(params["profile"]) is None
                 or not isinstance(params["target_id"], str) or not params["target_id"]):
+            raise ApiFailure("invalid_request")
+        if params["action"] == "reaction_set" and (
+                not isinstance(params["message_id"], str) or not params["message_id"]
+                or not isinstance(params["emoji"], str) or not 1 <= len(params["emoji"]) <= 16
+                or type(params["active"]) is not bool):
             raise ApiFailure("invalid_request")
         return operation, params
     if operation in ROUTE_UPDATE_OPERATIONS:

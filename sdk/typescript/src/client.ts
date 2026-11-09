@@ -595,9 +595,9 @@ export class CoreClient {
   }
 
   async conversation(profile: string, action: string, kind: string,
-                     targetId: string): Promise<unknown> {
+                     targetId: string, extra: Record<string, unknown> = {}): Promise<unknown> {
     return this.request("conversation.mutate",
-      { profile, action, kind, target_id: targetId });
+      { profile, action, kind, target_id: targetId, ...extra });
   }
 
   async peerUpdate(profile: string, peer: string, action: string,
