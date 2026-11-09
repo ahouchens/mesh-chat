@@ -22,6 +22,9 @@ CONSUMER_DIRECTORY = ROOT / "dist/android-core-consumer"
 CONSUMER_ARTIFACTS = tuple(CONSUMER_DIRECTORY / name for name in
                            ("host.apk", "consumer.apk", "consumer-test.apk", "mesh-core-client.aar"))
 APP_ID = "com.meshchat.runtime.smoke"
+# Requires authenticated concurrent controller admission, never ordinary suite
+# discovery. It is invoked explicitly by native_interop_peers.AndroidPeer.
+CONTROLLER_ONLY_CLASSES = frozenset({"PackagedNativeInteropBoundaryTest"})
 WEBRTC = {
     "NativeCallbackQueueTest": ("saturatedMetadataQueueStillAdmitsExactDisposal",),
     "NativeSessionReservationsTest": (
@@ -88,9 +91,12 @@ def cases(suite):
         entries = (("CorePackageConsumerTest", method, "none") for method in CORE_CONSUMER)
     elif suite != "webrtc":
         raise ValueError("Unknown qualification suite")
-    return [{"id": f"{name}.{method}.{phase}", "class": name, "method": method, "phase": phase,
+    result = [{"id": f"{name}.{method}.{phase}", "class": name, "method": method, "phase": phase,
              "report": method + (f"-{phase}" if suite == "signaling" else "") + ".txt"}
             for name, method, phase in entries]
+    if any(item["class"] in CONTROLLER_ONLY_CLASSES for item in result):
+        raise ValueError("Controller-only instrumentation cannot enter ordinary qualification")
+    return result
 
 
 def verify_case(text, run, test_class, method):

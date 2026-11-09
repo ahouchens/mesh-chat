@@ -93,12 +93,30 @@ class PackagedNativeInteropBoundaryTest {
                                     check(closed.getBoolean("ok"))
                                     initialized = false
                                     NativeWebRtcBridge.closeAll()
+                                    val host = Class.forName("com.meshchat.runtime.NativeWebRtcHost")
+                                    val reservationsField = host.getDeclaredField("reservations").apply { isAccessible = true }
+                                    val reservations = reservationsField.get(null)
+                                    val ids = reservations.javaClass.getMethod("ids")
+                                    val deadline = System.nanoTime() + 15_000_000_000L
+                                    var retired = false
+                                    while (System.nanoTime() < deadline) {
+                                        // Inspect actual retained ownership; shutdown may defer close.
+                                        mobile.callAttr("shutdown")
+                                        val storeRetired = python.builtins.callAttr("eval",
+                                            "_service is None and _retiring_service is None and _retiring_channel is None",
+                                            mobile.get("__dict__")).toString() == "True"
+                                        val resourcesRetired = (ids.invoke(reservations) as List<*>).isEmpty()
+                                        if (storeRetired && resourcesRetired) { retired = true; break }
+                                        Thread.sleep(25)
+                                    }
+                                    check(retired)
                                     if (payload.getBoolean("delete_profile")) {
                                         check(directory!!.parentFile == parent)
                                         check(directory!!.deleteRecursively())
                                     }
                                     finished = true
-                                    reply = JSONObject().put("ok", true).put("result", JSONObject().put("closed", true))
+                                    reply = JSONObject().put("ok", true).put("result", JSONObject().put("closed", true)
+                                        .put("resources_retired", true).put("store_retired", true))
                                 }
                                 else -> error("Unsupported controller action")
                             }

@@ -34,7 +34,8 @@ def checked_reply(value, identifier):
     if not isinstance(value, dict) or value.get("id") != identifier or type(value.get("ok")) is not bool:
         raise PeerFailure("invalid_peer_reply")
     if value["ok"] is not True:
-        raise PeerFailure(value.get("error", {}).get("code"))
+        error = value.get("error")
+        raise PeerFailure(error.get("code") if isinstance(error, dict) else None)
     return value.get("result")
 
 
@@ -73,6 +74,8 @@ def child_environment(environment=os.environ):
 
 
 class WindowsPeer:
+    EXCHANGE_TIMEOUT = 60
+
     def __init__(self, binary, directory, key):
         if sys.platform != "win32" or len(key) != 32:
             raise PeerFailure("windows_required")
@@ -126,18 +129,49 @@ class WindowsPeer:
             raise PeerFailure("peer_not_started")
         self._sequence += 1
         identifier = f"qualification:{self._sequence}"
-        self.process.stdin.write(encode({"v": 1, "id": identifier, "command": command, "payload": payload or {}}))
-        self.process.stdin.flush()
+        process, responses = self.process, self._responses
+        def exchange():
+            process.stdin.write(encode({"v": 1, "id": identifier, "command": command, "payload": payload or {}}))
+            process.stdin.flush()
+            try:
+                reply = responses.get(timeout=self.EXCHANGE_TIMEOUT)
+            except queue.Empty:
+                raise PeerFailure("peer_deadline") from None
+            return checked_reply(reply, identifier)
+        return self._bounded(exchange)
+
+    def _bounded(self, action):
+        """The whole OS write/read exchange has one deadline, including flush."""
+        result = queue.Queue(maxsize=1)
+        def execute():
+            try: result.put((True, action()))
+            except Exception as error: result.put((False, error))
+        worker = threading.Thread(target=execute, daemon=True)
+        worker.start()
         try:
-            reply = self._responses.get(timeout=60)
+            success, value = result.get(timeout=self.EXCHANGE_TIMEOUT)
         except queue.Empty:
+            process = self.process
+            try:
+                if process is not None and process.poll() is None:
+                    self._kill_tree(process)
+                    process.wait(timeout=15)
+                if self.client is not None:
+                    self.client.close()
+            except Exception:
+                pass
+            worker.join(5)
             raise PeerFailure("peer_deadline") from None
-        return checked_reply(reply, identifier)
+        worker.join(5)
+        if not success:
+            raise value
+        return value
 
     def core(self, operation, params=None, key=None):
         if self.client is None:
             raise PeerFailure("peer_not_started")
-        return self.client.request(operation, params or {}, idempotency_key=key)
+        client = self.client
+        return self._bounded(lambda: client.request(operation, params or {}, idempotency_key=key))
 
     def inventory(self):
         return self.private("qualification.inventory")
@@ -149,27 +183,40 @@ class WindowsPeer:
         process = self.process
         if process is None:
             return
-        if self.client is not None:
-            self.client.close()
-            self.client = None
-        if crash:
-            self._kill_tree(process)
-            self.forced_exits += 1
-        else:
-            try:
-                self.private("shutdown")
-            except Exception:
+        failure, code = None, None
+        try:
+            if self.client is not None:
+                self.client.close()
+                self.client = None
+            if crash:
                 self._kill_tree(process)
-                process.wait(timeout=15)
-                raise
-        code = process.wait(timeout=30)
-        self._reader.join(5)
-        self._stderr.join(5)
-        self.process = None
-        for stream in (process.stdin, process.stdout, process.stderr):
-            stream.close()
+                self.forced_exits += 1
+            else:
+                self.private("shutdown")
+            code = process.wait(timeout=30)
+        except Exception as error:
+            failure = error if isinstance(error, PeerFailure) else PeerFailure("windows_shutdown_failed")
+        finally:
+            try:
+                if process.poll() is None:
+                    self._kill_tree(process)
+                    process.wait(timeout=15)
+            except Exception:
+                if failure is None: failure = PeerFailure("windows_retirement_failed")
+            self.process = None
+            self.client = None
+            for thread in (self._reader, self._stderr):
+                thread.join(5)
+                if thread.is_alive() and failure is None:
+                    failure = PeerFailure("windows_reader_not_retired")
+            for stream in (process.stdin, process.stdout, process.stderr):
+                try: stream.close()
+                except Exception:
+                    if failure is None: failure = PeerFailure("windows_stream_not_closed")
+        if failure is not None:
+            raise failure
         if not crash:
-            if code != 0 or self._reader.is_alive() or self._stderr.is_alive():
+            if code != 0:
                 raise PeerFailure("unclean_windows_exit")
             self.clean_exits += 1
 
@@ -241,8 +288,19 @@ class AndroidPeer:
             raise PeerFailure("peer_not_started")
         self._sequence += 1
         identifier = f"qualification:{self._sequence}"
+        deadline = time.monotonic() + 60
+        self.socket.settimeout(60)
         self.socket.sendall(encode({"id": identifier, "action": action, "payload": payload or {}}))
-        return checked_reply(receive(self.socket.recv), identifier)
+        def read(count):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise PeerFailure("peer_deadline")
+            self.socket.settimeout(remaining)
+            return self.socket.recv(count)
+        try:
+            return checked_reply(receive(read), identifier)
+        except TimeoutError:
+            raise PeerFailure("peer_deadline") from None
 
     def core(self, operation, params=None, key=None):
         return self._request("core", {"operation": operation, "params": params or {}, "idempotency_key": key})
@@ -264,7 +322,10 @@ class AndroidPeer:
                 self._adb("shell", "am", "force-stop", self.APP)
                 self.forced_exits += 1
             else:
-                self._request("finish", {"delete_profile": delete_profile})
+                result = self._request("finish", {"delete_profile": delete_profile})
+                if (not isinstance(result, dict) or result.get("closed") is not True
+                        or result.get("resources_retired") is not True or result.get("store_retired") is not True):
+                    raise PeerFailure("android_retirement_unverified")
                 finished = True
             code = process.wait(timeout=30)
             self._reader.join(5)

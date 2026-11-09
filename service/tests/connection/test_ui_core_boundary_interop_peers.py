@@ -7,6 +7,8 @@ import socket
 import struct
 import sys
 import threading
+import queue
+from types import SimpleNamespace
 
 import pytest
 
@@ -79,6 +81,85 @@ def test_windows_crash_targets_the_exact_launched_pyinstaller_tree(monkeypatch):
     peers.WindowsPeer._kill_tree(type("OwnProcess", (), {"pid": 1234})())
     assert calls[0][0][0] == ["taskkill.exe", "/PID", "1234", "/T", "/F"]
     assert calls[0][1]["check"] and calls[0][1]["timeout"] == 15
+
+
+def windows_fixture(monkeypatch):
+    peer = object.__new__(peers.WindowsPeer)
+    peer.clean_exits = peer.forced_exits = 0
+    peer._sequence = 0
+    peer._responses = queue.Queue()
+    streams = [BytesIO() for _ in range(3)]
+    state = {"exit": None, "kills": 0, "waits": 0, "client_closed": False}
+    def kill(process):
+        assert process is peer.process
+        state.update(exit=-9, kills=state["kills"] + 1)
+    def wait(timeout):
+        state["waits"] += 1
+        if state["exit"] is None:
+            raise peers.subprocess.TimeoutExpired("owned-child", timeout)
+        return state["exit"]
+    peer.process = SimpleNamespace(stdin=streams[0], stdout=streams[1], stderr=streams[2],
+                                   poll=lambda: state["exit"], wait=wait)
+    peer.client = SimpleNamespace(close=lambda: state.update(client_closed=True))
+    peer._reader = peer._stderr = SimpleNamespace(join=lambda timeout: None, is_alive=lambda: False)
+    monkeypatch.setattr(peer, "_kill_tree", kill)
+    return peer, streams, state
+
+
+def test_windows_shutdown_failure_still_retires_owned_tree_and_every_stream(monkeypatch):
+    peer, streams, state = windows_fixture(monkeypatch)
+    def fail(*args): raise peers.PeerFailure("original_shutdown_error")
+    monkeypatch.setattr(peer, "private", fail)
+    with pytest.raises(peers.PeerFailure, match="original_shutdown_error"):
+        peer.stop()
+    assert state["kills"] == 1 and state["client_closed"]
+    assert peer.process is peer.client is None
+    assert all(stream.closed for stream in streams)
+    assert peer.clean_exits == 0
+
+
+def test_windows_exit_timeout_kills_tree_and_never_counts_clean_exit(monkeypatch):
+    peer, streams, state = windows_fixture(monkeypatch)
+    monkeypatch.setattr(peer, "private", lambda *args: None)
+    with pytest.raises(peers.PeerFailure, match="windows_shutdown_failed"):
+        peer.stop()
+    assert state["kills"] == 1 and state["waits"] == 2
+    assert all(stream.closed for stream in streams) and peer.process is None
+    assert peer.clean_exits == 0
+
+
+@pytest.mark.parametrize("blocked", ["write", "core_read"])
+def test_whole_windows_exchange_deadline_covers_blocked_write_or_core_read(monkeypatch, blocked):
+    peer, _, state = windows_fixture(monkeypatch)
+    peer.EXCHANGE_TIMEOUT = 0.025
+    released = threading.Event()
+    original_kill = peer._kill_tree
+    def kill(process):
+        original_kill(process)
+        released.set()
+    monkeypatch.setattr(peer, "_kill_tree", kill)
+    def hang(*args, **kwargs):
+        assert released.wait(2), "The bounded exchange must retire its exact host"
+        raise OSError("raw private setup must never escape the timeout")
+    if blocked == "write":
+        peer.process.stdin = SimpleNamespace(write=hang)
+        call = lambda: peer.private("qualification.inventory")
+    else:
+        peer.client.request = hang
+        call = lambda: peer.core("application.snapshot")
+    with pytest.raises(peers.PeerFailure, match="peer_deadline"):
+        call()
+    assert state["kills"] == 1 and state["client_closed"]
+
+
+def test_android_controller_is_explicitly_excluded_from_all_ordinary_required_suites():
+    import android_qualification
+    assert peers.AndroidPeer.TEST.rsplit(".", 1)[1] in android_qualification.CONTROLLER_ONLY_CLASSES
+    for suite in ("webrtc", "signaling", "core_api", "core_consumer"):
+        assert all(item["class"] != "PackagedNativeInteropBoundaryTest" for item in android_qualification.cases(suite))
+    for name in ("test_android_webrtc.sh", "test_android_signaling.sh", "test_android_core_api.sh"):
+        script = (peers.ROOT / "scripts" / name).read_text()
+        assert "-e class" in script and "android_qualification.py list" in script
 
 
 def test_packaged_drivers_do_not_construct_a_source_service_or_import_vault():
