@@ -13,8 +13,11 @@ executed and passed, zero failures or skips, qualification ID
 The workflow is not accepted: Windows failed frozen-material verification;
 broad verification passed 4,075 tests but failed one stale frontend history
 assertion (51 environment-specific skips); Android instrumentation compilation
-could not resolve its transitive Binder SDK dependency. Direct jobs were still
-running when this checkpoint was recorded.
+could not resolve its transitive Binder SDK dependency. Direct jobs subsequently
+completed successfully: both Windows and Linux passed 25 fabric, 10 recovery
+and 12 setup cases with zero skips. The lead validated each retained inventory
+and report using pinned `dcac85e` validators. Binary hashes in these report-only
+archives remain runner claims. The final workflow gate failed.
 
 Read-only inspection of the retained Windows executable confirmed SHA-256
 `1b9d37786c8c626fcd28c4d9e8021480c95e63c9c070255798a87fe4927df8b2` and identified
@@ -30,6 +33,34 @@ repository-byte repairs plus prepared reaction/invitation hooks. The lead ran
 zero skips, 12.30 seconds. Invitation preparation does not itself establish atomic
 personal adoption/workspace join; parent integration remains required. Runtime
 profile host binding and actual Windows–Android topology remain pending.
+
+### Combined native custody review
+
+Source `5cf3478f45bd8052d1e0dd4684c2c0ada4a7362d` integrates concrete supervisor
+pairing, complete private native lease accounting, the queued-creation
+cancellation fix, and the Android instrumentation dependency correction. Strict
+model/reducer typing passes. The complete local required run executed 2,982 cases:
+2,977 passed, five failed, zero skipped in 287.14 seconds. Four failures were
+boundary vectors still routing runtime lifecycle requests through the ordinary
+service session or omitting `profile.catalog`; D owns their correction. The
+remaining Bash fixture failed sandbox path traversal and passed independently
+with the necessary filesystem access. This is not a passing policy gate.
+
+Follow-up `02db485`, integrated at `8e396b7`, retains an acquired profile service
+through any handle-authority validation failure. The full corrected policy run
+and packaged CI remain required. Supervisor-owned initial pairing still needs
+its trusted host entry wired into the topology controller; a manually driven
+native handshake does not establish that coverage.
+
+The corrected complete policy run at
+`1e288ecbf9da00d49c84ee63ff9ece76a3f15f7d` passes all 3,108 collected/executed
+cases with zero failures or skips in 306.43 seconds. Qualification ID:
+`6b165305c11c4d418b07f57484b6b60c`; retained files are
+`dist/reports/policy-runtime-custody.{xml,json,inventory.json}`. Seven warnings
+concern existing JUnit metadata/upstream deprecation behavior. This source also
+contains the two-role topology infrastructure, whose actual execution and
+supervisor-owned pairing-entry followup remain pending. Passing its controller
+component tests is not transport qualification.
 
 ### Runtime catalog and installed SDK checkpoint
 

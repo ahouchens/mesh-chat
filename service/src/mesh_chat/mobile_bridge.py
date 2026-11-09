@@ -363,6 +363,9 @@ def shutdown() -> str:
     try:
         with _service_lock:
             _close_service()
+            if (_service is not None or _native_channel is not None
+                    or _retiring_service is not None or _retiring_channel is not None):
+                raise NativeUnavailable("Mobile runtime retirement is incomplete")
         return _dumps({"ok": True, "result": None})
     except Exception as exc:
         return _error(exc)

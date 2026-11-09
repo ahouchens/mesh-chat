@@ -61,6 +61,17 @@ bridge. A retains `call_manager.py` for protected unknown-call recovery after th
 group mutation batch; C owns any required `service.py` glue. Caller operation
 keys, consent and unresolved cleanup must survive these boundaries.
 
+Combined `1e288ec` passes 3,108 required policy cases, zero skips, after D's
+runtime-host vector correction. D's topology workflow/controller infrastructure
+is integrated but held from acceptance until C's trusted supervisor pairing
+entry replaces manual handshake orchestration and both platform initiator roles
+are exercised. C now exclusively owns `core_api/qualification_host.py` and new
+`test_native_pairing_host_port.py` for this narrow private route; ordinary public
+SDK/native command authority is unchanged. C also corrects mobile shutdown
+acknowledgment when a retiring service still holds its vault and removes the
+Windows long-lived initialization-key reference. B's bounded UI lifetime barrier
+must keep such pending shutdown outcomes uncertain, with a retry action.
+
 ## Active Wave 2 handoff
 
 All workers merge the current lead branch before edits. Source `174728e` is the
