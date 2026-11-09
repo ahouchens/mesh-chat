@@ -16,14 +16,14 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /** Production Tauri typed entry -> Binder -> CoreDispatch -> framed Python session.
- * Fixture setup alone accesses private service state. Calls under test use the
+ * Fixture setup and assertions inspect private service state. Calls under test use the
  * application entry point, with no replacement Core client or legacy commands.
  */
 @RunWith(AndroidJUnit4::class)
 class TypedCoreBridgeBoundaryTest {
     private val context: Context = InstrumentationRegistry.getInstrumentation().targetContext
 
-    private fun withRuntime(action: (PyObject) -> Unit) {
+    private fun withRuntime(seedProfile: Boolean = true, action: (PyObject) -> Unit) {
         val executor = Executors.newSingleThreadExecutor()
         try {
             executor.submit {
@@ -36,7 +36,7 @@ class TypedCoreBridgeBoundaryTest {
                 check(directory.parentFile == parent)
                 directory.mkdirs()
                 try {
-                    fixture.callAttr("setup", directory.absolutePath)
+                    fixture.callAttr("setup", directory.absolutePath, seedProfile)
                     action(fixture)
                 } finally {
                     fixture.callAttr("close")
@@ -152,6 +152,26 @@ class TypedCoreBridgeBoundaryTest {
         assertEquals("True", fixture.callAttr("assert_call_ended", callId).toString())
     }
 
+    @Test(timeout = 120_000)
+    fun typedFreshProfileBootstrapDoesNotSeedIdentity() = withRuntime(false) { fixture ->
+        assertEquals("True", fixture.callAttr("assert_profile_absent").toString())
+        val params = JSONObject().put("display_name", "Fresh Android owner")
+        val key = "android-fresh-profile-key-0001"
+        val created = result(request("profile.create", params, key))
+        val view = result(exchange("profile"))
+        assertEquals("Fresh Android owner", view.getString("display_name"))
+        val destination = view.getString("destination")
+        val identity = fixture.callAttr("profile_identity_hash").toString()
+        assertEquals(created.toString(), result(request("profile.create", params, key)).toString())
+        val conflict = request("profile.create", JSONObject().put("display_name", "Changed owner"), key)
+        assertFalse(conflict.getBoolean("ok"))
+        assertEquals("idempotency_conflict", conflict.getJSONObject("error").getString("code"))
+        fixture.callAttr("reopen")
+        assertEquals(created.toString(), result(request("profile.create", params, key)).toString())
+        assertEquals(destination, result(exchange("profile")).getString("destination"))
+        assertEquals(identity, fixture.callAttr("profile_identity_hash").toString())
+    }
+
     companion object {
         // No sockets or ordinary app profile. The actual Binder/session path
         // still derives its grant from the calling UID and serializes all calls.
@@ -168,10 +188,12 @@ class TypedCoreBridgeBoundaryTest {
             from mesh_chat.reticulum_config import NetworkSettings
             from mesh_chat.webrtc_signaling import verify_call_invite, verify_call_hangup
 
-            def setup(path):
+            def setup(path, seed_profile=True):
+                global fixture_path, fixture_key
                 close()
                 directory = Path(path)
-                store = VaultStore(directory, os.urandom(32), allow_unprotected_for_tests=True)
+                fixture_path, fixture_key = directory, os.urandom(32)
+                store = VaultStore(directory, fixture_key, allow_unprotected_for_tests=True)
                 store.put("settings", "network", NetworkSettings(nearby_discovery=False, lan_fallback=False).to_dict())
                 start = MeshChatService._start_network
                 lan = MeshChatService._prepare_lan_fallback
@@ -179,7 +201,11 @@ class TypedCoreBridgeBoundaryTest {
                     MeshChatService._start_network = lambda *_: None
                     MeshChatService._prepare_lan_fallback = lambda *_: None
                     service = MeshChatService(store, directory, lambda _: None)
+                    service._start_network = lambda *_: None
+                    service._prepare_lan_fallback = lambda *_: None
                     mobile_bridge._service = service
+                    if not seed_profile:
+                        return
                     service.create_profile("Typed Android Alex")
                     store.put("contact", "android-boundary-peer", {
                         "id": "android-boundary-peer", "display_name": "Typed Android Blair",
@@ -200,6 +226,33 @@ class TypedCoreBridgeBoundaryTest {
             def close():
                 close_all()
                 mobile_bridge.shutdown()
+
+            def reopen():
+                close()
+                start = MeshChatService._start_network
+                lan = MeshChatService._prepare_lan_fallback
+                try:
+                    MeshChatService._start_network = lambda *_: None
+                    MeshChatService._prepare_lan_fallback = lambda *_: None
+                    store = VaultStore(fixture_path, fixture_key, allow_unprotected_for_tests=True)
+                    mobile_bridge._service = MeshChatService(store, fixture_path, lambda _: None)
+                    mobile_bridge._service._start_network = lambda *_: None
+                    mobile_bridge._service._prepare_lan_fallback = lambda *_: None
+                finally:
+                    MeshChatService._start_network = start
+                    MeshChatService._prepare_lan_fallback = lan
+
+            def assert_profile_absent():
+                service = mobile_bridge._service
+                assert service.store.get("profile", "local") is None
+                assert service.store.get("identity", "local") is None
+                assert service._identity is None
+                return True
+
+            def profile_identity_hash():
+                service = mobile_bridge._service
+                assert len(service.store.list("identity")) == len(service.store.list("profile")) == 1
+                return service.store.get("profile", "local")["identity_hash"]
 
             def assert_settings_mutated():
                 service = mobile_bridge._service

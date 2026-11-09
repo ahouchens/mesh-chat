@@ -21,13 +21,13 @@ ANDROID_TEST = ROOT / ("plugins/tauri-plugin-mesh-runtime/android/src/androidTes
 
 
 @pytest.fixture
-def android_fixture(tmp_path):
+def android_fixture(tmp_path, request):
     source = ANDROID_TEST.read_text(encoding="utf-8")
     embedded = re.search(r'private val FIXTURE = """(.*?)"""\.trimIndent\(\)', source, re.S)
     assert embedded is not None, "The executed Android fixture must remain available to the component test"
     fixture = ModuleType("typed_core_boundary_fixture")
     exec(compile(dedent(embedded.group(1)), str(ANDROID_TEST) + ":FIXTURE", "exec"), fixture.__dict__)
-    fixture.setup(str(tmp_path))
+    fixture.setup(str(tmp_path), getattr(request, "param", True))
     try:
         yield fixture
     finally:
@@ -79,3 +79,22 @@ def test_android_call_control_fixture_asserts_signed_start_and_end(android_fixtu
         "call_id": started["id"], "reason": "completed"}, "android-boundary-call-end-0001")["result"]
     assert ended["state"] == "ended" and ended["id"] == started["id"]
     assert android_fixture.assert_call_ended(started["id"]) is True
+
+
+@pytest.mark.parametrize("android_fixture", [False], indirect=True)
+def test_android_fresh_profile_fixture_creates_only_through_keyed_core(android_fixture):
+    assert android_fixture.assert_profile_absent() is True
+    assert "profile.create" in result("runtime.capabilities")["operations"]
+    params, key = {"display_name": "Fresh Android owner"}, "android-fresh-profile-key-0001"
+    created = result("profile.create", params, key)
+    view = result("profile.query", {"profile": profile()})
+    assert view["display_name"] == "Fresh Android owner"
+    identity = android_fixture.profile_identity_hash()
+    assert result("profile.create", params, key) == created
+    conflict = exchange("profile.create", {"display_name": "Changed owner"}, key)
+    assert conflict["error"]["code"] == "idempotency_conflict"
+    android_fixture.reopen()
+    assert "profile.create" in result("runtime.capabilities")["operations"]
+    assert result("profile.create", params, key) == created
+    assert result("profile.query", {"profile": profile()}) == view
+    assert android_fixture.profile_identity_hash() == identity
