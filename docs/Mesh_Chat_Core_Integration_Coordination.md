@@ -25,6 +25,18 @@ The independent Android build and two installed cases remain unqualified;
 Windows pairing's cause remains unproven. All workers hold source while the lead
 validates platform reports. No release, default or scenario promotion.
 
+Current CI independently passes all 3,554 policy cases and the 670/12 boundary;
+broad verification also passes. Windows public pairing fails again, but its new
+timing evidence excludes late acceptance in this run: acceptance starts at
+28,701 ms and returns at 28,714 ms. The pending-request wait completes **1,945
+snapshot reads** before failure at 240,072 ms; no clipping occurs and its entry
+deadline flag is false. The final offerer snapshot is explicitly from that wait
+and contains zero contacts. Both final pairing probes are retired, not expired.
+This establishes a real post-accept observation period without the required
+request; it does not establish delivery failure or retirement cause. C reviews
+frozen-runtime/bootstrap differences offline; A/D audit existing public request
+state observations. Android and direct results remain pending.
+
 The previous feature-branch checkpoint is `577250e7b0dad8fca7a9d460f5e990dcc29af8dc`
 (tree `2ff3f7c8aac2d558e9af05a1d3aaca04e0a6048b`). Full manual CI
 [42711039872](https://github.com/ahouchens/mesh-chat/actions/runs/42711039872)

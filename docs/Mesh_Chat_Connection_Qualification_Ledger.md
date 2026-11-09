@@ -18,6 +18,18 @@ The independent Android build and two installed cases remain unqualified;
 Windows pairing's cause remains unproven. All workers hold source while the lead
 validates platform reports. No release, default or scenario promotion.
 
+Current CI independently passes all 3,554 policy cases and the 670/12 boundary;
+broad verification also passes. Windows public pairing fails again, but its new
+timing evidence excludes late acceptance in this run: acceptance starts at
+28,701 ms and returns at 28,714 ms. The pending-request wait completes **1,945
+snapshot reads** before failure at 240,072 ms; no clipping occurs and its entry
+deadline flag is false. The final offerer snapshot is explicitly from that wait
+and contains zero contacts. Both final pairing probes are retired, not expired.
+This establishes a real post-accept observation period without the required
+request; it does not establish delivery failure or retirement cause. C reviews
+frozen-runtime/bootstrap differences offline; A/D audit existing public request
+state observations. Android and direct results remain pending.
+
 Local policy qualification is `5d82b74d14c549c1a01aa6bd7316bf33`, 360.88s
 wall time (352.138s summed case durations). Exact App/Core wall time is 44.33s;
 Python XML SHA-256 `52330790dcf3d7de113a7978261221118d9bf2e2ad3ddb71711fef3cc27ab2a7`,
@@ -31,6 +43,25 @@ Selection artifact `13717079674` has archive SHA-256
 `67972eb4fc0e4ecdd70d30cda615e4dd6581ae7fada036c332dff4ba3d83d255`.
 All 146 validator source files are pinned to the candidate. These local gates
 and selection checks do not replace actual platform execution.
+
+At current source `677b6bf`, policy artifact `13718192421` has archive SHA-256
+`d8dad64d5240896991a2a10f48550122216a92a0303089535778c730eae90c13`;
+qualification `67d805f683724ad0ba7bbc28e569d1cf` independently reconstructs all
+3,554 cases with zero failures/skips. Verification artifact `13719560274` has
+archive `a4c3d17ce53960a7cb867210de757a9a4464817f878250dcfbdd9c9df6169e4a`;
+its boundary XML/inventory independently pass and broad runner summary passes.
+
+Desktop artifact `13719625071`, archive
+`6ed700b04d793ba44cb4e2fce4ff1280f49f04241e502ae9bbb9333e70c5ec2a`,
+and native artifact `13718691952`, archive
+`c730a2bd0d585357bd0a24b441256ab1d6036eb5ad3e2cfbdfeb2e6ed9128131`,
+bind nine passing components and normal bootstrap with actual DPAPI/EFS to the
+54,571,189-byte executable SHA-256
+`3a1f53c1e2b3abaf1fb4f2135d64ada8af965ee93affdaeaeae7077e08f185c9`.
+Bootstrap run `9295e4492f7644aabd81f8bda43eb91b` uses the retained SDK and
+source-verified consumer files. The failed pairing diagnostics pass the exact
+pinned strict parser; report attribution comes from the verified artifact/run,
+not intrinsic success bindings. Later packaged gates did not run.
 
 ### Completed checkpoint 577250e: evidence and subsequent repairs
 
