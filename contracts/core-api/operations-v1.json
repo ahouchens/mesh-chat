@@ -127,8 +127,17 @@
     "workspace.create",
     "profile.create"
   ],
-  "private_host_operations": ["native.command"],
+  "private_host_operations": ["native.command", "bootstrap.preview"],
+  "bootstrap_operations": ["profile.create", "bootstrap.preview"],
   "operations": [
+    {
+      "operation": "bootstrap.preview",
+      "permission": "profile_owner",
+      "scope": "runtime",
+      "mutation": false,
+      "visibility": "private_host",
+      "idempotency": "query"
+    },
     {
       "operation": "runtime.capabilities",
       "permission": "observe",

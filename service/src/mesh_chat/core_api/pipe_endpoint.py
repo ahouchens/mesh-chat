@@ -219,9 +219,11 @@ class PipeConfig:
     idle_timeout: float = 60.0
     scope: str = "consumer"
     private_native: bool = False
+    private_profile_bootstrap: bool = False
 
     def __post_init__(self):
-        host.host_grant(self.caller, self.permissions, scope=self.scope)
+        host.host_grant(self.caller, self.permissions, scope=self.scope,
+                        private_profile_bootstrap=self.private_profile_bootstrap)
         if type(self.private_native) is not bool or (self.private_native and self.scope != "owner"):
             raise ValueError("Private native binding requires the application owner")
         validate_images(self.allowed_images)
@@ -243,9 +245,11 @@ class PipeEndpoint:
         self._name = pipe_name(name)
         self._images = config.allowed_images
         self._grant = host.host_grant(config.caller, config.permissions,
-                                      scope=config.scope)
+                                      scope=config.scope,
+                                      private_profile_bootstrap=config.private_profile_bootstrap)
         self._scope = config.scope
         self._private_native = config.private_native
+        self._private_profile_bootstrap = config.private_profile_bootstrap
         self._stop = threading.Event()
         self._ready = threading.Event()
         self._lock = threading.Lock()
@@ -320,7 +324,8 @@ class PipeEndpoint:
                                                 permissions=self._grant.permissions,
                                                 profiles=self._grant.profiles,
                                                 scope=self._scope,
-                                                private_native=self._private_native)
+                                                private_native=self._private_native,
+                                                private_profile_bootstrap=self._private_profile_bootstrap)
                 session.serve(_Duplex(self.kernel, handle, self._stop, self._idle_timeout),
                               _Duplex(self.kernel, handle, self._stop, self._idle_timeout))
             except (OSError, ValueError) as error:

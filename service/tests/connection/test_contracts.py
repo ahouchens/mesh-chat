@@ -73,6 +73,7 @@ def request_vectors():
         "runtime.capabilities": {}, "runtime.stop": {}, "application.snapshot": {},
         "native.command": {"command": "workspace_snapshot", "payload": {}},
         "profile.create": {"display_name": "Alex"},
+        "bootstrap.preview": {"kind": "personal", "document": "signed-invitation"},
         "workspace.create": {"name": "Lake", "description": ""}, "profile.select": {},
         "profile.unlock": {"credential_handle": handle}, "profile.lock": {}, "profile.query": {},
         "peer.pairing_create": {},
@@ -237,8 +238,9 @@ def request_vectors():
 
 @pytest.mark.parametrize("operation,value", request_vectors().items())
 def test_each_designed_operation_has_an_executable_request_vector_and_permission(operation, value):
-    contract = ("core-api/private-host-request-v1.schema.json" if operation == "native.command"
-                else "core-api/request-v1.schema.json")
+    contract = {"native.command": "core-api/private-host-request-v1.schema.json",
+                "bootstrap.preview": "core-api/private-bootstrap-request-v1.schema.json"}.get(
+                    operation, "core-api/request-v1.schema.json")
     validator(contract).validate(value)
     if operation in COMPONENT_OPERATIONS:
         assert parse_request(value, COMPONENT_OPERATIONS) == (operation, value["params"])
@@ -291,6 +293,7 @@ def test_malformed_component_fields_are_rejected_at_the_parser_boundary(bad):
                 Draft202012Validator({**item, "$defs": schema["$defs"]})
                 for item in schema["oneOf"]}
     branches["native.command"] = validator("core-api/private-host-request-v1.schema.json")
+    branches["bootstrap.preview"] = validator("core-api/private-bootstrap-request-v1.schema.json")
     for operation, value in request_vectors().items():
         if operation not in COMPONENT_OPERATIONS:
             continue
