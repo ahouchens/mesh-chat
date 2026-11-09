@@ -4,9 +4,6 @@ import json
 from pathlib import Path
 from uuid import uuid4
 
-ROOT = Path(__file__).resolve().parents[1]
-
-
 REQUIRED_SUITES = (
     "service/tests/connection",
     "service/tests/test_background_reconnect.py",
@@ -27,6 +24,9 @@ class TestInventory:
         self.path = path
         self.source = source
         self.selection = tuple(selection)
+        # The qualification runner may execute an isolated repository while
+        # importing this plugin from its tooling checkout.
+        self.invocation_directory = Path.cwd().resolve()
         self.run_id = uuid4().hex
         self.deselected = False
 
@@ -44,7 +44,7 @@ class TestInventory:
         for suite in self.selection:
             # Policy uses service/ as root; mixed Windows app/host checks use
             # the repository root. Bind each selection to the actual root.
-            prefix = (ROOT / suite).relative_to(session.config.rootpath).as_posix()
+            prefix = (self.invocation_directory / suite).relative_to(session.config.rootpath).as_posix()
             if not any(nodeid.startswith(prefix + ("::" if prefix.endswith(".py") else "/"))
                        for nodeid in nodeids):
                 raise ValueError("Required qualification suite was not collected: " + suite)

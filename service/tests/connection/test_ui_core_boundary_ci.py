@@ -47,15 +47,21 @@ def test_missing_boundary_runtime_or_skipped_required_verification_cannot_pass()
 
 
 @pytest.mark.parametrize("service_root", [False, True])
-def test_required_inventory_binds_test_paths_to_the_actual_pytest_root(tmp_path, service_root):
+@pytest.mark.parametrize("external_repository", [False, True])
+def test_required_inventory_binds_test_paths_to_the_actual_pytest_root(tmp_path, monkeypatch, service_root, external_repository):
     from connection_test_inventory import TestInventory
     selection = ("service/tests/test_app_owned_windows.py",)
-    root = ROOT / "service" if service_root else ROOT
+    repository = tmp_path / "external-repository" if external_repository else ROOT
+    repository.mkdir(exist_ok=True)
+    monkeypatch.chdir(repository)
+    root = repository / "service" if service_root else repository
     prefix = "tests/" if service_root else "service/tests/"
     item = SimpleNamespace(nodeid=prefix + "test_app_owned_windows.py::test_case", user_properties=[])
     session = SimpleNamespace(items=[item], testsfailed=0,
                               config=SimpleNamespace(option=SimpleNamespace(), rootpath=root))
     inventory = TestInventory(tmp_path / "inventory.json", "source", selection)
+    # Later cwd changes cannot silently rebind the original invocation.
+    monkeypatch.chdir(ROOT)
     inventory.pytest_collection_finish(session)
     assert item.user_properties
     item.nodeid = "other/" + item.nodeid
