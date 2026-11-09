@@ -205,6 +205,27 @@ class RemoteProfileServiceMixin:
         self._changed()
         return record
 
+    def _prepare_remote_approval(self, value, *, origin, scope_kind, scope_id,
+                                 allow_private=False, operation_id=None):
+        """Prepare approval for a parent's transaction; perform no I/O effects.
+
+        The parent validates its current signed workspace authority and explicit
+        consent before invoking this hook, and holds its dispatch lock through
+        the combined commit. Only then may it reconcile remote profiles.
+        """
+        if self._identity is None or self._shutdown.is_set():
+            raise ValidationError("Local profile is unavailable")
+        self._require_profile()
+        if type(allow_private) is not bool:
+            raise ValidationError("Private endpoint choice is invalid")
+        record = self._prepare_remote_document(value, origin=origin, scope_kind=scope_kind,
+                                               scope_id=scope_id, allow_private=allow_private)
+        record["next_retry_at"] = time.time()
+        return record, [
+            ("remote_profile", record["id"], record),
+            self._remote_runtime_intent("transport", operation_id),
+        ]
+
     def _prepare_remote_document(self, value, *, origin, scope_kind, scope_id, allow_private=False):
         checked = validate_profile_document(value, allow_private=allow_private)
         existing = self.store.get("remote_profile", checked["id"])
