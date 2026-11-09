@@ -979,7 +979,7 @@ class ServiceWorkspaceAdmin:
             try:
                 outcome = self._service.create_workspace_admission_grant(
                     workspace_id, member_id, device_id, max_admissions,
-                    lifetime_days, v2_ready)
+                    lifetime_days, v2_ready, operation_id=operation_id)
             except ValidationError as error:
                 raise ApiFailure("invalid_request") from error
             if not isinstance(outcome, dict):
@@ -990,7 +990,8 @@ class ServiceWorkspaceAdmin:
         self._require_local(profile)
         with storage_errors():
             try:
-                self._service.accept_workspace_admission_grant(workspace_id, grant_id)
+                self._service.accept_workspace_admission_grant(workspace_id, grant_id,
+                                                               operation_id=operation_id)
             except ValidationError as error:
                 raise ApiFailure("invalid_request") from error
             return "accepted"
@@ -999,7 +1000,8 @@ class ServiceWorkspaceAdmin:
         self._require_local(profile)
         with storage_errors():
             try:
-                self._service.end_workspace_admission_grant(workspace_id, grant_id)
+                self._service.end_workspace_admission_grant(workspace_id, grant_id,
+                                                            operation_id=operation_id)
             except ValidationError as error:
                 raise ApiFailure("invalid_request") from error
             return "ended"

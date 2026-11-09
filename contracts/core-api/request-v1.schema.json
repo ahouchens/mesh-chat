@@ -2142,8 +2142,8 @@
             "workspace": {"$ref": "#/$defs/handle"},
             "admin_member": {"$ref": "#/$defs/handle"},
             "admin_device": {"$ref": "#/$defs/handle"},
-            "max_admissions": {"type": "integer", "minimum": 1, "maximum": 50},
-            "lifetime_days": {"type": "integer", "minimum": 1, "maximum": 90},
+            "max_admissions": {"type": "integer", "minimum": 1, "maximum": 5},
+            "lifetime_days": {"type": "integer", "minimum": 1, "maximum": 7},
             "v2_ready": {"type": "boolean"}
           },
           "required": ["profile", "workspace", "admin_member", "admin_device", "max_admissions", "lifetime_days", "v2_ready"],
