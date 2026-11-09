@@ -2,6 +2,37 @@
 
 ## Integration revalidation (2026-11-09)
 
+### First combined implementation checkpoint
+
+The lead merged A `947e338`, C `1141e25`, B `8f1ceab`, then D `28752d5`
+(including `e2cf2ca` and `136cb07`) with merge commits, reaching
+`2e7536847a351387a5d7fcf5d22b9d3d8c21cd5b`. No feature-branch push or full CI
+qualification is claimed for this checkpoint.
+
+| Executed by lead | Exact source | Result and scope |
+| --- | --- | --- |
+| Existing Core and contract tests | `00d06525d05d033cb8396a532b0b4419354de59a` | 552 passed, zero skips, 20.29 s; production parsing, session and local service coverage. |
+| `check_core_ui_boundary.py` | `2e7536847a351387a5d7fcf5d22b9d3d8c21cd5b`, tree `8e9137c91b0108b4eb2e275788a40b8ef3684c2d` | 267 Python cases and five rendered-App cases passed, zero failures/skips, 24.24 s total. Real serializer/framing/parser/session/vault; Tauri invocation is substituted. This is not native-host or packaged evidence. |
+| Application and boundary TypeScript checks | `2e75368` | Both passed. |
+| Android-host, contract and workspace-admin tests after A `3feb24f` | `963538c408f3cfd8f6397462b27137a5e56f5132` | 197 passed, zero skips, 10.79 s. Service incarnation changes fence cached sessions; nullable workspace notifications and history actions align with UI/domain behavior. |
+
+The first boundary attempt failed because sandboxed esbuild could not traverse
+the workspace parent. The complete rerun outside that sandbox passed; a local
+pytest cache ACL warning remained, with no skipped test. Test outputs and vaults
+were worktree-local. Disk exhaustion interrupted worker native builds; those
+builds are not passing evidence. Heavy native/emulator work is assigned to CI.
+
+Review found a blocking defect in C `1141e25`: Android's `sendMessage` convenience
+omits the required `kind: "text"` field. The owner has an explicit correction in
+the coordination plan; the added Binder instrumentation must execute it against
+the production parser. Public-owner access to private native commands, remaining
+keyed-operation durability, full settings/call-control mutation coverage, and
+full exact-source CI remain open. B's pending-send identity and accepted-draft
+suppression are limited to the mounted renderer; restart-safe pending UI work
+remains a separate implementation requirement. Wave 1 is not accepted yet.
+
+### Baseline findings
+
 The current integration baseline is
 `435b497150e5f0d12cb1c5dc7b4602da7a66ec4c`. All runs below retain their
 historical source/artifact scope; none is automatically evidence for this head.
