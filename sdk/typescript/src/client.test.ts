@@ -83,6 +83,40 @@ test("call recovery gates every helper before I/O and preserves the abandon key"
   assert.equal(JSON.parse(transport.written[1]!).idempotency_key, "explicit-abandon-key00");
 });
 
+test("pairing helpers gate advertised bounds and serialize exact keys and consent", async () => {
+  const caps = { ...CAPABILITIES, api_minor: 1,
+    operations: ["peer.pairing_begin", "peer.pairing_query", "peer.pairing_cancel"],
+    limits: { pairing_intents_per_runtime: 32, pairing_active_intents: 1, pairing_intent_seconds: 300,
+      pairing_code_utf8_bytes: 2048, pairing_key_idempotency_seconds: 604800, pairing_keys_per_caller_profile: 4096, pairing_keys_per_vault: 65536 } };
+  for (const broken of [{ ...caps, api_minor: 0 }, { ...caps, operations: caps.operations.slice(0, 2) }, { ...caps, limits: {} }]) {
+    const transport = new Scripted(success("client:1", broken));
+    const client = await CoreClient.open(transport);
+    for (const invoke of [() => client.pairingBegin(PROFILE, "offer", "caller-begin-key-0001"),
+        () => client.pairingQuery(PROFILE, PEER), () => client.pairingCancel(PROFILE, PEER, "caller-cancel-key-001")]) {
+      await assert.rejects(invoke(), (error: unknown) => error instanceof CoreError && error.code === "unsupported_operation");
+    }
+    assert.equal(transport.written.length, 1);
+  }
+  const transport = new Scripted(success("client:1", caps), success("client:2", {}), success("client:3", {}), success("client:4", {}), success("client:5", {}));
+  const client = await CoreClient.open(transport);
+  for (const invoke of [() => client.pairingBegin(PROFILE, "offer", "bad"),
+      () => client.pairingBegin(PROFILE, "answer", "caller-answer-key001"),
+      () => client.pairingBegin(PROFILE, "offer", "caller-begin-key-0001", { pairingCode: "forbidden" }),
+      () => client.pairingBegin(PROFILE, "answer", "caller-answer-key001", { pairingCode: "é".repeat(1025) }),
+      () => client.pairingCancel(PROFILE, PEER, "bad")]) await assert.rejects(invoke(), ProtocolError);
+  assert.equal(transport.written.length, 1);
+  await client.pairingBegin(PROFILE, "offer", "caller-begin-key-0001");
+  await client.pairingBegin(PROFILE, "answer", "caller-answer-key001", { pairingCode: "synthetic-code", allowDirectIpDisclosure: true });
+  await client.pairingQuery(PROFILE, PEER);
+  await client.pairingCancel(PROFILE, PEER, "caller-cancel-key-001");
+  const frames = transport.written.slice(1).map(line => JSON.parse(line));
+  assert.deepEqual(frames[0].params, { profile: PROFILE, role: "offer", allow_direct_ip_disclosure: false });
+  assert.equal(frames[1].params.allow_direct_ip_disclosure, true);
+  assert.equal(frames[1].params.pairing_code, "synthetic-code");
+  assert.equal(frames[2].idempotency_key, undefined);
+  assert.equal(frames[3].idempotency_key, "caller-cancel-key-001");
+});
+
 test("optional keyed group calls require coherent capability and a valid explicit key", async () => {
   const limits = { optional_key_idempotency_seconds: 604800, optional_keys_per_caller_profile: 4096, optional_keys_per_vault: 65536 };
   const caps = { ...CAPABILITIES, api_minor: 1, operations: [...CAPABILITIES.operations, "group.create"],

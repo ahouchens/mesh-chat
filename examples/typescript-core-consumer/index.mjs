@@ -12,6 +12,14 @@ try {
     installed_package: import.meta.resolve("@mesh-chat/core-client").includes("node_modules"), sdk_only: true };
   if (process.argv.includes("--create-profile")) {
     report.created = (await client.createProfile("SDK qualification", "sdk-create-profile-key-0001")).display_name === "SDK qualification";
+  } else if (process.argv.includes("--pairing-unsupported")) {
+    try {
+      await client.pairingBegin(profile, "offer", "sdk-pairing-begin-key-001");
+      throw new Error("Unsupported pairing host was accepted");
+    } catch (error) {
+      if (error.code !== "unsupported_operation") throw error;
+      report.pairing_refused = true;
+    }
   } else if (process.argv.includes("--recover-call")) {
     const operation = (await client.callOperationList(profile)).operations[0].operation;
     const queried = (await client.callOperationQuery(profile, operation)).operation;

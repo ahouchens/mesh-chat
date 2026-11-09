@@ -287,6 +287,38 @@ class CoreClient:
         self._require_call_recovery()
         return self.request("call.operation_abandon", {"profile": profile, "operation": operation}, idempotency_key=key)
 
+    def _require_pairing_intents(self):
+        caps = self.capabilities
+        supported, limits = caps.get("operations"), caps.get("limits")
+        names = ("pairing_intents_per_runtime", "pairing_active_intents", "pairing_intent_seconds", "pairing_code_utf8_bytes",
+                 "pairing_key_idempotency_seconds", "pairing_keys_per_caller_profile", "pairing_keys_per_vault")
+        if (type(caps.get("api_minor")) is not int or caps["api_minor"] < 1
+                or not isinstance(supported, list) or not all(isinstance(name, str) for name in supported)
+                or not {"peer.pairing_begin", "peer.pairing_query", "peer.pairing_cancel"} <= set(supported)
+                or not isinstance(limits, dict)
+                or any(type(limits.get(name)) is not int or not 0 < limits[name] <= 9007199254740991 for name in names)):
+            raise CoreClientError("unsupported_operation")
+
+    def pairing_begin(self, profile, role, key, *, pairing_code=None, allow_direct_ip_disclosure=False):
+        self._require_pairing_intents()
+        if (not isinstance(role, str) or role not in {"offer", "answer"} or type(allow_direct_ip_disclosure) is not bool
+                or (role == "offer" and pairing_code is not None)
+                or (role == "answer" and (not isinstance(pairing_code, str)
+                    or not 1 <= len(pairing_code.encode("utf-8")) <= self.capabilities["limits"]["pairing_code_utf8_bytes"]))):
+            raise ValueError("Pairing role, code or disclosure consent is invalid")
+        params = {"profile": profile, "role": role, "allow_direct_ip_disclosure": allow_direct_ip_disclosure}
+        if pairing_code is not None:
+            params["pairing_code"] = pairing_code
+        return self.request("peer.pairing_begin", params, idempotency_key=key)
+
+    def pairing_query(self, profile, pairing):
+        self._require_pairing_intents()
+        return self.request("peer.pairing_query", {"profile": profile, "pairing": pairing})
+
+    def pairing_cancel(self, profile, pairing, key):
+        self._require_pairing_intents()
+        return self.request("peer.pairing_cancel", {"profile": profile, "pairing": pairing}, idempotency_key=key)
+
     def call_control(self, handle, action, key, **params):
         return self.request("call.control",
                             {"profile": handle, "action": action, **params},

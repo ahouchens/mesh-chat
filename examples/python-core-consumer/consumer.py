@@ -26,7 +26,14 @@ def main():
             print(json.dumps(report), file=sys.stderr)
             return 0
         profile = client.capabilities["profiles"][0]
-        if "--recover-call" in sys.argv:
+        if "--pairing-unsupported" in sys.argv:
+            try:
+                client.pairing_begin(profile, "offer", "sdk-pairing-begin-key-001")
+            except CoreClientError as error:
+                report["pairing_refused"] = error.code == "unsupported_operation"
+            else:
+                raise AssertionError("Unsupported pairing host was accepted")
+        elif "--recover-call" in sys.argv:
             operation = client.call_operation_list(profile)["operations"][0]["operation"]
             queried = client.call_operation_query(profile, operation)["operation"]
             abandoned = client.call_operation_abandon(profile, operation, "sdk-call-abandon-key-0001")["operation"]

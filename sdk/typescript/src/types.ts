@@ -40,6 +40,13 @@ export interface CallOperation {
 export interface CallOperationCatalog { profile: string; operations: CallOperation[] }
 export interface CallOperationResult { profile: string; operation: CallOperation }
 
+export interface PairingIntent {
+  profile: string; pairing: string;
+  state: "reserved" | "offer_ready" | "awaiting_approval" | "transferred" | "retiring" | "retired";
+  expires_at: number; pairing_code: string | null;
+}
+export interface PairingBeginOptions { pairingCode?: string; allowDirectIpDisclosure?: boolean }
+
 export interface ProfileView {
   profile: string;
   display_name: string;

@@ -383,6 +383,41 @@
               "type": "integer",
               "minimum": 1,
               "maximum": 9007199254740991
+            },
+            "pairing_intents_per_runtime": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "pairing_active_intents": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "pairing_intent_seconds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "pairing_code_utf8_bytes": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "pairing_key_idempotency_seconds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "pairing_keys_per_caller_profile": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "pairing_keys_per_vault": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
             }
           }
         },
@@ -840,6 +875,93 @@
                   "call_operation_retention_seconds",
                   "call_operation_keys_per_caller_profile",
                   "call_operation_keys_per_vault"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operations": {
+                "contains": {
+                  "const": "peer.pairing_begin"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "api_minor": {
+                "minimum": 1
+              },
+              "limits": {
+                "required": [
+                  "pairing_intents_per_runtime",
+                  "pairing_active_intents",
+                  "pairing_intent_seconds",
+                  "pairing_code_utf8_bytes",
+                  "pairing_key_idempotency_seconds",
+                  "pairing_keys_per_caller_profile",
+                  "pairing_keys_per_vault"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operations": {
+                "contains": {
+                  "const": "peer.pairing_query"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "api_minor": {
+                "minimum": 1
+              },
+              "limits": {
+                "required": [
+                  "pairing_intents_per_runtime",
+                  "pairing_active_intents",
+                  "pairing_intent_seconds",
+                  "pairing_code_utf8_bytes",
+                  "pairing_key_idempotency_seconds",
+                  "pairing_keys_per_caller_profile",
+                  "pairing_keys_per_vault"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operations": {
+                "contains": {
+                  "const": "peer.pairing_cancel"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "api_minor": {
+                "minimum": 1
+              },
+              "limits": {
+                "required": [
+                  "pairing_intents_per_runtime",
+                  "pairing_active_intents",
+                  "pairing_intent_seconds",
+                  "pairing_code_utf8_bytes",
+                  "pairing_key_idempotency_seconds",
+                  "pairing_keys_per_caller_profile",
+                  "pairing_keys_per_vault"
                 ]
               }
             }
