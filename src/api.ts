@@ -353,6 +353,14 @@ export async function coreApiSendGroupMessage(group: string, text: string): Prom
   });
 }
 
+export async function coreApiSubmitWorkspacePrompt(
+  promptId: string, idempotencyKey: string,
+): Promise<unknown> {
+  const profile = await coreApiProfile();
+  return coreApiRequest("workspace.join_prompt",
+    { profile: profile.profile, prompt: promptId }, idempotencyKey);
+}
+
 export async function coreApiJoinWorkspace(
   document: string, idempotencyKey: string, i2pConsent = false,
 ): Promise<unknown> {

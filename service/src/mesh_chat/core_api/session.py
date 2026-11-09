@@ -47,7 +47,7 @@ from .requests import (
     INVITATION_OPERATIONS, PAIRING_OPERATIONS, PAIRING_PREVIEW_OPERATIONS, CONTACT_INVITATION_OPERATIONS, RECEIVED_OPERATIONS, RECOVERY_OPERATIONS, RECOVERY_TRANSFER_OPERATIONS,
     APPLICATION_OPERATIONS, CALL_OPERATIONS, CALL_CONTROL_OPERATIONS, COMPONENT_OPERATIONS, DRAFT_OPERATIONS,
     GROUP_OPERATIONS, GROUP_DRAFT_OPERATIONS, REACTION_OPERATIONS, RELATIONSHIP_OPERATIONS, SETTINGS_OPERATIONS, REQUEST_OPERATIONS, STOP_OPERATIONS,
-    WORKSPACE_APPROVE_OPERATIONS, WORKSPACE_DECLINE_OPERATIONS, WORKSPACE_JOIN_OPERATIONS,
+    WORKSPACE_APPROVE_OPERATIONS, WORKSPACE_DECLINE_OPERATIONS, WORKSPACE_JOIN_OPERATIONS, WORKSPACE_PROMPT_JOIN_OPERATIONS,
     WORKSPACE_CHANNEL_ARCHIVE_OPERATIONS, WORKSPACE_CHANNEL_CREATE_OPERATIONS,
     WORKSPACE_CHANNEL_MEMBERS_OPERATIONS,
     WORKSPACE_CHANNEL_MEMBERS_UPDATE_OPERATIONS, WORKSPACE_CHANNEL_UPDATE_OPERATIONS,
@@ -173,6 +173,7 @@ PERMISSION_BY_OPERATION = {
     "workspace.devices": "approve",
     "workspace.invitation_preview": "read",
     "workspace.join": "pair",
+    "workspace.join_prompt": "pair",
     "workspace.join_approve": "approve",
     "workspace.join_decline": "approve",
     "workspace.join_requests": "approve",
@@ -315,6 +316,7 @@ class CoreSession:
             (APPLICATION_OPERATIONS, self._application),
             (WORKSPACE_PREVIEW_OPERATIONS, self._workspace),
             (WORKSPACE_JOIN_OPERATIONS, self._workspace),
+            (WORKSPACE_PROMPT_JOIN_OPERATIONS, self._workspace),
             (WORKSPACE_LIST_OPERATIONS, self._workspace_admin),
             (WORKSPACE_REQUESTS_OPERATIONS, self._workspace_admin),
             (WORKSPACE_APPROVE_OPERATIONS, self._workspace_admin),
@@ -1069,6 +1071,17 @@ class CoreSession:
                 if item.workspace == submitted.workspace:
                     return device_link_submit_view(params["profile"], handle, submitted)
             raise ApiFailure("internal")
+        if operation in WORKSPACE_PROMPT_JOIN_OPERATIONS:
+            target = profiles.get(params["profile"])
+            if target is None:
+                raise ApiFailure("forbidden")
+            if key is None:
+                raise ApiFailure("invalid_request")
+            operation_id = self._operation_id(grant, target, key)
+            joined = self._workspace.submit_prompt(
+                target, params["prompt"], operation_id)
+            workspace = self._handle(grant, "workspace", target, joined.workspace)
+            return workspace_join_view(params["profile"], workspace, joined)
         if operation in WORKSPACE_JOIN_OPERATIONS:
             target = profiles.get(params["profile"])
             if target is None:

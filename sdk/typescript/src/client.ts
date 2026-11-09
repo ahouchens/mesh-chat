@@ -566,6 +566,12 @@ export class CoreClient {
     return this.request("remote_profile.query", { profile });
   }
 
+  async workspaceJoinPrompt(profile: string, prompt: string,
+                            idempotencyKey: string): Promise<unknown> {
+    return this.request("workspace.join_prompt", { profile, prompt },
+      { idempotencyKey });
+  }
+
   async pairingPreview(profile: string, document: string): Promise<unknown> {
     return this.request("peer.pairing_preview", { profile, document });
   }

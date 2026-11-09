@@ -36,6 +36,7 @@ STOP_OPERATIONS = ("runtime.stop",)
 APPLICATION_OPERATIONS = ("application.snapshot", "application.command")
 WORKSPACE_PREVIEW_OPERATIONS = ("workspace.invitation_preview",)
 WORKSPACE_JOIN_OPERATIONS = ("workspace.join",)
+WORKSPACE_PROMPT_JOIN_OPERATIONS = ("workspace.join_prompt",)
 WORKSPACE_LIST_OPERATIONS = ("workspace.query",)
 WORKSPACE_REQUESTS_OPERATIONS = ("workspace.join_requests",)
 WORKSPACE_APPROVE_OPERATIONS = ("workspace.join_approve",)
@@ -995,6 +996,14 @@ def parse_request(value, operations):
                 or ("i2p_consent" in params and type(params["i2p_consent"]) is not bool)):
             raise ApiFailure("invalid_request")
         return operation, params
+    if operation in WORKSPACE_PROMPT_JOIN_OPERATIONS:
+        params = value["params"]
+        if (not isinstance(params, dict) or set(params) != {"profile", "prompt"}
+                or not isinstance(params["profile"], str)
+                or HANDLE.fullmatch(params["profile"]) is None
+                or not isinstance(params["prompt"], str) or not params["prompt"]):
+            raise ApiFailure("invalid_request")
+        return operation, params
     if operation in WORKSPACE_JOIN_OPERATIONS:
         params = value["params"]
         if (not isinstance(params, dict) or set(params) != {"profile", "document"}
@@ -1306,6 +1315,7 @@ COMPONENT_OPERATIONS = (
     + APPLICATION_OPERATIONS
     + WORKSPACE_PREVIEW_OPERATIONS
     + WORKSPACE_JOIN_OPERATIONS
+    + WORKSPACE_PROMPT_JOIN_OPERATIONS
     + WORKSPACE_LIST_OPERATIONS
     + WORKSPACE_REQUESTS_OPERATIONS
     + WORKSPACE_APPROVE_OPERATIONS

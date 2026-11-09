@@ -284,6 +284,11 @@ class CoreClient:
     def remote_profiles(self, handle):
         return self.request("remote_profile.query", {"profile": handle})
 
+    def workspace_join_prompt(self, handle, prompt, key):
+        return self.request("workspace.join_prompt",
+                            {"profile": handle, "prompt": prompt},
+                            idempotency_key=key)
+
     def pairing_preview(self, handle, document):
         return self.request("peer.pairing_preview",
                             {"profile": handle, "document": document})

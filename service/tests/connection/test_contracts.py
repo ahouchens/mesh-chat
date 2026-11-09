@@ -140,6 +140,7 @@ def test_each_designed_operation_has_an_executable_request_vector_and_permission
         "remote_profile.query": {},
         "connection.document": {"action": "preview_direct", "document": "doc"},
         "peer.pairing_preview": {"document": "doc"},
+        "workspace.join_prompt": {"prompt": "p1"},
         "runtime.query": {"action": "background"},
         "runtime.mutate": {"action": "notification_previews",
           "hidden": True},

@@ -81,6 +81,7 @@ import {
   coreApiPreviewWorkspaceInvitation,
   coreApiPreviewInvitation,
   coreApiJoinWorkspace,
+  coreApiSubmitWorkspacePrompt,
   coreApiWorkspaceMemberRole,
   coreApiWorkspacePolicy,
   coreApiCreateWorkspaceChannel,
@@ -3747,9 +3748,8 @@ function JoinWorkspaceDialog({ initialValue = "", promptId, promptWorkspaceName,
       if (!workspace) {
         if (devicePreview) throw new Error("core_api_unavailable");
         workspace = promptId
-          ? await serviceCommand<Workspace>("submit_workspace_invitation_prompt", {
-              operation_id: joinAttempt.current.operationId, prompt_id: promptId,
-            })
+          ? await coreApiSubmitWorkspacePrompt(
+              promptId, joinAttempt.current.operationId) as Workspace
           : await coreApiJoinWorkspace(
               document, joinAttempt.current.operationId, i2pConsent) as Workspace;
       }

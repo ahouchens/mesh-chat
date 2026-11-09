@@ -76,7 +76,7 @@
           "type": "array",
           "uniqueItems": true,
           "minItems": 3,
-          "maxItems": 119,
+          "maxItems": 120,
           "items": {
             "enum": [
               "application.snapshot",
@@ -167,6 +167,7 @@
               "remote_profile.query",
               "connection.document",
               "peer.pairing_preview",
+              "workspace.join_prompt",
               "workspace.device_link_create",
               "workspace.device_link_preview",
               "workspace.device_link_submit",

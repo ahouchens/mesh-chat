@@ -57,3 +57,21 @@ class ServiceWorkspace:
                     or state not in JOIN_STATES):
                 raise ApiFailure("internal")
             return WorkspaceJoin(workspace_id, name, state)
+
+
+    def submit_prompt(self, profile, prompt_id, operation_id):
+        self._require_local(profile)
+        if not isinstance(operation_id, str) or not operation_id:
+            raise ApiFailure("invalid_request")
+        with storage_errors():
+            try:
+                workspace = self._service.submit_workspace_invitation_prompt(
+                    prompt_id, operation_id)
+            except (ValidationError, InvitationInvalid, InvitationExpired) as error:
+                raise ApiFailure("invalid_request") from error
+            workspace_id, name, state = (workspace.get("id"), workspace.get("name"),
+                                         workspace.get("state"))
+            if (not isinstance(workspace_id, str) or not isinstance(name, str)
+                    or state not in JOIN_STATES):
+                raise ApiFailure("internal")
+            return WorkspaceJoin(workspace_id, name, state)

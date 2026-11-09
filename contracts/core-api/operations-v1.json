@@ -120,7 +120,8 @@
     "connection.support",
     "remote_profile.query",
     "connection.document",
-    "peer.pairing_preview"
+    "peer.pairing_preview",
+    "workspace.join_prompt"
   ],
   "operations": [
     {
@@ -1004,6 +1005,13 @@
       "scope": "profile",
       "mutation": false,
       "idempotency": "none"
+    },
+    {
+      "operation": "workspace.join_prompt",
+      "permission": "pair",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
     }
   ],
   "limits": {
