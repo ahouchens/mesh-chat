@@ -53,6 +53,14 @@ denial of the same key after the host removes only `approve`. Workspace access
 fixtures deliver a real owner-signed recommendation to a joined member;
 transport is then unavailable while real consent/storage logic executes.
 
+`noop-audit.json` records a finite audit of 92 supported keyed mutation actions
+and 63 concrete adapter/helper methods at its stated source commit. It lists
+documented queries separately and identifies four early-success sites covering
+five actions. `test_ui_core_boundary_noop_idempotency.py` reproduces each through
+framed Core requests, requiring identical retries to converge and changed
+payloads to conflict. The audit records that source checkpoint; it does not
+qualify later source or replace A/C's separate parent-durability work.
+
 For development, run `python tests/core-ui-boundary/run_python.py --source <HEAD SHA> --junit .test-tmp/boundary.xml`
 or `vitest run --config tests/core-ui-boundary/vitest.config.ts` directly.
 `MESH_BOUNDARY_PYTHON` selects the Python interpreter; the default is the local
