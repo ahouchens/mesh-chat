@@ -1215,7 +1215,8 @@ class CoreSession:
             if target is None:
                 raise ApiFailure("forbidden")
             result = self._workspace_admin.remote_profile(
-                target, params["action"], params)
+                target, params["action"], params,
+                self._required_operation_id(grant, target, key))
             return {"remote_profile": result}
         if operation in WORKSPACE_DRAFT_OPERATIONS:
             target, inside = self._workspace_scope(grant, profiles, params)

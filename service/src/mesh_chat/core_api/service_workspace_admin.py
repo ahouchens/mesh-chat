@@ -1165,24 +1165,25 @@ class ServiceWorkspaceAdmin:
             return "saved"
 
 
-    def remote_profile(self, profile, action, params):
+    def remote_profile(self, profile, action, params, operation_id):
         self._require_local(profile)
         with storage_errors():
             try:
                 if action == "create":
                     result = self._service.create_manual_remote_profile(
                         params["label"], params["endpoints"],
-                        params.get("propagation_node"), params.get("allow_private", False))
+                        params.get("propagation_node"), params.get("allow_private", False),
+                        operation_id=operation_id)
                 elif action == "test":
-                    result = self._service.test_remote_profile(params["remote_profile_id"])
+                    result = self._service.test_remote_profile(params["remote_profile_id"], operation_id=operation_id)
                 elif action == "retry":
-                    result = self._service.retry_remote_profile(params["remote_profile_id"])
+                    result = self._service.retry_remote_profile(params["remote_profile_id"], operation_id=operation_id)
                 elif action == "remove":
-                    result = self._service.remove_remote_profile(params["remote_profile_id"])
+                    result = self._service.remove_remote_profile(params["remote_profile_id"], operation_id=operation_id)
                 elif action == "remove_propagation":
-                    result = self._service.remove_remote_propagation(params["remote_profile_id"])
+                    result = self._service.remove_remote_propagation(params["remote_profile_id"], operation_id=operation_id)
                 elif action == "approve_propagation":
-                    result = self._service.approve_remote_propagation(params["remote_profile_id"])
+                    result = self._service.approve_remote_propagation(params["remote_profile_id"], operation_id=operation_id)
                 else:
                     raise ApiFailure("invalid_request")
             except ValidationError as error:
