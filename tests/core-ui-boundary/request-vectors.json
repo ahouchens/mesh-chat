@@ -1284,5 +1284,27 @@
       "kind": "personal",
       "document": "signed-personal-invitation"
     }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:composer-query",
+    "operation": "peer.composer_query",
+    "params": {"profile": "callerScopedHandle1", "peer": "callerScopedPeer01"}
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:composer-update",
+    "operation": "peer.composer_update",
+    "params": {"profile": "callerScopedHandle1", "peer": "callerScopedPeer01",
+               "expected_revision": null, "text": "Serialized composer text"},
+    "idempotency_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:enqueue-draft",
+    "operation": "message.enqueue_draft",
+    "params": {"profile": "callerScopedHandle1", "recipient": "callerScopedPeer01",
+               "draft_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+    "idempotency_key": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
   }
 ]
