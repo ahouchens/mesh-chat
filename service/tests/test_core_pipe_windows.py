@@ -173,6 +173,26 @@ def test_sidecar_host_serves_owner_scope_operations(service):
         assert reply["ok"] is True
         assert "workspace.invitation_create" in reply["result"]["operations"]
         assert "peer.approve" in reply["result"]["operations"]
+        assert "native.command" in reply["result"]["operations"]
+        client.write(request("native.command", command="workspace_snapshot", payload={}))
+        assert json.loads(client.readline())["ok"]
+        client.close()
+    finally:
+        server.close()
+
+
+def test_packaged_owner_grants_cannot_invoke_private_native_commands(service):
+    from mesh_chat.core_api.host import OWNER_PERMISSIONS
+    name = pipe_name()
+    server = PipeEndpoint(name, config(permissions=tuple(OWNER_PERMISSIONS), scope="owner"))
+    server.start(service)
+    try:
+        client = connect(name)
+        client.write(request("runtime.capabilities"))
+        capabilities = json.loads(client.readline())
+        assert "native.command" not in capabilities["result"]["operations"]
+        client.write(request("native.command", command="workspace_snapshot", payload={}))
+        assert json.loads(client.readline())["error"]["code"] == "unsupported_operation"
         client.close()
     finally:
         server.close()

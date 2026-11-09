@@ -218,9 +218,12 @@ class PipeConfig:
     max_clients: int = 4
     idle_timeout: float = 60.0
     scope: str = "consumer"
+    private_native: bool = False
 
     def __post_init__(self):
         host.host_grant(self.caller, self.permissions, scope=self.scope)
+        if type(self.private_native) is not bool or (self.private_native and self.scope != "owner"):
+            raise ValueError("Private native binding requires the application owner")
         validate_images(self.allowed_images)
         if type(self.max_clients) is not int or not 1 <= self.max_clients <= 8:
             raise ValueError("Core API endpoint client budget is invalid")
@@ -242,6 +245,7 @@ class PipeEndpoint:
         self._grant = host.host_grant(config.caller, config.permissions,
                                       scope=config.scope)
         self._scope = config.scope
+        self._private_native = config.private_native
         self._stop = threading.Event()
         self._ready = threading.Event()
         self._lock = threading.Lock()
@@ -315,7 +319,8 @@ class PipeEndpoint:
                 session = host.bind_host_stream(service, caller=self._grant.caller,
                                                 permissions=self._grant.permissions,
                                                 profiles=self._grant.profiles,
-                                                scope=self._scope)
+                                                scope=self._scope,
+                                                private_native=self._private_native)
                 session.serve(_Duplex(self.kernel, handle, self._stop, self._idle_timeout),
                               _Duplex(self.kernel, handle, self._stop, self._idle_timeout))
             except (OSError, ValueError) as error:

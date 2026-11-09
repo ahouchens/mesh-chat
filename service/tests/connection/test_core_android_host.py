@@ -157,7 +157,21 @@ def test_retired_service_reference_cannot_reclaim_the_new_incarnation(host):
     assert call(replacement, caller, "runtime.capabilities")["ok"]
     assert call(service, caller, "runtime.capabilities")["error"]["code"] == "unavailable"
     assert call(replacement, caller, "profile.query", profile=profile)["ok"]
+
     # A delayed lifecycle observer cannot make an old object current again.
     service._shutdown.clear()
     assert call(service, caller, "runtime.capabilities")["error"]["code"] == "unavailable"
     assert call(replacement, caller, "profile.query", profile=profile)["ok"]
+
+
+def test_only_the_android_own_uid_host_binding_attaches_native_commands(host):
+    service = host()
+    command = frame("native.command", command="workspace_snapshot", payload={})
+    public = call(service, "com.example.consumer", "runtime.capabilities")
+    assert "native.command" not in public["result"]["operations"]
+    assert decode_frame(android_host.exchange(service, "com.example.consumer", command)
+                        )["error"]["code"] == "unsupported_operation"
+    own_uid = decode_frame(android_host.exchange(
+        service, "com.meshchat", frame("runtime.capabilities"), "owner"))
+    assert "native.command" in own_uid["result"]["operations"]
+    assert decode_frame(android_host.exchange(service, "com.meshchat", command, "owner"))["ok"]

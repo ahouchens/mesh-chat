@@ -260,6 +260,7 @@ class Ports:
     workspace_timeline: object | None = None
     runtime: object | None = None
     application: object | None = None
+    native_commands: object | None = None
     drafts: object | None = None
     calls: object | None = None
     settings: object | None = None
@@ -289,6 +290,7 @@ class CoreSession:
         self._workspace_timeline = ports.workspace_timeline
         self._runtime = ports.runtime
         self._application = ports.application
+        self._native_commands = ports.native_commands
         self._drafts = ports.drafts
         self._calls = ports.calls
         self._settings = ports.settings
@@ -317,7 +319,7 @@ class CoreSession:
             (INVITATION_OPERATIONS, self._invitations),
             (STOP_OPERATIONS, self._lifecycle),
             (APPLICATION_OPERATIONS, self._application),
-            (NATIVE_COMMAND_OPERATIONS, self._application),
+            (NATIVE_COMMAND_OPERATIONS, self._native_commands),
             (PROFILE_CREATE_OPERATIONS, self._application),
             (WORKSPACE_PREVIEW_OPERATIONS, self._workspace),
             (WORKSPACE_JOIN_OPERATIONS, self._workspace),
@@ -552,9 +554,9 @@ class CoreSession:
                 raise ApiFailure("unavailable")
             return self._owner_snapshot(grant, self._application.snapshot())
         if operation in NATIVE_COMMAND_OPERATIONS:
-            if self._application is None:
+            if self._native_commands is None:
                 raise ApiFailure("unavailable")
-            return self._application.command(params["command"], params["payload"])
+            return self._native_commands.command(params["command"], params["payload"])
         profile = self._profile_target(profiles, params)
         if operation == "diagnostics.query":
             return diagnostics_view(params["profile"], self._diagnostics.query(profile), params["limit"],
