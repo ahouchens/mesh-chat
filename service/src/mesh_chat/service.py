@@ -2325,6 +2325,7 @@ class MeshChatService(
         session: str,
         role: str,
         mailbox_token: str | None = None,
+        *, pending: bool = False,
     ) -> dict[str, Any]:
         base = self._call_settings.signal_mailbox_url
         if base is None:
@@ -2333,7 +2334,9 @@ class MeshChatService(
             raise ValidationError("Use an encrypted pairing context")
         pairing = parse_pairing(session, base)
         fetched = fetch_signal(base, pairing["session"], role,
-                               token=pairing["token"], secret=pairing["secret"])
+                               token=pairing["token"], secret=pairing["secret"], pending=pending)
+        if not fetched.get("document"):
+            return {**fetched, "session_id": session}
         if role == "offer":
             offer = verify_onboarding_offer(fetched["document"])
             self._signal_contexts()[offer.session_id] = {
@@ -6075,6 +6078,11 @@ class MeshChatService(
                 return
             with self._dispatch_lock:
                 self.store.close()
+                for context in getattr(self, "_native_pairing_contexts", {}).values():
+                    context.clear()
+                for name in ("_native_pairing_contexts", "_core_signal_attempts",
+                             "_core_signal_results", "_signal_pairing_contexts"):
+                    getattr(self, name, {}).clear()
                 self._identity = None
                 self.network = None
                 self._store_closed = True

@@ -21,11 +21,12 @@ from .errors import (
     ContactNotApproved, IdentityMismatch, NativeUnavailable, NetworkUnavailable, ValidationError,
 )
 from .native_webrtc_control import NativeWebRTCControlMixin
+from .native_pairing_service import NativePairingServiceMixin
 from .webrtc_interface import WebRTCInterface
 from .webrtc_signaling import _fingerprint
 
 
-class NativeWebRTCServiceMixin(NativeWebRTCControlMixin):
+class NativeWebRTCServiceMixin(NativePairingServiceMixin, NativeWebRTCControlMixin):
     _native_answer_exchange_timeout = 120.0
 
     def _native_work_allowed(self):
@@ -468,7 +469,10 @@ class NativeWebRTCServiceMixin(NativeWebRTCControlMixin):
                 if profile_id is not None:
                     if self.native_reconnect_session(profile_id):
                         raise NativeUnavailable("Native reconnect profile already has a peer")
-                self._native_resources.reserve(session_id)
+                physical = self._native_resources.reserve(session_id)
+                capture = getattr(self, "_native_pairing_allocation_reserved", None)
+                if capture is not None:
+                    capture(session_id, physical)
                 if profile_id is not None:
                     self._native_webrtc_profile_sessions[profile_id] = session_id
                 self._native_webrtc_live.add(session_id)
@@ -740,9 +744,57 @@ class NativeWebRTCServiceMixin(NativeWebRTCControlMixin):
                 raise NativeUnavailable("Local profile is unavailable")
             incarnation = self._runtime_incarnation
             return {"v": 1, "service_incarnation": incarnation, "qualification_only": True,
+                    "host_accounting": self._native_host_accounting(),
                     "profile_incarnation": sha256((incarnation + self._identity.hash.hex()).encode("ascii")).hexdigest()[:32],
                     "resources": [{"logical_session": session,
                                    "physical_resource": self._native_resources.require(session),
                                    "adopted": self._shared_native_session(session)}
                                   for session in sorted(self._native_webrtc_live)
                                   if self._native_resources.physical(session) is not None]}
+
+    def _native_host_accounting(self):
+        """Private bounded counts, including explicit unsupported observations."""
+        names = ("capacity", "reserved_count", "creating_count", "allocated_count", "active_count", "retiring_count")
+        empty = {"v": 1, "complete": False, "semantics": "native_allocation_leases",
+                 **dict.fromkeys(names), "availability": dict.fromkeys(names, False)}
+        host = self._native_webrtc_host()
+        inspect = getattr(host, "resourceAccounting", None)
+        if not callable(inspect):
+            return empty
+        try:
+            raw = inspect()
+            if not isinstance(raw, str) or len(raw.encode("utf-8")) > 4096:
+                raise ValueError
+            envelope = json.loads(raw)
+            value = envelope["result"]
+            allowed = set(empty) | {"routable_count", "creation_reservations_count"}
+            if (envelope.get("ok") is not True or not isinstance(value, dict)
+                    or set(value) - allowed or set(empty) - set(value)
+                    or type(value["v"]) is not int or value["v"] != 1
+                    or type(value["complete"]) is not bool
+                    or value["semantics"] != "native_allocation_leases"
+                    or not isinstance(value["availability"], dict)
+                    or set(value["availability"]) != set(names)):
+                raise ValueError
+            for name in names:
+                available, count = value["availability"][name], value[name]
+                if (type(available) is not bool or (not available and count is not None)
+                        or (available and (type(count) is not int or not 0 <= count <= 16))):
+                    raise ValueError
+            if value["complete"] != all(value["availability"].values()):
+                raise ValueError
+            for name in set(value) - set(empty):
+                if type(value[name]) is not int or not 0 <= value[name] <= 16:
+                    raise ValueError
+            if value["complete"] and (not 1 <= value["capacity"] <= 16
+                    or value["reserved_count"] > value["capacity"]
+                    or value["creating_count"] > value["reserved_count"]
+                    or value["allocated_count"] > value["reserved_count"]
+                    or value["allocated_count"] != value["active_count"] + value["retiring_count"]):
+                raise ValueError
+            self._require_native_work()
+            if self._native_webrtc_host() is not host:
+                raise ValueError
+            return value
+        except (ValueError, KeyError, TypeError):
+            raise NativeUnavailable("Native resource accounting is unavailable") from None

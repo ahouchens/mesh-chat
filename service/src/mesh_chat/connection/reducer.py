@@ -163,7 +163,7 @@ def _result(state: ConnectionState, event: Result | Failed | Adopted) -> Transit
             result = replace(result, effects=result.effects + (Retire(event.allocated),))
         return result
     if isinstance(event, Adopted):
-        if (step.phase is not Phase.DISCOVER or state.carrier is not None
+        if (state.key.scope == "pairing" or step.phase is not Phase.DISCOVER or state.carrier is not None
                 or event.allocated.adapter_epoch != state.adapter_epoch or not _eligible(state)):
             result = _failure(state, event.now, "invalid_adoption", blocked=True)
             return replace(result, effects=result.effects + (Retire(event.allocated),))
@@ -192,7 +192,7 @@ def _result(state: ConnectionState, event: Result | Failed | Adopted) -> Transit
             return Transition(replace(state, negotiation=None, reason=reason,
                               retry_at=event.now + state.policy.poll_interval), reason=reason)
         if state.key.scope == "pairing":
-            phase = Phase.GATHER_OFFER if state.authority.preferred else Phase.GATHER_ANSWER
+            phase = Phase.GATHER_OFFER if state.authority.preferred else Phase.WAIT_OFFER
         else:
             phase = Phase.REQUEST if state.authority.preferred else Phase.WAIT_REQUEST
         return _work(state, phase, step.resource, event.now)

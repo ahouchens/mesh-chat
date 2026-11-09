@@ -6,6 +6,25 @@ import org.junit.Test
 import org.webrtc.RTCStats
 
 class NativePathEvidenceTest {
+    @Test fun accountingRetainsCreatingAndCancelledAllocatedLeasesUntilActualDisposal() {
+        val reservations = NativeSessionReservations(2)
+        val lease = reservations.reserve("peer")!!
+        assertEquals(1, reservations.accounting()["reserved_count"])
+        assertEquals(1, reservations.accounting()["creating_count"])
+        assertTrue(reservations.beginAllocation(lease))
+        assertEquals(1, reservations.accounting()["active_count"])
+        reservations.cancel("peer")
+        reservations.finishCreation(lease)
+        val retiring = reservations.accounting()
+        assertEquals(0, retiring["active_count"])
+        assertEquals(0, retiring["creating_count"])
+        assertEquals(1, retiring["retiring_count"])
+        assertEquals(1, retiring["allocated_count"])
+        assertEquals(1, retiring["reserved_count"])
+        reservations.disposed(lease)
+        assertEquals(0, reservations.accounting()["reserved_count"])
+    }
+
     private fun reports(relay: String? = "tcp"): MutableMap<String, RTCStats> {
         fun stat(type: String, id: String, vararg members: Pair<String, Any>) =
             RTCStats(1000L, type, id, mapOf(*members))

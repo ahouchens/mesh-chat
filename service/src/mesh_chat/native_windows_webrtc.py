@@ -501,6 +501,22 @@ class WindowsNativeWebRTCHost:
     def activate(self, resource):
         self._require(resource)
 
+    def resourceAccounting(self):
+        """Private observations; a routing map is not proof of native disposal.
+
+        This backend currently drops closing peers before disposal finishes.
+        Explicit unavailable counts prevent qualification from accepting an
+        empty map as zero retained physical resources.
+        """
+        names = ("reserved_count", "creating_count", "allocated_count", "active_count", "retiring_count")
+        with self._lock:
+            result = {"v": 1, "complete": False, "semantics": "native_allocation_leases",
+                      "capacity": MAX_SESSIONS, **dict.fromkeys(names),
+                      "availability": {"capacity": True, **dict.fromkeys(names, False)},
+                      "routable_count": len(self._sessions),
+                      "creation_reservations_count": len(self._reservations)}
+        return json.dumps({"ok": True, "result": result}, separators=(",", ":"))
+
     def close(self, resource):
         with self._lock:
             self._reservations.discard(resource)

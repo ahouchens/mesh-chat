@@ -133,6 +133,9 @@ class ConnectionRuntime:
                 if contact_id is None or contact_id in {profile.get("contact_id"), key.profile_id}:
                     self._veto.add(key)
                     self.owner.dispatch(key, ContextChanged(self.now(), desired=Desired.STOPPED))
+            self.owner.revoke_handoffs(None if contact_id is None else {
+                key for key, profile in self._profile_values.items()
+                if contact_id in {profile.get("contact_id"), key.profile_id}})
 
     def committed_start(self, contact_id=None):
         with self._lock:
@@ -230,13 +233,17 @@ class ConnectionRuntime:
                         and state.reason == "pairing_ready"):
                     self._handoff_attempts[event.operation.key] = event.operation
                     try:
-                        transferred_ok = self._handoff is not None and self._handoff(event.operation, event.allocated)
+                        if self._handoff is not None:
+                            self._handoff(event.operation, event.allocated,
+                                lambda resource, target: self.owner.commit_handoff(event.operation, resource, target, self.now()))
                     except Exception:
-                        transferred_ok = False
-                    if transferred_ok:
+                        # Commit is the receipt. A callback may lose its return
+                        # after committing or even after target adoption.
+                        pass
+                    if self.owner.handoff_committed(event.operation):
                         self._transferred_pairings[event.operation.key] = event.operation, event.allocated
                     else:
-                        self._pending[Retire(event.allocated)] = None
+                        self.owner.reject_handoff(event.operation)
 
     def _effects(self):
         for effect in self.owner.drain():

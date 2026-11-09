@@ -7,7 +7,7 @@ from threading import RLock
 from .diagnostics import Diagnostics
 from .model import (
     Adopted, Cancel, ConnectionKey, ConnectionState, ContextChanged, Desired, Event,
-    Failed, Failure, Policy, Resource, Result, Retire, Work,
+    Failed, Failure, HandoffLease, Operation, Policy, Resource, Result, Retire, Work,
 )
 from .reducer import transition
 
@@ -27,6 +27,9 @@ class ConnectionSupervisor:
         self._control = OrderedDict()
         self._retired = set()
         self._retiring = set()
+        self._handoffs: dict[Operation, HandoffLease] = {}
+        self._surrendered = {}
+        self._handoff_committed = set()
         self.diagnostics = Diagnostics(policy.max_diagnostics)
 
     def register(self, state: ConnectionState):
@@ -61,7 +64,14 @@ class ConnectionSupervisor:
                 if event.operation.key != key:
                     raise ValueError("Completion belongs to another connection")
                 self._running.pop(event.operation, None)
-                if event.allocated and self._owned_elsewhere(key, event.allocated):
+                surrendered = self._surrendered.get(key, ())
+                lease = next((value for value in self._handoffs.values()
+                              if value.resource == event.allocated), None)
+                if lease is not None and event.now >= lease.deadline:
+                    self.reject_handoff(lease.operation)
+                if event.allocated in surrendered or (lease and lease.target != key):
+                    event = Failed(event.operation, event.now, Failure.INTERNAL)
+                elif event.allocated and self._owned_elsewhere(key, event.allocated):
                     # A misrouted adapter result is not cleanup authority for
                     # another actor, including its canceled but still-live work.
                     event = Failed(event.operation, event.now, Failure.INTERNAL)
@@ -71,6 +81,17 @@ class ConnectionSupervisor:
             result = replace(result, state=replace(result.state, sequence=max(
                 state.sequence + 1, result.state.sequence)))
             self._states[key] = result.state
+            if (isinstance(event, Result) and event.handoff and event.allocated
+                    and state.negotiation and state.negotiation.operation == event.operation
+                    and result.state.reason == "pairing_ready"):
+                self._handoffs[event.operation] = HandoffLease(event.operation,
+                    event.allocated, event.allocated, event.now + self.policy.phase_timeout)
+                self._surrendered[key] = (event.allocated,)
+            if (isinstance(event, Adopted) and result.state.carrier
+                    and result.state.carrier.resource == event.allocated):
+                for operation, lease in tuple(self._handoffs.items()):
+                    if lease.resource == event.allocated and lease.target == key:
+                        del self._handoffs[operation]
             self.diagnostics.record(state, event, result)
             pending = self._pending.get(key)
             if pending and not self.is_current(pending):
@@ -93,6 +114,42 @@ class ConnectionSupervisor:
                 raise CapacityExceeded("Connection cleanup must complete")
             return result.state
 
+    def commit_handoff(self, operation: Operation, resource: Resource, target: ConnectionKey, now: float):
+        """Atomically bind pending custody to one receiver, before publication."""
+        with self._lock:
+            lease = self._handoffs.get(operation)
+            if lease is not None and now >= lease.deadline:
+                self.reject_handoff(operation)
+                return False
+            if (lease is None or lease.target is not None or target.scope == "pairing"
+                    or resource.adapter_epoch != lease.source.adapter_epoch
+                    or any(other.resource == resource for source, other in self._handoffs.items()
+                           if source != operation)
+                    or resource in self._retiring or lease.source in self._retiring
+                    or self._owned_elsewhere(operation.key, resource)):
+                return False
+            self._handoffs[operation] = replace(lease, resource=resource, target=target)
+            self._surrendered[operation.key] = (lease.source, resource)
+            self._handoff_committed.add(operation)
+            return True
+
+    def handoff_committed(self, operation: Operation):
+        with self._lock:
+            return operation in self._handoff_committed
+
+    def reject_handoff(self, operation: Operation):
+        with self._lock:
+            lease = self._handoffs.pop(operation, None)
+            if lease is not None:
+                self._control[Retire(lease.resource)] = None
+                self._retiring.add(lease.resource)
+
+    def revoke_handoffs(self, keys=None):
+        with self._lock:
+            for operation, lease in tuple(self._handoffs.items()):
+                if keys is None or operation.key in keys or lease.target in keys:
+                    self.reject_handoff(operation)
+
     def resource_released(self, resource: Resource):
         """Only confirmed cleanup releases the private retirement reservation."""
         with self._lock:
@@ -111,6 +168,11 @@ class ConnectionSupervisor:
     def tick(self, now: float, jitter: float = 0):
         from .model import Tick
         with self._lock:
+            for operation, lease in tuple(self._handoffs.items()):
+                target = self._states.get(lease.target)
+                if (now >= lease.deadline or (target is not None and (
+                        not target.authority.authorized or target.desired is Desired.STOPPED))):
+                    self.reject_handoff(operation)
             for key in tuple(self._states):
                 if key not in self._retired:
                     self.dispatch(key, Tick(now, jitter))
