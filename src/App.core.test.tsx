@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Snapshot, Workspace, WorkspaceChannel, WorkspaceMessage } from "./types";
+import { ComposerHostFixture, composerCapabilities } from "./test/composer-host";
 
 const host = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: host.invoke }));
@@ -57,7 +58,7 @@ const personalPreview = {
 };
 let current: Snapshot;
 let snapshotsFail: boolean;
-let send: (params: Record<string, unknown>) => Promise<unknown>;
+let directComposer: ComposerHostFixture;
 let mutation: (params: Record<string, unknown>) => Promise<unknown>;
 let createProfile: (params: Record<string, unknown>) => Promise<unknown>;
 let bootstrapPreview: (params: Record<string, unknown>) => Promise<unknown>;
@@ -65,7 +66,7 @@ let bootstrapPreview: (params: Record<string, unknown>) => Promise<unknown>;
 const requests = (operation: string) => host.invoke.mock.calls
   .filter(([command, payload]) => command === "core_api_request" && payload.operation === operation)
   .map(([, payload]) => payload as { operation: string; params: Record<string, unknown>; idempotencyKey: string | null });
-const sends = () => host.invoke.mock.calls.filter(([command]) => command === "core_api_send_message").map(([, params]) => params);
+const sends = () => requests("message.enqueue_draft");
 
 beforeEach(() => {
   snapshotsFail = false;
@@ -75,7 +76,7 @@ beforeEach(() => {
       help_route: false, store_for_offline: false, approved_propagation_nodes: [], i2p_enabled: false, i2p_connectable: false, i2p_managed: true, i2p_peers: [] },
     network: { transport_enabled: false, propagation_enabled: false, interface_available: true, interfaces: [], outbound_propagation_node: null },
   };
-  send = async () => ({ message: "d".repeat(40), accepted: true });
+  directComposer = new ComposerHostFixture(profileHandle, "e".repeat(40));
   createProfile = async () => {
     current = { ...current, profile };
     return { display_name: profile.display_name };
@@ -85,13 +86,15 @@ beforeEach(() => {
   host.invoke.mockImplementation(async (command: string, payload: Record<string, unknown> = {}) => {
     if (command === "initialize_service") return current;
     if (command === "runtime_platform") return "desktop";
+    if (command === "core_api_capabilities") return composerCapabilities;
+    if (command === "core_api_peer_for_destination") return { profile: profileHandle, peer: "e".repeat(40), destination: contact.destination_hash };
     if (command === "core_api_profile") {
       if (!current.profile) throw JSON.stringify({ code: "locked", retry_after_ms: null });
       return { profile: profileHandle, ...profile, destination: profile.destination_hash, connections: [], peers: [] };
     }
     if (command === "core_api_draft_get") return { text: "" };
     if (command === "core_api_draft_set") return {};
-    if (command === "core_api_send_message") return send(payload);
+    if (command === "core_api_send_message") throw new Error("Legacy direct enqueue must not be used");
     if (command === "set_native_theme") return;
     if (command === "core_api_request") {
       const params = payload.params as Record<string, unknown>;
@@ -100,6 +103,9 @@ beforeEach(() => {
         return current;
       }
       if (payload.operation === "profile.create") return createProfile(params);
+      if (["peer.composer_query", "peer.composer_update", "message.enqueue_draft"].includes(String(payload.operation))) {
+        return directComposer.request(String(payload.operation), params, payload.idempotencyKey as string | undefined);
+      }
       if (payload.operation === "bootstrap.preview") return bootstrapPreview(params);
       if (payload.operation === "peer.pairing_accept") return { profile: profileHandle, peer: "d".repeat(40), trust: "awaiting_consent" };
       if (payload.operation === "workspace.timeline_query") {
@@ -350,60 +356,70 @@ describe("Core application serialization", () => {
     expect(requests("peer.pairing_accept")).toHaveLength(0);
   });
 
-  it("reuses the exact pending send after Core commits but its reply is lost", async () => {
-    const durable = new Map<string, unknown>();
-    send = async (params) => {
-      if (!durable.has(String(params.idempotencyKey))) {
-        durable.set(String(params.idempotencyKey), { message: "d".repeat(40), accepted: true });
-        throw JSON.stringify({ code: "unavailable", retry_after_ms: 100 });
-      }
-      return durable.get(String(params.idempotencyKey));
-    };
+  async function composeDirect(text: string) {
     render(<App />);
-    const composer = await screen.findByRole("textbox", { name: "Message Taylor" });
-    fireEvent.change(composer, { target: { value: "Retry this exact send" } });
+    await screen.findByRole("textbox", { name: "Message Taylor" });
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Message Taylor" })).toHaveProperty("readOnly", false));
+    const composer = screen.getByRole("textbox", { name: "Message Taylor" });
+    fireEvent.change(composer, { target: { value: text } });
+    return composer as HTMLTextAreaElement;
+  }
+
+  it("retries the same persisted revision after Core commits but its reply is lost", async () => {
+    directComposer.loseNextSendReply = true;
+    const composer = await composeDirect("Retry this exact send");
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-    expect((await screen.findByRole("alert")).textContent).toContain("Retrying unchanged text");
-    expect((composer as HTMLTextAreaElement).value).toBe("Retry this exact send");
+    await screen.findByRole("button", { name: "Retry previous send" });
+    expect(composer.value).toBe("Retry this exact send");
     await act(async () => { window.dispatchEvent(new Event("focus")); });
     expect(sends()).toHaveLength(1);
-    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    fireEvent.click(screen.getByRole("button", { name: "Retry previous send" }));
     await waitFor(() => expect(sends()).toHaveLength(2));
     expect(sends()[1]).toEqual(sends()[0]);
-    expect(durable.size).toBe(1);
-    await waitFor(() => expect((composer as HTMLTextAreaElement).value).toBe(""));
-    expect((await screen.findByRole("alert")).textContent).toContain("Saved text: Retry this exact send");
-    expect(host.invoke.mock.calls.some(([command]) => command === "service_command")).toBe(false);
+    expect(directComposer.messageCount).toBe(1);
+    await waitFor(() => expect(composer.value).toBe(""));
+    expect(screen.getByDisplayValue("Retry this exact send")).toHaveProperty("readOnly", true);
+    expect(host.invoke.mock.calls.some(([command]) => command === "core_api_send_message")).toBe(false);
+    expect(host.invoke.mock.calls.some(([command]) => command === "core_api_draft_set")).toBe(false);
     expect(requests("native.command").some(({ params }) => params.command === "send_message")).toBe(false);
   });
 
   it("keeps an accepted send out of the composer when snapshot refresh fails", async () => {
-    send = async () => { snapshotsFail = true; return { message: "d".repeat(40), accepted: true }; };
-    render(<App />);
-    const composer = await screen.findByRole("textbox", { name: "Message Taylor" });
-    fireEvent.change(composer, { target: { value: "Already accepted" } });
+    directComposer.onEnqueue = async () => { snapshotsFail = true; };
+    const composer = await composeDirect("Already accepted");
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-    const notice = (await screen.findByRole("alert")).textContent;
-    expect(notice).toContain("Your message was saved");
-    expect(notice).toContain("Saved text: Already accepted");
-    expect((composer as HTMLTextAreaElement).value).toBe("");
+    expect((await screen.findByRole("alert")).textContent).toContain("Your message was saved");
+    expect(composer.value).toBe("");
+    expect(screen.getByDisplayValue("Already accepted")).toHaveProperty("readOnly", true);
     fireEvent.submit(composer.closest("form")!);
     expect(sends()).toHaveLength(1);
-    expect(host.invoke).toHaveBeenCalledWith("core_api_draft_set", { destination: contact.destination_hash, text: "" });
+    expect(requests("peer.composer_update")).toHaveLength(1);
+    expect(host.invoke.mock.calls.some(([command]) => command === "core_api_draft_set")).toBe(false);
   });
 
-  it("gives changed text a separate operation while retaining the uncertain original", async () => {
-    send = async () => { throw JSON.stringify({ code: "unavailable", retry_after_ms: null }); };
+  it("recovers a committed send and newer saved text after App remount", async () => {
+    directComposer.loseNextSendReply = true;
+    const composer = await composeDirect("Committed before remount");
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await screen.findByRole("button", { name: "Retry previous send" });
+    directComposer.replace("Newer Core draft");
+    cleanup();
     render(<App />);
-    const composer = await screen.findByRole("textbox", { name: "Message Taylor" });
-    for (const text of ["Original", "Edited", "Original"]) {
-      fireEvent.change(composer, { target: { value: text } });
-      fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-      await screen.findByRole("alert");
-    }
-    expect(sends()).toHaveLength(3);
+    await screen.findByDisplayValue("Newer Core draft");
+    expect(screen.getByDisplayValue("Committed before remount")).toHaveProperty("readOnly", true);
+    expect(sends()).toHaveLength(1);
+    expect(directComposer.messageCount).toBe(1);
+  });
+
+  it("uses a new persisted revision for a deliberate later same-text send", async () => {
+    const composer = await composeDirect("Same message text");
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(composer.value).toBe(""));
+    fireEvent.change(composer, { target: { value: "Same message text" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(sends()).toHaveLength(2));
     expect(sends()[1].idempotencyKey).not.toBe(sends()[0].idempotencyKey);
-    expect(sends()[2]).toEqual(sends()[0]);
+    expect(directComposer.messageCount).toBe(2);
   });
 
   it("serializes workspace send and read fields without legacy aliases", async () => {
