@@ -10,7 +10,21 @@ composer state, independent SDK distributions and upgrades, supervisor-owned
 native lifecycle/pairing, and the remaining packaged transport/fault matrix.
 The ledger records exact scope; this is not full M2–M5 completion.
 
-The current feature-branch checkpoint is `577250e7b0dad8fca7a9d460f5e990dcc29af8dc`
+The current shared feature checkpoint is `677b6bf9e9ea0f50d4465e04cca9f79038632187`
+(tree `0e2516336d33d0febd5b152a25ab9b6972f7212b`). Full manual qualification
+[42716355520](https://github.com/ahouchens/mesh-chat/actions/runs/42716355520)
+is running. Retained selection independently confirms all six suite families and
+native workload `full`; duplicate PR run `42716363961` was canceled.
+
+This exact source passes SDK staging, **3,554 required policy tests**, **670 Python
+plus 12 rendered App/Core cases**, and **nine Windows component cases**, with
+zero failures and skips. It integrates C's public AGP DSL receiver fix `595b1bf`
+and D's bounded stage timing/read-count/provenance diagnostics `1f177e4`.
+The independent Android build and two installed cases remain unqualified;
+Windows pairing's cause remains unproven. All workers hold source while the lead
+validates platform reports. No release, default or scenario promotion.
+
+The previous feature-branch checkpoint is `577250e7b0dad8fca7a9d460f5e990dcc29af8dc`
 (tree `2ff3f7c8aac2d558e9af05a1d3aaca04e0a6048b`). Full manual CI
 [42711039872](https://github.com/ahouchens/mesh-chat/actions/runs/42711039872)
 completed failed at **22:46:32 UTC**. Its retained selection confirms all six families

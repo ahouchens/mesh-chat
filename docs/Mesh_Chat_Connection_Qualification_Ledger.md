@@ -2,9 +2,39 @@
 
 ## Integration revalidation (2026-11-09)
 
-### Current repaired checkpoint: full CI dispatched
+### AGP repair and timing diagnostics: full CI dispatched
 
-The current feature-branch checkpoint is `577250e7b0dad8fca7a9d460f5e990dcc29af8dc`
+The current shared feature checkpoint is `677b6bf9e9ea0f50d4465e04cca9f79038632187`
+(tree `0e2516336d33d0febd5b152a25ab9b6972f7212b`). Full manual qualification
+[42716355520](https://github.com/ahouchens/mesh-chat/actions/runs/42716355520)
+is running. Retained selection independently confirms all six suite families and
+native workload `full`; duplicate PR run `42716363961` was canceled.
+
+This exact source passes SDK staging, **3,554 required policy tests**, **670 Python
+plus 12 rendered App/Core cases**, and **nine Windows component cases**, with
+zero failures and skips. It integrates C's public AGP DSL receiver fix `595b1bf`
+and D's bounded stage timing/read-count/provenance diagnostics `1f177e4`.
+The independent Android build and two installed cases remain unqualified;
+Windows pairing's cause remains unproven. All workers hold source while the lead
+validates platform reports. No release, default or scenario promotion.
+
+Local policy qualification is `5d82b74d14c549c1a01aa6bd7316bf33`, 360.88s
+wall time (352.138s summed case durations). Exact App/Core wall time is 44.33s;
+Python XML SHA-256 `52330790dcf3d7de113a7978261221118d9bf2e2ad3ddb71711fef3cc27ab2a7`,
+inventory `b635bc5600be201867defc4f2e24f2db14aecc0a245a681f8f7ab84edda0ac85`,
+rendered XML `3a3155e8be51675ae685117845d6b0983e4229debcc38f206183ea399ad698db`.
+Windows wall time is 2.82s; XML
+`3eafbd3befcdc23dadd6bf77284019fa1b93aa3d21e976e246123e6ee5dc532b`,
+inventory `b0cf12b7e390b061552cbec72cdac73808282f128096b85c3cef3391b8dd84ff`.
+
+Selection artifact `13717079674` has archive SHA-256
+`67972eb4fc0e4ecdd70d30cda615e4dd6581ae7fada036c332dff4ba3d83d255`.
+All 146 validator source files are pinned to the candidate. These local gates
+and selection checks do not replace actual platform execution.
+
+### Completed checkpoint 577250e: evidence and subsequent repairs
+
+The previous feature-branch checkpoint is `577250e7b0dad8fca7a9d460f5e990dcc29af8dc`
 (tree `2ff3f7c8aac2d558e9af05a1d3aaca04e0a6048b`). Full manual CI
 [42711039872](https://github.com/ahouchens/mesh-chat/actions/runs/42711039872)
 completed failed at **22:46:32 UTC**. Its retained selection confirms all six families
