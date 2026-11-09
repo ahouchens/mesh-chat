@@ -4,9 +4,11 @@ API 1.1 adds `peer.pairing_begin`, `peer.pairing_query` and
 `peer.pairing_cancel`. All require current `approve` permission and a host-bound
 profile. Begin and cancel require explicit caller envelope keys. The public
 family is advertised only with a concrete shared-native actor/host and the
-actor's durable-cancellation and terminal-checkpoint hooks. Current source work
-is gated while C supplies those hooks; this document does not qualify native
-traffic, an independent app host or SC21.
+actor's durable-cancellation and terminal-checkpoint hooks. Producer component
+tests cover the actual actor, vault, signatures, supervisor and framed API with
+native/mailbox boundary doubles; installed SDK cases cover begin/query/cancel.
+This document does not qualify packaged native traffic, an independent app host
+or SC21.
 
 Begin parameters are `{profile,role:"offer"|"answer",pairing_code?,
 allow_direct_ip_disclosure?}`. Offer must omit `pairing_code`; answer requires

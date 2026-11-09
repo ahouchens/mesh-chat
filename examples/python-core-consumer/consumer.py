@@ -26,7 +26,16 @@ def main():
             print(json.dumps(report), file=sys.stderr)
             return 0
         profile = client.capabilities["profiles"][0]
-        if "--pairing-unsupported" in sys.argv:
+        if "--exercise-pairing-owner" in sys.argv:
+            first = client.pairing_begin(profile, "offer", "sdk-pairing-begin-key-001")
+            repeated = client.pairing_begin(profile, "offer", "sdk-pairing-begin-key-001")
+            observed = client.pairing_query(profile, first["pairing"])
+            cancelled = client.pairing_cancel(profile, first["pairing"], "sdk-pairing-cancel-key001")
+            replayed = client.pairing_cancel(profile, first["pairing"], "sdk-pairing-cancel-key001")
+            report.update(began=first["state"] == "reserved", same_pairing=first["pairing"] == repeated["pairing"],
+                          queried=observed["pairing"] == first["pairing"], cancelled=cancelled["state"] == "retired",
+                          cancel_replayed=replayed == cancelled)
+        elif "--pairing-unsupported" in sys.argv:
             try:
                 client.pairing_begin(profile, "offer", "sdk-pairing-begin-key-001")
             except CoreClientError as error:

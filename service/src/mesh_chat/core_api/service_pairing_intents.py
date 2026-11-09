@@ -237,8 +237,8 @@ class ServicePairingIntents:
                 if replay != {"pairing": pairing}:
                     raise ApiFailure("resync_required")
                 identifier, row = self._row(scope, pairing)
-            if row["terminal_state"] is None and not row["cancel_requested"]:
-                if time.time() >= row["expires_at"]:
+            if row["terminal_state"] is None:
+                if row["cancel_requested"] or time.time() >= row["expires_at"]:
                     receipt = store.get("workspace_operation", store.opaque_id("workspace-operation", row["native_id"]))
                     if receipt is None:
                         # Same current runtime, no child admission receipt: the
@@ -258,18 +258,26 @@ class ServicePairingIntents:
             if row["runtime_epoch"] != self.service._runtime_incarnation:
                 raise ApiFailure("resync_required")
             receipt = self.service.store.get("workspace_operation", self.service.store.opaque_id("workspace-operation", row["native_id"]))
-            if receipt is None:
-                state = "retired" if row["cancel_requested"] else "reserved"
+            if row["cancel_requested"] or time.time() >= expires:
+                # A durable stop/expiry suppresses disclosure immediately. Only
+                # the actual terminal checkpoint may report retirement.
+                state = "retiring"
+            elif receipt is None:
+                state = "reserved"
             else:
                 context = getattr(self.service, "_native_pairing_contexts", {}).get(row["native_id"])
                 if context is not None and context.get("state") in _TERMINAL:
-                    return PairingIntentObservation(row["pairing"], context["state"], expires, None)
+                    return PairingIntentObservation(row["pairing"], "retiring", expires, None)
                 try:
                     observation = self.service.native_pairing_status(row["native_id"])
                 except CallOutcomeRequiresResync as error:
                     raise ApiFailure("resync_required") from error
                 except NativeUnavailable as error:
                     raise ApiFailure("unavailable") from error
+                except ContactNotApproved:
+                    if time.time() >= expires:
+                        return PairingIntentObservation(row["pairing"], "retiring", expires, None)
+                    raise
                 state, code = observation["state"], observation.get("pairing_code")
                 expires = min(expires, observation["expires_at"])
                 if state not in _TERMINAL and time.time() >= expires:
@@ -294,7 +302,7 @@ class ServicePairingIntents:
                 receipt = store.get("workspace_operation", store.opaque_id("workspace-operation", row["native_id"]))
                 if receipt is None:
                     _checkpoint_terminal(service, identifier, row["runtime_epoch"], row["identity_hash"], row["native_id"], "retired")
-                else:
+                elif time.time() < row["expires_at"]:
                     try:
                         cancelled = service.native_pairing_cancel(row["native_id"])
                         if cancelled.get("state") in _TERMINAL:
