@@ -56,7 +56,7 @@ mutation durability are also open, with A/B ownership recorded in coordination.
 
 The feature branch was fast-forward pushed to `29a5606`. Full workflow dispatch
 [42630080557](https://github.com/ahouchens/mesh-chat/actions/runs/42630080557)
-is running for that exact head with all five suite families selected. The
+completed for that exact head with all five suite families selected. The
 redundant PR-triggered run was canceled to avoid duplicate runner consumption.
 Neither dispatch nor the local boundary results establish Wave 1 acceptance.
 
@@ -98,9 +98,48 @@ encoding; package binary hashes remain runner-generated claims in those reports.
 The first CI Verify job failed because a test matched composer text before the
 thread mutation arrived. D's integrated correction holds the send deliberately,
 waits for a rendered message article, and queries its durable ID/content through
-Core. Later source still requires full CI. Call replay after an intervening state
-change, remaining keyed domain actions, and the restart-safe composer remain
-open; these passing slices do not close Wave 1 or M2–M5.
+Core. Every platform, direct-transport, policy and layout job passed; Verify and
+the final aggregate gate failed. Later source still requires full CI.
+
+At `2f3cbbdba4b07eeb4db32cae286bd58ff165a30b`, remote-profile mutations commit
+records, receipts and runtime intent before reconciliation. Call replay returns
+the current call projection, including an intervening end or ring expiry,
+without another signal. The lead ran 73 focused call/remote cases successfully;
+the optional remote-network case initially skipped, then passed separately with
+its required opt-in (22.34 seconds). That test runs real isolated clients through
+an outbound TCP relay, covering personal and workspace admission and delivery.
+Remaining keyed domain actions and the restart-safe composer remain open; these
+passing slices do not close Wave 1 or M2–M5.
+
+The next full required policy run at `99dd87d` executed 2,334 cases: 2,333
+passed, one failed, zero skipped (208.64 seconds). Its SDK coverage assertion
+incorrectly treated private `bootstrap.preview` as a public-client obligation.
+The integrated correction verifies the manifest's private visibility and public
+operation inventory separately; all 20 compatibility cases passed at `4a8453e`.
+This focused repair does not convert the earlier failed full run into a pass.
+
+At `685dd5a`, the lead checked keyed composite actions and remote Core adapters:
+207 focused cases passed, then the exact-source boundary gate passed 275 Python
+and six rendered-App cases with no skips (15.51 seconds). Strict model/reducer
+typechecking also passed on the preceding production checkpoint. Independent
+review subsequently found that accepted workspace message/read-hint keys can
+return success after signed membership removal; this remains a repair input.
+
+The completed first CI direct-transport reports at `29a5606` were also inspected:
+Windows and Linux each executed 25 fabric, 10 recovery and 12 setup cases, all
+passing without skips. Source/tree, run-bound collection and executed inventories
+match. These are controlled native/service component scenarios, not packaged
+cross-platform interoperability; binary hashes in these reports-only archives
+remain runner-generated claims.
+
+Prepared remote/reconnect helpers at `2def80a` passed 140 focused and legacy
+tests without skips. They supply write sets for parent atomic commits; this is
+not yet evidence that every parent action uses them. D's two signed-removal
+replay regressions were integrated and independently reproduced at `bddf089`.
+Mailbox intent batch `61d7a1c` passed 22 focused signaling/call cases, including
+an owned loopback HTTP server and a lost reply after encrypted storage. Three
+separate external-Worker tests skipped because no test Worker was configured;
+they are not counted as passing execution.
 
 ### Baseline findings (historical audit)
 

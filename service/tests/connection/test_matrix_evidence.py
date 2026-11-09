@@ -11,6 +11,9 @@ import connection_matrix as matrix
 from connection_evidence import execution_evidence
 from direct_qualification import LEVEL, SUITES as DIRECT_SUITES
 from connection_test_inventory import REQUIRED_SUITES
+from check_core_ui_boundary import PYTHON_SELECTION, RENDERED_CASES, junit_summary
+from check_core_windows_boundary import CASES as WINDOWS_CASES, SELECTION as WINDOWS_SELECTION
+from core_boundary_evidence import UI_LEVEL, WINDOWS_LEVEL, digest
 from test_desktop_transport import CHECKS
 from test_packaged_lifecycle import CHECKS as PACKAGED_CHECKS, COUNTS as PACKAGED_COUNTS, LEVEL as PACKAGED_LEVEL
 from test_packaged_transport import CHECKS as TRANSPORT_CHECKS, COUNTS as TRANSPORT_COUNTS, LEVEL as TRANSPORT_LEVEL
@@ -19,7 +22,7 @@ from test_packaged_transport import PAIRING_CHECKS, PAIRING_COUNTS, PAIRING_LEVE
 
 def fixture(directory):
     source, tree = "a" * 40, "b" * 40
-    for name in ("policy", "desktop", "android"):
+    for name in ("policy", "desktop", "android", "verification"):
         (directory / name).mkdir()
     inventory = {"v": 1, "source_commit": source, "selection": list(REQUIRED_SUITES),
                  "nodeids": ["test_case"], "run_id": "current"}
@@ -65,7 +68,43 @@ def fixture(directory):
                         ("desktop/packaged-pairing.json", pairing),
                         ("android/android-qualification.json", android)):
         (directory / path).write_text(json.dumps(value))
+    boundary_reports(directory, source, tree)
     return source, tree, android
+
+
+def boundary_reports(directory, source, tree):
+    """Synthetic complete runs for testing the aggregator, never qualification evidence."""
+    records = {}
+    for name, folder, selection, nodeids in (
+        ("python", "verification", PYTHON_SELECTION,
+         [path.removeprefix("service/") + "::test_case" for path in PYTHON_SELECTION]),
+        ("windows", "desktop", WINDOWS_SELECTION, sorted(WINDOWS_CASES)),
+    ):
+        filename = "core-ui-boundary-python" if name == "python" else "core-windows-boundary"
+        junit = directory / folder / (filename + ".xml")
+        inventory = junit.with_suffix(".inventory.json")
+        inventory.write_text(json.dumps({"v": 1, "source_commit": source, "selection": list(selection),
+                                         "nodeids": nodeids, "run_id": "boundary-" + name}))
+        document = ET.Element("testsuite")
+        for nodeid in nodeids:
+            case = ET.SubElement(document, "testcase", name=nodeid, time="1")
+            properties = ET.SubElement(case, "properties")
+            for key, value in {"qualification_run": "boundary-" + name, "qualification_nodeid": nodeid}.items():
+                ET.SubElement(properties, "property", name=key, value=value)
+        ET.ElementTree(document).write(junit)
+        records[name] = {**junit_summary(junit), "inventory_sha256": digest(inventory), "exit_code": 0}
+    junit = directory / "verification/core-ui-boundary-rendered_ui.xml"
+    document = ET.Element("testsuite")
+    for classname, name in sorted(RENDERED_CASES):
+        ET.SubElement(document, "testcase", classname=classname, name=name, time="1")
+    ET.ElementTree(document).write(junit)
+    ui = {"v": 1, "source_commit": source, "source_tree": tree, "passed": True,
+          "evidence_level": UI_LEVEL, "suites": {"python": records["python"],
+          "rendered_ui": {**junit_summary(junit), "exit_code": 0}}}
+    windows = {"v": 1, "source_commit": source, "source_tree": tree, "evidence_level": WINDOWS_LEVEL,
+               **records["windows"]}
+    (directory / "verification/core-ui-boundary.json").write_text(json.dumps(ui))
+    (directory / "desktop/core-windows-boundary.json").write_text(json.dumps(windows))
 
 
 def test_gate_revalidates_policy_inventory_and_both_platform_component_reports(tmp_path):
@@ -75,8 +114,12 @@ def test_gate_revalidates_policy_inventory_and_both_platform_component_reports(t
     assert result["android_tests_executed"] == 47
     assert set(result["windows_transport_checks"]) == CHECKS
     assert set(result["report_sha256"]) == {"policy", "windows_transport", "windows_packaged_lifecycle",
-                                          "windows_packaged_transport", "windows_packaged_pairing", "android"}
+                                          "windows_packaged_transport", "windows_packaged_pairing", "android",
+                                          "core_ui_boundary", "core_windows_boundary"}
     assert result["windows_packaged_lifecycle_checks"] == list(PACKAGED_CHECKS)
+    assert result["core_ui_boundary_python_tests"] == len(PYTHON_SELECTION)
+    assert result["core_ui_boundary_rendered_tests"] == 6
+    assert result["core_windows_boundary_tests"] == 3
 
 
 def test_android_report_without_typed_app_bridge_execution_cannot_qualify(tmp_path):
@@ -267,6 +310,7 @@ def test_suite_manifest_is_uniform_across_every_required_component(tmp_path):
     assert [record["suite"] for record in records] == [
         "policy", "windows_transport", "windows_packaged_lifecycle",
         "windows_packaged_transport", "windows_packaged_pairing",
+        "core_ui_boundary_python", "core_ui_boundary_rendered", "core_windows_boundary",
         "android_webrtc", "android_signaling", "android_core_api", "android_core_consumer",
         *("direct_Linux_" + name for name in DIRECT_SUITES),
         *("direct_Windows_" + name for name in DIRECT_SUITES)]
@@ -284,6 +328,10 @@ def test_suite_manifest_is_uniform_across_every_required_component(tmp_path):
     assert all(record["source_commit"] == source and record["source_tree"] == tree for record in records)
     windows = next(record for record in records if record["suite"] == "windows_transport")
     assert windows["checks"] == len(CHECKS) and windows["artifacts"]
+    boundary = [record for record in records if record["suite"].startswith("core_")]
+    assert [record["tests"]["executed"] for record in boundary] == [len(PYTHON_SELECTION), 6, 3]
+    assert all(record["artifacts"]["junit"] for record in boundary)
+    assert all("inventory" in record["artifacts"] for record in (boundary[0], boundary[2]))
 
 
 def test_suite_record_rejects_failed_skipped_or_unbounded_counts():
@@ -317,3 +365,70 @@ def test_manifest_component_identities_match_the_shared_requirement_table(tmp_pa
     present = {record["suite"] for record in matrix.collect(tmp_path, source, tree, required)["suites"]}
     expected = set().union(*(COMPONENTS[name] for name in required))
     assert present == expected
+
+
+@pytest.mark.parametrize("component", ["python", "rendered_ui", "windows"])
+@pytest.mark.parametrize("fault", ["missing_report", "source", "tree", "digest", "skip", "inventory", "run"])
+def test_final_gate_revalidates_every_boundary_execution(tmp_path, component, fault):
+    source, tree, _ = fixture(tmp_path)
+    windows = component == "windows"
+    folder = tmp_path / ("desktop" if windows else "verification")
+    path = folder / ("core-windows-boundary.json" if windows else "core-ui-boundary.json")
+    record = json.loads(path.read_text())
+    suite = record if windows else record["suites"][component]
+    junit = folder / ("core-windows-boundary.xml" if windows else f"core-ui-boundary-{component}.xml")
+    if fault == "missing_report":
+        path.unlink()
+    else:
+        if fault in {"source", "tree"}:
+            record["source_commit" if fault == "source" else "source_tree"] = "f" * 40
+        elif fault == "digest":
+            suite["sha256"] = "f" * 64
+        elif fault == "skip":
+            document = ET.parse(junit)
+            ET.SubElement(document.getroot().find("testcase"), "skipped")
+            document.write(junit)
+            # Even a matching updated digest cannot qualify skipped execution.
+            suite.update(junit_summary(junit))
+            suite["passed"] = True
+        elif component == "rendered_ui":
+            document = ET.parse(junit)
+            cases = document.getroot().findall("testcase")
+            # Keep six passing cases while substituting or duplicating one identity.
+            cases[0].set("name", "unrelated case" if fault == "inventory" else cases[1].get("name"))
+            document.write(junit)
+            suite.update(junit_summary(junit))
+        else:
+            inventory = junit.with_suffix(".inventory.json")
+            collected = json.loads(inventory.read_text())
+            if fault == "inventory":
+                collected["selection"] = ["unrelated.py"]
+            else:
+                collected["run_id"] = "another-run"
+            inventory.write_text(json.dumps(collected))
+            suite["inventory_sha256"] = digest(inventory)
+        path.write_text(json.dumps(record))
+    with pytest.raises((ValueError, FileNotFoundError)):
+        matrix.collect(tmp_path, source, tree, ["policy", "verification"])
+
+
+@pytest.mark.parametrize("component", ["python", "windows"])
+def test_boundary_gate_rejects_a_consistent_but_reduced_execution_inventory(tmp_path, component):
+    source, tree, _ = fixture(tmp_path)
+    windows = component == "windows"
+    folder = tmp_path / ("desktop" if windows else "verification")
+    path = folder / ("core-windows-boundary.json" if windows else "core-ui-boundary.json")
+    junit = folder / ("core-windows-boundary.xml" if windows else "core-ui-boundary-python.xml")
+    inventory = junit.with_suffix(".inventory.json")
+    document = ET.parse(junit)
+    document.getroot().remove(document.getroot().find("testcase"))
+    document.write(junit)
+    collected = json.loads(inventory.read_text())
+    collected["nodeids"].pop(0)
+    inventory.write_text(json.dumps(collected))
+    record = json.loads(path.read_text())
+    suite = record if windows else record["suites"]["python"]
+    suite.update(junit_summary(junit), inventory_sha256=digest(inventory))
+    path.write_text(json.dumps(record))
+    with pytest.raises(ValueError, match="inventory|collection"):
+        matrix.collect(tmp_path, source, tree, ["policy", "verification"])

@@ -86,6 +86,11 @@ jobs:
           name: desktop-transport-${{ github.sha }}
           path: dist/qualification/desktop
       - uses: actions/download-artifact@v4
+        if: needs.plan.outputs.verification == 'true'
+        with:
+          name: mesh-chat-verification
+          path: dist/qualification/verification
+      - uses: actions/download-artifact@v4
         if: needs.plan.outputs.android == 'true'
         with:
           name: android-qualification-${{ github.sha }}

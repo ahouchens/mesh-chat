@@ -11,13 +11,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import pytest
 from connection_evidence import execution_evidence
 from connection_test_inventory import TestInventory
-
-
-SELECTION = (
-    "service/tests/connection/test_ui_core_boundary_requests.py",
-    "service/tests/connection/test_ui_core_boundary_ci.py",
-    "service/tests/connection/test_ui_core_boundary_calls.py",
-)
+from check_core_ui_boundary import PYTHON_SELECTION as SELECTION
 
 
 def main():
