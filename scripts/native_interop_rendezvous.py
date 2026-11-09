@@ -22,7 +22,11 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 ROLES = {"windows", "android"}
 PRODUCER_JOBS = {"windows": "native_windows_peer", "android": "native_android_peer"}
-PHASES = {"offer", "answer", "approved", "control", "result"}
+OFFER_PHASES = {"offer", "offer_turn_udp", "offer_turn_tcp", "offer_turn_tls", "offer_impaired"}
+NEGATIVE_CASES = {"turn_tcp", "turn_tls", "impaired"}
+APPROVAL_PHASES = {"approved", "impaired_ready"} | {
+    prefix + scenario for prefix in ("negative_ready_", "negative_checked_") for scenario in NEGATIVE_CASES}
+PHASES = OFFER_PHASES | APPROVAL_PHASES | {"answer", "control", "result"}
 KEY_TTL = 7200
 MESSAGE_TTL = 600
 MAX_BLOB = 96 * 1024
@@ -57,10 +61,10 @@ def artifact_name(context, role, phase):
 def checked_payload(phase, value):
     if not isinstance(value, dict):
         raise ValueError("Bootstrap payload must be a bounded object")
-    if phase in {"offer", "answer"}:
+    if phase in OFFER_PHASES | {"answer"}:
         valid = (set(value) == {"shareable"} and isinstance(value["shareable"], str)
                  and 0 < len(value["shareable"].encode("utf-8")) <= MAX_SHAREABLE)
-    elif phase == "approved":
+    elif phase in APPROVAL_PHASES:
         valid = set(value) == {"approved"} and type(value["approved"]) is bool
     elif phase == "control":
         valid = (set(value) == {"scenarios", "iterations", "cold_start_every"}
@@ -68,7 +72,7 @@ def checked_payload(phase, value):
                  and all(item in {"direct", "turn_udp", "turn_tcp", "turn_tls", "impaired", "cold_start_receipts"}
                          for item in value["scenarios"])
                  and type(value["iterations"]) is int and value["iterations"] == 100
-                 and type(value["cold_start_every"]) is int and value["cold_start_every"] == 1)
+                 and type(value["cold_start_every"]) is int and value["cold_start_every"] == 10)
     elif phase == "result":
         valid = (set(value) == {"report_sha256", "passed"} and type(value["passed"]) is bool
                  and isinstance(value["report_sha256"], str)
