@@ -1,0 +1,212 @@
+{
+  "run_id": 42598859239,
+  "source_commit": "435b497150e5f0d12cb1c5dc7b4602da7a66ec4c",
+  "workflow": "CI",
+  "source": "GitHub jobs API snapshot supplied by integration lead",
+  "jobs": [
+    {
+      "name": "Check Windows desktop host",
+      "url": "https://github.com/ahouchens/mesh-chat/actions/runs/42598859239/job/129098104511",
+      "conclusion": "success",
+      "duration_seconds": 387.0,
+      "steps": [
+        {
+          "name": "Set up job",
+          "duration_seconds": 4.0
+        },
+        {
+          "name": "Run actions/checkout@v7",
+          "duration_seconds": 8.0
+        },
+        {
+          "name": "Run pnpm/setup@v3",
+          "duration_seconds": 21.0
+        },
+        {
+          "name": "Run actions/setup-python@v7",
+          "duration_seconds": 5.0
+        },
+        {
+          "name": "Run dtolnay/rust-toolchain@1.90.0",
+          "duration_seconds": 13.0
+        },
+        {
+          "name": "Run Swatinem/rust-cache@v2",
+          "duration_seconds": 27.0
+        },
+        {
+          "name": "Run actions/cache@v5",
+          "duration_seconds": 4.0
+        },
+        {
+          "name": "Run pnpm install --frozen-lockfile",
+          "duration_seconds": 4.0
+        },
+        {
+          "name": "Run python -m pip install --disable-pip-version-check -r service/requirements-dev.lock",
+          "duration_seconds": 22.0
+        },
+        {
+          "name": "Run pnpm build",
+          "duration_seconds": 19.0
+        },
+        {
+          "name": "Run python scripts/build_sidecar.py",
+          "duration_seconds": 1.0
+        },
+        {
+          "name": "Qualify packaged native WebRTC messaging",
+          "duration_seconds": 13.0
+        },
+        {
+          "name": "Soak packaged native WebRTC messaging",
+          "duration_seconds": 78.0
+        },
+        {
+          "name": "Qualify initialized packaged service shutdown and process recovery",
+          "duration_seconds": 22.0
+        },
+        {
+          "name": "Run cargo test --locked --manifest-path src-tauri/Cargo.toml --lib",
+          "duration_seconds": 24.0
+        },
+        {
+          "name": "Qualify the private core API pipe endpoint",
+          "duration_seconds": 5.0
+        },
+        {
+          "name": "Qualify the packaged wheel over the private pipe endpoint",
+          "duration_seconds": 5.0
+        },
+        {
+          "name": "Qualify the packaged wheel with owner-scoped grants",
+          "duration_seconds": 5.0
+        },
+        {
+          "name": "Qualify a packaged consumer message after host restart",
+          "duration_seconds": 5.0
+        },
+        {
+          "name": "Check experimental shared WebView host",
+          "duration_seconds": 7.0
+        },
+        {
+          "name": "Build isolated WebView2 qualification executable",
+          "duration_seconds": 22.0
+        },
+        {
+          "name": "Exercise real WebView2 through the private host pipe",
+          "duration_seconds": 5.0
+        },
+        {
+          "name": "Qualify frozen peers and receipts across a service crash",
+          "duration_seconds": 35.0
+        },
+        {
+          "name": "Qualify explicit first-time approval and paired messaging",
+          "duration_seconds": 23.0
+        },
+        {
+          "name": "Run actions/upload-artifact@v4",
+          "duration_seconds": 2.0
+        },
+        {
+          "name": "Post Run actions/cache@v5",
+          "duration_seconds": 0.0
+        },
+        {
+          "name": "Post Run Swatinem/rust-cache@v2",
+          "duration_seconds": 0.0
+        },
+        {
+          "name": "Post Run actions/setup-python@v7",
+          "duration_seconds": 1.0
+        },
+        {
+          "name": "Post Run pnpm/setup@v3",
+          "duration_seconds": 1.0
+        },
+        {
+          "name": "Post Run actions/checkout@v7",
+          "duration_seconds": 3.0
+        },
+        {
+          "name": "Complete job",
+          "duration_seconds": 0.0
+        }
+      ]
+    },
+    {
+      "name": "Verify and test",
+      "url": "https://github.com/ahouchens/mesh-chat/actions/runs/42598859239/job/129098104719",
+      "conclusion": "success",
+      "duration_seconds": 519.0,
+      "steps": [
+        {
+          "name": "Set up job",
+          "duration_seconds": 1.0
+        },
+        {
+          "name": "Check out repository",
+          "duration_seconds": 2.0
+        },
+        {
+          "name": "Set up pnpm and Node.js",
+          "duration_seconds": 10.0
+        },
+        {
+          "name": "Set up Python",
+          "duration_seconds": 2.0
+        },
+        {
+          "name": "Install JavaScript dependencies",
+          "duration_seconds": 1.0
+        },
+        {
+          "name": "Install Python dependencies",
+          "duration_seconds": 12.0
+        },
+        {
+          "name": "Build and test the experimental core client",
+          "duration_seconds": 1.0
+        },
+        {
+          "name": "Package and smoke the TypeScript client",
+          "duration_seconds": 1.0
+        },
+        {
+          "name": "Package and smoke the Python service",
+          "duration_seconds": 4.0
+        },
+        {
+          "name": "Prove the TypeScript client against the Python facade",
+          "duration_seconds": 2.0
+        },
+        {
+          "name": "Validate and test",
+          "duration_seconds": 478.0
+        },
+        {
+          "name": "Upload verification report",
+          "duration_seconds": 1.0
+        },
+        {
+          "name": "Post Set up Python",
+          "duration_seconds": 0.0
+        },
+        {
+          "name": "Post Set up pnpm and Node.js",
+          "duration_seconds": 1.0
+        },
+        {
+          "name": "Post Check out repository",
+          "duration_seconds": 0.0
+        },
+        {
+          "name": "Complete job",
+          "duration_seconds": 0.0
+        }
+      ]
+    }
+  ]
+}

@@ -51,6 +51,11 @@ CORE_API = ("serviceIsExportedBehindTheSignaturePermission",
             "emptyFrameIsRejectedBeforeDispatch",
             "oversizedFrameIsRejectedBeforeDispatch",
             "uninitializedBridgeFailsClosedWithATypedFrame")
+TYPED_CORE_BRIDGE = (
+    "typedProfileWorkspaceAndSettingsReachProductionCore",
+    "typedDraftAndLostReplyRetryKeepOneDurableMessage",
+    "typedErrorsPreserveConflictAndCallerAuthority",
+)
 CORE_CONSUMER = ("consumerQueriesProductionFacadeAcrossUid", "externalCallerCannotAcquireOwnerScope",
                  "detachingConsumerCanReattachToItsProfile", "privateControlIsRejectedThroughThePublicPackage",
                  "consumerCanEnqueueAndReadAMessageThroughThePublicPackage",
@@ -74,7 +79,8 @@ def cases(suite):
     if suite == "signaling":
         entries = (("SignalMailboxAndroidTest", method, phase) for method, phase in SIGNALING)
     elif suite == "core_api":
-        entries = (("MeshCoreApiServiceTest", method, "none") for method in CORE_API)
+        entries = [("MeshCoreApiServiceTest", method, "none") for method in CORE_API]
+        entries += [("TypedCoreBridgeBoundaryTest", method, "none") for method in TYPED_CORE_BRIDGE]
     elif suite == "core_consumer":
         entries = (("CorePackageConsumerTest", method, "none") for method in CORE_CONSUMER)
     elif suite != "webrtc":
