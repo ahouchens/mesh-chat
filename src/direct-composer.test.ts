@@ -72,6 +72,57 @@ function fixture() {
 }
 
 describe("direct composer presentation ordering", () => {
+  it("freezes edits and flushes only the current issued draft ticket before retirement", async () => {
+    const core = fixture();
+    const controller = new DirectComposerController(core.port);
+    await controller.load();
+    const key = core.snapshot().update_key;
+    controller.edit("Keep this draft");
+    const flush = controller.freezeAndFlush();
+    controller.edit("Too late");
+    await Promise.all([flush, controller.send(), controller.save(), controller.retry(), controller.freezeAndFlush()]);
+    expect(core.updates).toEqual([{ revision: null, text: "Keep this draft", key }]);
+    expect(core.sends).toEqual([]);
+    expect(controller.getSnapshot()).toMatchObject({ text: "Keep this draft", canSave: false, canSend: false });
+  });
+
+  it("does not replay an uncertain save or send during retirement", async () => {
+    for (const kind of ["save", "send"] as const) {
+      const core = fixture();
+      const controller = new DirectComposerController(core.port);
+      await controller.load();
+      controller.edit("Original text");
+      if (kind === "save") { core.loseUpdate(); await controller.save(); }
+      else { core.loseSend(); await controller.send(); }
+      const before = { updates: [...core.updates], sends: [...core.sends] };
+      await controller.freezeAndFlush();
+      expect(core.updates).toEqual(before.updates);
+      expect(core.sends).toEqual(before.sends);
+      expect(controller.getSnapshot().retry).toBe(kind);
+    }
+  });
+
+  it("does not enqueue when a send's draft update settles after retirement began", async () => {
+    const core = fixture();
+    const update = deferred<ComposerUpdate>();
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    const controller = new DirectComposerController({ ...core.port, update: async (...args) => {
+      const result = await core.port.update(...args);
+      entered();
+      return update.promise.then(() => result);
+    } });
+    await controller.load();
+    controller.edit("Do not send after lock");
+    const sending = controller.send();
+    await started;
+    const retirement = controller.freezeAndFlush();
+    update.resolve({} as ComposerUpdate);
+    await Promise.all([sending, retirement]);
+    expect(core.sends).toEqual([]);
+    expect(core.updates).toHaveLength(1);
+  });
+
   it("loads purely, then uses the distinct issued update key and revision to send", async () => {
     const core = fixture();
     const controller = new DirectComposerController(core.port);
