@@ -85,6 +85,29 @@ def mutation(invoke, profile, peer, group, operation, key="explicit-group-key-00
 
 
 @pytest.mark.parametrize("operation", ["group.create", "group.message_enqueue"])
+def test_keyed_group_acceptance_emits_committed_state_invalidation_while_offline(group_host, operation):
+    pair, _ = group_host
+    service = pair.owner
+    invoke, _, profile, peer, group = public(service)
+    observed = []
+    namespaces = ("group", "group_message", "group_delivery", "workspace_operation", "api_optional_mutation", "api_optional_quota")
+    def observe(event):
+        if event == {"type": "event", "event": "state_changed"}:
+            observed.append({name: dict(service.store.items(name)) for name in namespaces})
+    service.emit = observe
+    before_packets = list(pair.owner_network.sent)
+    first = mutation(invoke, profile, peer, group, operation)
+    assert first["ok"], first
+    committed = {name: dict(service.store.items(name)) for name in namespaces}
+    assert observed == [committed]  # Synchronous event observes the entire durable acceptance.
+    assert committed["api_optional_mutation"] and committed["workspace_operation"]
+    assert mutation(invoke, profile, peer, group, operation) == first
+    assert observed == [committed, committed]
+    assert {name: dict(service.store.items(name)) for name in namespaces} == committed
+    assert pair.owner_network.sent == before_packets
+
+
+@pytest.mark.parametrize("operation", ["group.create", "group.message_enqueue"])
 def test_keyed_group_lost_reply_reopen_and_replay_preserve_one_domain_mutation(group_host, operation):
     pair, reopen = group_host
     service = pair.owner
