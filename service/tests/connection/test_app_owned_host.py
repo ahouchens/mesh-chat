@@ -61,6 +61,7 @@ def test_fresh_host_is_empty_and_only_public_core_can_create_identity(runtime):
     value = start()
     assert value.store.profile_dir == directory / "mesh-core-runtime" / "profile-v1"
     assert value.service._identity is None and value.store.list("contact") == []
+    assert not value.service.settings.nearby_discovery and not value.service.settings.lan_fallback
     options = value.endpoint.config
     assert options.scope == "owner" and options.private_profile_bootstrap
     assert not options.private_native and not options.private_composer_legacy

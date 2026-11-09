@@ -9,6 +9,7 @@ from .core_api.pipe_endpoint import PipeConfig, PipeEndpoint
 from .core_api.pipe_policy import allowed_images, pipe_name
 from .errors import MeshChatError, NativeUnavailable, ValidationError
 from .service import MeshChatService
+from .reticulum_config import NetworkSettings
 from .vault import ProfileLock, VaultStore
 from .windows_app_key import load_key
 
@@ -60,6 +61,9 @@ class AppOwnedRuntime:
             if directory.is_symlink() or directory.is_junction():
                 raise NativeUnavailable("App-owned profile binding changed")
             self.store = store_factory(directory, key_loader(root))
+            if self.store.get("settings", "network") is None:
+                self.store.put("settings", "network",
+                    NetworkSettings(nearby_discovery=False, lan_fallback=False).to_dict())
             if host_factory is None:
                 from .native_windows_webrtc import WindowsNativeWebRTCHost
                 host_factory = WindowsNativeWebRTCHost
