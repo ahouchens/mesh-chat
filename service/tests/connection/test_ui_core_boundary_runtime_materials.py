@@ -51,10 +51,10 @@ class Archive:
 
 def staged(installed):
     root, distributions = installed
-    expected, datas = materials.collection(root=root, distribution=distributions.__getitem__)
+    datas = materials.pyinstaller_datas(root=root, distribution=distributions.__getitem__)
+    expected = json.loads((root / "service/build/native-runtime-materials/inventory.json").read_bytes())
     data = {str(Path(target) / Path(source).name).replace("\\", "/"): Path(source).read_bytes()
             for source, target in datas}
-    data[materials.EMBEDDED] = materials.canonical(expected)
     data.update({file: (root / file).read_bytes() for file in distributions["av"].files
                  if file.endswith((".dll", ".pyd"))})
     data["python313.dll"] = b"fixture python runtime"
@@ -129,6 +129,22 @@ def test_pyinstaller_data_destinations_preserve_source_basename_and_cannot_inven
     # tiny CArchive fixture above; no synthetic renamed declaration is inserted.
     expected, archive, declaration = staged(installed)
     assert materials.EMBEDDED_DECLARATION in archive.toc
+    materials.inspect_archive(archive, expected, declaration)
+
+
+def test_windows_crlf_repository_sources_stage_identical_lf_bytes_and_preserve_wheel_notices(installed):
+    root, distributions = installed
+    for path in (root / "LICENSE", root / "THIRD_PARTY_NOTICES.md", root / "scripts/native-runtime-materials-v1.json"):
+        path.write_bytes(materials.text_bytes(path).replace(b"\n", b"\r\n") + (b"\r\n" if not path.read_bytes().endswith(b"\n") else b""))
+    # Keep repository fixture texts equivalent to their inventory expectation.
+    expected, archive, declaration = staged(installed)
+    for path in (materials.PREFIX + "/LICENSE", materials.PREFIX + "/THIRD_PARTY_NOTICES.md", materials.EMBEDDED_DECLARATION):
+        assert b"\r\n" not in archive.data[path]
+    wheel_notice = root / distributions["av"].files[1]
+    wheel_notice.write_bytes(b"upstream notice\r\nunaltered\r\n")
+    expected, archive, declaration = staged(installed)
+    notice_path = next(item["path"] for package in expected["packages"] if package["name"] == "av" for item in package["notice_files"] if item["kind"] == "notice")
+    assert archive.data[notice_path] == b"upstream notice\r\nunaltered\r\n"
     materials.inspect_archive(archive, expected, declaration)
 
 

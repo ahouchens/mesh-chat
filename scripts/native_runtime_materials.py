@@ -30,6 +30,11 @@ def canonical(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
 
 
+def text_bytes(path):
+    """Repository text must have identical archive bytes on Windows and Linux."""
+    return path.read_bytes().replace(b"\r\n", b"\n")
+
+
 def normalized(name):
     return re.sub(r"[-_.]+", "-", name).lower()
 
@@ -98,16 +103,26 @@ def collection(*, root=ROOT, distribution=importlib.metadata.distribution):
                            (root / "scripts/native-runtime-materials-v1.json", EMBEDDED_DECLARATION)):
         datas.append((str(source), str(PurePosixPath(target).parent)))
     return {"v": 1, "declaration_sha256": digest(canonical(declaration)), "packages": packages,
-            "project_license_sha256": digest((root / "LICENSE").read_bytes()),
-            "repository_notices_sha256": digest((root / "THIRD_PARTY_NOTICES.md").read_bytes())}, datas
+            "project_license_sha256": digest(text_bytes(root / "LICENSE")),
+            "repository_notices_sha256": digest(text_bytes(root / "THIRD_PARTY_NOTICES.md"))}, datas
 
 
-def pyinstaller_datas():
-    inventory, datas = collection()
-    path = ROOT / "service/build/native-runtime-materials/inventory.json"
+def pyinstaller_datas(*, root=ROOT, distribution=importlib.metadata.distribution):
+    inventory, datas = collection(root=root, distribution=distribution)
+    path = root / "service/build/native-runtime-materials/inventory.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(canonical(inventory))
-    return [*datas, (str(path), PREFIX)]
+    repository_inputs = {root / "LICENSE", root / "THIRD_PARTY_NOTICES.md", root / "scripts/native-runtime-materials-v1.json"}
+    staged = []
+    for source, target in datas:
+        source = Path(source)
+        if source in repository_inputs:
+            normalized = path.parent / "repository" / source.name
+            normalized.parent.mkdir(parents=True, exist_ok=True)
+            normalized.write_bytes(text_bytes(source))
+            source = normalized
+        staged.append((str(source), target))
+    return [*staged, (str(path), PREFIX)]
 
 
 def inspect_archive(archive, expected, declaration):
@@ -126,7 +141,7 @@ def inspect_archive(archive, expected, declaration):
         return value
     if extract(EMBEDDED) != canonical(expected):
         raise ValueError("Frozen inventory differs from the installed locked materials")
-    if digest(extract(EMBEDDED_DECLARATION)) != digest(DECLARATION.read_bytes()):
+    if digest(extract(EMBEDDED_DECLARATION)) != digest(text_bytes(DECLARATION)):
         raise MaterialFailure("frozen_declaration_changed")
     if digest(extract(PREFIX + "/THIRD_PARTY_NOTICES.md")) != expected["repository_notices_sha256"]:
         raise ValueError("Frozen repository notice differs")
@@ -176,7 +191,7 @@ def verify_report(record, source, tree):
             or record["v"] != 1 or record["passed"] is not True or record["evidence_level"] != LEVEL
             or record["source_commit"] != source or record["source_tree"] != tree
             or record["scope"] != declaration["scope"]
-            or record["declaration_sha256"] != digest(DECLARATION.read_bytes())):
+            or record["declaration_sha256"] != digest(text_bytes(DECLARATION))):
         raise ValueError("Runtime materials report source, declaration or outcome differs")
     def sha(value):
         if not isinstance(value, str) or re.fullmatch(r"[a-f0-9]{64}", value) is None:
@@ -188,7 +203,7 @@ def verify_report(record, source, tree):
             "required_modules_verified", "notice_limits", "native_files_without_wheel_owner", "release_approval"}
             or value["required_modules_verified"] != declaration["required_modules"]
             or value["notice_limits"] != declaration["wheel_native_notice_limit"] or value["release_approval"] is not False
-            or value["project_license_sha256"] != digest((ROOT / "LICENSE").read_bytes())):
+            or value["project_license_sha256"] != digest(text_bytes(ROOT / "LICENSE"))):
         raise ValueError("Runtime material scope or inventory is incomplete")
     packages = value["packages"]
     locked = locked_distributions(ROOT / "service/requirements.lock")
@@ -265,7 +280,7 @@ def main():
         phase = "unchanged_artifact_binding"
         require_unchanged(binary, binding)
         result.update(binding, inventory=inspected, passed=True,
-                      scope=declaration["scope"], declaration_sha256=digest(DECLARATION.read_bytes()))
+                      scope=declaration["scope"], declaration_sha256=digest(text_bytes(DECLARATION)))
         verify_report(result, binding["source_commit"], binding["source_tree"])
     except Exception as error:
         result["passed"] = False
