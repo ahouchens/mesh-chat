@@ -17,6 +17,7 @@ SELECTION = (
     "service/tests/connection/test_ui_core_boundary_requests.py",
     "service/tests/connection/test_ui_core_boundary_ci.py",
     "service/tests/connection/test_ui_core_boundary_calls.py",
+    "service/tests/connection/test_ui_core_boundary_replay_authority.py",
 )
 
 
