@@ -8,6 +8,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 ARTIFACTS = {"python": "mesh_chat_core_client-0.3.0.dev0-py3-none-any.whl",
@@ -98,7 +99,11 @@ def main():
         if source_identity(source) != (source, tree):
             raise RuntimeError("Source changed while staging SDK artifacts")
         if path := os.environ.get("GITHUB_ENV"):
-            values = {"MESH_CORE_SDK_ARTIFACTS": str(directory), "MESH_NODE": node, "MESH_NPM_CLI": npm}
+            consumer_temp = Path(os.environ.get("RUNNER_TEMP") or tempfile.gettempdir()).resolve()
+            if not consumer_temp.is_dir() or consumer_temp.is_relative_to(ROOT):
+                raise ValueError("Installed SDK consumer temporary directory must be outside the checkout")
+            values = {"MESH_CORE_SDK_ARTIFACTS": str(directory), "MESH_NODE": node, "MESH_NPM_CLI": npm,
+                      "MESH_CORE_CONSUMER_TMP": str(consumer_temp)}
             if any("\n" in value or "\r" in value for value in values.values()):
                 raise ValueError("Invalid SDK staging environment path")
             with open(path, "a", encoding="utf-8") as stream:
