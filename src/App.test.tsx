@@ -16,7 +16,7 @@ const api = vi.hoisted(() => {
     const created = await serviceCommand("create_group", { title: name, member_ids: memberIds, posting_policy: policy }) as { id?: string; title?: string; posting_policy?: string };
     return { group: created.id ?? "group", name: created.title ?? name, posting_policy: created.posting_policy ?? policy };
   }),
-  coreApiCreateInvitation: vi.fn(async (..._args: unknown[]): Promise<{ profile: string; link: string; text: string; file: string; expires_at: number }> => { throw new Error("core_api_unavailable"); }),
+  coreApiCreateInvitation: vi.fn(async (payload: Record<string, unknown>): Promise<unknown> => serviceCommand("create_invitation", payload)),
   coreApiPeerForDestination: vi.fn(async (_destination: string): Promise<{ profile: string; peer: string; destination: string }> => { throw new Error("core_api_unavailable"); }),
   coreApiRequest: vi.fn(async (_operation: string, _params?: Record<string, unknown>): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiCallControl: vi.fn(async (action: string, params: Record<string, unknown>): Promise<unknown> => {
@@ -458,7 +458,7 @@ afterEach(() => {
   api.coreApiAcceptInvitation.mockImplementation(async (invitation: string, i2pConsent = false) => api.serviceCommand("accept_invitation", { invitation, ...(i2pConsent ? { i2p_consent: true } : {}) }));
   api.coreApiDraftGet.mockImplementation(async () => { throw new Error("core_api_unavailable"); });
   api.coreApiDraftSet.mockImplementation(async (_destination: string, text: string) => api.serviceCommand("save_draft", { contact_id: approved.id, text }));
-  api.coreApiCreateInvitation.mockImplementation(async () => { throw new Error("core_api_unavailable"); });
+  api.coreApiCreateInvitation.mockImplementation(async (payload: Record<string, unknown>) => api.serviceCommand("create_invitation", payload));
   api.coreApiPeerForDestination.mockImplementation(async () => { throw new Error("core_api_unavailable"); });
   api.coreApiRequest.mockImplementation(async () => { throw new Error("core_api_unavailable"); });
   vi.unstubAllGlobals();

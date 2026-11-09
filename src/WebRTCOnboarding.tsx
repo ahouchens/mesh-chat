@@ -487,13 +487,8 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
     setOnboarding("sending");
     setOnboardingError("");
     try {
-      let created: InvitationFormats;
-      try {
-        created = await coreApiCreateInvitation({ connection_mode: "webrtc" });
-      } catch (reason) {
-        if (!String(reason).includes("core_api_unavailable")) throw reason;
-        created = await serviceCommand<InvitationFormats>("create_invitation", { connection_mode: "webrtc" });
-      }
+      const created = await coreApiCreateInvitation(
+        { connection_mode: "webrtc" }) as unknown as InvitationFormats;
       if (attemptRef.current !== attempt) return;
       let workspaceDocument: string | undefined;
       if (selectedWorkspaceId) {
