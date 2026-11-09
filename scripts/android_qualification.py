@@ -57,6 +57,7 @@ TYPED_CORE_BRIDGE = (
     "typedErrorsPreserveConflictAndCallerAuthority",
     "typedSettingsMutationsReadBackFromTheRealDomain",
     "typedCallControlSignsQueuesAndEndsAnApprovedCall",
+    "typedFreshProfileBootstrapDoesNotSeedIdentity",
 )
 CORE_CONSUMER = ("consumerQueriesProductionFacadeAcrossUid", "externalCallerCannotAcquireOwnerScope",
                  "detachingConsumerCanReattachToItsProfile", "privateControlIsRejectedThroughThePublicPackage",
