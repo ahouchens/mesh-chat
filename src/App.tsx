@@ -10,6 +10,7 @@ import { contactTrustDescription, contactTrustLabel, groupComposerState, groupIn
 import { canPrepareDirectHost, directActionLabel, directPhaseLabel, directFailureReport, directReasonLabel, sanitizedDoctorSummary } from "./directLabels";
 import { errorMessage } from "./errors";
 import { DirectMessageComposer } from "./DirectMessageComposer";
+import { GroupMessageComposer } from "./GroupMessageComposer";
 import { newOperationId } from "./operationId";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import {
@@ -2721,6 +2722,8 @@ function GroupConversation({
   reactionError,
   onDraft,
   onSend,
+  onAccepted,
+  onSendingChange,
   onDetailsOpenChange,
   onToggleReactionPicker,
   onReactionCatalogOpenChange,
@@ -2750,6 +2753,8 @@ function GroupConversation({
   reactionError: string;
   onDraft: (value: string) => void;
   onSend: () => void;
+  onAccepted: () => Promise<unknown>;
+  onSendingChange: (sending: boolean) => void;
   onDetailsOpenChange: (open: boolean) => void;
   onToggleReactionPicker: (messageId: string) => void;
   onReactionCatalogOpenChange: (messageId: string, open: boolean) => void;
@@ -2818,14 +2823,16 @@ function GroupConversation({
           </article>
         ))}
       </div>
-      {retrying && <details className="composer-saved" role="status"><summary>Previous group send is not confirmed. View original text</summary><textarea readOnly aria-label="Previous group send text" value={pendingText ?? ""} /></details>}
       {canPost ? (
+        <GroupMessageComposer key={group.core_handle ?? group.id} group={group.core_handle ?? ""} displayName={group.title} onAccepted={onAccepted} onSendingChange={onSendingChange} legacyComposer={<>
+        {retrying && <details className="composer-saved" role="status"><summary>Previous group send is not confirmed. View original text</summary><textarea readOnly aria-label="Previous group send text" value={pendingText ?? ""} /></details>}
         <form className="composer" aria-busy={sending} onSubmit={(event) => { event.preventDefault(); onSend(); }}>
           {sendError && <p className="composer__error" role="alert">{sendError}</p>}
           <label className="sr-only" htmlFor="group-message-composer">Message {group.title}</label>
           <textarea id="group-message-composer" rows={1} value={draft} readOnly={sending} enterKeyHint="send" onChange={(event) => onDraft(event.target.value)} placeholder={`Message ${group.title}`} maxLength={16384} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); onSend(); } }} />
           <button type="submit" disabled={sending || (!retrying && !draft.trim())} aria-label={retrying ? "Retry previous group send" : "Send group message"}><Send size={19} /></button>
         </form>
+        </>} />
       ) : <div className="composer composer--restricted"><LockKeyhole size={17} /><span>{composerReason}</span></div>}
     </section>
   );
@@ -6771,6 +6778,8 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
             onSetReaction={(messageId, emoji, active) => void setMessageReaction("group", messageId, emoji, active)}
             onDraft={(value) => { setSendError(""); saveGroupDraft(selectedGroup.id, value); }}
             onSend={() => void sendGroupMessage()}
+            onAccepted={() => refresh(true)}
+            onSendingChange={setGroupSendBusy}
             onBack={() => selectConversation(null)}
             onDelete={() => { setDeleteError(""); setDeleteTarget({ kind: "group", id: selectedGroup.id }); }}
             onRemove={(destinationHash) => void runGroupAction("remove_group_member", { group_id: selectedGroup.id, destination_hash: destinationHash })}

@@ -1,4 +1,4 @@
-import type { AcceptedComposerSend, ComposerEnqueue, ComposerPort, ComposerSendOutcome, CoreComposer } from "./core-composer";
+import type { AcceptedComposerSend, ComposerDraftEnqueue as ComposerEnqueue, ComposerControllerPort as ComposerPort, ComposerSendOutcome, ComposerSnapshot as CoreComposer } from "./core-composer";
 
 interface PendingUpdate {
   expectedRevision: string | null;
@@ -299,3 +299,5 @@ export class DirectComposerController {
     return result;
   }
 }
+
+export { DirectComposerController as ComposerController };
