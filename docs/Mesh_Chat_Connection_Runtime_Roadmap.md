@@ -23,7 +23,7 @@ This diagnostic run is not full combined qualification.
 The preceding full-qualification checkpoint is `677b6bf9e9ea0f50d4465e04cca9f79038632187`
 (tree `0e2516336d33d0febd5b152a25ab9b6972f7212b`). Full manual qualification
 [42716355520](https://github.com/ahouchens/mesh-chat/actions/runs/42716355520)
-is running. Retained selection independently confirms all six suite families and
+completed failed at **23:25:11 UTC**. Retained selection independently confirms all six suite families and
 native workload `full`; duplicate PR run `42716363961` was canceled.
 
 This exact source passes SDK staging, **3,554 required policy tests**, **670 Python
@@ -50,8 +50,8 @@ hash bindings and 62 JVM cases. The DSL receiver repair clears the earlier cast;
 configuration now rejects a Provider passed to the legacy source-set API at
 `runtime-host/build.gradle.kts:33`. Its two new independent cases never build or
 run. C will use the generated-source Variant API with task dependencies intact.
-Linux direct transport/recovery/setup independently pass 25/10/12 cases with
-zero skips; Windows direct evidence remains pending. No overall Android or
+Linux and Windows direct transport/recovery/setup each independently pass
+25/10/12 cases with zero skips. No overall Android or
 combined platform acceptance is claimed.
 
 The previous feature-branch checkpoint is `577250e7b0dad8fca7a9d460f5e990dcc29af8dc`

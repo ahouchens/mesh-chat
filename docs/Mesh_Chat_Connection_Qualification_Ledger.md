@@ -17,7 +17,7 @@ This diagnostic run is not full combined qualification.
 The preceding full-qualification checkpoint is `677b6bf9e9ea0f50d4465e04cca9f79038632187`
 (tree `0e2516336d33d0febd5b152a25ab9b6972f7212b`). Full manual qualification
 [42716355520](https://github.com/ahouchens/mesh-chat/actions/runs/42716355520)
-is running. Retained selection independently confirms all six suite families and
+completed failed at **23:25:11 UTC**. Retained selection independently confirms all six suite families and
 native workload `full`; duplicate PR run `42716363961` was canceled.
 
 This exact source passes SDK staging, **3,554 required policy tests**, **670 Python
@@ -44,8 +44,8 @@ hash bindings and 62 JVM cases. The DSL receiver repair clears the earlier cast;
 configuration now rejects a Provider passed to the legacy source-set API at
 `runtime-host/build.gradle.kts:33`. Its two new independent cases never build or
 run. C will use the generated-source Variant API with task dependencies intact.
-Linux direct transport/recovery/setup independently pass 25/10/12 cases with
-zero skips; Windows direct evidence remains pending. No overall Android or
+Linux and Windows direct transport/recovery/setup each independently pass
+25/10/12 cases with zero skips. No overall Android or
 combined platform acceptance is claimed.
 
 Local policy qualification is `5d82b74d14c549c1a01aa6bd7316bf33`, 360.88s
@@ -80,6 +80,23 @@ Bootstrap run `9295e4492f7644aabd81f8bda43eb91b` uses the retained SDK and
 source-verified consumer files. The failed pairing diagnostics pass the exact
 pinned strict parser; report attribution comes from the verified artifact/run,
 not intrinsic success bindings. Later packaged gates did not run.
+
+Android qualification artifact `13718793500` has archive SHA-256
+`621676d733c640794d99ffb08c566f512b097e5e3ef6a510192819ff35ef35ff`;
+debug artifact `13718843412` has archive
+`a592d5df18f6b42af8aae2372132f9ddfeec06c536852fcb166700cf236828d5`.
+The lead verifies exact-source inventories, all 50 existing case reports, seven
+binary hashes and 62 JVM cases. Independent-consumer inventory is absent after
+the Provider registration failure; no build or execution of those two cases is
+claimed. Native interoperability is skipped after prerequisite failure.
+
+Linux direct artifact `13719651714` has archive
+`ef94c75b703322bcebd6b6e4789a54ee00b8cd9ac73ef8ac86c1f1e046f0c101`;
+Windows artifact `13719178444` has archive
+`b678e30551ed2ec07b06b47b473cb32bef22b4ad86fe82af4a42a1668386774e`.
+Both exact-source report sets independently pass 25 transport, ten recovery and
+12 setup cases, with zero skips. These report archives do not retain the native
+binaries; their reported binary digests are runner claims.
 
 ### Completed checkpoint 577250e: evidence and subsequent repairs
 
