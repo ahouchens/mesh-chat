@@ -107,6 +107,7 @@ async function send(sender, receiver) {
 
 async function check(executable, directory) {
   const owned = [];
+  diagnostics.start();
   deadline = Date.now() + 240000;
   try {
     phase = "fresh_profiles";
@@ -139,9 +140,15 @@ async function check(executable, directory) {
     diagnostics.enter("invitation_accept");
     await answerer.client.request("contact.invitation", { profile: answerer.profile,
       action: "decide", invitation: invitation.id, accept: true });
+    diagnostics.acceptanceReturned();
     diagnostics.enter("pending_request_wait");
-    const request = await wait(async () => one((await snapshot(offerer)).contacts,
-      item => item.trust === "pending_request" && item.destination_hash === answerer.destination));
+    diagnostics.pendingWait(Date.now() >= deadline);
+    const request = await wait(async () => {
+      diagnostics.pendingAttempt();
+      const value = await snapshot(offerer);
+      diagnostics.pendingComplete();
+      return one(value.contacts, item => item.trust === "pending_request" && item.destination_hash === answerer.destination);
+    });
     diagnostics.enter("request_approve");
     await offerer.client.approve(offerer.profile, request.core_handle);
     diagnostics.enter("offerer_relationship_wait");
@@ -170,6 +177,7 @@ async function check(executable, directory) {
     diagnostics.enter("answerer_ready_recheck");
     await messagingReady(answerer);
   } catch (error) {
+    diagnostics.freezeFailure();
     failureDeadlineExhausted = Date.now() >= deadline;
     await probePairingFailure(owned, diagnostics);
     throw error;
@@ -181,6 +189,7 @@ async function check(executable, directory) {
       finally { await peer.runtime.stop(); }
     }));
     if (exits.some(result => result.status !== "fulfilled")) {
+      diagnostics.freezeFailure();
       diagnostics.enter("retirement");
       failureDeadlineExhausted = Date.now() >= deadline;
       throw new Error("retirement_incomplete");

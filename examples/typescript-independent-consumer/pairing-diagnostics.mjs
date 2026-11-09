@@ -14,18 +14,48 @@ export const ERROR_CODES = new Set(["invalid_request", "incompatible_version", "
 const ROLES = new Set(["offerer", "answerer"]);
 const bound = value => Math.min(value, 256);
 
-export function pairingDiagnostics() {
+export function pairingDiagnostics(monotonicNow = () => performance.now()) {
   let subphase = "arguments";
   let failureProbe;
+  let startedAt;
+  let failureFrozen = false;
+  const stageTiming = { offsets_ms: {}, clipped: false };
+  let postAcceptReads;
   const peers = {};
+  function mark(name) {
+    if (startedAt === undefined || failureFrozen) return;
+    const elapsed = Math.floor(monotonicNow() - startedAt);
+    const clipped = Number.isFinite(elapsed) ? Math.max(0, Math.min(elapsed, 600000)) : 600000;
+    stageTiming.clipped ||= clipped !== elapsed;
+    stageTiming.offsets_ms[name] = clipped;
+  }
+  function count(name) {
+    if (!postAcceptReads || failureFrozen) return;
+    if (postAcceptReads[name] === 4096) postAcceptReads.clipped = true;
+    else postAcceptReads[name]++;
+  }
   function peer(role) {
     if (!ROLES.has(role)) throw new Error("invalid_diagnostic_role");
     return peers[role] ??= {};
   }
   return {
+    start() { startedAt = monotonicNow(); },
     enter(value) {
       if (!SUBPHASES.has(value)) throw new Error("invalid_diagnostic_subphase");
       subphase = value;
+      if (value === "invitation_accept") mark("invitation_accept_started");
+    },
+    acceptanceReturned() { mark("invitation_accept_returned"); },
+    pendingWait(deadlineExhausted) {
+      if (failureFrozen) return;
+      mark("pending_request_wait_entered");
+      postAcceptReads = { attempts: 0, completed: 0, clipped: false, deadline_exhausted_at_entry: deadlineExhausted };
+    },
+    pendingAttempt() { count("attempts"); },
+    pendingComplete() { count("completed"); },
+    freezeFailure() {
+      mark("failure_observed");
+      failureFrozen = true;
     },
     snapshot(role, value, expectedDestination) {
       if (!Array.isArray(value?.contacts) || !Array.isArray(value?.contact_invitations)) return;
@@ -34,6 +64,7 @@ export function pairingDiagnostics() {
       const pending = contacts.filter(item => item.trust === "pending_request");
       const approved = contacts.filter(item => ["approved", "verified"].includes(item.trust));
       peer(role).last_snapshot = {
+        observed_subphase: subphase,
         contacts: bound(contacts.length), invitations: bound(invitations.length),
         pending_invitations: bound(invitations.filter(item => item.state === "pending").length),
         pending_requests: bound(pending.length), approved_contacts: bound(approved.length),
@@ -57,6 +88,8 @@ export function pairingDiagnostics() {
     probe(value) { failureProbe = value; },
     failure(deadlineExhausted = false) {
       return { subphase, deadline_exhausted: deadlineExhausted, peers: structuredClone(peers),
+        ...(startedAt !== undefined ? { stage_timing: structuredClone(stageTiming) } : {}),
+        ...(postAcceptReads ? { post_accept_reads: structuredClone(postAcceptReads) } : {}),
         ...(failureProbe !== undefined ? { failure_probe: structuredClone(failureProbe) } : {}) };
     },
   };

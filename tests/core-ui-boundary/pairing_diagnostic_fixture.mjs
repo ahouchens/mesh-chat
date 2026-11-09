@@ -6,7 +6,9 @@ import { appendFileSync } from "node:fs";
 const originalNow = Date.now;
 const started = originalNow();
 let expired = false;
-Date.now = () => expired ? started + 300000 : started;
+let elapsed = 0;
+Date.now = () => started + (expired ? 300000 : elapsed);
+Object.defineProperty(performance, "now", {value: () => expired ? 300000 : elapsed});
 const fault = process.env.PAIRING_DIAGNOSTIC_FAULT;
 const probeMode = process.env.PAIRING_DIAGNOSTIC_PROBE;
 function log(value) {
@@ -31,11 +33,13 @@ globalThis.__diagnosticFixture = {
     } };
   },
   connectNamedPipe: async pipe => pipe,
-  CoreClient: { open: async role => {
+  CoreClient: { open: async (role, options) => {
+    log({event: "open", role, timeout: options?.requestTimeoutMs});
     let created = false;
     return {
       capabilities: { profiles: ["PRIVATE_PROFILE"], operations: [] }, close() {},
       async request(operation, _params, options) {
+        log({event: "request", role, operation});
         if (operation === "peer.pairing_query") {
           log({event: "probe", role, timeout: options?.timeoutMs});
           if (probeMode === "reject") throw new CoreError("PRIVATE_PROBE_ERROR");
@@ -54,6 +58,13 @@ globalThis.__diagnosticFixture = {
           turn_broker_consent: true, relay_only: true } };
         if (operation === "application.snapshot") {
           if (fault === "create_failure") throw new CoreError("forbidden");
+          if (accepted && role === "offerer") {
+            log({event: "post_accept_snapshot", role});
+            if (fault === "pending_read_reject") { elapsed = 1500; throw new CoreError("unavailable"); }
+            if (fault === "pending_read_in_flight") return new Promise((_, reject) => setTimeout(() => {
+              elapsed = 1500; reject(new CoreError("unavailable"));
+            }, 10));
+          }
           let contacts = [], invitations = [];
           if (answered && role === "answerer" && !accepted) {
             if (fault === "invitation_wait") halt(fault);
@@ -72,7 +83,10 @@ globalThis.__diagnosticFixture = {
         if (operation === "contact.invitation") {
           if (fault === "invitation_accept") throw new CoreError("forbidden");
           if (fault === "unsafe_error") throw new CoreError("private_token");
-          accepted = true; return {};
+          accepted = true;
+          elapsed = fault === "late_accept" ? 240100 : 1000;
+          log({event: "accept_returned", role});
+          return {};
         }
         if (operation === "connection.snapshot") {
           const unavailable = fault === role + "_ready_wait";
