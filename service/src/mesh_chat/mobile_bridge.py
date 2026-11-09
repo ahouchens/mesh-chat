@@ -190,7 +190,7 @@ def _publish_profile_service(service):
             _retiring_service = _retiring_channel = None
 
 
-def _open_profile_slot(directory, key):
+def _open_profile_slot(directory, key, *, native_channel=True):
     global _retiring_service, _retiring_channel, _opening_channel
     from .direct_bootstrap_mobile import AndroidBootstrapProcess
     from .service import NativeStartupIncomplete
@@ -198,7 +198,7 @@ def _open_profile_slot(directory, key):
         if (_service is not None or _opening_channel is not None
                 or (_retiring_service is not None and not _retiring_service._store_closed)):
             raise NativeUnavailable("Previous mobile profile is still retiring")
-    channel, incarnation = NativeChannel(), uuid.uuid4().hex
+    channel, incarnation = NativeChannel() if native_channel else None, uuid.uuid4().hex
     store = VaultStore(directory, key, native_mobile_protection="android")
     service = None
     try:
@@ -214,7 +214,21 @@ def _open_profile_slot(directory, key):
         # The app's native dispatcher may still hold keyless transport objects
         # from the previous profile. Acknowledge its reset before any service
         # worker can allocate or restore resources for this profile.
-        channel.request("reset")
+        if channel is not None:
+            channel.request("reset")
+        else:
+            # This app-owned host has no Rust direct-UDP dispatcher. Its actual
+            # JNI WebRTC host must have acknowledged every previous lease.
+            from .native_webrtc_host import android_host
+            accounting = json.loads(str(android_host().resourceAccounting()))
+            result = accounting.get("result") or {}
+            if (accounting.get("ok") is not True or result.get("complete") is not True
+                    or type(result.get("reserved_count")) is not int or result["reserved_count"] != 0):
+                raise NativeUnavailable("Native WebRTC retirement is incomplete")
+            if store.get("settings", "network") is None:
+                from .reticulum_config import NetworkSettings
+                store.put("settings", "network",
+                    NetworkSettings(nearby_discovery=False, lan_fallback=False).to_dict())
         service = MeshChatService(store, directory, lambda value: _emit(value, incarnation=incarnation),
                                   direct_native=channel, connection_policy="shared-native")
         service._direct_bootstrap_factory = AndroidBootstrapProcess
@@ -253,14 +267,26 @@ def _open_profile_slot(directory, key):
 
 def initialize_native_host(provider, display_name=None):
     """Kotlin-only object capability; a registered cold start stays locked."""
+    return _initialize_native_host(provider, display_name, public_only=False)
+
+
+def initialize_app_owned_host(provider):
+    """Installing application's object capability; no Tauri or renderer port."""
+    return _initialize_native_host(provider, None, public_only=True)
+
+
+def _initialize_native_host(provider, display_name, *, public_only):
     global _profile_host
     from .mobile_profile_host import NativeMobileProfileHost, native_key, provider_identity, PROFILE_SLOT
     catalog = None
     created_profile = False
     try:
-        directory, _ = provider_identity(provider)
+        directory, _ = provider_identity(provider,
+            namespace="mesh-core-runtime" if public_only else "mesh-chat")
         with _profile_install_lock:
             if _profile_host is not None:
+                if _profile_host.public_only != public_only:
+                    raise NativeUnavailable("Native runtime ownership cannot change")
                 _profile_host.rebind(provider)
                 active = _profile_host.core.lifecycle.active
                 return (_dumps({"ok": True, "result": active.snapshot()}) if active is not None
@@ -274,7 +300,8 @@ def initialize_native_host(provider, display_name=None):
                                  native_mobile_protection="android")
             if catalog.get("host_profile", PROFILE_SLOT) is None and _service is None:
                 try:
-                    active = _open_profile_slot(directory, native_key(str(provider.profileKey())))
+                    active = _open_profile_slot(directory, native_key(str(provider.profileKey())),
+                        **({"native_channel": False} if public_only else {}))
                     created_profile = True
                     _publish_profile_service(active)
                     if display_name is not None and active.store.get("profile", "local") is None:
@@ -289,8 +316,10 @@ def initialize_native_host(provider, display_name=None):
             if active is not None:
                 active._mobile_channel, active._mobile_event_incarnation = _native_channel, _event_incarnation
                 active._mobile_binding = _service_binding
-            host = NativeMobileProfileHost(provider, catalog, open_profile=_open_profile_slot,
-                publish=_publish_profile_service, active=active, emit=_profile_host_event)
+            opener = ((lambda directory, key: _open_profile_slot(directory, key, native_channel=False))
+                      if public_only else _open_profile_slot)
+            host = NativeMobileProfileHost(provider, catalog, open_profile=opener,
+                publish=_publish_profile_service, active=active, emit=_profile_host_event, public_only=public_only)
             _profile_host = host
             catalog = None  # The runtime host now owns the independent catalog.
             host._notify()

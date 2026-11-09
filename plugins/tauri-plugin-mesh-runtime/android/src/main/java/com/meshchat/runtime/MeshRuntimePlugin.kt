@@ -21,8 +21,6 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.security.keystore.KeyGenParameterSpec
-import android.security.keystore.KeyProperties
 import android.provider.Settings
 import android.util.Base64
 import android.util.Log
@@ -47,12 +45,6 @@ import app.tauri.plugin.Plugin
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 import org.json.JSONObject
-import java.security.KeyStore
-import java.security.SecureRandom
-import javax.crypto.Cipher
-import javax.crypto.KeyGenerator
-import javax.crypto.SecretKey
-import javax.crypto.spec.GCMParameterSpec
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -219,39 +211,8 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
     private fun catalogKey(): ByteArray = protectedKey("mesh-chat-profile-host-key-v1",
         activity.getSharedPreferences("mesh-chat-profile-host", Context.MODE_PRIVATE))
 
-    private fun protectedKey(alias: String, storage: SharedPreferences): ByteArray {
-        val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        if (!keyStore.containsAlias(alias)) {
-            val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
-            generator.init(
-                KeyGenParameterSpec.Builder(
-                    alias,
-                    KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
-                )
-                    .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-                    .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                    .setKeySize(256)
-                    .build(),
-            )
-            generator.generateKey()
-        }
-        val wrappingKey = keyStore.getKey(alias, null) as SecretKey
-        val stored = storage.getString("wrapped-key", null)
-        if (stored != null) {
-            val packed = Base64.decode(stored, Base64.NO_WRAP)
-            require(packed.size > 12)
-            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-            cipher.init(Cipher.DECRYPT_MODE, wrappingKey, GCMParameterSpec(128, packed, 0, 12))
-            return cipher.doFinal(packed, 12, packed.size - 12)
-        }
-
-        val raw = ByteArray(32).also { SecureRandom().nextBytes(it) }
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.ENCRYPT_MODE, wrappingKey)
-        val packed = cipher.iv + cipher.doFinal(raw)
-        check(storage.edit().putString("wrapped-key", Base64.encodeToString(packed, Base64.NO_WRAP)).commit())
-        return raw
-    }
+    private fun protectedKey(alias: String, storage: SharedPreferences): ByteArray =
+        NativeProtectedKeyStore.load(alias, storage)
 
     private fun prepareProfileRuntime() {
         NativeWebRtcBridge.attach(activity.applicationContext)

@@ -32,11 +32,12 @@ def native_key(value):
         raise NativeUnavailable("Native key slot is unavailable") from None
 
 
-def provider_identity(provider):
+def provider_identity(provider, *, namespace="mesh-chat"):
     try:
         directory = Path(str(provider.profileDirectory())).resolve()
         caller = str(provider.ownerCaller())
-        if (directory.name != "profile-v1" or directory.parent.name != "mesh-chat"
+        if (namespace not in {"mesh-chat", "mesh-core-runtime"}
+                or directory.name != "profile-v1" or directory.parent.name != namespace
                 or not directory.is_absolute() or not 1 <= len(caller) <= 200
                 or any(not 0x20 <= ord(character) <= 0x7E for character in caller)):
             raise ValueError
@@ -47,8 +48,12 @@ def provider_identity(provider):
 
 class NativeMobileProfileHost:
     def __init__(self, provider, catalog_store, *, open_profile, publish,
-                 active=None, emit=lambda _: None, now=monotonic):
-        self.directory, self.caller = provider_identity(provider)
+                 active=None, emit=lambda _: None, now=monotonic, public_only=False):
+        if type(public_only) is not bool:
+            raise NativeUnavailable("Native profile host binding is invalid")
+        self.public_only = public_only
+        self._namespace = "mesh-core-runtime" if public_only else "mesh-chat"
+        self.directory, self.caller = provider_identity(provider, namespace=self._namespace)
         if (catalog_store.profile_dir.resolve() != self.directory.parent / "host-v1"
                 or (active is not None and (active.store.profile_dir.resolve() != self.directory
                     or getattr(active, "_connection_policy", None) != "shared-native"))):
@@ -78,7 +83,7 @@ class NativeMobileProfileHost:
             raise NativeUnavailable("Native profile registration is unavailable") from None
 
     def rebind(self, provider):
-        if provider_identity(provider) != (self.directory, self.caller):
+        if provider_identity(provider, namespace=self._namespace) != (self.directory, self.caller):
             raise NativeUnavailable("Native profile provider binding changed")
         with self._auth_lock:
             self._challenges.clear()
@@ -120,7 +125,8 @@ class NativeMobileProfileHost:
                     if len(self._sessions) >= MAX_CALLERS:
                         raise ApiFailure("resource_exhausted")
                     session = self.core.bind(lambda: self._grant(caller, scope),
-                        private_native=scope == "owner", private_composer_legacy=scope == "owner",
+                        private_native=scope == "owner" and not self.public_only,
+                        private_composer_legacy=scope == "owner" and not self.public_only,
                         private_profile_bootstrap=scope == "owner")
                     self._sessions[caller, scope] = session
             before = self.context()

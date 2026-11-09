@@ -61,6 +61,10 @@ from the inherited startup-status framing. The session receives host-fixed
 owner grants and public profile bootstrap. It does not expose `native.command`,
 qualification commands, renderer compatibility commands, keys or raw signaling.
 
+Fresh independent hosts start with nearby discovery and LAN fallback disabled;
+existing preferences are preserved. The application can change them later
+through the supported public settings operations.
+
 The application first calls public `profile.create` with its own explicit
 idempotency key. Later pairing, contact decisions, settings and message requests
 must use the public operations actually advertised in `runtime.capabilities`.
@@ -74,8 +78,13 @@ frozen runtime and SDK outside the checkout.
 
 ## Android
 
-The separate runtime-host AAR and trusted application bootstrap are under
-implementation. The client AAR alone is not an independently usable host.
-Do not substitute a qualification initializer or seeded test service for normal
-application startup. The original Mesh Chat Keystore profile slot remains
-unchanged.
+The separate experimental runtime host is
+`com.meshchat:core-runtime-host:0.3.0-experimental`. Its native
+`MeshCoreRuntime.start(context)` returns a future with `UNLOCKED`, `LOCKED` or
+`RETIRING` state, and the application binds its own `MeshCoreApiService` using
+the installed client SDK. See the [Android runtime host instructions](../plugins/tauri-plugin-mesh-runtime/android/runtime-host/README.md)
+for the app-scoped permission, trusted confirmation API and versioned staging
+inputs. The original Mesh Chat Keystore profile slot remains unchanged.
+
+Actual AAR assembly, independent installation and platform qualification are
+still required; a source implementation is not that evidence.

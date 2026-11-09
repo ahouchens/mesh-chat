@@ -32,8 +32,9 @@ class MeshCoreApiService : Service() {
         // signature permission.
         val uid = Binder.getCallingUid()
         val hostUid = Process.myUid()
+        val permission = if (MeshCoreRuntime.isInstalled()) "$packageName.permission.MESH_CORE_API" else PERMISSION
         if (uid != hostUid &&
-            checkCallingPermission(PERMISSION) != PackageManager.PERMISSION_GRANTED
+            checkCallingPermission(permission) != PackageManager.PERMISSION_GRANTED
         ) {
             return errorFrame("forbidden")
         }
