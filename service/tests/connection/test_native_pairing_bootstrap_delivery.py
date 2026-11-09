@@ -20,14 +20,6 @@ def _peer(commands, replies):
     from mesh_chat.vault import VaultStore
     import base64
 
-    # Match the modern SCTP SDP emitted by the packaged WebView host.
-    import mesh_chat.native_windows_webrtc as native
-    original_pc = native.RTCPeerConnection
-    def modern_pc(*args, **kwargs):
-        pc = original_pc(*args, **kwargs)
-        pc._sctpLegacySdp = False
-        return pc
-    native.RTCPeerConnection = modern_pc
     service = None
     counts = {}
 
