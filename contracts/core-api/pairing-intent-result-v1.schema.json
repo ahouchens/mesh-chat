@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mesh-chat:core-api:pairing-intent-result:1",
+  "title": "Experimental scoped supervisor pairing intent",
+  "type": "object",
+  "properties": {
+    "api_version": {
+      "const": 1
+    },
+    "request_id": {
+      "type": "string"
+    },
+    "ok": {
+      "const": true
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "profile": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "pairing": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "state": {
+          "enum": [
+            "reserved",
+            "offer_ready",
+            "awaiting_approval",
+            "transferred",
+            "retiring",
+            "retired"
+          ]
+        },
+        "expires_at": {
+          "type": "number",
+          "minimum": 0
+        },
+        "pairing_code": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 2048
+        }
+      },
+      "required": [
+        "profile",
+        "pairing",
+        "state",
+        "expires_at",
+        "pairing_code"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "not": {
+                  "const": "offer_ready"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "pairing_code": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "required": [
+    "api_version",
+    "request_id",
+    "ok",
+    "result"
+  ],
+  "additionalProperties": false
+}

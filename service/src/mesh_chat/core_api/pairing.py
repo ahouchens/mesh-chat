@@ -16,6 +16,14 @@ class PairingRequest:
     document: str
 
 
+@dataclass(frozen=True)
+class PairingIntentObservation:
+    pairing: str
+    state: str
+    expires_at: float
+    pairing_code: str | None
+
+
 class Pairing(Protocol):
     def contact_invitation(self, profile: str, action: str, params: dict) -> dict: ...
 

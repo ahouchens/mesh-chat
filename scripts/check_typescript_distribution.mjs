@@ -42,6 +42,9 @@ import { CoreClient } from "@mesh-chat/core-client";
 import { createStdioTransport } from "@mesh-chat/core-client/node";
 assert.equal(typeof CoreClient, "function");
 assert.equal(typeof CoreClient.prototype.enqueueDraft, "function");
+for (const name of ["callOperationList", "callOperationQuery", "callOperationAbandon", "pairingBegin", "pairingQuery", "pairingCancel"]) {
+  assert.equal(typeof CoreClient.prototype[name], "function", name);
+}
 assert.equal(typeof createStdioTransport, "function");
 assert.ok(import.meta.resolve("@mesh-chat/core-client").includes("node_modules"));
 console.log(JSON.stringify({installed_outside_checkout:true,imports_public_package:true}));

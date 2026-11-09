@@ -72,6 +72,9 @@ assert package.__version__ == '0.3.0.dev0'
 assert pathlib.Path(package.__file__).resolve().is_relative_to(pathlib.Path(sys.argv[1]).resolve())
 assert not any(name == 'mesh_chat' or name.startswith('mesh_chat.') for name in sys.modules)
 assert callable(package.CoreClient.enqueue_draft)
+for name in ('call_operation_list','call_operation_query','call_operation_abandon',
+             'pairing_begin','pairing_query','pairing_cancel'):
+    assert callable(getattr(package.CoreClient, name, None)), name
 print(json.dumps({'version':package.__version__,'installed_outside_checkout':True,'private_runtime_imported':False}))
 """
         result["consumer"] = json.loads(run([sys.executable, "-I", "-S", "-B", "-c", smoke, str(site)], work, env))

@@ -17,6 +17,8 @@ import type {
   ProfileCatalog,
   CallOperationCatalog,
   CallOperationResult,
+  PairingIntent,
+  PairingBeginOptions,
   ConnectionView,
   DiagnosticsView,
   EventPage,
@@ -72,7 +74,7 @@ export interface RequestOptions {
   signal?: AbortSignal;
 }
 
-const REQUIRED_KEYS = new Set(["call.control", "call.operation_abandon", "connection.retry", "events.ack", "message.enqueue", "message.enqueue_draft", "peer.composer_update", "profile.create", "profile.lock", "profile.select", "profile.unlock", "remote_profile.mutate", "route.update", "runtime.mutate", "workspace.admin_request_approve", "workspace.admin_request_cancel", "workspace.admin_request_decline", "workspace.admin_request_dismiss", "workspace.admin_request_submit", "workspace.admission_grant_accept", "workspace.admission_grant_create", "workspace.admission_grant_end", "workspace.admission_grant_list", "workspace.authority_accept", "workspace.authority_finalize", "workspace.authority_loss_report", "workspace.authority_offer", "workspace.channel_archive", "workspace.channel_create", "workspace.channel_members_update", "workspace.channel_recover", "workspace.channel_state", "workspace.channel_transfer_accept", "workspace.channel_transfer_offer", "workspace.channel_update", "workspace.close", "workspace.create", "workspace.device_link_approve", "workspace.device_link_create", "workspace.device_link_decline", "workspace.device_link_submit", "workspace.device_remove", "workspace.direct_open", "workspace.display_name_decide", "workspace.display_name_request", "workspace.draft_set", "workspace.invitation_create", "workspace.invitation_revoke", "workspace.join", "workspace.join_approve", "workspace.join_decline", "workspace.join_prompt", "workspace.leave", "workspace.member_remove", "workspace.member_role", "workspace.metadata_update", "workspace.policy_update", "workspace.read_hint_sync", "workspace.remove_data", "workspace.retention_update", "workspace.timeline_mutation"]);
+const REQUIRED_KEYS = new Set(["call.control", "call.operation_abandon", "connection.retry", "events.ack", "message.enqueue", "message.enqueue_draft", "peer.composer_update", "peer.pairing_begin", "peer.pairing_cancel", "profile.create", "profile.lock", "profile.select", "profile.unlock", "remote_profile.mutate", "route.update", "runtime.mutate", "workspace.admin_request_approve", "workspace.admin_request_cancel", "workspace.admin_request_decline", "workspace.admin_request_dismiss", "workspace.admin_request_submit", "workspace.admission_grant_accept", "workspace.admission_grant_create", "workspace.admission_grant_end", "workspace.admission_grant_list", "workspace.authority_accept", "workspace.authority_finalize", "workspace.authority_loss_report", "workspace.authority_offer", "workspace.channel_archive", "workspace.channel_create", "workspace.channel_members_update", "workspace.channel_recover", "workspace.channel_state", "workspace.channel_transfer_accept", "workspace.channel_transfer_offer", "workspace.channel_update", "workspace.close", "workspace.create", "workspace.device_link_approve", "workspace.device_link_create", "workspace.device_link_decline", "workspace.device_link_submit", "workspace.device_remove", "workspace.direct_open", "workspace.display_name_decide", "workspace.display_name_request", "workspace.draft_set", "workspace.invitation_create", "workspace.invitation_revoke", "workspace.join", "workspace.join_approve", "workspace.join_decline", "workspace.join_prompt", "workspace.leave", "workspace.member_remove", "workspace.member_role", "workspace.metadata_update", "workspace.policy_update", "workspace.read_hint_sync", "workspace.remove_data", "workspace.retention_update", "workspace.timeline_mutation"]);
 const KEYED_ACTIONS: Record<string, string[]> = {"workspace.connection": ["invite_contact", "prompt_dismiss", "prompt_submit", "reconnect_consent"], "workspace.history": ["cancel", "hide_direct", "hide_message", "prune", "start"], "workspace.access_recommendation": ["apply", "apply_by_id", "create", "send"]};
 
 export class CoreClient {
@@ -271,6 +273,40 @@ export class CoreClient {
 
   async callOperationAbandon(profile: string, operation: string, idempotencyKey: string): Promise<CallOperationResult> {
     this.#requireCallRecovery(); return this.request("call.operation_abandon", { profile, operation }, { idempotencyKey });
+  }
+
+  #requirePairingIntents(): void {
+    const caps = this.capabilities;
+    const operations = ["peer.pairing_begin", "peer.pairing_query", "peer.pairing_cancel"];
+    const limits = ["pairing_intents_per_runtime", "pairing_active_intents", "pairing_intent_seconds", "pairing_code_utf8_bytes",
+      "pairing_key_idempotency_seconds", "pairing_keys_per_caller_profile", "pairing_keys_per_vault"];
+    if (!Number.isSafeInteger(caps.api_minor) || caps.api_minor < 1 || !Array.isArray(caps.operations) ||
+        operations.some(name => !caps.operations.includes(name)) || typeof caps.limits !== "object" || caps.limits === null ||
+        limits.some(name => !Number.isSafeInteger(caps.limits[name]) || caps.limits[name]! <= 0)) {
+      throw new CoreError("unsupported_operation", null, null);
+    }
+  }
+
+  async pairingBegin(profile: string, role: "offer" | "answer", idempotencyKey: string,
+                     options: PairingBeginOptions = {}): Promise<PairingIntent> {
+    this.#requirePairingIntents();
+    const consent = options.allowDirectIpDisclosure === undefined ? false : options.allowDirectIpDisclosure;
+    if (!["offer", "answer"].includes(role) || typeof consent !== "boolean" ||
+        (role === "offer" && options.pairingCode !== undefined) ||
+        (role === "answer" && (typeof options.pairingCode !== "string" || options.pairingCode.length === 0 ||
+          new TextEncoder().encode(options.pairingCode).length > this.capabilities.limits.pairing_code_utf8_bytes!))) {
+      throw new ProtocolError("pairing role, code or disclosure consent is invalid");
+    }
+    return this.request("peer.pairing_begin", { profile, role, allow_direct_ip_disclosure: consent,
+      ...(options.pairingCode !== undefined ? { pairing_code: options.pairingCode } : {}) }, { idempotencyKey });
+  }
+
+  async pairingQuery(profile: string, pairing: string): Promise<PairingIntent> {
+    this.#requirePairingIntents(); return this.request("peer.pairing_query", { profile, pairing });
+  }
+
+  async pairingCancel(profile: string, pairing: string, idempotencyKey: string): Promise<PairingIntent> {
+    this.#requirePairingIntents(); return this.request("peer.pairing_cancel", { profile, pairing }, { idempotencyKey });
   }
 
   async profileQuery(profile: string): Promise<ProfileView> {

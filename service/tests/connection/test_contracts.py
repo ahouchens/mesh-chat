@@ -77,6 +77,8 @@ def request_vectors():
         "workspace.create": {"name": "Lake", "description": ""}, "profile.select": {},
         "profile.unlock": {"credential_handle": handle}, "profile.lock": {}, "profile.query": {},
         "peer.pairing_create": {},
+        "peer.pairing_begin": {"role": "offer"}, "peer.pairing_query": {"pairing": handle},
+        "peer.pairing_cancel": {"pairing": handle},
         "workspace.invitation_preview": {"document": "workspace-invitation"},
         "workspace.join": {"document": "workspace-invitation"},
         "workspace.query": {},

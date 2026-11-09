@@ -12,6 +12,23 @@ try {
     installed_package: import.meta.resolve("@mesh-chat/core-client").includes("node_modules"), sdk_only: true };
   if (process.argv.includes("--create-profile")) {
     report.created = (await client.createProfile("SDK qualification", "sdk-create-profile-key-0001")).display_name === "SDK qualification";
+  } else if (process.argv.includes("--exercise-pairing-owner")) {
+    const first = await client.pairingBegin(profile, "offer", "sdk-pairing-begin-key-001");
+    const repeated = await client.pairingBegin(profile, "offer", "sdk-pairing-begin-key-001");
+    const observed = await client.pairingQuery(profile, first.pairing);
+    const cancelled = await client.pairingCancel(profile, first.pairing, "sdk-pairing-cancel-key001");
+    const replayed = await client.pairingCancel(profile, first.pairing, "sdk-pairing-cancel-key001");
+    Object.assign(report, { began: first.state === "reserved", same_pairing: first.pairing === repeated.pairing,
+      queried: observed.pairing === first.pairing, cancelled: cancelled.state === "retired",
+      cancel_replayed: JSON.stringify(replayed) === JSON.stringify(cancelled) });
+  } else if (process.argv.includes("--pairing-unsupported")) {
+    try {
+      await client.pairingBegin(profile, "offer", "sdk-pairing-begin-key-001");
+      throw new Error("Unsupported pairing host was accepted");
+    } catch (error) {
+      if (error.code !== "unsupported_operation") throw error;
+      report.pairing_refused = true;
+    }
   } else if (process.argv.includes("--recover-call")) {
     const operation = (await client.callOperationList(profile)).operations[0].operation;
     const queried = (await client.callOperationQuery(profile, operation)).operation;
