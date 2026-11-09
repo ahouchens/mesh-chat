@@ -45,7 +45,7 @@ from .invitations import (
     readable_fingerprint,
     verify_invitation,
 )
-from .call_manager import CallManager, CallOutcomeRequiresResync
+from .call_manager import CallManager, CallOutcomeRequiresResync, CallOperationCapacityExceeded
 from .call_settings import CallSettings
 from .turn_credentials import fetch_ice_servers
 from .signal_mailbox import fetch as fetch_signal
@@ -513,6 +513,8 @@ class MeshChatService(
         self._shutdown = threading.Event()
         self._dispatch_lock = threading.RLock()
         self._core_call_epoch = uuid.uuid4().hex
+        self._core_signal_attempts = {}
+        self._core_signal_results = {}
         self._retry_queue_lock = threading.Lock()
         self._direct_retry_ids: dict[str, None] = {}
         self._group_retry_ids: dict[str, None] = {}
@@ -2032,12 +2034,13 @@ class MeshChatService(
         return self._call_settings.rtc_configuration()
 
     def signal_publish(
-        self,
-        document: str,
-        role: str,
-        session_id: str | None = None,
+        self, document: str, role: str, session_id: str | None = None,
         mailbox_token: str | None = None,
     ) -> dict[str, Any]:
+        base, pairing, code = self._prepare_signal_publish(document, role, session_id, mailbox_token)
+        return self._publish_prepared_signal(document, role, base, pairing, code)
+
+    def _prepare_signal_publish(self, document, role, session_id=None, mailbox_token=None):
         base = self._call_settings.signal_mailbox_url
         if base is None:
             raise MailboxNotConfigured("Signaling mailbox is not configured")
@@ -2048,7 +2051,9 @@ class MeshChatService(
             offer = verify_onboarding_offer(document)
             if offer.signer_destination != self._require_profile()["destination_hash"]:
                 raise ValidationError("Only this device's offer can be published")
-            code = create_pairing(base)
+            previous = contexts.get(offer.session_id)
+            code = (previous["code"] if previous is not None
+                    and previous["offer"].serialized == offer.serialized else create_pairing(base))
             contexts[offer.session_id] = {"code": code, "offer": offer, "expires_at": time.time() + 600}
         elif role == "answer":
             try:
@@ -2063,10 +2068,67 @@ class MeshChatService(
         else:
             raise ValidationError("Onboarding role is invalid")
         pairing = parse_pairing(code, base)
+        return base, pairing, code
+
+    @staticmethod
+    def _publish_prepared_signal(document, role, base, pairing, code):
         result = publish_signal(base, document, role, token=pairing["token"],
                                 session=pairing["session"], secret=pairing["secret"])
-        # The UI shares this code explicitly, never in diagnostics or persistence.
         return {**result, "session_id": code}
+
+    def keyed_signal_publish(self, document, role, operation_id, session_id=None, mailbox_token=None):
+        """Record durable intent before HTTP; never persist pairing secrets or SDP."""
+        with self._dispatch_lock:
+            profile = self._require_profile()
+            self._call_identity()
+            base = self._call_settings.signal_mailbox_url
+            if base is None:
+                raise MailboxNotConfigured("Signaling mailbox is not configured")
+            payload = {"action": "signal_publish", "document": document, "role": role,
+                       "session_id": session_id, "mailbox_token": mailbox_token}
+            operation_id, digest, replay = self._workspace_operation(
+                "core.call.control", operation_id, payload)
+            if replay is not None and (replay.get("runtime_epoch") != self._core_call_epoch
+                    or replay.get("identity_hash") != profile["identity_hash"]
+                    or replay.get("mailbox_url") != base):
+                raise CallOutcomeRequiresResync("Signaling intent requires a current pairing context")
+            now = time.time()
+            for identifier, attempt in tuple(self._core_signal_attempts.items()):
+                if attempt["pairing"]["expires_at"] <= now:
+                    self._core_signal_attempts.pop(identifier, None)
+                    self._core_signal_results.pop(identifier, None)
+            attempt = self._core_signal_attempts.get(operation_id)
+            if replay is not None and attempt is None:
+                raise CallOutcomeRequiresResync("Signaling pairing context is no longer available")
+            if attempt is not None and attempt["digest"] != digest:
+                raise ValidationError("Operation ID was already used with different input")
+            if attempt is None:
+                if len(self._core_signal_attempts) >= 32:
+                    raise CallOperationCapacityExceeded("Too many pending signaling operations")
+                base, pairing, code = self._prepare_signal_publish(document, role, session_id, mailbox_token)
+                offer = self._signal_contexts()[json.loads(document)["session_id"]]["offer"]
+                attempt = {"digest": digest, "base": base, "pairing": pairing, "code": code,
+                           "offer": offer, "identity_hash": profile["identity_hash"]}
+                self._core_signal_attempts[operation_id] = attempt
+            if attempt["base"] != base or attempt["identity_hash"] != profile["identity_hash"]:
+                raise CallOutcomeRequiresResync("Signaling authority changed")
+            checked = (verify_onboarding_offer(document) if role == "offer"
+                       else verify_onboarding_answer(document, attempt["offer"]))
+            if checked.signer_destination != profile["destination_hash"]:
+                raise ContactNotApproved("Only this device's signaling can be published")
+            parse_pairing(attempt["code"], base)
+            # The immutable receipt records intent, not an HTTP success. A process
+            # restart deliberately requires resync rather than allocating a new room.
+            if replay is None:
+                self.store.commit_operation(operation_id, digest,
+                    {"action": "signal_publish", "runtime_epoch": self._core_call_epoch,
+                     "identity_hash": profile["identity_hash"], "mailbox_url": base}, ())
+            if operation_id in self._core_signal_results:
+                return dict(self._core_signal_results[operation_id])
+            result = self._publish_prepared_signal(document, role, attempt["base"],
+                                                   attempt["pairing"], attempt["code"])
+            self._core_signal_results[operation_id] = dict(result)
+            return result
 
     def _signal_contexts(self) -> dict[str, Any]:
         contexts = getattr(self, "_signal_pairing_contexts", {})

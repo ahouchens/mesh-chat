@@ -36,6 +36,10 @@ class CallOutcomeRequiresResync(ValidationError):
     """A durable command receipt cannot establish current media resources."""
 
 
+class CallOperationCapacityExceeded(ValidationError):
+    """Bounded ephemeral operation slots must not evict uncertain outcomes."""
+
+
 @dataclass(frozen=True)
 class PreparedCallMutation:
     result: dict[str, Any]
