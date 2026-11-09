@@ -86,3 +86,17 @@ new real-transport tests. D owns
 `service/tests/connection/test_matrix_evidence.py` and the reserved
 `TypedCoreBridgeBoundaryTest.kt` instrumentation file. These assignments do not
 activate Wave 2 or transfer the public SDK files.
+
+For durable keyed mutations, A additionally owns `service.py`, `vault.py`,
+`call_manager.py`, `workspace_service.py`, and `remote_service.py` under
+`service/src/mesh_chat/`, plus `service/tests/test_vault.py`. Prefer prepared
+domain writes and the existing `VaultStore.commit_operation` boundary. External
+network/resource effects need committed intent and recovery; a vault transaction
+cannot make those effects atomic. C's later lifecycle ownership excludes these
+files until explicitly transferred.
+
+B resumes bounded Wave 1 onboarding work: stable profile-create keys and retry
+handling. A supplies the trusted private bootstrap on an already-started empty
+service, without widening ordinary public-owner grants. B's Core-owned composer
+revision/CAS and atomic draft-bound enqueue proposal is the accepted Wave 2
+design direction; implementation remains gated on Wave 1.
