@@ -1,8 +1,6 @@
 package com.meshchat.runtime
 
 import android.util.Base64
-import javax.crypto.Mac
-import javax.crypto.spec.SecretKeySpec
 
 /** One current native device-credential confirmation; no renderer facts grant it. */
 class NativeProfileAuthorization(private val now: () -> Long = { System.nanoTime() / 1_000_000 }) {
@@ -32,12 +30,8 @@ class NativeProfileAuthorization(private val now: () -> Long = { System.nanoTime
     @Synchronized fun cancel(challenge: String) {
         if (proof?.challenge == challenge) proof = null
     }
-}
 
-internal fun profileCatalogKey(key: ByteArray): ByteArray {
-    require(key.size == 32)
-    return Mac.getInstance("HmacSHA256").apply { init(SecretKeySpec(key, "HmacSHA256")) }
-        .doFinal("mesh-chat:profile-host-catalog:v1".toByteArray(Charsets.US_ASCII))
+    @Synchronized fun cancelAll() { proof = null }
 }
 
 /** Installed only by native Kotlin; the original Keystore-backed key reader is authoritative. */
@@ -45,9 +39,11 @@ class NativeProfileProvider(
     private val directory: String,
     private val caller: String,
     private val loadExistingKey: () -> ByteArray,
+    private val loadCatalogKey: () -> ByteArray,
     private val authorization: NativeProfileAuthorization,
     private val beforeOpen: () -> Unit = {},
     private val publication: (String) -> Unit = {},
+    private val encodeKey: (ByteArray) -> String = { Base64.encodeToString(it, Base64.NO_WRAP) },
 ) {
     fun profileDirectory(): String = directory
     fun ownerCaller(): String = caller
@@ -58,21 +54,19 @@ class NativeProfileProvider(
         val key = loadExistingKey()
         try {
             check(key.size == 32)
-            return Base64.encodeToString(key, Base64.NO_WRAP)
+            return encodeKey(key)
         } finally {
             key.fill(0)
         }
     }
 
     fun catalogKey(): String {
-        val key = loadExistingKey()
-        var derived: ByteArray? = null
+        val key = loadCatalogKey()
         try {
-            derived = profileCatalogKey(key)
-            return Base64.encodeToString(derived, Base64.NO_WRAP)
+            check(key.size == 32)
+            return encodeKey(key)
         } finally {
             key.fill(0)
-            derived?.fill(0)
         }
     }
 

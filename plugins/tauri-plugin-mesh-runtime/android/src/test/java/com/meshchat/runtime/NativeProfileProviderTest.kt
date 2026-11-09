@@ -41,7 +41,7 @@ class NativeProfileProviderTest {
 
     @Test fun nativeProviderBindsProofToTheFrameworkCallerAndRegisteredSlot() {
         val gate = NativeProfileAuthorization()
-        val provider = NativeProfileProvider("fixed-path", "app.owner", { ByteArray(32) }, gate)
+        val provider = NativeProfileProvider("fixed-path", "app.owner", { ByteArray(32) }, { ByteArray(32) }, gate)
         assertTrue(gate.begin(first))
         assertTrue(gate.verified(first))
         assertFalse(provider.consumeAuthorization(first, "other.app", "primary"))
@@ -50,11 +50,42 @@ class NativeProfileProviderTest {
         assertFalse(provider.consumeAuthorization(first, "app.owner", "primary"))
     }
 
-    @Test fun catalogKeyIsDomainSeparatedFromTheProfileKey() {
-        val key = ByteArray(32) { 'b'.code.toByte() }
-        val derived = profileCatalogKey(key)
-        assertEquals(32, derived.size)
-        assertFalse(key.contentEquals(derived))
-        assertEquals("b".repeat(32), key.toString(Charsets.US_ASCII))
+    @Test fun coldCatalogReadsItsSeparateAuthorityWithoutLoadingOrOpeningTheProfile() {
+        var catalogReads = 0
+        val metadata = ByteArray(32) { 7 }
+        val issued = mutableListOf<ByteArray>()
+        val provider = NativeProfileProvider("fixed-path", "app.owner",
+            { error("Locked catalog must never request the original profile key") },
+            { catalogReads++; metadata.copyOf().also { issued.add(it) } },
+            NativeProfileAuthorization(), beforeOpen = { error("Must remain locked") },
+            encodeKey = { java.util.Base64.getEncoder().encodeToString(it) })
+        repeat(2) {
+            assertEquals(java.util.Base64.getEncoder().encodeToString(metadata), provider.catalogKey())
+        }
+        assertEquals(2, catalogReads)
+        assertTrue(issued.all { key -> key.all { it == 0.toByte() } })
+    }
+
+    @Test fun profileOpenReadsOriginalAuthorityFreshAndNeverReadsCatalogKey() {
+        var profileReads = 0
+        var opens = 0
+        val issued = mutableListOf<ByteArray>()
+        val provider = NativeProfileProvider("fixed-path", "app.owner",
+            { profileReads++; ByteArray(32) { profileReads.toByte() }.also { issued.add(it) } },
+            { error("Profile opener must not request the catalog key") },
+            NativeProfileAuthorization(), beforeOpen = { opens++ },
+            encodeKey = { java.util.Base64.getEncoder().encodeToString(it) })
+        assertNotEquals(provider.profileKey(), provider.profileKey())
+        assertEquals(2, profileReads)
+        assertEquals(2, opens)
+        assertTrue(issued.all { key -> key.all { it == 0.toByte() } })
+    }
+
+    @Test fun activityDestructionInvalidatesAlreadyVerifiedProof() {
+        val gate = NativeProfileAuthorization()
+        assertTrue(gate.begin(first))
+        assertTrue(gate.verified(first))
+        gate.cancelAll()
+        assertFalse(gate.consume(first))
     }
 }
