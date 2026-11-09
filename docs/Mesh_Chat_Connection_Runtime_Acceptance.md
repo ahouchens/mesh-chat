@@ -48,6 +48,20 @@ staging at `50474ec` passes nine checks, including a real outside-checkout SDK
 install/import. None closes SC21, native topology or actual platform lifecycle
 acceptance. The pairing defect remains under production/harness investigation.
 
+The final CI gate failed despite both controlled direct-network platforms
+passing. Local `5556cc0` adds 248 passing recovery/SDK/contract checks; call
+recovery is explicitly gated on an unavailable production media-retirement
+provider. Android instrumentation hooks and Kotlin packaging have local repairs
+pending CI confirmation. Cold-start catalog key separation is still required
+before accepting the actual Android profile-provider wiring.
+
+The corrected local checkpoint passes all 3,251 required policy cases at
+`6875b00`. Narrow first-contact repair `e7f6497` passes real native/isolated-RNS
+pairing and receipt checks; exact `efbddfa` passes 649 Python and ten rendered-App
+cases without skips. Fresh frozen/Android CI confirmation is still required.
+Actual provider wiring also needs isolated credential-result routing; the local
+passes do not change the remaining M2–M5 acceptance obligations.
+
 The rows below summarize historical evidence, not qualification of baseline
 `435b497150e5f0d12cb1c5dc7b4602da7a66ec4c` or subsequent integration commits.
 The historical baseline audit supplied to this integration found 25 passing schema tests

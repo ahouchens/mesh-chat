@@ -159,9 +159,13 @@ class NativePairingServiceMixin:
         """Approval cannot start a competing reconnect before initial handoff."""
         if profile["id"] in self._native_webrtc_profile_sessions:
             return False
-        contact = self._reconnect_contact(profile["contact_id"])
+        # This is a denial-only projection of host-derived profile data. Pending
+        # contacts legitimately have device profiles before approval; requiring
+        # reconnect authority here would fault and fence the entire runtime.
+        destination = profile.get("destination_hash")
         return any(context["state"] not in {"transferred", "retired"}
-                   and self._native_webrtc_peers.get(context["session"]) == contact["destination_hash"]
+                   and destination is not None
+                   and self._native_webrtc_peers.get(context["session"]) == destination
                    for context in getattr(self, "_native_pairing_contexts", {}).values())
 
     def _native_pairing_gather(self, context):

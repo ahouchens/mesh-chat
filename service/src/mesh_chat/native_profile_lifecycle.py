@@ -120,6 +120,22 @@ class ProfileRuntimeLifecycle:
         finally:
             self._transition_lock.release()
 
+    def retire_for_host_shutdown(self):
+        """Trusted lifetime teardown; never opens or commits a selection.
+
+        Host termination cannot depend on capacity for a new mutation receipt.
+        The host must fence new Core admission and discard its incarnation
+        after this port acknowledges retirement.
+        """
+        if not self._transition_lock.acquire(blocking=False):
+            raise NativeUnavailable("A profile transition is already running")
+        try:
+            self._retire_active()
+            self._drain_retirement()
+            return self.query()
+        finally:
+            self._transition_lock.release()
+
     def _retire_active(self):
         with self._lock:
             if self._active is not None:

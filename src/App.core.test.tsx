@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Snapshot, Workspace, WorkspaceChannel, WorkspaceMessage } from "./types";
+import type { Group, Snapshot, Workspace, WorkspaceChannel, WorkspaceMessage } from "./types";
 import { ComposerHostFixture, composerCapabilities } from "./test/composer-host";
 
 const host = vi.hoisted(() => ({ invoke: vi.fn(), openUrls: [] as Array<(urls: string[]) => void>,
@@ -59,6 +59,14 @@ const root: WorkspaceMessage = {
   sequence: 1, event_digest: "88".repeat(32), created_at: 100,
 };
 const profileHandle = "c".repeat(40);
+const group: Group = {
+  id: "local-group", core_handle: "group-core-handle", title: "Field team", owner_destination: profile.destination_hash,
+  posting_policy: "members", status: "active", epoch: 1, manifest_hash: "a".repeat(64), created_at: 1, updated_at: 1,
+  members: [
+    { destination_hash: profile.destination_hash, display_name: profile.display_name, role: "owner", status: "active", fingerprint: profile.fingerprint },
+    { destination_hash: contact.destination_hash, display_name: contact.display_name, role: "member", status: "active", fingerprint: contact.fingerprint },
+  ],
+};
 const personalPreview = {
   display_name: "Taylor", identity_hash: contact.identity_hash, destination_hash: contact.destination_hash,
   fingerprint: contact.fingerprint, hints: [], expires_at: 2_000_000_000,
@@ -152,6 +160,225 @@ describe("Core application serialization", () => {
   }
 
   const nativeLocks = () => host.invoke.mock.calls.filter(([command]) => command === "lock_service");
+
+  function optionalGroups(handle: (operation: string, params: Record<string, unknown>, key: string) => Promise<unknown>) {
+    const original = host.invoke.getMockImplementation()!;
+    host.invoke.mockImplementation(async (command, payload) => {
+      if (command === "core_api_capabilities") return { ...composerCapabilities,
+        operations: [...composerCapabilities.operations, "group.create", "group.message_enqueue"],
+        optional_keyed_operations: ["group.create", "group.message_enqueue"], limits: { ...composerCapabilities.limits,
+          optional_key_idempotency_seconds: 604800, optional_keys_per_caller_profile: 4096, optional_keys_per_vault: 65536 } };
+      if (command === "core_api_request" && ["group.create", "group.message_enqueue"].includes(payload.operation)) {
+        return handle(payload.operation, payload.params, payload.idempotencyKey);
+      }
+      if (command === "core_api_request" && payload.operation === "group.draft_set") return {};
+      return original(command, payload);
+    });
+  }
+
+  async function openGroupCreation() {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "New group" }));
+    const dialog = await screen.findByRole("dialog", { name: "Create a private group" });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Name" }), { target: { value: group.title } });
+    fireEvent.click(within(dialog).getByRole("checkbox"));
+    return dialog;
+  }
+
+  it("retries an uncertain keyed group creation with the same prepared scope and payload", async () => {
+    let attempts = 0;
+    optionalGroups(async (operation, params) => {
+      expect(operation).toBe("group.create");
+      current = { ...current, groups: [{ ...group, title: String(params.title) }] };
+      if (++attempts === 1) throw JSON.stringify({ code: "unavailable" });
+      return { group: group.core_handle, name: params.title };
+    });
+    const dialog = await openGroupCreation();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create group" }));
+    fireEvent.click(await within(dialog).findByRole("button", { name: "Retry group creation" }));
+    await screen.findByRole("textbox", { name: `Message ${group.title}` });
+    const creates = requests("group.create");
+    expect(creates).toHaveLength(2);
+    expect(creates[1]).toEqual(creates[0]);
+    expect(creates[0]).toEqual({ operation: "group.create", params: {
+      profile: profileHandle, title: group.title, posting_policy: "members", members: ["e".repeat(40)],
+    }, idempotencyKey: expect.any(String) });
+  });
+
+  it("does not recreate a confirmed group after its following snapshot failed", async () => {
+    optionalGroups(async (_operation, params) => {
+      current = { ...current, groups: [{ ...group, title: String(params.title) }] };
+      snapshotsFail = true;
+      return { group: group.core_handle, name: params.title };
+    });
+    const dialog = await openGroupCreation();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create group" }));
+    const open = await within(dialog).findByRole("button", { name: "Open created group" });
+    snapshotsFail = false;
+    fireEvent.click(open);
+    await screen.findByRole("textbox", { name: `Message ${group.title}` });
+    expect(requests("group.create")).toHaveLength(1);
+  });
+
+  it("keeps an uncertain committed creation ticket across dialog close and reopen", async () => {
+    let attempts = 0;
+    optionalGroups(async (_operation, params) => {
+      current = { ...current, groups: [{ ...group, title: String(params.title) }] };
+      if (++attempts === 1) throw JSON.stringify({ code: "unavailable" });
+      return { group: group.core_handle, name: params.title };
+    });
+    let dialog = await openGroupCreation();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create group" }));
+    await within(dialog).findByRole("button", { name: "Retry group creation" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "New group" }));
+    dialog = await screen.findByRole("dialog", { name: "Create a private group" });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Name" }), { target: { value: group.title } });
+    fireEvent.click(within(dialog).getByRole("checkbox"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Retry group creation" }));
+    await screen.findByRole("textbox", { name: `Message ${group.title}` });
+    expect(requests("group.create")).toHaveLength(2);
+    expect(requests("group.create")[1]).toEqual(requests("group.create")[0]);
+  });
+
+  it("keeps a confirmed creation awaiting refresh across dialog close and reopen", async () => {
+    optionalGroups(async (_operation, params) => {
+      current = { ...current, groups: [{ ...group, title: String(params.title) }] };
+      snapshotsFail = true;
+      return { group: group.core_handle, name: params.title };
+    });
+    let dialog = await openGroupCreation();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create group" }));
+    await within(dialog).findByRole("button", { name: "Open created group" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "New group" }));
+    dialog = await screen.findByRole("dialog", { name: "Create a private group" });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Name" }), { target: { value: group.title } });
+    fireEvent.click(within(dialog).getByRole("checkbox"));
+    snapshotsFail = false;
+    fireEvent.click(within(dialog).getByRole("button", { name: "Open created group" }));
+    await screen.findByRole("textbox", { name: `Message ${group.title}` });
+    expect(requests("group.create")).toHaveLength(1);
+  });
+
+  it("retains a confirmed creation when a successful refresh lacks its exact group", async () => {
+    const other = { ...group, id: "other-local-group", core_handle: "other-core-group" };
+    optionalGroups(async (_operation, params) => {
+      current = { ...current, groups: [other] };
+      return { group: group.core_handle, name: params.title };
+    });
+    let dialog = await openGroupCreation();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create group" }));
+    await within(dialog).findByRole("button", { name: "Open created group" });
+    // A different group with the same title is not the completed creation.
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "New group" }));
+    dialog = await screen.findByRole("dialog", { name: "Create a private group" });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Name" }), { target: { value: group.title } });
+    fireEvent.click(within(dialog).getByRole("checkbox"));
+    current = { ...current, groups: [other, group] };
+    fireEvent.click(within(dialog).getByRole("button", { name: "Open created group" }));
+    await screen.findByRole("textbox", { name: `Message ${group.title}` });
+    expect(requests("group.create")).toHaveLength(1);
+  });
+
+  it("keeps each proposed group payload bound to its original action key", async () => {
+    optionalGroups(async () => { throw JSON.stringify({ code: "unavailable" }); });
+    const dialog = await openGroupCreation();
+    const name = within(dialog).getByRole("textbox", { name: "Name" });
+    for (const title of [group.title, "Other team", group.title]) {
+      fireEvent.change(name, { target: { value: title } });
+      fireEvent.click(within(dialog).getByRole("button", { name: title === group.title && requests("group.create").length ? "Retry group creation" : "Create group" }));
+      await within(dialog).findByRole("alert");
+    }
+    const creates = requests("group.create");
+    expect(creates).toHaveLength(3);
+    expect(creates[1].idempotencyKey).not.toBe(creates[0].idempotencyKey);
+    expect(creates[2]).toEqual(creates[0]);
+  });
+
+  it("retries the same uncertain group send without losing a newer draft or creating a second intent", async () => {
+    current = { ...current, contacts: [], groups: [group] };
+    const accepted = new Map<string, unknown>();
+    let lose = true;
+    optionalGroups(async (operation, _params, key) => {
+      expect(operation).toBe("group.message_enqueue");
+      expect(key).toBeTypeOf("string");
+      const receipt = accepted.get(key) ?? { sent: true, accepted: true, message: "group-acceptance", accepted_at: 1, idempotency_expires_at: 604801 };
+      accepted.set(key, receipt);
+      if (lose) { lose = false; throw JSON.stringify({ code: "unavailable" }); }
+      return receipt;
+    });
+    render(<App />);
+    const composer = await screen.findByRole("textbox", { name: `Message ${group.title}` });
+    fireEvent.change(composer, { target: { value: "Original group message" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send group message" }));
+    const retry = await screen.findByRole("button", { name: "Retry previous group send" });
+    await waitFor(() => expect(retry).toHaveProperty("disabled", false));
+    fireEvent.change(composer, { target: { value: "Newer draft" } });
+    expect(screen.getByRole("textbox", { name: "Previous group send text" })).toHaveProperty("value", "Original group message");
+    await act(async () => { window.dispatchEvent(new Event("focus")); });
+    expect(requests("group.message_enqueue")).toHaveLength(1);
+    fireEvent.click(retry);
+    await screen.findByRole("button", { name: "Send group message" });
+    const sends = requests("group.message_enqueue");
+    expect(sends).toHaveLength(2);
+    expect(sends[1]).toEqual(sends[0]);
+    expect(sends[0]).toEqual({ operation: "group.message_enqueue", params: {
+      profile: profileHandle, group: group.core_handle, text: "Original group message",
+    }, idempotencyKey: expect.any(String) });
+    expect(accepted.size).toBe(1);
+    expect(requests("message.query")).toHaveLength(0);
+    expect(composer).toHaveProperty("value", "Newer draft");
+    await waitFor(() => expect(requests("group.draft_set").at(-1)?.params.text).toBe("Newer draft"));
+  });
+
+  it("preserves unkeyed group sends on an older host without the optional extension", async () => {
+    current = { ...current, contacts: [], groups: [group] };
+    const original = host.invoke.getMockImplementation()!;
+    host.invoke.mockImplementation(async (command, payload) => command === "core_api_request"
+      && ["group.message_enqueue", "group.draft_set"].includes(payload.operation) ? { sent: true } : original(command, payload));
+    render(<App />);
+    const composer = await screen.findByRole("textbox", { name: `Message ${group.title}` });
+    fireEvent.change(composer, { target: { value: "Legacy group message" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send group message" }));
+    await waitFor(() => expect(requests("group.message_enqueue")).toHaveLength(1));
+    expect(requests("group.message_enqueue")[0].idempotencyKey).toBeNull();
+    await waitFor(() => expect(composer).toHaveProperty("value", ""));
+  });
+
+  it("uses a distinct action key for a deliberate later same-text group send", async () => {
+    current = { ...current, contacts: [], groups: [group] };
+    optionalGroups(async () => ({ sent: true, accepted: true, message: "group-acceptance", accepted_at: 1, idempotency_expires_at: 604801 }));
+    render(<App />);
+    const composer = await screen.findByRole("textbox", { name: `Message ${group.title}` });
+    for (let count = 1; count <= 2; count++) {
+      fireEvent.change(composer, { target: { value: "Same group message" } });
+      fireEvent.click(screen.getByRole("button", { name: "Send group message" }));
+      await waitFor(() => expect(requests("group.message_enqueue")).toHaveLength(count));
+      await waitFor(() => expect(screen.getByRole("button", { name: "Send group message" })).toHaveProperty("disabled", true));
+    }
+    const sends = requests("group.message_enqueue");
+    expect(sends[0].idempotencyKey).not.toBe(sends[1].idempotencyKey);
+  });
+
+  it("never downgrades an uncertain keyed group send to an unkeyed replay", async () => {
+    current = { ...current, contacts: [], groups: [group] };
+    let attempts = 0;
+    optionalGroups(async () => { throw JSON.stringify({ code: ++attempts === 1 ? "unavailable" : "unsupported_operation" }); });
+    render(<App />);
+    const composer = await screen.findByRole("textbox", { name: `Message ${group.title}` });
+    fireEvent.change(composer, { target: { value: "Keep this identity" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send group message" }));
+    const retry = await screen.findByRole("button", { name: "Retry previous group send" });
+    await waitFor(() => expect(retry).toHaveProperty("disabled", false));
+    fireEvent.click(retry);
+    await waitFor(() => expect(requests("group.message_enqueue")).toHaveLength(2));
+    await waitFor(() => expect(retry).toHaveProperty("disabled", false));
+    const sends = requests("group.message_enqueue");
+    expect(sends[1]).toEqual(sends[0]);
+    expect(sends.every((send) => typeof send.idempotencyKey === "string")).toBe(true);
+  });
 
   it("does not save settings when the profile lookup finishes after lock and reopen", async () => {
     render(<App />);

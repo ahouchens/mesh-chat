@@ -184,6 +184,50 @@ def emulator_and_cleanup():
             "abi": adb("shell", "getprop", "ro.product.cpu.abi"), "test_host_cleanup": "passed"}
 
 
+def failed_run_reports(identity):
+    """Retain every report outcome without asserting artifact/platform acceptance."""
+    suites = []
+    for suite in ("webrtc", "signaling", "core_api", "core_consumer"):
+        directory = REPORTS / f"android-{suite}"
+        required = cases(suite)
+        observed = {"suite": suite, "inventory": "missing", "required_case_reports": len(required),
+                    "passed_case_reports": 0, "failed_case_reports": 0, "missing_case_reports": 0,
+                    "unvalidated_case_reports": len(required), "issues": []}
+        try:
+            path = directory / "inventory.json"
+            if path.stat().st_size > 128 * 1024: raise ValueError
+            inventory = json.loads(path.read_text(encoding="utf-8"))
+            if (type(inventory.get("v")) is not int or inventory["v"] != 1
+                    or any(inventory.get(key) != value for key, value in identity.items())
+                    or inventory.get("scenarios") != required or not isinstance(inventory.get("run_id"), str)
+                    or re.fullmatch(r"[a-f0-9]{32}", inventory["run_id"]) is None):
+                raise ValueError
+        except FileNotFoundError:
+            observed["issues"].append({"code": "inventory_missing"})
+        except Exception:
+            observed["inventory"] = "invalid"
+            observed["issues"].append({"code": "inventory_invalid"})
+        else:
+            observed["inventory"] = "valid"
+            observed["unvalidated_case_reports"] = 0
+            for case in required:
+                report = directory / case["report"]
+                try:
+                    if report.stat().st_size > 2 * 1024 * 1024: raise ValueError
+                    verify_case(report.read_text(encoding="utf-8"), inventory["run_id"], case["class"], case["method"])
+                except FileNotFoundError:
+                    observed["missing_case_reports"] += 1
+                    observed["issues"].append({"scenario_id": case["id"], "code": "case_report_missing"})
+                except Exception:
+                    observed["failed_case_reports"] += 1
+                    observed["issues"].append({"scenario_id": case["id"], "code": "case_report_not_successful"})
+                else:
+                    observed["passed_case_reports"] += 1
+        suites.append(observed)
+    return {**identity, "scope": "Failed-run case report diagnostics only; no artifact, platform or overall acceptance",
+            "suites": suites}
+
+
 def report(status):
     result = {"v": 1, "passed": False,
               "evidence_level": "android_emulator_optimized_native_and_python_components", "phase": "runner"}
@@ -205,6 +249,10 @@ def report(status):
         # Instrumentation text can contain private documents. Keep it in the test
         # log artifacts; the machine result exposes only a bounded failure class.
         result["failure_type"] = type(error).__name__
+        try:
+            result["failed_run_reports"] = failed_run_reports(source())
+        except Exception:
+            result["report_diagnostics_unavailable"] = True
     REPORTS.mkdir(parents=True, exist_ok=True)
     (REPORTS / "android-qualification.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(result))

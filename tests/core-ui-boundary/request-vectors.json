@@ -372,6 +372,25 @@
   },
   {
     "api_version": 1,
+    "request_id": "boundary:call-list",
+    "operation": "call.operation_list",
+    "params": { "profile": "callerScopedHandle1" }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:call-query",
+    "operation": "call.operation_query",
+    "params": { "profile": "callerScopedHandle1", "operation": "callerScopedOperation1" }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:call-abandon",
+    "operation": "call.operation_abandon",
+    "params": { "profile": "callerScopedHandle1", "operation": "callerScopedOperation1" },
+    "idempotency_key": "boundary-call-abandon-key-0001"
+  },
+  {
+    "api_version": 1,
     "request_id": "boundary:1",
     "operation": "settings.query",
     "params": {

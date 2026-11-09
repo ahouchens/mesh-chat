@@ -2,6 +2,42 @@
 
 ## Integration revalidation (2026-11-09)
 
+### Corrected pairing and combined qualification checkpoint
+
+Source `6875b00d7a3502ce662b33acdfdc6bc84c0b4ab7`, tree
+`b9e02254cf654040c47ecc6e5223153e0d993575`, passes the complete 3,251-case
+required policy inventory, zero failures/skips, in 336.65s. Qualification ID:
+`a666ed1903c74a8889fde787d9df5d59`; reports are
+`dist/reports/policy-recovery-group.{xml,json,inventory.json}`. Exact SDK staging
+also passes. Its exact boundary passes 649 Python plus eight rendered-App cases
+in 47.54s without skips. Completed policy scratch was removed; reports remain.
+
+C reproduced first-time pairing with real native DataChannels and isolated
+Reticulum processes. The carrier and explicit approval were intact, but the new
+pairing projection called an approval-requiring lookup for a pending contact,
+faulting the entire connection runtime. Narrow repair `0af2687` uses the
+host-derived destination only for that denial projection; actual authority
+checks remain in the grant/adoption paths. It was cherry-picked with attribution
+as `e7f6497`, excluding the still-held Android provider ancestor `0b012c3`.
+The lead's real first-contact/receipt and pairing-runtime regressions pass 31
+cases, zero skips, in 21.78s. This is source execution, not frozen-package proof.
+
+Source `efbddfa2ed35bfbdda85ff220a83c925abd3bf3e`, tree
+`0bd10b8c6a73e5d4a7d4f37d134a2accbda22361`, adds D's two rendered group replay
+cases and B's final reconnect-factory admission guard. Its exact boundary passes
+649 Python plus **ten** rendered-App cases, zero failures/skips, in 41.42s.
+The group cases lose real committed replies, replay the exact caller key and
+payload after modal reopening, and preserve a newer draft without another
+durable group/message/outbox/receipt. Group membership uses real signed domain
+messages over an explicitly in-process fixture. The lead's 27 focused reconnect
+admission/runtime checks pass. None establishes full renderer-restart group-key
+durability, physical media retirement, native interoperability or SC21 traffic.
+
+The corrected source is ready for a new full packaged qualification run. Android
+profile-provider wiring remains held for separate protected catalog-key storage
+and dedicated native credential-result routing; the shared Tauri activity-result
+callback cannot establish which activity supplied a successful result.
+
 ### Current full CI failure and local repairs
 
 Full run `42676194199` targets `da815655792241629f19f0e7ac02b8402a744790`,
@@ -25,8 +61,15 @@ is not a diagnosed cause. C owns production handoff diagnosis and D owns probe
 diagnostics. Desktop report artifact `13700996616` has verified ZIP SHA-256
 `279dd742957f2b5cafb38b898cbc3a21ce8d941e375b3cd6b79f3d8b88ae9c0f`.
 Reports are retained under `.test-tmp/ci-evidence-da81565/desktop-transport`.
-Its executable hashes remain runner claims until independently checked against
-the executable archive. Required native topology has not executed in this run.
+The lead subsequently hashed every entry of native artifact `13700018594` in
+memory (ZIP SHA-256
+`1c42f24bb6fdb543501148f97fa8222ac24d2d5561f12ede6559a550020faeaf`). The
+retained sidecar SHA-256
+`8f4719e2f6b167d64241961ba009a5c8a453f487ff14b377967893f5862d0575` and
+build-manifest digest match the native control/lifecycle, materials, packaged
+lifecycle and preapproved-transport reports. No executable was extracted or run
+locally. The separate WebView2 probe binary digest remains a runner claim.
+Required native topology has not executed in this run.
 
 Android also failed two manual native adoption instrumentation cases, the Kotlin
 `workspaceJoinIsConvergentWithoutACallerKey` unit assertion (20 passes, one
@@ -42,6 +85,16 @@ port. A owns the Kotlin assertion and license packaging diagnosis. This fixture
 finding does not establish the cause of the separate Windows pairing failure.
 The required native-interoperability job was skipped after prerequisite failure.
 
+The workflow finished with a failed final gate. Both direct-network jobs passed;
+the lead independently validated 25 fabric, 10 recovery and 12 setup cases per
+platform with zero skips using pinned `da81565` validators. Linux artifact
+`13701687559` has ZIP SHA-256
+`5bfee1c2a84e83155122a239295a7a6814b98a6395d42e46b8eca6e99c577af0`;
+Windows artifact `13701943154` has ZIP SHA-256
+`f0513f652452ebce3f77b425b83ab767cd5d951810fc8b27fefa3b311cc22f10`.
+These controlled native/Python suites do not qualify packaged cross-platform
+interoperability. Their binary digests remain runner claims in report archives.
+
 Local source `a899b8576ee2130510b5bf98b6a64b7b44bf7f71`, tree
 `ebd717956b4b7ff7ceb215b8afa4cc4357879b77`, integrates the fixture repair,
 independent group authority tests and the remaining API/component admission
@@ -52,6 +105,27 @@ At `50474ec78d082ad17e4bafd450187780823abd2a`, nine independent consumer staging
 checks pass without skips in 1.36s, including actual offline archive installation
 and public SDK import outside the checkout. This is staging evidence only:
 normal app-owned host bootstrap and public pairing/receipt traffic remain open.
+
+### Gated call recovery and Android fixture repairs
+
+Source `5556cc0f502c70da10f81f7685f3a5b2b6963ac1`, tree
+`2171f4e3b46cf67c1e0f4617d3e0fe2964ffcbe2`, integrates protected call acceptance,
+caller-scoped discovery and abandonment, exact trusted retirement tickets,
+asynchronous completion, SDK helpers and the Kotlin CI repairs. Exact SDK staging
+passes; the lead's 248 call-recovery, legacy-call, installed-consumer, license
+and contract checks pass without skips in 13.92s. The extension remains
+unadvertised on ordinary hosts. A typed substitute retirement provider in tests
+does not establish actual browser media cleanup, native recovery or permission
+to replace unresolved media. A host that has activated the protected catalog
+cannot bypass its fences by rebinding without the provider.
+
+D's `3a122d4` Android instrumentation correction targets the actual inner
+reconnect executor while preserving the existing synthetic-path scope and
+readiness deadline. The lead's 20 adapter checks pass without skips in 1.99s;
+emulator confirmation remains required. Follow-up `7b2718b` retains all failed
+case inventories and JVM reports. `f7d9844` completes the three call-recovery
+request vectors through actual Core framing, with explicit component-provider
+scope and ordinary-host unsupported controls. No required vector is waived.
 
 ### Wave 2 interim CI and packaging repairs
 

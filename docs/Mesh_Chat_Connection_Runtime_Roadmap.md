@@ -34,6 +34,18 @@ boundary cases, and `50474ec` passes nine independent app staging checks. Public
 app-owned host bootstrap, actual cross-platform consumer traffic and trusted
 media-retirement recovery remain implementation and qualification work.
 
+The workflow is now finished and failed overall. Both direct-network platforms
+pass retained, independently validated component inventories. Local call recovery
+at `5556cc0` passes 248 focused checks while remaining disabled without a complete
+trusted media owner. Android fixture/Kotlin package repairs await a fresh CI run;
+actual profile-provider wiring remains held for cold catalog key separation.
+
+The first-contact runtime fault is repaired narrowly at `e7f6497`, with 31
+passing real-native pairing/runtime checks. Prior combined policy `6875b00`
+passes 3,251 cases; current `efbddfa` passes 649 Python and ten rendered-App
+boundary cases. Full packaged requalification follows. Provider acceptance still
+requires separate catalog-key authority and dedicated native auth-result routing.
+
 Integration begins at `435b497150e5f0d12cb1c5dc7b4602da7a66ec4c` on a
 separate lead branch. The [coordination inventory](Mesh_Chat_Core_Integration_Coordination.md)
 assigns exclusive ownership and defines the two-wave implementation gates.

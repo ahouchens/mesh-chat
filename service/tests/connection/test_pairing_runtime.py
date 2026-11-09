@@ -314,6 +314,25 @@ def run_until(service, condition, timeout=3):
     assert condition(), (service._connection_runtime.owner.diagnostics.snapshot()[0][-15:])
 
 
+@pytest.mark.parametrize("trust", ["awaiting_consent", "pending_request", "blocked", "identity_changed"])
+def test_pending_device_profile_denies_authority_without_faulting_whole_runtime(native_pairing, trust):
+    from mesh_chat.models import TrustState
+    from test_reconnect_service import _add_contact
+    create, _ = native_pairing
+    service, *_ = create()
+    peer, *_ = create()
+    contact = _add_contact(service, "pending-peer", peer._identity,
+        peer._require_profile()["destination_hash"])
+    profile_id = service.reconnect_capabilities_get(contact["id"])["profile"]["id"]
+    contact["trust"] = TrustState(trust).value
+    service.store.put("contact", contact["id"], contact)
+    runtime = service._connection_runtime
+    runtime.step()
+    state = next(state for state in runtime.owner.snapshots() if state.key.profile_id == profile_id)
+    assert not state.authority.authorized and state.desired is Desired.STOPPED
+    assert state.carrier is None and runtime._failure is None
+
+
 def test_actual_pairing_composition_exchanges_signed_offer_answer_without_granting_contact_trust(native_pairing):
     create, _ = native_pairing
     first, _, created, _, controls, _ = create()

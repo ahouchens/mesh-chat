@@ -24,6 +24,12 @@ object CoreApiBridge {
     @Volatile
     private var latch = CountDownLatch(1)
 
+    /** A publication changes capability availability; invalidate caches, never replay. */
+    fun runtimeRebound() = synchronized(lock) {
+        client = null
+        hostClient = null
+    }
+
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             synchronized(lock) {

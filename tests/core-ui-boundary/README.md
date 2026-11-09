@@ -38,11 +38,22 @@ Windows host artifact. It rechecks the boundary reports against the required
 source commit/tree, retained JUnit and collection digests, run identities and
 zero-failure/zero-skip execution. The uniform manifest includes separate
 `core_ui_boundary_python`, `core_ui_boundary_rendered` and
-`core_windows_boundary` records. Rendered execution must contain all six named
-cases (eight after the Wave 2 composer remount additions); Windows must contain
+`core_windows_boundary` records. Rendered execution must contain all ten named
+cases, including composer remount and keyed group create/send reply-loss controls; Windows must contain
 all three named cases. Python counts come from the
 complete collection of the required boundary files, rather than a historical
 case count. The final gate requires only the standard library.
+
+The group send case opens a real group only after another real identity signs
+its join statement and production invitation, manifest and correlated receipt
+handlers finish the membership update. The fixture uses an in-process recording
+transport for that setup. It does not patch member status, mock Core responses
+or claim native delivery evidence. UI requests still reach the actual framed
+Core and encrypted journal. Lost keyed creation/send replies must replay the
+original prepared scope, payload and caller key, preserve a newer draft, and
+leave one durable group/message and unchanged outbox/receipt counts. The opaque
+group acceptance reference is never queried as a direct message. Full renderer
+restart recovery of group action keys remains outside these two cases.
 
 Independent authority tests pass JSON frames through the actual Core session.
 Signed workspace removal must deny replay of an earlier accepted message or

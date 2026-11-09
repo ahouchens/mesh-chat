@@ -104,6 +104,15 @@ impl<R: Runtime> MeshRuntime<R> {
         Ok(self.0.run_mobile_plugin("shutdown", ())?)
     }
 
+    pub fn lock_profile(&self) -> Result<NativeResponse> {
+        Ok(self.0.run_mobile_plugin("lockProfile", ())?)
+    }
+
+    pub async fn authorize_profile_unlock(&self, profile: &str) -> Result<NativeResponse> {
+        Ok(self.0.run_mobile_plugin_async("authorizeProfileUnlock",
+            ProfileUnlockRequest { profile: profile.into() }).await?)
+    }
+
     pub fn set_background_availability(&self, enabled: bool) -> Result<NativeResponse> {
         Ok(self.0.run_mobile_plugin(
             "setBackgroundAvailability",

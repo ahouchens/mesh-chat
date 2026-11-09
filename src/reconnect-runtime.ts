@@ -1,4 +1,5 @@
-import { coreApiPeerForDestination, coreApiRequest, loadCallIceServers, serviceCommand } from "./api";
+import { coreApiPeerForDestination, coreApiRequest as unscopedCoreApiRequest, loadCallIceServers, serviceCommand as unscopedServiceCommand } from "./api";
+import type { CoreRequestAdmission } from "./core-admission";
 import type { CallIceConfiguration } from "./types";
 import {
   ReconnectCoordinator,
@@ -83,6 +84,7 @@ function hasLiveSession(profileId: string, contactId: string): boolean {
 export interface ReconnectRuntimeOptions {
   refresh: () => Promise<void>;
   onSession?: (path: WebRTCSessionPath) => void;
+  readonly admit?: CoreRequestAdmission;
 }
 
 /**
@@ -95,6 +97,13 @@ export interface ReconnectRuntimeOptions {
 export function createReconnectDeps(
   options: ReconnectRuntimeOptions,
 ): ReconnectCoordinatorDeps {
+  const admit = options.admit;
+  const coreApiRequest = <T>(...args: Parameters<typeof unscopedCoreApiRequest>): Promise<T> => admit
+    ? admit(() => unscopedCoreApiRequest<T>(...args)) : unscopedCoreApiRequest<T>(...args);
+  const serviceCommand = <T>(command: string, payload?: Record<string, unknown>): Promise<T> => {
+    if (admit) return unscopedServiceCommand<T>(command, payload, admit);
+    return payload === undefined ? unscopedServiceCommand<T>(command) : unscopedServiceCommand<T>(command, payload);
+  };
   return {
     profiles: async () => {
       const generation = ++refreshGeneration;
