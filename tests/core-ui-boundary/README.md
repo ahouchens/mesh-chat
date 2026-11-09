@@ -189,6 +189,15 @@ acknowledged clean host exits. The final matrix binds its executable/build
 digests to the other tested native Windows artifacts. Missing EFS, bootstrap or
 cleanup fails this gate. This is installed Windows bootstrap evidence only;
 Android, pairing and SC21 receipt traffic remain separate requirements.
+The separate required `windows-independent-pairing.json` producer then uses the
+same retained SDK and frozen runtime to start two fresh normal Windows host
+instances outside the checkout. Only public SDK operations perform pairing,
+explicit invitation/contact decisions, transferred-intent cancellation and
+bidirectional messages. Public connection observations must stay ready; actual
+Core `delivered` queries and exactly one inbound/outbound public record per
+message establish the receipt checks. This report binds its bootstrap report,
+SDK/runtime/application hashes and distinct run, requires actual EFS and two
+acknowledged host exits, and cannot satisfy Windows-Android/SC21 evidence.
 The three public pairing vectors use an advertised production Core actor with
 real framing, vault records and signatures. The fixture admits one offer to
 `offer_ready`, then revokes the caller's grants. Begin/query/cancel must return

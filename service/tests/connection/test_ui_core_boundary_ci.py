@@ -80,6 +80,12 @@ def test_normal_installed_windows_runtime_is_a_required_distinct_artifact_bound_
     uploads = [step for step in steps if step.get("uses", "").startswith("actions/upload-artifact@")]
     assert any("dist/reports/windows-independent-bootstrap.json" in step["with"]["path"] for step in uploads)
     assert "windows_independent_bootstrap" in ci.COMPONENTS["verification"]
+    pairing = next(index for index, step in enumerate(steps)
+                   if "scripts/check_independent_core_pairing.py" in step.get("run", ""))
+    assert pairing > qualification
+    assert "continue-on-error" not in steps[pairing] and "if" not in steps[pairing]
+    assert any("dist/reports/windows-independent-pairing.json" in step["with"]["path"] for step in uploads)
+    assert "windows_independent_pairing" in ci.COMPONENTS["verification"]
 
 
 def test_android_typed_app_cases_are_required_by_the_artifact_bound_inventory():

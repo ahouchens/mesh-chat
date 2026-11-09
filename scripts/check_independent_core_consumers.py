@@ -35,14 +35,11 @@ def application_environment(environment):
             and key.upper() not in {"PYTHONPATH", "PYTHONHOME", "NODE_PATH", "NODE_OPTIONS"}}
 
 
-def verify_report(record, source, tree):
+def verify_binding(record, source, tree):
     if (type(record.get("v")) is not int or record["v"] != 1 or record.get("passed") is not True
             or record.get("source_commit") != source or record.get("source_tree") != tree
-            or record.get("evidence_level") != LEVEL or record.get("scope") != SCOPE
-            or record.get("sdk_artifact") != SDK_ARTIFACT
-            or record.get("checks") != CHECKS or any(type(record["checks"].get(key)) is not type(value)
-                                                   for key, value in CHECKS.items())):
-        raise ValueError("Installed Windows consumer evidence has the wrong source, scope or execution")
+            or record.get("sdk_artifact") != SDK_ARTIFACT):
+        raise ValueError("Installed Windows consumer evidence has the wrong source or outcome")
     import re
     for key in ("sidecar_sha256", "build_input_sha256", "build_manifest_sha256", "sdk_sha256"):
         if not isinstance(record.get(key), str) or re.fullmatch(r"[a-f0-9]{64}", record[key]) is None:
@@ -59,6 +56,15 @@ def verify_report(record, source, tree):
             or type(record.get("duration_seconds")) not in {int, float}
             or not 0 <= record["duration_seconds"] < 600):
         raise ValueError("Independent application run identity or duration is invalid")
+    return record
+
+
+def verify_report(record, source, tree):
+    verify_binding(record, source, tree)
+    if (record.get("evidence_level") != LEVEL or record.get("scope") != SCOPE
+            or record.get("checks") != CHECKS or any(type(record["checks"].get(key)) is not type(value)
+                                                   for key, value in CHECKS.items())):
+        raise ValueError("Installed Windows consumer scope or execution is incomplete")
     return record
 
 
