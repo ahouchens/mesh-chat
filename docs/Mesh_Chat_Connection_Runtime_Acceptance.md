@@ -22,18 +22,21 @@ qualification.
 
 The rows below summarize historical evidence, not qualification of baseline
 `435b497150e5f0d12cb1c5dc7b4602da7a66ec4c` or subsequent integration commits.
-The baseline audit supplied to this integration found 25 passing schema tests
+The historical baseline audit supplied to this integration found 25 passing schema tests
 but only 84 accepted component examples and 40 rejections/errors through the
 production request parser. Parser parameter access, mutation idempotency
 admission, UI workspace field translation, mobile Core stubs and direct-send
-retry/refresh handling require repair and combined revalidation.
+retry/refresh handling required repair and combined revalidation. Those bounded
+Wave 1 repairs passed at `174728e`; remaining restart and lifecycle obligations
+are assigned in Wave 2.
 
 Consequently the checked UI/Core migration items in the roadmap establish
-implementation intent, not application acceptance. Wave 1 must exercise the
+implementation intent, not blanket application acceptance. Wave 1 exercised the
 actual Windows and Android routes through serialization and production Core,
 including workspace state, messaging, settings and call control. See the
 [ownership and gate inventory](Mesh_Chat_Core_Integration_Coordination.md).
-No historical `local`, `component` or `workflow` label below closes that gate.
+The exact-source ledger closes that bounded gate; historical `local`, `component`
+or `workflow` labels below do not establish broader current-source completion.
 
 ## Environment limits
 
@@ -149,3 +152,53 @@ Unavailable in this environment: Wi-Fi/cellular switching, screen-off/Doze,
 real process death by OS policy, Stop/lock on physical devices and end-to-end
 receipts on physical hardware. No emulator, packaged or CI result on this branch
 is presented as that evidence.
+
+## Storage and distribution boundary during Wave 2
+
+The runtime owns the vault and its lifetime profile lock. Public SDK clients
+attach through the host and do not open the database or receive the vault key.
+Desktop resolves Tauri's application-data directory for `com.meshchat.desktop`
+and appends `profile-v1`; its key uses the OS keyring entry
+`com.meshchat.desktop` / `vault-key-v1`. Android resolves the application's
+private `filesDir/mesh-chat/profile-v1`; its vault key is wrapped using the
+Android Keystore alias `mesh-chat-vault-key-v1`. These are implementation paths,
+not a portable backup format or permission to copy a live database.
+
+Composer use raises the vault format floor from 1 to 2 in the same transaction
+as its first mutation. A format-1-only host must refuse that profile before
+starting workers. The current migration tests prove local atomicity and refusal;
+the staged old/new package upgrade matrix remains required. Ordinary client
+detach does not authorize stopping the owner or removing its data.
+
+No whole-profile export/import or portable private-key backup is qualified.
+An exported invitation, reconnect document or redacted diagnostic report does
+not back up the profile. Uninstall/data-clear preservation and removal have not
+been qualified for these combined packages. In-place upgrade fixtures must keep
+the original profile and key material, then verify identity, history, outbox,
+drafts and receipts after restart. Destructive uninstall is a separate fixture
+with disposable synthetic data, not an upgrade step.
+
+API major/minor, SDK package, internal IPC and signed peer-wire versions remain
+separate. Wave 2 stages experimental SDK 0.3 against API 1.1; API 1.0 consumers
+must retain their established behavior, while new composer methods require the
+advertised minor, operations and limits before sending a mutation. The exact
+tested artifact pairs, OS/architecture, permissions, hashes and migration
+direction belong in the staged matrix. No historical compatibility window or
+published support promise is inferred from these experimental checks.
+
+The earlier audit of 92 keyed mutation actions is bounded. Some current
+operations still declare repeatable or convergent behavior, including group
+message enqueue, while section 6.6 requires mutation keys. A is auditing actual
+parser, session, action overrides and domain behavior before proposing compatible
+extensions; metadata alone does not establish the gap count. SDKs must preserve
+the current declared semantics and must not invent retry keys. This unresolved
+requirement prevents a full M5 or section 13 completion claim.
+
+The repository records its license in `LICENSE` and bundled attribution in
+`THIRD_PARTY_NOTICES.md` (Unicode, Twemoji, i2pd and Android WebRTC). This is an
+inventory of existing files, not a completed dependency audit. Qualification
+must inspect the actual staged SDK/runtime archives for their applicable
+notices, native dependency versions and license materials, and ensure fixture
+identities and private fault controls are absent. Windows native dependency
+coverage and complete staged notice inclusion remain open until that inventory
+is checked. No publication is part of this integration.

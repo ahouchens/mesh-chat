@@ -21,6 +21,10 @@ android {
         minSdk = 24
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         consumerProguardFiles("consumer-rules.pro")
+        // Trusted build-time qualification selector, never an invocation field.
+        val sharedNative = providers.gradleProperty("meshSharedNative").orElse("false").get()
+        require(sharedNative in setOf("true", "false"))
+        buildConfigField("boolean", "MESH_SHARED_NATIVE", sharedNative)
         ndk {
             abiFilters += meshRuntimeAbis
         }
@@ -33,6 +37,7 @@ android {
 
     buildFeatures {
         aidl = true
+        buildConfig = true
     }
 }
 
@@ -62,6 +67,7 @@ chaquopy.sourceSets.getByName("main") {
 
 dependencies {
     implementation(project(":tauri-android"))
+    implementation(project(":mesh-core-client"))
     implementation("androidx.activity:activity-ktx:1.10.1")
     implementation("androidx.core:core-ktx:1.15.0")
     // Native data-channel transport for the opt-in background availability

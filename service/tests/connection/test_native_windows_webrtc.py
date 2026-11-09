@@ -72,6 +72,16 @@ def test_native_host_exchanges_binary_packets_and_controls():
         assert stats["ok"] and stats["result"]["data_channel_state"] == "open"
         assert stats["result"]["received_packets"] == 1
         assert json.loads(right.stats("right"))["result"]["received_controls"] == 0
+        left_path = json.loads(left.pathEvidence("left"))["result"]
+        right_path = json.loads(right.pathEvidence("right"))["result"]
+        assert left_path["status"] == right_path["status"] == "selected"
+        assert left_path["pair"]["local"] == right_path["pair"]["remote"]
+        assert left_path["pair"]["remote"] == right_path["pair"]["local"]
+        assert left_path["pair"]["relay_protocol"] == "not_applicable"
+        assert left_path["application"]["enqueued_bytes"] == len(packet)
+        assert left_path["application"]["received_bytes"] == len(b"reply") + len(b"control text")
+        assert not left_path["availability"]["pair_bytes"]
+        assert left_path["pair"]["bytes_sent"] is None
     finally:
         left.shutdown()
         right.shutdown()
@@ -83,6 +93,7 @@ def test_close_is_exact_and_reports_closed_once():
         left.close("left")
         wait_for(left_events, lambda event: event == ("closed", "left", ""))
         assert json.loads(left.stats("left"))["error"] == "native_webrtc_session_missing"
+        assert json.loads(left.pathEvidence("left"))["error"] == "native_webrtc_session_missing"
         deadline = time.monotonic() + 5
         while right.send("right", b"after close") is not False:
             assert time.monotonic() < deadline, "remote session never observed closure"
@@ -103,6 +114,51 @@ def test_missing_packet_channel_and_oversized_frames_fail_before_allocation():
         assert host_instance.send("missing", b"x" * 1065) is False
     finally:
         host_instance.shutdown()
+
+
+def test_inspection_submission_failure_closes_unscheduled_coroutine_and_releases_only_its_slot(monkeypatch):
+    import inspect
+    from mesh_chat.native_windows_webrtc import _HostFailure
+    instance, _ = host()
+    captured = []
+    try:
+        assert json.loads(instance.createOffer("peer", json.dumps(ICE), json.dumps(CHANNELS)))["ok"]
+        original = instance._submit
+        def unavailable(coroutine, **kwargs):
+            captured.append(coroutine)
+            raise _HostFailure("native_webrtc_unavailable")
+        monkeypatch.setattr(instance, "_submit", unavailable)
+        assert json.loads(instance.pathEvidence("peer"))["error"] == "native_webrtc_unavailable"
+        assert inspect.getcoroutinestate(captured[0]) == inspect.CORO_CLOSED
+        assert not instance._sampling
+        monkeypatch.setattr(instance, "_submit", original)
+        assert json.loads(instance.pathEvidence("peer"))["ok"]
+    finally:
+        monkeypatch.undo()
+        instance.shutdown()
+
+
+def test_inspection_timeout_retains_slot_until_actual_pending_sample_finishes(monkeypatch):
+    from mesh_chat.native_windows_webrtc import _HostFailure
+    instance, _ = host()
+    captured = []
+    try:
+        assert json.loads(instance.createOffer("peer", json.dumps(ICE), json.dumps(CHANNELS)))["ok"]
+        original = instance._submit
+        def pending(coroutine, **kwargs):
+            captured.append(coroutine)
+            raise _HostFailure("native_webrtc_timeout")
+        monkeypatch.setattr(instance, "_submit", pending)
+        assert json.loads(instance.pathEvidence("peer"))["error"] == "native_webrtc_timeout"
+        assert json.loads(instance.pathEvidence("peer"))["error"] == "native_webrtc_inspection_busy"
+        assert len(captured) == 1
+        monkeypatch.setattr(instance, "_submit", original)
+        assert json.loads(original(captured[0]))["ok"]
+        assert not instance._sampling
+        assert json.loads(instance.pathEvidence("peer"))["ok"]
+    finally:
+        monkeypatch.undo()
+        instance.shutdown()
 
 
 def test_session_capacity_is_bounded():

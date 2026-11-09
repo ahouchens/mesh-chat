@@ -15,10 +15,14 @@ import base64
 import json
 import re
 import threading
+import inspect
 from dataclasses import dataclass, field
 import time
+from importlib.metadata import version
+from uuid import uuid4
 
 from aiortc import RTCConfiguration, RTCIceServer, RTCPeerConnection, RTCSessionDescription
+from .native_path_evidence import SAMPLE_TIMEOUT, candidate, endpoint, observation, pair_token, validate_observation
 
 MESSAGE_LIMIT = 1064
 CONTROL_LIMIT = 65_536
@@ -44,6 +48,11 @@ class _Session:
     closed: bool = False
     received_packets: int = 0
     received_controls: int = 0
+    received_bytes: int = 0
+    enqueued_packets: int = 0
+    enqueued_controls: int = 0
+    enqueued_bytes: int = 0
+    sample_sequence: int = 0
     local_type: str | None = None
     remote_type: str | None = None
 
@@ -141,6 +150,8 @@ class WindowsNativeWebRTCHost:
         self._lock = threading.RLock()
         self._sessions = {}
         self._reservations = set()
+        self._adapter_epoch = uuid4().hex
+        self._sampling = {}
         self._loop = asyncio.new_event_loop()
         self._closed = False
         self._thread = threading.Thread(target=self._run, name="mesh-chat-native-webrtc",
@@ -161,7 +172,8 @@ class WindowsNativeWebRTCHost:
             self._loop.close()
 
     def _submit(self, coroutine, timeout=OPERATION_TIMEOUT):
-        if self._closed:
+        if self._closed or self._loop.is_closed() or not self._thread.is_alive():
+            coroutine.close()
             raise _HostFailure("native_webrtc_unavailable")
         future = asyncio.run_coroutine_threadsafe(coroutine, self._loop)
         try:
@@ -233,6 +245,7 @@ class WindowsNativeWebRTCHost:
         encoded = data.encode("utf-8") if isinstance(data, str) else bytes(data)
         if not encoded or len(encoded) > limit:
             return
+        session.received_bytes += len(encoded)
         payload = base64.b64encode(encoded).decode("ascii")
         if label == "mesh-reticulum":
             session.received_packets += 1
@@ -344,6 +357,11 @@ class WindowsNativeWebRTCHost:
         if channel is None or channel.readyState != "open":
             return False
         channel.send(payload)
+        session.enqueued_bytes += len(payload.encode("utf-8") if isinstance(payload, str) else payload)
+        if label == "mesh-reticulum":
+            session.enqueued_packets += 1
+        else:
+            session.enqueued_controls += 1
         return True
 
     def send(self, resource, packet):
@@ -383,6 +401,102 @@ class WindowsNativeWebRTCHost:
             return _error(failure.code)
         except Exception:
             return _error("native_webrtc_stats_failed")
+
+    def pathEvidence(self, resource):
+        """Private current mechanism evidence, separate from ordinary stats."""
+        coroutine = token = None
+        try:
+            session = self._require(resource)
+            with self._lock:
+                if resource in self._sampling:
+                    raise _HostFailure("native_webrtc_inspection_busy")
+                token = self._sampling[resource] = object()
+            coroutine = self._path_evidence(session, token)
+            return self._submit(coroutine, timeout=SAMPLE_TIMEOUT)
+        except _HostFailure as failure:
+            if failure.code != "native_webrtc_timeout":
+                self._release_unscheduled_sample(resource, token, coroutine)
+            return _error(failure.code)
+        except Exception:
+            self._release_unscheduled_sample(resource, token, coroutine)
+            return _error("native_webrtc_inspection_failed")
+
+    def _release_unscheduled_sample(self, resource, token, coroutine):
+        if coroutine is not None and inspect.getcoroutinestate(coroutine) == inspect.CORO_CREATED:
+            coroutine.close()
+        if coroutine is None or inspect.getcoroutinestate(coroutine) == inspect.CORO_CLOSED:
+            with self._lock:
+                if self._sampling.get(resource) is token:
+                    self._sampling.pop(resource, None)
+
+    async def _path_evidence(self, session, token):
+        try:
+            if not self._current(session):
+                raise _HostFailure("native_webrtc_session_missing")
+            session.sample_sequence += 1
+            pc = session.pc
+            ice_state = str(pc.iceConnectionState).lower()
+            dtls = getattr(getattr(pc, "sctp", None), "transport", None)
+            pair, status = None, "not_selected"
+            # This is a deliberately version-bound private seam. The normal
+            # WebRTC transport remains usable if inspection is unsupported.
+            if (version("aiortc"), version("aioice")) != ("1.13.0", "0.10.2"):
+                status = "unsupported"
+            elif ice_state in {"connected", "completed"}:
+                connection = getattr(getattr(dtls, "transport", None), "_connection", None)
+                nominated = getattr(connection, "_nominated", None)
+                if not isinstance(nominated, dict):
+                    status = "unsupported"
+                elif set(nominated) == {1}:
+                    pair = self._selected_pair(session, nominated[1])
+                    status = "selected" if pair is not None else "unavailable"
+            value = observation(session.resource, self._adapter_epoch, session.sample_sequence,
+                int(time.monotonic() * 1000), status=status, ice_state=ice_state,
+                dtls_state=str(getattr(dtls, "state", "unknown")).lower(),
+                channel_state=(session.channels["mesh-reticulum"].readyState
+                               if "mesh-reticulum" in session.channels else "missing"), pair=pair,
+                application={key: getattr(session, key) for key in (
+                    "enqueued_packets", "enqueued_controls", "enqueued_bytes",
+                    "received_packets", "received_controls", "received_bytes")})
+            if not self._current(session):
+                raise _HostFailure("native_webrtc_session_missing")
+            return json.dumps({"ok": True, "result": validate_observation(value, session.resource)}, separators=(",", ":"))
+        finally:
+            with self._lock:
+                if self._sampling.get(session.resource) is token:
+                    self._sampling.pop(session.resource, None)
+
+    def _selected_pair(self, session, pair):
+        if not pair.nominated or pair.state.name != "SUCCEEDED":
+            return None
+        local = candidate(pair.local_candidate.host, pair.local_candidate.port,
+                          pair.local_candidate.type, pair.local_candidate.transport.lower())
+        remote = candidate(pair.remote_candidate.host, pair.remote_candidate.port,
+                           pair.remote_candidate.type, pair.remote_candidate.transport.lower())
+        protocol, socket = "not_applicable", None
+        if local["type"] == "relay":
+            protocol, socket = self._relay_socket(pair.protocol.transport)
+        return {"token": pair_token(self._adapter_epoch, session.resource, local, remote),
+                "local": local, "remote": remote, "nominated": True,
+                "relay_protocol": protocol, "relay_socket": socket,
+                "bytes_sent": None, "bytes_received": None, "rtt_ms": None}
+
+    @staticmethod
+    def _relay_socket(transport):
+        from aioice.turn import TurnClientTcpProtocol, TurnClientUdpProtocol, TurnTransport
+        if not isinstance(transport, TurnTransport):
+            return "unknown", None
+        inner = getattr(transport, "_TurnTransport__inner_protocol", None)
+        if isinstance(inner, TurnClientTcpProtocol):
+            protocol = "tls" if inner.transport.get_extra_info("ssl_object") is not None else "tcp"
+        elif isinstance(inner, TurnClientUdpProtocol):
+            protocol = "udp"
+        else:
+            return "unknown", None
+        local, remote = inner.transport.get_extra_info("sockname"), inner.transport.get_extra_info("peername")
+        if not local or not remote:
+            return protocol, None
+        return protocol, {"local": endpoint(local[0], local[1]), "remote": endpoint(remote[0], remote[1]), "protocol": protocol}
 
     def activate(self, resource):
         self._require(resource)
