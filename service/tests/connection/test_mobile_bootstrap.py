@@ -172,6 +172,34 @@ def test_failed_unpublished_constructor_retains_its_cleanup_owner(mobile_request
             assert service._store_closed
 
 
+def test_deferred_constructor_cleanup_retains_unpublished_instance_until_worker_drains(mobile_request, monkeypatch):
+    from mesh_chat.connection import composition
+    captured = []
+    released = threading.Event()
+
+    def failed_owner(service):
+        captured.append(service)
+        service._pending_contact_carriers = {"pending": SimpleNamespace(close=lambda: None, wait=released.wait)}
+        raise RuntimeError("owner construction failed")
+
+    monkeypatch.setattr(composition, "native_runtime", failed_owner)
+    try:
+        assert not json.loads(mobile_bridge.initialize_native(mobile_request))["ok"]
+        service, = captured
+        assert mobile_bridge._service is None and mobile_bridge._retiring_service is service
+        assert not service._store_closed and service.store.get("profile", "local") is None
+        assert service._close_finalizer.is_alive()
+        assert not json.loads(mobile_bridge.initialize(mobile_request))["ok"]
+        assert mobile_bridge._retiring_service is service and not service._store_closed
+    finally:
+        released.set()
+        if captured:
+            captured[0]._close_finalizer.join(3)
+            assert captured[0]._store_closed
+            assert json.loads(mobile_bridge.shutdown())["ok"]
+            assert mobile_bridge._retiring_service is None
+
+
 @pytest.mark.parametrize("field", ["connection_policy", "native_webrtc_host"])
 def test_mobile_json_cannot_select_private_composition(mobile_request, field):
     request = json.loads(mobile_request)

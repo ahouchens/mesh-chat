@@ -608,6 +608,8 @@ class MeshChatService(
                 self.close()
             except Exception as error:
                 raise NativeStartupIncomplete(self) from error
+            if not self._store_closed:
+                raise NativeStartupIncomplete(self)
             raise
 
     def _start_network(self, display_name: str) -> None:
