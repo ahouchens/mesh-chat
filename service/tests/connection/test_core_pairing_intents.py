@@ -8,6 +8,8 @@ from mesh_chat.core_api.errors import ApiFailure
 from mesh_chat.core_api.requests import COMPONENT_OPERATIONS, PAIRING_INTENT_OPERATIONS, parse_request
 from mesh_chat.core_api.session import CoreSession, Grant, Ports
 from mesh_chat.core_api.wire_codec import decode_frame, encode_frame
+from mesh_chat.core_api.messages import MessageScope
+from mesh_chat.core_api.service_pairing_intents import ServicePairingIntents
 from test_core_messages import host
 from test_pairing_runtime import native_pairing
 from test_core_sdk_distribution import installed_consumer, run_consumer
@@ -95,3 +97,54 @@ def test_installed_sdk_on_unbound_real_host_never_writes_a_pairing_mutation(host
     assert report["sdk_only"] and report["pairing_refused"]
     assert requests == ["runtime.capabilities"]
     assert service.store.list("api_pairing_intent") == service.store.list("api_pairing_quota") == []
+
+
+def public_client(service, caller="sdk-native-owner"):
+    grants = [Grant(caller, frozenset({"observe", "approve", "read", "send"}), ("local",))]
+    stream = bind_service_stream(service, lambda: grants[0])
+    def invoke(operation, params=None, key=None):
+        request = {"api_version": 1, "request_id": "pairing:public", "operation": operation, "params": params or {}}
+        if key is not None:
+            request["idempotency_key"] = key
+        return decode_frame(stream.exchange(encode_frame(request)))
+    caps = invoke("runtime.capabilities")
+    assert caps["ok"], caps
+    assert set(PAIRING_INTENT_OPERATIONS) <= set(caps["result"]["operations"])
+    return invoke, grants, caps["result"]["profiles"][0]
+
+
+def test_lost_public_reservation_return_then_expired_replay_never_admits_a_new_child(native_pairing, monkeypatch):
+    create, _ = native_pairing
+    service, native, created, _, _, _ = create()
+    # This window is entirely before child admission. Its forbidden boundary
+    # proves no native actor invocation, independently of callback support.
+    monkeypatch.setattr(service, "native_pairing_public_intents", True, raising=False)
+    def forbid(*args, **kwargs): pytest.fail("Expired public reservation admitted native work")
+    monkeypatch.setattr(service, "native_pairing_begin", forbid)
+    invoke, grants, profile = public_client(service)
+    original = service.store.conditional_put_and_delete
+    lost = []
+    def lose_committed_return(*args, **kwargs):
+        result = original(*args, **kwargs)
+        if not lost:
+            lost.append(True)
+            raise OSError("lost public reservation return before child admission")
+        return result
+    monkeypatch.setattr(service.store, "conditional_put_and_delete", lose_committed_return)
+    params = {"profile": profile, "role": "offer"}
+    assert invoke("peer.pairing_begin", params, "original-pairing-key-0001")["error"]["code"] == "unavailable"
+    identifier, row = service.store.items("api_pairing_intent")[0]
+    callbacks = ServicePairingIntents(service, lambda: grants[0])._callbacks(
+        MessageScope(grants[0].caller, "local"), identifier, row)
+    assert callbacks[0]() and not callbacks[1]()
+    import time
+    monkeypatch.setattr(time, "time", lambda: row["expires_at"] + 1)
+    assert callbacks[0]() and callbacks[1]()  # Expiry stops work without revoking cleanup authority.
+    replay = invoke("peer.pairing_begin", params, "original-pairing-key-0001")
+    assert replay["ok"], replay
+    assert replay["result"]["pairing"] == row["pairing"] and replay["result"]["state"] == "retired"
+    assert replay["result"]["expires_at"] == row["expires_at"] and replay["result"]["pairing_code"] is None
+    assert created == [] and not getattr(service, "_native_pairing_contexts", {})
+    assert len(service.store.list("workspace_operation")) == len(service.store.list("api_pairing_intent")) == 1
+    assert all(quota["count"] == 1 for quota in service.store.list("api_pairing_quota"))
+    assert service.store.get("api_pairing_owner", "active") is None

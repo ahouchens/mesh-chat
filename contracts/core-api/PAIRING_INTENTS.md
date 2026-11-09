@@ -51,6 +51,14 @@ reallocation is allowed. A caller that loses the begin reply replays its origina
 key and parameters. This family does not provide a catalog for callers that lose
 all local intent keys; full renderer-restart recovery remains additional work.
 
+The original absolute deadline is passed to child admission and never renewed
+by retry. Expiry also makes the trusted stop callback true, while current grant
+checks remain available for cleanup. If public reservation committed but child
+admission never did, an expired same-runtime replay can acknowledge `retired`
+from the absent child receipt under the dispatch lock. It cannot allocate any
+native resource. An admitted child needs its actual terminal acknowledgment;
+expiry alone reports `retiring`, without an admission code.
+
 Bounds are advertised under `pairing_intents_per_runtime` (32 retained actor
 intents), `pairing_active_intents` (1), `pairing_intent_seconds` (300),
 `pairing_code_utf8_bytes` (2048), `pairing_key_idempotency_seconds` (604800),

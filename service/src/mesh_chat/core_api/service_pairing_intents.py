@@ -158,7 +158,7 @@ class ServicePairingIntents:
             try:
                 service = service_ref()
                 current = service.store.get("api_pairing_intent", identifier) if service is not None else None
-                return current is None or current["cancel_requested"] is True
+                return current is None or current["cancel_requested"] is True or time.time() >= current["expires_at"]
             except Exception:
                 return True
         def terminal(state):
@@ -169,11 +169,13 @@ class ServicePairingIntents:
         return authorized, cancelled, terminal
 
     def _admit(self, scope, identifier, row, params):
+        if time.time() >= row["expires_at"]:
+            raise ApiFailure("resync_required")
         authorized, cancelled, terminal = self._callbacks(scope, identifier, row)
         try:
             return self.service.native_pairing_begin(row["native_id"], role=params["role"], authorized=authorized,
                 pairing_code=params.get("pairing_code"), allow_direct_ip_disclosure=params.get("allow_direct_ip_disclosure", False),
-                cancel_requested=cancelled, on_terminal=terminal)
+                cancel_requested=cancelled, on_terminal=terminal, expires_at=row["expires_at"])
         except CallOutcomeRequiresResync as error:
             raise ApiFailure("resync_required") from error
         except NativeUnavailable as error:
@@ -209,9 +211,10 @@ class ServicePairingIntents:
             _, digest, replay = service._workspace_operation("core.peer.pairing_begin", operation_id, payload)
             identifier = self._index(scope, pairing)
             if replay is None:
+                imported = None
                 if params["role"] == "answer":
                     try:
-                        parse_pairing(params["pairing_code"], mailbox)
+                        imported = parse_pairing(params["pairing_code"], mailbox)
                     except ValidationError as error:
                         raise ApiFailure("invalid_request") from error
                 self._owner_available()
@@ -224,7 +227,8 @@ class ServicePairingIntents:
                        "operation_id": operation_id, "native_id": str(uuid5(UUID(operation_id), "core-native-pairing:v1")),
                        "runtime_epoch": service._runtime_incarnation, "identity_hash": profile["identity_hash"],
                        "mailbox_url": mailbox,
-                       "expires_at": now + PAIRING_INTENT_LIMITS["pairing_intent_seconds"],
+                       "expires_at": min(now + PAIRING_INTENT_LIMITS["pairing_intent_seconds"],
+                                         imported["expires_at"] if imported else float("inf")),
                        "cancel_requested": False, "terminal_state": None}
                 self._commit(scope, operation_id, digest, {"pairing": pairing},
                     {("api_pairing_intent", identifier): None, ("api_pairing_owner", "active"): None},
@@ -234,7 +238,16 @@ class ServicePairingIntents:
                     raise ApiFailure("resync_required")
                 identifier, row = self._row(scope, pairing)
             if row["terminal_state"] is None and not row["cancel_requested"]:
-                self._admit(scope, identifier, row, params)
+                if time.time() >= row["expires_at"]:
+                    receipt = store.get("workspace_operation", store.opaque_id("workspace-operation", row["native_id"]))
+                    if receipt is None:
+                        # Same current runtime, no child admission receipt: the
+                        # actor could never allocate. Expiry cannot admit a new
+                        # child or silently extend this original intent.
+                        _checkpoint_terminal(service, identifier, row["runtime_epoch"], row["identity_hash"], row["native_id"], "retired")
+                        row = store.get("api_pairing_intent", identifier)
+                else:
+                    self._admit(scope, identifier, row, params)
             result = self._observe(row)
         service._changed()
         return result
@@ -259,6 +272,8 @@ class ServicePairingIntents:
                     raise ApiFailure("unavailable") from error
                 state, code = observation["state"], observation.get("pairing_code")
                 expires = min(expires, observation["expires_at"])
+                if state not in _TERMINAL and time.time() >= expires:
+                    state, code = "retiring", None
         return PairingIntentObservation(row["pairing"], state, expires, code)
 
     def query(self, scope, pairing):
