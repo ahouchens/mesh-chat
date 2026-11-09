@@ -14,6 +14,8 @@ COUNTERS = ("enqueued_packets", "enqueued_controls", "enqueued_bytes",
 
 
 def endpoint(address, port):
+    if not isinstance(address, str):
+        raise ValueError("Invalid address")
     address = str(ipaddress.ip_address(address))
     if type(port) is not int or not 1 <= port <= 65535:
         raise ValueError("Invalid port")
@@ -107,10 +109,9 @@ def _validate_pair(pair, value):
         raise ValueError
     for key in ("local", "remote"):
         current = pair[key]
-        if not isinstance(current, dict) or current != candidate(**{
-                "address": current["address"], "port": current["port"],
-                "kind": current["type"], "protocol": current["protocol"]}):
+        if not isinstance(current, dict) or set(current) != {"address", "port", "type", "protocol"}:
             raise ValueError
+        candidate(current["address"], current["port"], current["type"], current["protocol"])
     if pair["token"] != pair_token(value["adapter_epoch"], value["resource"], pair["local"], pair["remote"]):
         raise ValueError
     if pair["nominated"] is not None and type(pair["nominated"]) is not bool:
@@ -124,8 +125,9 @@ def _validate_pair(pair, value):
         if set(socket) != {"local", "remote", "protocol"} or socket["protocol"] != pair["relay_protocol"]:
             raise ValueError
         for key in ("local", "remote"):
-            if socket[key] != endpoint(**socket[key]):
+            if not isinstance(socket[key], dict) or set(socket[key]) != {"address", "port"}:
                 raise ValueError
+            endpoint(**socket[key])
     for key in ("bytes_sent", "bytes_received"):
         if pair[key] is not None:
             _integer(pair[key])

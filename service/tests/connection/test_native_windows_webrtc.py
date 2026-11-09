@@ -116,6 +116,51 @@ def test_missing_packet_channel_and_oversized_frames_fail_before_allocation():
         host_instance.shutdown()
 
 
+def test_inspection_submission_failure_closes_unscheduled_coroutine_and_releases_only_its_slot(monkeypatch):
+    import inspect
+    from mesh_chat.native_windows_webrtc import _HostFailure
+    instance, _ = host()
+    captured = []
+    try:
+        assert json.loads(instance.createOffer("peer", json.dumps(ICE), json.dumps(CHANNELS)))["ok"]
+        original = instance._submit
+        def unavailable(coroutine, **kwargs):
+            captured.append(coroutine)
+            raise _HostFailure("native_webrtc_unavailable")
+        monkeypatch.setattr(instance, "_submit", unavailable)
+        assert json.loads(instance.pathEvidence("peer"))["error"] == "native_webrtc_unavailable"
+        assert inspect.getcoroutinestate(captured[0]) == inspect.CORO_CLOSED
+        assert not instance._sampling
+        monkeypatch.setattr(instance, "_submit", original)
+        assert json.loads(instance.pathEvidence("peer"))["ok"]
+    finally:
+        monkeypatch.undo()
+        instance.shutdown()
+
+
+def test_inspection_timeout_retains_slot_until_actual_pending_sample_finishes(monkeypatch):
+    from mesh_chat.native_windows_webrtc import _HostFailure
+    instance, _ = host()
+    captured = []
+    try:
+        assert json.loads(instance.createOffer("peer", json.dumps(ICE), json.dumps(CHANNELS)))["ok"]
+        original = instance._submit
+        def pending(coroutine, **kwargs):
+            captured.append(coroutine)
+            raise _HostFailure("native_webrtc_timeout")
+        monkeypatch.setattr(instance, "_submit", pending)
+        assert json.loads(instance.pathEvidence("peer"))["error"] == "native_webrtc_timeout"
+        assert json.loads(instance.pathEvidence("peer"))["error"] == "native_webrtc_inspection_busy"
+        assert len(captured) == 1
+        monkeypatch.setattr(instance, "_submit", original)
+        assert json.loads(original(captured[0]))["ok"]
+        assert not instance._sampling
+        assert json.loads(instance.pathEvidence("peer"))["ok"]
+    finally:
+        monkeypatch.undo()
+        instance.shutdown()
+
+
 def test_session_capacity_is_bounded():
     host_instance, _ = host()
     try:
