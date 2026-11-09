@@ -1331,5 +1331,25 @@
     "params": {"profile": "callerScopedHandle1", "recipient": "callerScopedPeer01",
                "draft_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
     "idempotency_key": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:pairing-begin",
+    "operation": "peer.pairing_begin",
+    "params": {"profile": "callerScopedHandle1", "role": "offer", "allow_direct_ip_disclosure": false},
+    "idempotency_key": "boundary-pairing-begin-key0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:pairing-query",
+    "operation": "peer.pairing_query",
+    "params": {"profile": "callerScopedHandle1", "pairing": "callerScopedPairingHandle1"}
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:pairing-cancel",
+    "operation": "peer.pairing_cancel",
+    "params": {"profile": "callerScopedHandle1", "pairing": "callerScopedPairingHandle1"},
+    "idempotency_key": "boundary-pairing-cancel-key0001"
   }
 ]

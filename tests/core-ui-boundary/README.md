@@ -189,6 +189,13 @@ acknowledged clean host exits. The final matrix binds its executable/build
 digests to the other tested native Windows artifacts. Missing EFS, bootstrap or
 cleanup fails this gate. This is installed Windows bootstrap evidence only;
 Android, pairing and SC21 receipt traffic remain separate requirements.
+The three public pairing vectors use an advertised production Core actor with
+real framing, vault records and signatures. The fixture admits one offer to
+`offer_ready`, then revokes the caller's grants. Begin/query/cancel must return
+`forbidden` without disclosing the code, mutating sealed records, allocating or
+closing native resources, or publishing mailbox documents. Ordinary unbound
+hosts must omit and reject all three operations. Native/mailbox boundaries are
+explicit test doubles in these vector checks; they do not qualify native traffic.
 The fresh-profile case starts with no profile or identity, verifies a signed
 invitation through private preview without any vault write or network/event
 effect, then creates only through

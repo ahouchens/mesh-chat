@@ -12,7 +12,7 @@ from pathlib import Path
 from jsonschema import Draft202012Validator
 import pytest
 
-from mesh_chat.core_api.requests import COMPONENT_OPERATIONS, PROFILE_RUNTIME_OPERATIONS, CALL_RECOVERY_OPERATIONS, parse_request
+from mesh_chat.core_api.requests import COMPONENT_OPERATIONS, PROFILE_RUNTIME_OPERATIONS, CALL_RECOVERY_OPERATIONS, PAIRING_INTENT_OPERATIONS, parse_request
 from mesh_chat.core_api.composition import bind_service_stream
 from mesh_chat.core_api.runtime_host import CoreRuntimeHost, RegisteredProfile
 from mesh_chat.core_api.session import CoreSession, Grant, Ports
@@ -22,6 +22,7 @@ from mesh_chat.vault import VaultStore
 from mesh_chat.core_api.call_operations import CallRetirementAcknowledgment, CallRetirementTicket
 from test_core_messages import host
 from test_core_call_idempotency import FINGERPRINT, SDP
+from test_pairing_runtime import native_pairing, run_until
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -137,6 +138,50 @@ def denied_call_recovery(host):
         stream.close()
 
 
+@pytest.fixture
+def denied_pairing_intents(native_pairing):
+    """Actual advertised actor/crypto/vault; native and mailbox boundary doubles."""
+    create, documents = native_pairing
+    service, _, created, closed, controls, _ = create()
+    grants = [Grant("boundary-pairing-ui", frozenset({"observe", "approve"}), ("local",))]
+    stream = bind_service_stream(service, lambda: grants[0])
+    def invoke(value):
+        return decode_frame(stream.exchange(encode_frame(value)))
+    caps = invoke({"api_version": 1, "request_id": "pairing-vector:negotiate",
+                   "operation": "runtime.capabilities", "params": {}})
+    assert caps["ok"] and set(PAIRING_INTENT_OPERATIONS) <= set(caps["result"]["operations"])
+    profile = caps["result"]["profiles"][0]
+    accepted = invoke({"api_version": 1, "request_id": "pairing-vector:setup",
+        "operation": "peer.pairing_begin", "params": {"profile": profile, "role": "offer"},
+        "idempotency_key": "boundary-pairing-setup-key0001"})
+    assert accepted["ok"], accepted
+    pairing = accepted["result"]["pairing"]
+    def current():
+        return invoke({"api_version": 1, "request_id": "pairing-vector:query",
+            "operation": "peer.pairing_query", "params": {"profile": profile, "pairing": pairing}})
+    run_until(service, lambda: current()["result"]["state"] == "offer_ready")
+    assert current()["result"]["pairing_code"] and len(created) == 1
+    grants[0] = Grant("boundary-pairing-ui", frozenset(), ("local",))
+    def state():
+        records = service.store._db.execute("SELECT kind,record_id,sealed FROM records ORDER BY kind,record_id").fetchall()
+        contexts = {key: value["state"] for key, value in service._native_pairing_contexts.items()}
+        return records, service.store._db.total_changes, contexts, list(created), list(closed), list(controls), dict(documents)
+    before = state()
+    def exchange(vector):
+        value = wire_round_trip(vector)
+        value["params"]["profile"] = profile
+        if "pairing" in value["params"]: value["params"]["pairing"] = pairing
+        contract_for(value["operation"]).validate(value)
+        result = invoke(value)
+        assert state() == before
+        assert "pairing_code" not in result and "result" not in result
+        return result
+    try:
+        yield exchange
+    finally:
+        stream.close()
+
+
 @pytest.mark.parametrize("vector", COMPONENT_VECTORS, ids=lambda value: value["operation"])
 def test_schema_valid_serialized_request_reaches_production_parser(vector):
     value = wire_round_trip(vector)
@@ -164,6 +209,11 @@ def test_serialized_request_reaches_session_authority_without_effects(vector, re
         assert reply == {"api_version": 1, "request_id": vector["request_id"], "ok": False,
                          "error": {"code": "forbidden", "retry_after_ms": None}}
         return
+    if vector["operation"] in PAIRING_INTENT_OPERATIONS:
+        reply = request.getfixturevalue("denied_pairing_intents")(vector)
+        assert reply == {"api_version": 1, "request_id": vector["request_id"], "ok": False,
+                         "error": {"code": "forbidden", "retry_after_ms": None}}
+        return
     effects = ForbiddenEffects()
     ports = Ports(**{field.name: effects for field in fields(Ports)})
     session = CoreSession(lambda: Grant("denied-ui", frozenset(), ("local",)),
@@ -175,7 +225,7 @@ def test_serialized_request_reaches_session_authority_without_effects(vector, re
     }
 
 
-@pytest.mark.parametrize("vector", [value for value in COMPONENT_VECTORS if value["operation"] in PROFILE_RUNTIME_OPERATIONS + CALL_RECOVERY_OPERATIONS], ids=lambda value: value["operation"])
+@pytest.mark.parametrize("vector", [value for value in COMPONENT_VECTORS if value["operation"] in PROFILE_RUNTIME_OPERATIONS + CALL_RECOVERY_OPERATIONS + PAIRING_INTENT_OPERATIONS], ids=lambda value: value["operation"])
 def test_ordinary_service_binding_does_not_advertise_or_dispatch_host_only_authority(vector, tmp_path, monkeypatch):
     monkeypatch.setattr(MeshChatService, "_start_network", lambda *_: None)
     monkeypatch.setattr(MeshChatService, "_prepare_lan_fallback", lambda *_: None)
@@ -185,7 +235,7 @@ def test_ordinary_service_binding_does_not_advertise_or_dispatch_host_only_autho
     try:
         caps = decode_frame(session.exchange(encode_frame({"api_version": 1, "request_id": "ordinary:negotiate",
             "operation": "runtime.capabilities", "params": {}})))
-        assert caps["ok"] and not set(PROFILE_RUNTIME_OPERATIONS + CALL_RECOVERY_OPERATIONS) & set(caps["result"]["operations"])
+        assert caps["ok"] and not set(PROFILE_RUNTIME_OPERATIONS + CALL_RECOVERY_OPERATIONS + PAIRING_INTENT_OPERATIONS) & set(caps["result"]["operations"])
         before = store._db.total_changes
         reply = decode_frame(session.exchange(encode_frame(wire_round_trip(vector))))
         assert reply == {"api_version": 1, "request_id": vector["request_id"], "ok": False,
