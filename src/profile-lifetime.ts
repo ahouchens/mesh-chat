@@ -43,9 +43,12 @@ export class ProfileLifetime {
     return mutation;
   }
 
-  retire(): Promise<RetirementDisposition> {
+  retire(allowCleanup = true): Promise<RetirementDisposition> {
+    // A native replacement already owns host retirement. Old renderer cleanup
+    // must still release local resources without invoking the replacement host.
+    if (!allowCleanup) this.retiringGeneration = null;
     if (this.retirement) return this.retirement;
-    this.retiringGeneration = this.generation;
+    this.retiringGeneration = allowCleanup ? this.generation : null;
     this.generation += 1;
     this.phase = "closing";
     // Participants freeze synchronously before React unmount cleanup can run.

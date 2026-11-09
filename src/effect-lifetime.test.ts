@@ -82,6 +82,14 @@ it("blocks legacy attach fallback when its channel owner closes before the Core 
   expect(host.invoke.mock.calls.some(([command]) => command === "service_command")).toBe(false);
   expect(data.close).toHaveBeenCalledOnce();
 });
+it("closes local channels without sending old detach commands after a native host replacement", async () => {
+  const lifetime = new ProfileLifetime(); const data = channel();
+  const bridge = await attachWebRTCBridge(data, { effects: scope(lifetime) }); bridges.push(bridge);
+  lifetime.register(lifetime.capture(), () => bridge.close());
+  await lifetime.retire(false);
+  expect(data.close).toHaveBeenCalledOnce(); expect(data.onmessage).toBeNull();
+  expect(commands()).toEqual(["webrtc_attach"]);
+});
 
 it("never falls back or restores an old bridge after a health reply crosses reopening", async () => {
   vi.useFakeTimers(); const lifetime = new ProfileLifetime(); const data = channel();
