@@ -62,3 +62,49 @@ counts, dependencies and limits. Historical manifests qualify only their named
 source/artifacts. Unit/local, native component, emulator, packaged and workflow
 evidence are distinct. No physical qualification is available. No release, tag,
 publication, force push or main merge is authorized.
+
+## Follow-up assignments and checkpoint
+
+At `8a902a05b580408a4f1853904f8e6ade01f41d95`, the private native host port
+separation and Android enqueue `kind: text` fix are integrated. Ordinary public
+owner grants cannot advertise or invoke the native command port. The lead ran
+211 contract, host and real Windows pipe cases with no failures or skips; strict
+model/reducer typechecking also passed.
+
+The complete required policy inventory at `d4945d0` executed 2,240 cases:
+2,239 passed and one failed, with zero skips. The isolated contact worker test
+reached recipient readiness but received no inbound invitation. A focused rerun
+at `8a902a0` reproduced that failure (one pass, one failure). This is not passing
+qualification evidence.
+
+C now exclusively owns `service/src/mesh_chat/contact_bootstrap.py`,
+`isolated_bootstrap.py`, `direct_bootstrap_process.py`,
+`direct_bootstrap_worker.py` in that same directory, and
+`service/tests/connection/test_contact_bootstrap.py` for this gate repair.
+A owns the production `core_api/pipe_client.py` buffer correction exposed by D's
+new real-transport tests. D owns
+`service/tests/connection/test_matrix_evidence.py` and the reserved
+`TypedCoreBridgeBoundaryTest.kt` instrumentation file. These assignments do not
+activate Wave 2 or transfer the public SDK files.
+
+For durable keyed mutations, A additionally owns `service.py`, `vault.py`,
+`call_manager.py`, `workspace_service.py`, and `remote_service.py` under
+`service/src/mesh_chat/`, plus `service/tests/test_vault.py`. Prefer prepared
+domain writes and the existing `VaultStore.commit_operation` boundary. External
+network/resource effects need committed intent and recovery; a vault transaction
+cannot make those effects atomic. C's later lifecycle ownership excludes these
+files until explicitly transferred.
+
+Subsequent transfer: C exclusively owns `service/src/mesh_chat/remote_service.py`
+and the new `service/tests/connection/test_remote_profile_idempotency.py` for
+remote-profile keyed durability. A's worktree was verified clean before transfer.
+A retains the Core adapter in `service_workspace_admin.py`, and wires the optional
+domain `operation_id` argument supplied by C. Persisted runtime intent must use
+current consent/settings during reconciliation; replay cannot restore revoked
+approval or return cached connectivity as current state.
+
+B resumes bounded Wave 1 onboarding work: stable profile-create keys and retry
+handling. A supplies the trusted private bootstrap on an already-started empty
+service, without widening ordinary public-owner grants. B's Core-owned composer
+revision/CAS and atomic draft-bound enqueue proposal is the accepted Wave 2
+design direction; implementation remains gated on Wave 1.

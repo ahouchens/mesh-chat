@@ -51,10 +51,16 @@ const root: WorkspaceMessage = {
   sequence: 1, event_digest: "88".repeat(32), created_at: 100,
 };
 const profileHandle = "c".repeat(40);
+const personalPreview = {
+  display_name: "Taylor", identity_hash: contact.identity_hash, destination_hash: contact.destination_hash,
+  fingerprint: contact.fingerprint, hints: [], expires_at: 2_000_000_000,
+};
 let current: Snapshot;
 let snapshotsFail: boolean;
 let send: (params: Record<string, unknown>) => Promise<unknown>;
 let mutation: (params: Record<string, unknown>) => Promise<unknown>;
+let createProfile: (params: Record<string, unknown>) => Promise<unknown>;
+let bootstrapPreview: (params: Record<string, unknown>) => Promise<unknown>;
 
 const requests = (operation: string) => host.invoke.mock.calls
   .filter(([command, payload]) => command === "core_api_request" && payload.operation === operation)
@@ -70,11 +76,19 @@ beforeEach(() => {
     network: { transport_enabled: false, propagation_enabled: false, interface_available: true, interfaces: [], outbound_propagation_node: null },
   };
   send = async () => ({ message: "d".repeat(40), accepted: true });
+  createProfile = async () => {
+    current = { ...current, profile };
+    return { display_name: profile.display_name };
+  };
+  bootstrapPreview = async () => { throw JSON.stringify({ code: "unsupported_operation", retry_after_ms: null }); };
   mutation = async (params) => ({ ...root, id: params.event_id, direction: "outbound", text: params.text, reply_count: 0 });
   host.invoke.mockImplementation(async (command: string, payload: Record<string, unknown> = {}) => {
     if (command === "initialize_service") return current;
     if (command === "runtime_platform") return "desktop";
-    if (command === "core_api_profile") return { profile: profileHandle, ...profile, destination: profile.destination_hash, connections: [], peers: [] };
+    if (command === "core_api_profile") {
+      if (!current.profile) throw JSON.stringify({ code: "locked", retry_after_ms: null });
+      return { profile: profileHandle, ...profile, destination: profile.destination_hash, connections: [], peers: [] };
+    }
     if (command === "core_api_draft_get") return { text: "" };
     if (command === "core_api_draft_set") return {};
     if (command === "core_api_send_message") return send(payload);
@@ -85,6 +99,9 @@ beforeEach(() => {
         if (snapshotsFail) throw JSON.stringify({ code: "unavailable", retry_after_ms: 100 });
         return current;
       }
+      if (payload.operation === "profile.create") return createProfile(params);
+      if (payload.operation === "bootstrap.preview") return bootstrapPreview(params);
+      if (payload.operation === "peer.pairing_accept") return { profile: profileHandle, peer: "d".repeat(40), trust: "awaiting_consent" };
       if (payload.operation === "workspace.timeline_query") {
         if (params.view === "thread_messages") return { result: {
           root, replies: [], next_cursor: null, high_water: 1, unread_count: 1,
@@ -109,6 +126,230 @@ afterEach(() => {
 });
 
 describe("Core application serialization", () => {
+  async function openProfileSetup() {
+    current = { ...current, profile: null };
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Start a chat" }));
+    return screen.getByRole("textbox", { name: "Display name" });
+  }
+
+  it("reuses the serialized key for unchanged first-run creation after an uncertain response", async () => {
+    let attempts = 0;
+    createProfile = async () => {
+      if (++attempts === 1) throw JSON.stringify({ code: "unavailable", retry_after_ms: null });
+      current = { ...current, profile };
+      return { display_name: "Alex" };
+    };
+    const name = await openProfileSetup();
+    fireEvent.change(name, { target: { value: "  Alex  " } });
+    fireEvent.click(screen.getByRole("button", { name: "Create my invite" }));
+    fireEvent.submit(name.closest("form")!);
+    await screen.findByRole("alert");
+    expect(requests("profile.create")).toHaveLength(1);
+    fireEvent.change(name, { target: { value: "Alex" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create my invite" }));
+    await screen.findByRole("textbox", { name: "Message Taylor" });
+    const creates = requests("profile.create");
+    expect(creates).toHaveLength(2);
+    expect(creates[0]).toEqual({ operation: "profile.create", params: { display_name: "Alex" }, idempotencyKey: expect.any(String) });
+    expect(creates[1]).toEqual(creates[0]);
+    expect(host.invoke).toHaveBeenCalledWith("initialize_service", { displayName: null });
+    expect(host.invoke.mock.calls.filter(([command]) => command === "initialize_service")).toHaveLength(1);
+  });
+
+  it("keeps each proposed name bound to its own key without changing an earlier payload", async () => {
+    createProfile = async () => { throw JSON.stringify({ code: "unavailable", retry_after_ms: null }); };
+    const name = await openProfileSetup();
+    for (const text of ["Alex", "Blair", "Alex"]) {
+      fireEvent.change(name, { target: { value: text } });
+      fireEvent.click(screen.getByRole("button", { name: "Create my invite" }));
+      await screen.findByRole("alert");
+    }
+    const creates = requests("profile.create");
+    expect(creates).toHaveLength(3);
+    expect(creates[1].idempotencyKey).not.toBe(creates[0].idempotencyKey);
+    expect(creates[2]).toEqual(creates[0]);
+  });
+
+  it("loads a profile after its accepted creation reply was lost without another create", async () => {
+    createProfile = async () => {
+      current = { ...current, profile };
+      throw JSON.stringify({ code: "unavailable", retry_after_ms: null });
+    };
+    const name = await openProfileSetup();
+    fireEvent.change(name, { target: { value: "Alex" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create my invite" }));
+    await screen.findByRole("alert");
+    fireEvent.click(screen.getByRole("button", { name: "Create my invite" }));
+    await screen.findByRole("textbox", { name: "Message Taylor" });
+    expect(requests("profile.create")).toHaveLength(1);
+    expect(requests("application.snapshot")).toHaveLength(1);
+  });
+
+  it("does not recreate a confirmed profile when the following snapshot failed", async () => {
+    createProfile = async () => {
+      current = { ...current, profile };
+      snapshotsFail = true;
+      return { display_name: "Alex" };
+    };
+    const name = await openProfileSetup();
+    fireEvent.change(name, { target: { value: "Alex" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create my invite" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("Your profile was created");
+    snapshotsFail = false;
+    fireEvent.click(screen.getByRole("button", { name: "Create my invite" }));
+    await screen.findByRole("textbox", { name: "Message Taylor" });
+    expect(requests("profile.create")).toHaveLength(1);
+  });
+
+  it("opens the existing profile after a lost reply and renderer remount without another creation", async () => {
+    createProfile = async () => {
+      current = { ...current, profile };
+      throw JSON.stringify({ code: "unavailable", retry_after_ms: null });
+    };
+    const name = await openProfileSetup();
+    fireEvent.change(name, { target: { value: "Alex" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create my invite" }));
+    await screen.findByRole("alert");
+    cleanup();
+    render(<App />);
+    await screen.findByRole("textbox", { name: "Message Taylor" });
+    expect(requests("profile.create")).toHaveLength(1);
+  });
+
+  it("waits for outcome reconciliation when a retry snapshot is unavailable", async () => {
+    createProfile = async () => { throw JSON.stringify({ code: "unavailable", retry_after_ms: null }); };
+    const name = await openProfileSetup();
+    fireEvent.change(name, { target: { value: "Alex" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create my invite" }));
+    await screen.findByRole("alert");
+    snapshotsFail = true;
+    fireEvent.click(screen.getByRole("button", { name: "Create my invite" }));
+    await screen.findByRole("alert");
+    expect(requests("profile.create")).toHaveLength(1);
+    expect(requests("application.snapshot")).toHaveLength(1);
+  });
+
+  it("does not create under an edited name if the earlier uncertain creation succeeded", async () => {
+    createProfile = async () => {
+      current = { ...current, profile };
+      throw JSON.stringify({ code: "unavailable", retry_after_ms: null });
+    };
+    const name = await openProfileSetup();
+    fireEvent.change(name, { target: { value: "Alex" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create my invite" }));
+    await screen.findByRole("alert");
+    fireEvent.change(name, { target: { value: "Blair" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create my invite" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("already has a profile named Alex");
+    expect(requests("profile.create")).toHaveLength(1);
+    expect((name as HTMLInputElement).value).toBe("Blair");
+  });
+
+  it.each([
+    "MESHCHAT2:pending-consent",
+    "MESHWORKSPACE4:pending-consent",
+    "MESHWORKSPACEDEVICE1:pending-consent",
+  ])("keeps pre-profile %s without effects when bootstrap verification is unavailable", async (document) => {
+    current = { ...current, profile: null };
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Join a chat" }));
+    const invitation = screen.getByRole("textbox", { name: "Invitation" });
+    fireEvent.change(invitation, { target: { value: document } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await screen.findByRole("alert");
+    expect((invitation as HTMLTextAreaElement).value).toBe(document);
+    const kind = document.startsWith("MESHWORKSPACEDEVICE") ? "device_link" : document.startsWith("MESHWORKSPACE") ? "workspace" : "personal";
+    expect(requests("bootstrap.preview")).toEqual([{ operation: "bootstrap.preview", params: { kind, document }, idempotencyKey: null }]);
+    expect(host.invoke.mock.calls.some(([command]) => command === "core_api_profile")).toBe(false);
+    expect(requests("profile.create")).toHaveLength(0);
+    expect(requests("peer.pairing_accept")).toHaveLength(0);
+    expect(requests("workspace.join")).toHaveLength(0);
+    expect(requests("workspace.device_link_submit")).toHaveLength(0);
+    expect(host.invoke.mock.calls.filter(([command]) => command === "initialize_service")).toHaveLength(1);
+    expect(host.invoke.mock.calls.some(([command]) => command === "service_command")).toBe(false);
+  });
+
+  it.each([
+    ["MESHCHAT2:verified-document", "personal", "Connect to Taylor"],
+    ["MESHWORKSPACE4:verified-document", "workspace", "Set up this device for Lakewatcher"],
+    ["MESHWORKSPACEDEVICE1:verified-document", "device_link", "Set up this device for Lakewatcher"],
+  ] as const)("reviews pre-profile %s through the exact trusted verification envelope", async (document, kind, heading) => {
+    current = { ...current, profile: null };
+    bootstrapPreview = async () => ({ kind, preview: kind === "personal" ? personalPreview
+      : kind === "workspace" ? { name: "Lakewatcher", description: "Field coordination", owner_fingerprint: "AAAA BBBB", member_count: 1, retention_days: 90, expires_at: 2_000_000_000 }
+        : { name: "Lakewatcher", member_display_name: "Alex", sponsor_fingerprint: "AAAA BBBB", device_count: 1, expires_at: 2_000_000_000 } });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Join a chat" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Invitation" }), { target: { value: document } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await screen.findByRole("heading", { name: heading });
+    expect(requests("bootstrap.preview")).toEqual([{ operation: "bootstrap.preview", params: { kind, document }, idempotencyKey: null }]);
+    expect(requests("profile.create")).toHaveLength(0);
+    expect(requests("peer.pairing_accept")).toHaveLength(0);
+    expect(requests("workspace.join")).toHaveLength(0);
+    expect(requests("workspace.device_link_submit")).toHaveLength(0);
+    expect(host.invoke.mock.calls.some(([command]) => command === "core_api_profile")).toBe(false);
+    expect(requests("peer.pairing_preview")).toHaveLength(0);
+    expect(requests("workspace.invitation_preview")).toHaveLength(0);
+    expect(requests("workspace.connection")).toHaveLength(0);
+  });
+
+  it("requires both verified remote and I2P consent before creation or personal acceptance", async () => {
+    const document = "MESHI2P1:verified-remote-document";
+    current = { ...current, profile: null };
+    bootstrapPreview = async () => ({ kind: "personal", preview: {
+      ...personalPreview, requires_network_consent: true, requires_i2p_consent: true,
+      remote_profile: { id: "remote", label: "Field relay", endpoint_count: 1, expires_at: 2_000_000_000,
+        capabilities: ["reticulum_tcp"], private_endpoint_warning: false, propagation_identifier: null,
+        privacy_disclosure: "The operator can observe connection metadata." },
+      i2p_access_point: { b32: "a".repeat(52) + ".b32.i2p", label: "Approved relay", relay: "i2p" },
+    } });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Join a chat" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Invitation" }), { target: { value: document } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    const submit = await screen.findByRole("button", { name: "Create profile and connect" });
+    fireEvent.change(screen.getByRole("textbox", { name: "Your display name" }), { target: { value: "Alex" } });
+    fireEvent.submit(submit.closest("form")!);
+    expect(requests("profile.create")).toHaveLength(0);
+    fireEvent.click(screen.getByRole("checkbox", { name: /Connect to this access point/ }));
+    fireEvent.submit(submit.closest("form")!);
+    expect(requests("profile.create")).toHaveLength(0);
+    expect(requests("peer.pairing_accept")).toHaveLength(0);
+    fireEvent.click(screen.getByRole("checkbox", { name: /Use this I2P access point/ }));
+    fireEvent.click(submit);
+    await waitFor(() => expect(requests("peer.pairing_accept")).toHaveLength(1));
+    expect(requests("profile.create")[0]).toEqual({ operation: "profile.create", params: { display_name: "Alex" }, idempotencyKey: expect.any(String) });
+    expect(requests("peer.pairing_accept")[0]).toEqual({ operation: "peer.pairing_accept", params: {
+      profile: profileHandle, document, i2p_consent: true,
+    }, idempotencyKey: null });
+    const operations = host.invoke.mock.calls.filter(([command]) => command === "core_api_request").map(([, payload]) => payload.operation);
+    expect(operations.indexOf("bootstrap.preview")).toBeLessThan(operations.indexOf("profile.create"));
+    expect(operations.indexOf("profile.create")).toBeLessThan(operations.indexOf("peer.pairing_accept"));
+  });
+
+  it("ignores an older verification result after the invitation document changes", async () => {
+    current = { ...current, profile: null };
+    let finishOld!: (value: unknown) => void;
+    const oldPreview = new Promise((resolve) => { finishOld = resolve; });
+    bootstrapPreview = async (params) => params.document === "MESHCHAT2:older-document" ? oldPreview
+      : { kind: "personal", preview: { ...personalPreview, display_name: "Blair" } };
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Join a chat" }));
+    const input = screen.getByRole("textbox", { name: "Invitation" });
+    fireEvent.change(input, { target: { value: "MESHCHAT2:older-document" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() => expect(requests("bootstrap.preview")).toHaveLength(1));
+    fireEvent.change(input, { target: { value: "MESHCHAT2:newer-document" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await screen.findByRole("heading", { name: "Connect to Blair" });
+    await act(async () => finishOld({ kind: "personal", preview: personalPreview }));
+    expect(screen.queryByRole("heading", { name: "Connect to Taylor" })).toBeNull();
+    expect(requests("profile.create")).toHaveLength(0);
+    expect(requests("peer.pairing_accept")).toHaveLength(0);
+  });
+
   it("reuses the exact pending send after Core commits but its reply is lost", async () => {
     const durable = new Map<string, unknown>();
     send = async (params) => {

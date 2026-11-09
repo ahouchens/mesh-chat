@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { onBackButtonPress } from "@tauri-apps/api/app";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
-import type { AdmissionGrant, NotificationCapability, Snapshot } from "./types";
+import type { AdmissionGrant, InvitationPreview, NotificationCapability, Snapshot, WorkspaceDeviceLinkPreview, WorkspaceInvitationPreview } from "./types";
 import { clearPairingResume } from "./pairing-resume";
 import { newOperationId } from "./operationId";
 
@@ -213,8 +213,48 @@ export async function coreApiCreateInvitation(
   return coreApiRequest("peer.pairing_create", { ...options, profile: profile.profile });
 }
 
-export async function coreApiCreateProfile(displayName: string): Promise<Record<string, unknown>> {
-  return await coreApiRequest("profile.create", { display_name: displayName }) as Record<string, unknown>;
+export async function coreApiCreateProfile(
+  displayName: string, idempotencyKey: string,
+): Promise<Record<string, unknown>> {
+  return await coreApiRequest("profile.create", { display_name: displayName }, idempotencyKey) as Record<string, unknown>;
+}
+
+type BootstrapPreviews = {
+  personal: InvitationPreview;
+  workspace: Pick<WorkspaceInvitationPreview, "name" | "description" | "owner_fingerprint" | "member_count" | "retention_days" | "expires_at"
+    | "remote_profile" | "participant_access" | "i2p_access_point" | "requires_i2p_consent" | "requires_network_consent" | "connection_reply_available" | "invitation_digest">;
+  device_link: Omit<WorkspaceDeviceLinkPreview, "workspace_id">;
+};
+
+export async function coreApiBootstrapPreview<K extends keyof BootstrapPreviews>(
+  kind: K, document: string,
+): Promise<BootstrapPreviews[K]> {
+  const result = await coreApiRequest<{ kind: K; preview: BootstrapPreviews[K] }>(
+    "bootstrap.preview", { kind, document });
+  if (!result || result.kind !== kind || !validBootstrapPreview(kind, result.preview)) {
+    throw new ServiceCommandError("core_api_protocol");
+  }
+  return result.preview;
+}
+
+function validBootstrapPreview(kind: keyof BootstrapPreviews, preview: unknown): boolean {
+  if (!preview || typeof preview !== "object" || Array.isArray(preview)) return false;
+  const value = preview as Record<string, unknown>;
+  const strings = kind === "personal"
+    ? ["display_name", "identity_hash", "destination_hash", "fingerprint"]
+    : kind === "workspace" ? ["name", "owner_fingerprint"]
+      : ["name", "member_display_name", "sponsor_fingerprint"];
+  if (strings.some((field) => typeof value[field] !== "string" || !value[field])) return false;
+  if (typeof value.expires_at !== "number" || !Number.isFinite(value.expires_at) || value.expires_at <= 0) return false;
+  if (kind === "personal" && !Array.isArray(value.hints)) return false;
+  if (kind === "workspace" && (typeof value.description !== "string"
+    || !Number.isInteger(value.member_count) || Number(value.member_count) < 1
+    || ![null, 30, 90, 365].includes(value.retention_days as number | null))) return false;
+  if (kind === "device_link" && (!Number.isInteger(value.device_count) || Number(value.device_count) < 1)) return false;
+  for (const field of ["remote_profile", "participant_access", "i2p_access_point"]) {
+    if (field in value && (!value[field] || typeof value[field] !== "object" || Array.isArray(value[field]))) return false;
+  }
+  return true;
 }
 
 export async function coreApiCreateWorkspace(

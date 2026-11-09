@@ -22,7 +22,9 @@ class BootstrapProcess:
         environment = os.environ.copy()
         # RNS/LXMF persist ratchets and peer metadata. The caller supplies the
         # already verified VaultStore workspace, never a generic OS temp root.
-        self._temporary = tempfile.TemporaryDirectory(prefix="mesh-bootstrap-parent-", dir=directory)
+        # RNS appends cache/resource directories and 64-character hashes. Keep
+        # both private process layers short enough for ordinary Windows vaults.
+        self._temporary = tempfile.TemporaryDirectory(prefix="mbp-", dir=directory)
         environment["MESH_CHAT_BOOTSTRAP_DIRECTORY"] = self._temporary.name
         if not getattr(sys, "frozen", False):
             environment["PYTHONPATH"] = str(Path(__file__).resolve().parent.parent)

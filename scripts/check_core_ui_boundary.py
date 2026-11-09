@@ -59,7 +59,7 @@ def main():
         begin = time.monotonic()
         status = subprocess.run(command, cwd=ROOT, env=environment, timeout=180).returncode
         summary = junit_summary(junit) if junit.exists() else {"passed": False, "missing_junit": True}
-        if name == "rendered_ui" and summary.get("tests_executed") != 5:
+        if name == "rendered_ui" and summary.get("tests_executed") != 6:
             summary.update(passed=False, incomplete_required_inventory=True)
         results[name] = {**summary, "exit_code": status, "wall_seconds": time.monotonic() - begin}
     passed = all(result["passed"] and result["exit_code"] == 0 for result in results.values())
