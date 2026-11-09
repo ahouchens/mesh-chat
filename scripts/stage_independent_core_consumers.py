@@ -18,7 +18,7 @@ from stage_core_sdk import ARTIFACTS, tools
 
 ROOT = Path(__file__).resolve().parents[1]
 APPLICATION = ROOT / "examples/typescript-independent-consumer"
-FILES = ("package.json", "consumer.mjs", "runtime.mjs", "README.md")
+FILES = ("package.json", "consumer.mjs", "runtime.mjs", "bootstrap-check.mjs", "README.md")
 LEVEL = "independent_public_sdk_application_staging"
 
 
@@ -80,7 +80,7 @@ def install_typescript(directory, artifact, node, npm):
     subprocess.run([node, npm, "install", str(artifact.resolve()), "--offline", "--ignore-scripts",
                     "--no-audit", "--no-fund", "--no-save", "--package-lock=false"],
                    cwd=directory, env=environment, capture_output=True, check=True, timeout=90)
-    for source in ("consumer.mjs", "runtime.mjs"):
+    for source in (name for name in FILES if name.endswith(".mjs")):
         subprocess.run([node, "--check", source], cwd=directory, env=environment,
                        capture_output=True, check=True, timeout=15)
     probe = """
