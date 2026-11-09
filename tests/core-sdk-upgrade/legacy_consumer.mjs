@@ -12,8 +12,16 @@ const client = await CoreClient.open(transport);
 try {
   const profile = client.capabilities.profiles[0];
   const peer = (await client.profileQuery(profile)).peers[0];
-  const accepted = await client.enqueue(profile, peer, "Upgrade legacy enqueue", "upgrade-legacy-message-key-0001");
-  const report = { accepted: accepted.accepted, api_minor: client.capabilities.api_minor,
+  let accepted;
+  if (process.argv.includes("--old-group-create")) {
+    accepted = typeof (await client.createGroup(profile, "Legacy SDK group", "members", [peer])).group === "string";
+  } else if (process.argv.includes("--old-group-send")) {
+    const group = (await client.groups(profile)).groups[0].group;
+    accepted = (await client.sendGroup(profile, group, "Legacy SDK group message")).sent;
+  } else {
+    accepted = (await client.enqueue(profile, peer, "Upgrade legacy enqueue", "upgrade-legacy-message-key-0001")).accepted;
+  }
+  const report = { accepted, api_minor: client.capabilities.api_minor,
     installed_package: import.meta.resolve("@mesh-chat/core-client").includes("node_modules") };
   if (process.argv.includes("--expect-no-composer")) {
     try { await client.composerQuery(profile, peer); throw new Error("unexpected composer"); }

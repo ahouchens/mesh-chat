@@ -18,6 +18,7 @@ export interface Capabilities {
   api_minor: number;
   stability: string;
   operations: string[];
+  optional_keyed_operations?: string[];
   profiles: string[];
   limits: Record<string, number>;
 }

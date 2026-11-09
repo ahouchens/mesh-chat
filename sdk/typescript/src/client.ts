@@ -124,7 +124,7 @@ export class CoreClient {
     if (this.#closed) {
       throw new TransportClosedError();
     }
-    if ((REQUIRED_KEYS.has(operation) || (KEYED_ACTIONS[operation] ?? []).includes(String(params.action))) &&
+    if ((options.idempotencyKey !== undefined || REQUIRED_KEYS.has(operation) || (KEYED_ACTIONS[operation] ?? []).includes(String(params.action))) &&
         (typeof options.idempotencyKey !== "string" || !/^[A-Za-z0-9._:-]{16,128}$/.test(options.idempotencyKey))) {
       throw new ProtocolError("operation requires a caller-provided idempotency key");
     }
@@ -303,8 +303,20 @@ export class CoreClient {
 
   async createGroup(profile: string, title: string,
                     postingPolicy: "members" | "owner_admins",
-                    members: string[]): Promise<unknown> {
-    return this.request("group.create", { profile, title, posting_policy: postingPolicy, members });
+                    members: string[], idempotencyKey?: string): Promise<unknown> {
+    if (idempotencyKey !== undefined) this.#requireOptionalKeyed("group.create");
+    return this.request("group.create", { profile, title, posting_policy: postingPolicy, members },
+      idempotencyKey === undefined ? {} : { idempotencyKey });
+  }
+
+  #requireOptionalKeyed(operation: string): void {
+    const caps = this.capabilities;
+    const names = ["optional_key_idempotency_seconds", "optional_keys_per_caller_profile", "optional_keys_per_vault"];
+    if (!Number.isSafeInteger(caps.api_minor) || caps.api_minor < 1 || !Array.isArray(caps.optional_keyed_operations) ||
+        !caps.optional_keyed_operations.includes(operation) || !Array.isArray(caps.operations) || !caps.operations.includes(operation) || !caps.limits || !names.every(name =>
+        Number.isSafeInteger(caps.limits[name]) && caps.limits[name]! > 0)) {
+      throw new CoreError("unsupported_operation", null, null);
+    }
   }
 
   async retryGroupInvitation(profile: string, group: string, member: string): Promise<unknown> {
@@ -329,8 +341,10 @@ export class CoreClient {
     return this.request("group.member_remove", { profile, group, member });
   }
 
-  async sendGroup(profile: string, group: string, text: string): Promise<unknown> {
-    return this.request("group.message_enqueue", { profile, group, text });
+  async sendGroup(profile: string, group: string, text: string, idempotencyKey?: string): Promise<unknown> {
+    if (idempotencyKey !== undefined) this.#requireOptionalKeyed("group.message_enqueue");
+    return this.request("group.message_enqueue", { profile, group, text },
+      idempotencyKey === undefined ? {} : { idempotencyKey });
   }
 
   async groups(profile: string): Promise<unknown> {

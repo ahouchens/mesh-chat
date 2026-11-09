@@ -42,6 +42,7 @@ from .views import (call_ice_view, call_media_view, call_settings_view, device_r
 from .errors import ApiFailure, failure_code
 from .limits import MAX_FRAME_BYTES, MAX_REQUEST_JSON_DEPTH, MAX_REQUEST_JSON_TOKENS
 from .composer import Composer, COMPOSER_LIMITS
+from .optional_mutations import OPTIONAL_KEY_LIMITS
 from .views import composer_view
 from .requests import COMPOSER_OPERATIONS
 from .diagnostics import Diagnostics, MAX_DIAGNOSTICS, MAX_DIAGNOSTIC_BYTES
@@ -656,16 +657,29 @@ class CoreSession:
                 return group_membership_view(params["profile"], params["group"], observation)
             if operation == "group.message_enqueue":
                 group_id = self._group_identifier(grant, profile, params["group"])
-                observation = self._groups.send(profile, group_id, params["text"])
+                if key is None:
+                    observation = self._groups.send(profile, group_id, params["text"])
+                else:
+                    if operation not in getattr(self._groups, "optional_keyed_operations", ()):
+                        raise ApiFailure("unsupported_operation")
+                    observation = self._groups.send_keyed(MessageScope(grant.caller, profile), group_id,
+                        params["text"], self._operation_id(grant, profile, key))
+                message = (self._handle(grant, "group_message", profile, observation.message_id)
+                           if getattr(observation, "message_id", None) is not None else None)
                 return group_message_sent_view(params["profile"], params["group"],
-                                               observation)
+                                               observation, message)
             if operation == "group.create":
                 contacts = [self._peers(grant, profile).get(handle)
                             for handle in params["members"]]
                 if any(contact is None for contact in contacts):
                     raise ApiFailure("forbidden")
-                observation = self._groups.create(
-                    profile, params["title"], contacts, params["posting_policy"])
+                if key is None:
+                    observation = self._groups.create(profile, params["title"], contacts, params["posting_policy"])
+                else:
+                    if operation not in getattr(self._groups, "optional_keyed_operations", ()):
+                        raise ApiFailure("unsupported_operation")
+                    observation = self._groups.create_keyed(MessageScope(grant.caller, profile), params["title"],
+                        contacts, params["posting_policy"], self._operation_id(grant, profile, key))
                 return group_view(
                     params["profile"],
                     self._handle(grant, "group", profile, observation.group_id),
@@ -1396,8 +1410,13 @@ class CoreSession:
             limits.update(diagnostic_count=MAX_DIAGNOSTICS, diagnostic_bytes=MAX_DIAGNOSTIC_BYTES)
         if self._composer is not None:
             limits.update(COMPOSER_LIMITS)
-        return {"api_major": 1, "api_minor": 1, "stability": "experimental",
-                "operations": list(self._operations), "profiles": list(profiles), "limits": limits}
+        result = {"api_major": 1, "api_minor": 1, "stability": "experimental",
+                  "operations": list(self._operations), "profiles": list(profiles), "limits": limits}
+        optional = sorted(set(getattr(self._groups, "optional_keyed_operations", ())) & set(self._operations))
+        if optional:
+            result["optional_keyed_operations"] = optional
+            limits.update(OPTIONAL_KEY_LIMITS)
+        return result
 
     def _observe(self, grant, profile, operation, params):
         view = self._observations.profile(profile)

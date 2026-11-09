@@ -51,6 +51,28 @@ private fun capabilities(major: Int = 1): JSONObject = JSONObject()
 
 class CoreClientTest {
     @Test
+    fun malformedMajorNeverCoercesToSupportedVersion() {
+        for (major in listOf<Any>("1", 1.5, true)) {
+            val transport = Scripted(success("client:1", capabilities().put("api_major", major)))
+            val error = runCatching { CoreClient.open(transport) }.exceptionOrNull()
+            assertEquals("incompatible_version", (error as CoreException).code)
+            assertTrue(transport.closed)
+            assertEquals(1, transport.written.size)
+        }
+    }
+
+    @Test
+    fun explicitGroupKeyRequiresFeatureAndPreservesLegacyNoKeyCall() {
+        val transport = Scripted(success("client:1", capabilities()), success("client:2", JSONObject()))
+        val client = CoreClient.open(transport)
+        val error = runCatching { client.createGroup(PROFILE, "Title", "members", listOf(PEER), "explicit-group-key-0001") }.exceptionOrNull()
+        assertEquals("unsupported_operation", (error as CoreException).code)
+        assertEquals(1, transport.written.size)
+        client.createGroup(PROFILE, "Title", "members", listOf(PEER))
+        assertFalse(JSONObject(transport.written[1]).has("idempotency_key"))
+    }
+
+    @Test
     fun missingComposerCapabilityRejectsBeforeAnyMutationFrame() {
         val transport = Scripted(success("client:1", capabilities()))
         val client = CoreClient.open(transport)

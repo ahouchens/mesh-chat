@@ -40,6 +40,10 @@ test("composer refuses an older host before writing and never invents a key", as
   await assert.rejects(client.workspaceAdmissionGrantList(PROFILE, "w".repeat(64)), ProtocolError);
   await assert.rejects(client.profileCatalog(), (error: unknown) => error instanceof CoreError && error.code === "unsupported_operation");
   await assert.rejects(client.lockProfile(PROFILE, "caller-key-profile-0001"), (error: unknown) => error instanceof CoreError && error.code === "unsupported_operation");
+  await assert.rejects(client.createGroup(PROFILE, "Title", "members", [PEER], "caller-group-key-0001"),
+    (error: unknown) => error instanceof CoreError && error.code === "unsupported_operation");
+  await assert.rejects(client.sendGroup(PROFILE, "g".repeat(64), "Text", "caller-group-key-0001"),
+    (error: unknown) => error instanceof CoreError && error.code === "unsupported_operation");
   assert.equal(transport.written.length, 1);
 });
 
@@ -52,6 +56,23 @@ test("all repaired keyed helpers preserve an explicit caller key", async () => {
   await client.workspaceJoin(PROFILE, "signed document", key);
   await client.workspaceAdmissionGrantList(PROFILE, "w".repeat(64), key);
   assert.ok(transport.written.slice(1).every(line => JSON.parse(line).idempotency_key === key));
+});
+
+test("optional keyed group calls require coherent capability and a valid explicit key", async () => {
+  const limits = { optional_key_idempotency_seconds: 604800, optional_keys_per_caller_profile: 4096, optional_keys_per_vault: 65536 };
+  const caps = { ...CAPABILITIES, api_minor: 1, operations: [...CAPABILITIES.operations, "group.create"],
+    optional_keyed_operations: ["group.create"], limits };
+  const transport = new Scripted(success("client:1", caps), success("client:2", {}));
+  const client = await CoreClient.open(transport);
+  await assert.rejects(client.createGroup(PROFILE, "Title", "members", [PEER], "bad"), ProtocolError);
+  assert.equal(transport.written.length, 1);
+  await client.createGroup(PROFILE, "Title", "members", [PEER], "explicit-group-key-0001");
+  assert.equal(JSON.parse(transport.written[1]!).idempotency_key, "explicit-group-key-0001");
+  const broken = new Scripted(success("client:1", { ...caps, operations: [] }));
+  const unsupported = await CoreClient.open(broken);
+  await assert.rejects(unsupported.createGroup(PROFILE, "Title", "members", [PEER], "explicit-group-key-0001"),
+    (error: unknown) => error instanceof CoreError && error.code === "unsupported_operation");
+  assert.equal(broken.written.length, 1);
 });
 
 test("ambiguous JSON and admission errors fail closed without a second frame", async () => {

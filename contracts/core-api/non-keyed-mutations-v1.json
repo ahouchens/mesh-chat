@@ -606,5 +606,10 @@
     "first_domain_batch": "A group_service.py and new test_group_operation_idempotency.py assigned. Atomic message+recipient legs+global receipt; current profile/membership/posting authority before replay; postcommit network attempts.",
     "remaining_cross_owner": "C service.py remains exclusive; require prepared trust/settings/conversation/connection-reply hooks, C reconnect_service.py/participant_service.py hooks; request reactions.py/contact_invitations.py/direct_recovery.py exact ownership before edits.",
     "metadata_correction": "Three workspace.device_removal_* families already have synthetic target-derived domain IDs but reject SDK-provided keys; additive explicit key path must fix parser/schema/session/pending replay together."
-  }
+  },
+  "implemented_optional_keyed_extensions": [
+    "group.create",
+    "group.message_enqueue"
+  ],
+  "status_note": "Legacy40mutationactions remain in this audit; explicit advertised keyed variants for these2 are now implemented. Other38action variants remain unimplemented; no fullspec6.6/M5 claim."
 }
