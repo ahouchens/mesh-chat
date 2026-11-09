@@ -45,7 +45,9 @@ async function create(executable, directory, name, owned) {
   if (["nearby_discovery", "lan_fallback", "help_route"].some(key => settings[key] !== false)) throw new Error();
   const calls = (await client.request("call.settings_query", { profile: peer.profile })).settings;
   await client.request("call.settings_update", { profile: peer.profile,
-    settings: { ...calls, turn_broker_consent: true, relay_only: false } });
+    settings: { ...calls, turn_broker_consent: true, relay_only: true } });
+  const applied = (await client.request("call.settings_query", { profile: peer.profile })).settings;
+  if (applied.turn_broker_consent !== true || applied.relay_only !== true) throw new Error();
   return peer;
 }
 async function state(peer) {
@@ -100,11 +102,11 @@ async function check(executable, directory) {
     const answerer = await create(executable, join(directory, "answerer"), "Independent answerer", owned);
     if (!offerer.destination || offerer.destination === answerer.destination) throw new Error();
     phase = "public_pairing";
-    const begun = await offerer.client.pairingBegin(offerer.profile, "offer", randomUUID(), { allowDirectIpDisclosure: true });
+    const begun = await offerer.client.pairingBegin(offerer.profile, "offer", randomUUID(), { allowDirectIpDisclosure: false });
     offerer.pairing = begun.pairing;
     const code = await wait(async () => (await state(offerer)).pairing_code);
     answerer.pairing = (await answerer.client.pairingBegin(answerer.profile, "answer", randomUUID(), {
-      pairingCode: code, allowDirectIpDisclosure: true })).pairing;
+      pairingCode: code, allowDirectIpDisclosure: false })).pairing;
     phase = "explicit_approval";
     const invitation = await wait(async () => one((await snapshot(answerer)).contact_invitations,
       item => item.state === "pending"));
@@ -139,7 +141,8 @@ async function check(executable, directory) {
     if (exits.some(result => result.status !== "fulfilled")) throw new Error("retirement_incomplete");
     phase = previous;
   }
-  return { fresh_profiles: 2, alternate_paths_disabled: true, explicit_disclosure_consent: true,
+  return { fresh_profiles: 2, alternate_paths_disabled: true, direct_disclosure_consented: false,
+    relay_only_requested: true, broker_consent: true,
     explicit_contact_decisions: 2, supervisor_transfers: 2, public_messaging_ready: 2,
     transferred_cancel_preserves_delivery: true,
     authenticated_receipts: 2, original_message_key_replay: true, single_inbound_and_outbound_records: true,

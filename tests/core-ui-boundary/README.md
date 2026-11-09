@@ -192,7 +192,8 @@ Android, pairing and SC21 receipt traffic remain separate requirements.
 The separate required `windows-independent-pairing.json` producer then uses the
 same retained SDK and frozen runtime to start two fresh normal Windows host
 instances outside the checkout. Only public SDK operations perform pairing,
-explicit invitation/contact decisions, transferred-intent cancellation and
+explicit relay-only requests with broker consent and direct disclosure declined,
+invitation/contact decisions, transferred-intent cancellation and
 bidirectional messages. Public connection observations must stay ready; actual
 Core `delivered` queries and exactly one inbound/outbound public record per
 message establish the receipt checks. This report binds its bootstrap report,

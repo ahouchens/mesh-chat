@@ -40,7 +40,8 @@ check does not exchange peer messages or qualify SC21.
 
 `pairing-check.mjs` separately starts two normal application host instances with
 fresh protected data directories. It disables LAN/discovery/help routes through
-public settings, explicitly consents to broker use and IP disclosure, exchanges
+public settings, explicitly consents to broker use, requests relay-only ICE and
+declines direct-IP disclosure on both public pairing intents, then exchanges
 a public pairing code, accepts the signed invitation and approves the pending
 contact. Both intents must transfer. Cancelling those transferred intents must
 preserve public messaging readiness and delivery. One message in each direction
@@ -48,6 +49,9 @@ must reach authenticated `delivered` state, retain the same message on original
 key replay and produce exactly one outbound/inbound public record. Both hosts
 must acknowledge clean shutdown, and the producer checks EFS on both vaults.
 The report is Windows-only. Android, selected ICE paths and SC21 remain separate.
+The public pairing disclosure option governs gathering; it does not grant
+persistent per-contact direct-IP messaging consent. This check uses the supported
+relay-only route and never injects that separate consent through a private API.
 
 Input and output are bounded newline-delimited JSON on dedicated inherited
 streams. Each input contains `id`, `operation`, `params`, and, for a keyed

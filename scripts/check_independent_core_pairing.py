@@ -15,8 +15,9 @@ from stage_independent_core_consumers import ROOT, cleanup, digest, install_type
 from stage_core_sdk import tools
 
 LEVEL = "windows_installed_public_sdk_supervisor_pairing_and_receipts"
-SCOPE = "Two normally installed Windows application hosts, explicit public pairing and authenticated receipts with actual DPAPI/EFS; no Android, selected-path, impairment, media, physical or SC21 qualification"
-CHECKS = {"fresh_profiles": 2, "alternate_paths_disabled": True, "explicit_disclosure_consent": True,
+SCOPE = "Two normally installed Windows application hosts, relay-only public pairing requests and authenticated receipts with actual DPAPI/EFS; no Android, selected-path, impairment, media, physical or SC21 qualification"
+CHECKS = {"fresh_profiles": 2, "alternate_paths_disabled": True, "direct_disclosure_consented": False,
+          "relay_only_requested": True, "broker_consent": True,
           "explicit_contact_decisions": 2, "supervisor_transfers": 2, "public_messaging_ready": 2,
           "transferred_cancel_preserves_delivery": True,
           "authenticated_receipts": 2, "original_message_key_replay": True,
