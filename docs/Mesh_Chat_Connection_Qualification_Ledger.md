@@ -19,6 +19,24 @@ These are local durability checks. The eight required rendered-App cases,
 packaged upgrade fixtures and combined Wave 2 CI remain pending. The accepted
 Wave 1 source and its evidence below remain unchanged.
 
+### Wave 2 lifecycle and private inspector checkpoint
+
+The lifecycle batch `9559312` and deferred-constructor correction `d86b47a`
+were integrated at `644c6b6`. A failed unpublished service retains ownership
+while cleanup is deferred, and the bridge rejects replacement initialization
+until that exact runtime releases its vault. The lead ran 138 combined mobile,
+profile-lifecycle, pending-carrier, runtime and composer cases: all passed,
+zero skips, 3.90 seconds.
+
+Private inspector `409a4e8` was then integrated at
+`1c360bd3d64f09ee95f888f430813d28becf9783`. Thirty-seven inspector, native Windows
+and lifecycle cases passed, zero skips, 3.38 seconds. All 669 Core and contract
+tests passed on that combined source, zero skips, 30.22 seconds. The inspector
+reports current resource/incarnation-bound path observations and marks unavailable
+measurements explicitly. These checks do not prove a relay path, cross-platform
+traffic or fault budgets; those require the active topology qualification.
+Submission-failure cleanup and Android stats sampling remain follow-up work.
+
 ### Wave 1 accepted at the fully qualified combined source
 
 The combined implementation is `174728edad62aae6ef16e95b075183d06c5cdda3`,
