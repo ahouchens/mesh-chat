@@ -41,6 +41,16 @@ encrypted vault before networking starts. Same-key retries survive service
 restart; changed display names conflict. Networking after the commit is a
 separate effect, and a failed response does not undo committed profile creation.
 
+The same trusted bootstrap port accepts verification-only `bootstrap.preview`
+through `private-bootstrap-request-v1.schema.json`: parameters are `kind`
+(`personal`, `workspace`, or `device_link`) and `document`, with no profile or
+idempotency key. Documents are bounded to 1 MiB of UTF-8. The result is
+`{kind, preview}` with selected signed display, fingerprint, expiry and consent
+fields; it excludes saved-workspace records and internal IDs. Verification does
+not create an identity, accept or join, grant consent, write to the vault, or
+contact an endpoint. Existing profile-scoped preview operations retain their
+separate public contracts.
+
 The trusted application host authenticates callers before constructing a facade
 session. The session holds its caller ID, operation permissions and allowed
 profile scopes; none of those facts come from request JSON. Windows bootstrap
