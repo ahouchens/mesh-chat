@@ -12,6 +12,12 @@ extensions.configure<com.android.build.api.dsl.LibraryExtension> {
     compileSdk = 36
     defaultConfig { minSdk = 24 }
     buildFeatures { aidl = true }
+    packaging.resources {
+        // AGP excludes this Java resource by default; the redistributed client
+        // must retain its own MIT license inside classes.jar.
+        excludes.remove("/META-INF/LICENSE")
+        excludes.remove("META-INF/LICENSE")
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
