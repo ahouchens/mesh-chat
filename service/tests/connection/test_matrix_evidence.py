@@ -14,6 +14,7 @@ from connection_test_inventory import REQUIRED_SUITES
 from check_core_ui_boundary import PYTHON_SELECTION, RENDERED_CASES, junit_summary
 from check_core_windows_boundary import CASES as WINDOWS_CASES, SELECTION as WINDOWS_SELECTION
 from core_boundary_evidence import UI_LEVEL, WINDOWS_LEVEL, digest
+from native_windows_evidence import LEVELS as NATIVE_LEVELS, CHECKS as NATIVE_CHECKS, COUNTS as NATIVE_COUNTS, SCOPE as NATIVE_SCOPE
 from test_desktop_transport import CHECKS
 from test_packaged_lifecycle import CHECKS as PACKAGED_CHECKS, COUNTS as PACKAGED_COUNTS, LEVEL as PACKAGED_LEVEL
 from test_packaged_transport import CHECKS as TRANSPORT_CHECKS, COUNTS as TRANSPORT_COUNTS, LEVEL as TRANSPORT_LEVEL
@@ -69,6 +70,15 @@ def fixture(directory):
                         ("android/android-qualification.json", android)):
         (directory / path).write_text(json.dumps(value))
     boundary_reports(directory, source, tree)
+    for index, kind in enumerate(("control", "lifecycle"), start=3):
+        native = {"v": 1, "passed": True, "source_commit": source, "source_tree": tree,
+                  "evidence_level": NATIVE_LEVELS[kind], "run_id": str(index) * 32,
+                  "sidecar_sha256": packaged["sidecar_sha256"], "build_input_sha256": packaged["build_input_sha256"],
+                  "build_manifest_sha256": "f" * 64, "checks": list(NATIVE_CHECKS[kind]),
+                  "counts": dict(NATIVE_COUNTS[kind]), "duration_seconds": 1.0, "scope": NATIVE_SCOPE}
+        if kind == "lifecycle":
+            native["timings_ms"] = {"open_max": 100, "control_max": 200, "control_p95": 150}
+        (directory / f"desktop/native-windows-{kind}.json").write_text(json.dumps(native))
     return source, tree, android
 
 
@@ -115,7 +125,8 @@ def test_gate_revalidates_policy_inventory_and_both_platform_component_reports(t
     assert set(result["windows_transport_checks"]) == CHECKS
     assert set(result["report_sha256"]) == {"policy", "windows_transport", "windows_packaged_lifecycle",
                                           "windows_packaged_transport", "windows_packaged_pairing", "android",
-                                          "core_ui_boundary", "core_windows_boundary"}
+                                          "core_ui_boundary", "core_windows_boundary",
+                                          "windows_native_control", "windows_native_lifecycle"}
     assert result["windows_packaged_lifecycle_checks"] == list(PACKAGED_CHECKS)
     assert result["core_ui_boundary_python_tests"] == len(PYTHON_SELECTION)
     assert result["core_ui_boundary_rendered_tests"] == 6
@@ -311,6 +322,7 @@ def test_suite_manifest_is_uniform_across_every_required_component(tmp_path):
         "policy", "windows_transport", "windows_packaged_lifecycle",
         "windows_packaged_transport", "windows_packaged_pairing",
         "core_ui_boundary_python", "core_ui_boundary_rendered", "core_windows_boundary",
+        "windows_native_control", "windows_native_lifecycle",
         "android_webrtc", "android_signaling", "android_core_api", "android_core_consumer",
         *("direct_Linux_" + name for name in DIRECT_SUITES),
         *("direct_Windows_" + name for name in DIRECT_SUITES)]
@@ -332,6 +344,24 @@ def test_suite_manifest_is_uniform_across_every_required_component(tmp_path):
     assert [record["tests"]["executed"] for record in boundary] == [len(PYTHON_SELECTION), 6, 3]
     assert all(record["artifacts"]["junit"] for record in boundary)
     assert all("inventory" in record["artifacts"] for record in (boundary[0], boundary[2]))
+
+
+@pytest.mark.parametrize("fault", ["missing", "binary", "inputs", "manifest", "reused_run", "partial_soak"])
+def test_native_packaged_runs_are_mandatory_and_bound_to_the_same_tested_artifact(tmp_path, fault):
+    source, tree, _ = fixture(tmp_path)
+    path = tmp_path / "desktop/native-windows-lifecycle.json"
+    value = json.loads(path.read_text())
+    if fault == "missing":
+        path.unlink()
+    else:
+        if fault == "binary": value["sidecar_sha256"] = "9" * 64
+        elif fault == "inputs": value["build_input_sha256"] = "9" * 64
+        elif fault == "manifest": value["build_manifest_sha256"] = "9" * 64
+        elif fault == "reused_run": value["run_id"] = "c" * 32
+        else: value["counts"]["channel_pairs"] = 99
+        path.write_text(json.dumps(value))
+    with pytest.raises((ValueError, FileNotFoundError)):
+        matrix.collect(tmp_path, source, tree, ["policy", "verification"])
 
 
 def test_suite_record_rejects_failed_skipped_or_unbounded_counts():
