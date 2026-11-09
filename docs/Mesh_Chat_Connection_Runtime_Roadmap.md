@@ -2,6 +2,18 @@
 
 Feature branch: `codex/mesh-chat-core-refactor`.
 
+## Current integration checkpoint (2026-11-09)
+
+Integration begins at `435b497150e5f0d12cb1c5dc7b4602da7a66ec4c` on a
+separate lead branch. The [coordination inventory](Mesh_Chat_Core_Integration_Coordination.md)
+assigns exclusive ownership and defines the two-wave implementation gates.
+Existing checked items below are historical implementation records. They are
+not evidence that the current Windows and Android UI paths work end to end:
+the baseline audit identified production parser/session, mobile routing and UI
+serialization/idempotency defects despite passing component tests.
+The acceptance reconciliation and ledger will record repaired behavior against
+exact integrated source and artifacts. Full M2–M5 completion is not claimed.
+
 Executed automated evidence for the current commit is recorded in the
 [qualification ledger](Mesh_Chat_Connection_Qualification_Ledger.md);
 it separates automated runs from physical and packaged limits.

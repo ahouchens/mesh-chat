@@ -1,5 +1,22 @@
 # Connection runtime qualification ledger
 
+## Integration revalidation (2026-11-09)
+
+The current integration baseline is
+`435b497150e5f0d12cb1c5dc7b4602da7a66ec4c`. All runs below retain their
+historical source/artifact scope; none is automatically evidence for this head.
+The supplied baseline audit reports schema/production-parser disagreement,
+mutation idempotency rejection, mobile Core stubs and UI serialization/retry
+defects. These findings are repair inputs, not passing evidence. The lead has
+verified the clean baseline and presence of the native Windows implementation;
+combined Wave 1 execution and full CI qualification are pending.
+
+The [coordination inventory](Mesh_Chat_Core_Integration_Coordination.md) records
+owners, cross-boundary requirements and remaining specification obligations.
+Physical qualification remains unavailable and publication is outside scope.
+
+## Historical evidence
+
 This ledger records the automated evidence behind the connection-runtime refactor at
 commit `3517e3d` (2026-11-02). The transport and packaged-Windows evidence below
 was captured at
@@ -165,11 +182,13 @@ condition is recorded with its actual status:
 | M2: required coverage intact with explicit skip reporting | met | Gate fails
   missing, skipped, canceled or stale evidence; inventory has zero skips. |
 | M4: production Windows and Android transports no longer require a WebView |
-  **partially met** | Android native transport exists; Windows uses packaged
-  WebView2, and the production native Windows DataChannel is not implemented. |
+  **partially met** | Android native transport and a native Windows DataChannel
+  implementation exist. Native Windows component evidence uses legacy bridge
+  policy; production supervisor promotion and cross-platform parity remain open. |
 | M4: scenario runner on those exact transports, fault and 100-iteration
-  matrices | **not met** | Packaged WebView2 scenarios pass; the native Windows
-  fault/receipt soak does not exist. |
+  matrices | **not met** | Historical native Windows component fault and receipt
+  soaks are recorded above; the complete shared-policy, impaired, cross-platform
+  matrix and exact integrated-source qualification remain open. |
 | M4: defined physical qualification checklist on a release candidate |
   unavailable | No physical devices or isolated network. |
 | M5: INV21–INV26 and SC21–SC26 pass | **not met** | INV21/22/25/26 and
@@ -195,7 +214,7 @@ condition is recorded with its actual status:
 
 **Conclusion.** The specification's M2–M5 definition of done is not met. The
 facade and clients cover the implemented operation inventory, which is not proof
-that all specification requirements are implemented. Native Windows transport,
+that all specification requirements are implemented. Native Windows promotion,
 packaged consumers, UI migration, profile lifecycle, legacy-loop removal and the
 remaining automated scenarios are implementation/qualification work. Only the
 physical checklist requires the unavailable physical test environment. Release
@@ -214,7 +233,9 @@ These were **not** executed and are not claimed anywhere in this ledger:
 - published SDK/package artifacts and a supported version-pair matrix;
 - a **tagged** release qualification and any publication; a branch-build release
   qualification was executed and passed but is not a release;
-- a native Windows DataChannel implementation.
+- full supervisor-owned native Windows production promotion and its complete
+  cross-platform impairment qualification (the native implementation and
+  historical component tests do exist).
 
 The corresponding acceptance rows (INV21, INV22, INV25, INV26, SC01, SC21, SC25)
 remain partial or open for exactly these reasons.
