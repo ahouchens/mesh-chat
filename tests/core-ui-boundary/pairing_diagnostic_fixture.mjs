@@ -1,0 +1,85 @@
+// Synthetic SDK/host boundaries exercise the actual producer's failure output.
+// This never starts Core, a native host, a pipe or a network connection.
+import { registerHooks } from "node:module";
+
+const originalNow = Date.now;
+const started = originalNow();
+let expired = false;
+Date.now = () => expired ? started + 300000 : started;
+const fault = process.env.PAIRING_DIAGNOSTIC_FAULT;
+let accepted = false;
+let approved = false;
+let answered = false;
+class CoreError extends Error {
+  constructor(code) { super("PRIVATE_ERROR_TEXT"); this.code = code; }
+}
+const destination = role => "PRIVATE_DESTINATION_" + role;
+const other = role => role === "offerer" ? "answerer" : "offerer";
+function halt(name) { if (fault === name) expired = true; }
+globalThis.__diagnosticFixture = {
+  CoreError,
+  launchRuntime: async (_executable, directory) => ({ pipe: directory.endsWith("offerer") ? "offerer" : "answerer",
+    stop: async () => {} }),
+  connectNamedPipe: async pipe => pipe,
+  CoreClient: { open: async role => {
+    let created = false;
+    return {
+      capabilities: { profiles: ["PRIVATE_PROFILE"], operations: [] }, close() {},
+      async request(operation) {
+        if (operation === "runtime.capabilities") return { profiles: ["PRIVATE_PROFILE"] };
+        if (operation === "profile.create") { created = true; return {}; }
+        if (operation === "profile.query") return { destination: destination(role), connections: ["PRIVATE_CONNECTION"] };
+        if (operation === "settings.update") return {};
+        if (operation === "settings.query") return { settings: { nearby_discovery: false, lan_fallback: false, help_route: false } };
+        if (operation === "call.settings_update") return {};
+        if (operation === "call.settings_query") return { settings: { stun_urls: [], turn_url: null, turn_username: null,
+          turn_configured: false, turn_broker_url: null, signal_mailbox_url: null, store_call_signaling: true,
+          turn_broker_consent: true, relay_only: true } };
+        if (operation === "application.snapshot") {
+          let contacts = [], invitations = [];
+          if (answered && role === "answerer" && !accepted) {
+            if (fault === "invitation_wait") halt(fault);
+            else invitations = [{ id: "PRIVATE_INVITATION", state: "pending", token: "PRIVATE_TOKEN" }];
+          }
+          if (accepted) {
+            let trust = approved ? "approved" : "pending_request";
+            let target = destination(other(role));
+            if (role === "offerer" && !approved && fault === "pending_request_wait") { target = "PRIVATE_UNEXPECTED"; halt(fault); }
+            if (role === "offerer" && approved && fault === "offerer_relationship_wait") { target = "PRIVATE_UNEXPECTED"; halt(fault); }
+            contacts = [{ trust, destination_hash: target, core_handle: "PRIVATE_CONTACT", sdp: "PRIVATE_SDP" }];
+          }
+          return { profile: created ? { destination: destination(role) } : null,
+            contacts, contact_invitations: invitations, messages: [] };
+        }
+        if (operation === "contact.invitation") {
+          if (fault === "invitation_accept") throw new CoreError("forbidden");
+          if (fault === "unsafe_error") throw new CoreError("private_token");
+          accepted = true; return {};
+        }
+        if (operation === "connection.query") {
+          const unavailable = fault === role + "_ready_wait";
+          if (unavailable) halt(fault);
+          return { observation: { messaging_ready: !unavailable }, token: "PRIVATE_TOKEN" };
+        }
+        throw new Error("Unexpected synthetic request");
+      },
+      async pairingBegin(_profile, kind) {
+        if (kind === "answer") answered = true;
+        return { pairing: "PRIVATE_PAIRING", state: kind === "offer" ? "reserved" : "awaiting_approval", pairing_code: null };
+      },
+      async pairingQuery() { return { state: "offer_ready", pairing_code: "PRIVATE_PAIRING_CODE" }; },
+      async approve() { approved = true; },
+    };
+  } },
+};
+const sources = {
+  "@mesh-chat/core-client": "export const {CoreClient,CoreError}=globalThis.__diagnosticFixture;",
+  "@mesh-chat/core-client/node": "export const {connectNamedPipe}=globalThis.__diagnosticFixture;",
+  "./runtime.mjs": "export const {launchRuntime}=globalThis.__diagnosticFixture;",
+};
+registerHooks({ resolve(specifier, context, nextResolve) {
+  if (Object.hasOwn(sources, specifier)) return {
+    url: "data:text/javascript," + encodeURIComponent(sources[specifier]), shortCircuit: true,
+  };
+  return nextResolve(specifier, context);
+} });

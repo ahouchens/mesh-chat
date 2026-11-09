@@ -6,8 +6,10 @@ import { join } from "node:path";
 import { setTimeout as pause } from "node:timers/promises";
 import { launchRuntime } from "./runtime.mjs";
 import { freshRelaySettings } from "./relay-settings.mjs";
+import { ERROR_CODES, pairingDiagnostics } from "./pairing-diagnostics.mjs";
 
 let phase = "arguments";
+const diagnostics = pairingDiagnostics();
 let deadline;
 async function wait(read) {
   while (Date.now() < deadline) {
@@ -22,10 +24,14 @@ function one(rows, predicate) {
   if (matches.length > 1) throw new Error("unexpected_public_records");
   return matches[0];
 }
-async function snapshot(peer) { return peer.client.request("application.snapshot", {}); }
-async function create(executable, directory, name, owned) {
+async function snapshot(peer) {
+  const value = await peer.client.request("application.snapshot", {});
+  diagnostics.snapshot(peer.role, value, peer.expectedDestination);
+  return value;
+}
+async function create(executable, directory, name, role, owned) {
   const runtime = await launchRuntime(executable, directory);
-  const peer = { runtime, client: null };
+  const peer = { runtime, client: null, role };
   owned.push(peer); // Retain lifetime even if SDK negotiation fails.
   peer.client = await CoreClient.open(await connectNamedPipe(runtime.pipe), { requestTimeoutMs: 30000 });
   const client = peer.client;
@@ -53,6 +59,7 @@ async function create(executable, directory, name, owned) {
 }
 async function state(peer) {
   const value = await peer.client.pairingQuery(peer.profile, peer.pairing);
+  diagnostics.pairing(peer.role, value);
   if (["retired", "retiring"].includes(value.state)) throw new Error("pairing_retired");
   return value;
 }
@@ -68,10 +75,13 @@ async function messagingReady(peer) {
   return wait(async () => {
     const profile = await peer.client.request("profile.query", { profile: peer.profile });
     let ready = 0;
+    let checked = 0;
+    diagnostics.connections(peer.role, profile.connections.length, checked, ready);
     for (const connection of profile.connections) {
       if (Date.now() >= deadline) throw new Error("public_pairing_deadline");
       const value = await peer.client.request("connection.query", { profile: peer.profile, connection });
       if (value.observation.messaging_ready === true) ready++;
+      diagnostics.connections(peer.role, profile.connections.length, ++checked, ready);
     }
     if (ready > 1) throw new Error("unexpected_ready_connections");
     return ready === 1;
@@ -99,38 +109,64 @@ async function check(executable, directory) {
   deadline = Date.now() + 240000;
   try {
     phase = "fresh_profiles";
-    const offerer = await create(executable, join(directory, "offerer"), "Independent offerer", owned);
-    const answerer = await create(executable, join(directory, "answerer"), "Independent answerer", owned);
+    diagnostics.enter("offerer_create");
+    const offerer = await create(executable, join(directory, "offerer"), "Independent offerer", "offerer", owned);
+    diagnostics.enter("answerer_create");
+    const answerer = await create(executable, join(directory, "answerer"), "Independent answerer", "answerer", owned);
+    diagnostics.enter("identity_distinct");
     if (!offerer.destination || offerer.destination === answerer.destination) throw new Error();
+    offerer.expectedDestination = answerer.destination;
+    answerer.expectedDestination = offerer.destination;
     phase = "public_pairing";
+    diagnostics.enter("offer_begin");
     const begun = await offerer.client.pairingBegin(offerer.profile, "offer", randomUUID(), { allowDirectIpDisclosure: false });
+    diagnostics.pairing("offerer", begun);
     offerer.pairing = begun.pairing;
+    diagnostics.enter("offer_code_wait");
     const code = await wait(async () => (await state(offerer)).pairing_code);
-    answerer.pairing = (await answerer.client.pairingBegin(answerer.profile, "answer", randomUUID(), {
-      pairingCode: code, allowDirectIpDisclosure: false })).pairing;
+    diagnostics.enter("answer_begin");
+    const answered = await answerer.client.pairingBegin(answerer.profile, "answer", randomUUID(), {
+      pairingCode: code, allowDirectIpDisclosure: false });
+    diagnostics.pairing("answerer", answered);
+    answerer.pairing = answered.pairing;
     phase = "explicit_approval";
+    diagnostics.enter("invitation_wait");
     const invitation = await wait(async () => one((await snapshot(answerer)).contact_invitations,
       item => item.state === "pending"));
+    diagnostics.enter("invitation_guard");
     if ((await snapshot(answerer)).contacts.length) throw new Error("approval_was_implicit");
+    diagnostics.enter("invitation_accept");
     await answerer.client.request("contact.invitation", { profile: answerer.profile,
       action: "decide", invitation: invitation.id, accept: true });
+    diagnostics.enter("pending_request_wait");
     const request = await wait(async () => one((await snapshot(offerer)).contacts,
       item => item.trust === "pending_request" && item.destination_hash === answerer.destination));
+    diagnostics.enter("request_approve");
     await offerer.client.approve(offerer.profile, request.core_handle);
+    diagnostics.enter("offerer_relationship_wait");
     offerer.contact = await relationship(offerer, answerer);
+    diagnostics.enter("answerer_relationship_wait");
     answerer.contact = await relationship(answerer, offerer);
+    diagnostics.enter("offerer_ready_wait");
     await messagingReady(offerer);
+    diagnostics.enter("answerer_ready_wait");
     await messagingReady(answerer);
     phase = "transferred_cancellation";
     for (const peer of owned) {
+      diagnostics.enter("transfer_wait");
       await wait(async () => (await state(peer)).state === "transferred");
+      diagnostics.enter("transferred_cancel");
       const cancelled = await peer.client.pairingCancel(peer.profile, peer.pairing, randomUUID());
       if (cancelled.state !== "transferred" || cancelled.pairing_code !== null) throw new Error();
     }
     phase = "authenticated_receipts";
+    diagnostics.enter("offerer_receipt");
     await send(offerer, answerer);
+    diagnostics.enter("answerer_receipt");
     await send(answerer, offerer);
+    diagnostics.enter("offerer_ready_recheck");
     await messagingReady(offerer);
+    diagnostics.enter("answerer_ready_recheck");
     await messagingReady(answerer);
   } finally {
     const previous = phase;
@@ -139,7 +175,10 @@ async function check(executable, directory) {
       try { peer.client?.close(); }
       finally { await peer.runtime.stop(); }
     }));
-    if (exits.some(result => result.status !== "fulfilled")) throw new Error("retirement_incomplete");
+    if (exits.some(result => result.status !== "fulfilled")) {
+      diagnostics.enter("retirement");
+      throw new Error("retirement_incomplete");
+    }
     phase = previous;
   }
   return { fresh_profiles: 2, alternate_paths_disabled: true, direct_disclosure_consented: false,
@@ -154,8 +193,9 @@ try {
   if (args.length !== 4 || args[0] !== "--runtime" || args[2] !== "--data-directory") throw new Error();
   process.stdout.write(JSON.stringify(await check(args[1], args[3])) + "\n");
 } catch (error) {
-  const code = error instanceof CoreError && /^[a-z_]{1,64}$/.test(error.code) ? error.code : "unavailable";
-  process.stdout.write(JSON.stringify({ passed: false, phase, error_code: code }) + "\n");
+  const code = error instanceof CoreError && ERROR_CODES.has(error.code) ? error.code : "unavailable";
+  process.stdout.write(JSON.stringify({ passed: false, phase, error_code: code,
+    diagnostics: diagnostics.failure(Number.isFinite(deadline) && Date.now() >= deadline) }) + "\n");
   process.stderr.write("Independent public pairing check failed.\n");
   process.exitCode = 1;
 }

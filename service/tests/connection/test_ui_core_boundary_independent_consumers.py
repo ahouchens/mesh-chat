@@ -2,6 +2,7 @@
 
 import json
 import io
+import copy
 import os
 from pathlib import Path
 import sys
@@ -22,6 +23,95 @@ import check_independent_core_consumers as bootstrap
 import check_independent_core_pairing as pairing
 import verify_android_independent_consumer as android_distribution
 import stage_android_independent_consumer as android_staging
+
+
+@pytest.mark.parametrize("fault", ["invitation_wait", "invitation_accept", "pending_request_wait",
+    "offerer_relationship_wait", "offerer_ready_wait", "answerer_ready_wait", "unsafe_error"])
+def test_actual_node_pairing_producer_reports_safe_specific_failure_observations(fault):
+    # Actual producer control flow; synthetic SDK/host boundary, no native claim.
+    node, _ = staging.tools()
+    completed = subprocess.run([node, "--import", (staging.ROOT /
+        "tests/core-ui-boundary/pairing_diagnostic_fixture.mjs").as_uri(),
+        str(staging.APPLICATION / "pairing-check.mjs"), "--runtime", "unused", "--data-directory", "unused"],
+        cwd=staging.ROOT, env={**os.environ, "PAIRING_DIAGNOSTIC_FAULT": fault},
+        capture_output=True, text=True, timeout=15)
+    assert completed.returncode == 1, completed.stdout + completed.stderr
+    assert len(completed.stdout.encode()) <= 4096
+    observed = json.loads(completed.stdout)
+    details = pairing.failure_details(observed)
+    expected = "invitation_accept" if fault == "unsafe_error" else fault
+    assert details["application_phase"] == "explicit_approval"
+    assert details["diagnostics"]["subphase"] == expected
+    assert details["diagnostics"]["deadline_exhausted"] is (fault not in {"invitation_accept", "unsafe_error"})
+    assert details["error_code"] == ("forbidden" if fault == "invitation_accept" else "unavailable")
+    assert "private" not in (completed.stdout + completed.stderr).lower()
+    peers = details["diagnostics"]["peers"]
+    assert peers["answerer"]["last_pairing"] == {"state": "awaiting_approval", "code_present": False}
+    if fault == "invitation_wait":
+        assert peers["answerer"]["last_snapshot"]["pending_invitations"] == 0
+    elif fault == "pending_request_wait":
+        assert peers["offerer"]["last_snapshot"]["pending_requests"] == 1
+        assert peers["offerer"]["last_snapshot"]["matching_pending_request"] is False
+    elif fault == "offerer_relationship_wait":
+        assert peers["offerer"]["last_snapshot"]["approved_contacts"] == 1
+        assert peers["offerer"]["last_snapshot"]["matching_approved_contact"] is False
+    elif fault.endswith("ready_wait"):
+        role = fault.removesuffix("_ready_wait")
+        assert peers[role]["last_connections"] == {"total": 1, "checked": 1, "ready": 0, "counts_capped": False}
+
+
+def test_node_diagnostic_projection_caps_counts_and_selects_no_private_payloads():
+    node, _ = staging.tools()
+    script = """
+import {pairingDiagnostics, SUBPHASES, ERROR_CODES} from './examples/typescript-independent-consumer/pairing-diagnostics.mjs';
+const diagnostics = pairingDiagnostics();
+diagnostics.enter('invitation_wait');
+diagnostics.snapshot('answerer', {contacts: Array(300).fill({trust:'pending_request',destination_hash:'PRIVATE_DESTINATION'}),
+  contact_invitations: Array(300).fill({state:'pending',sdp:'PRIVATE_SDP'})}, 'PRIVATE_DESTINATION');
+diagnostics.pairing('answerer', {state:'PRIVATE_STATE',pairing_code:'PRIVATE_PAIRING_CODE',token:'PRIVATE_TOKEN'});
+diagnostics.connections('answerer',300,299,298);
+console.log(JSON.stringify({diagnostics:diagnostics.failure(),subphases:[...SUBPHASES],errors:[...ERROR_CODES]}));
+"""
+    completed = subprocess.run([node, "--input-type=module", "-e", script], cwd=staging.ROOT,
+        capture_output=True, text=True, check=True, timeout=15)
+    assert "PRIVATE" not in completed.stdout
+    value = json.loads(completed.stdout)
+    assert set(value["subphases"]) == set().union(*pairing.SUBPHASES.values())
+    contract = json.loads((staging.ROOT / "contracts/core-api/error-v1.schema.json").read_text())
+    assert set(value["errors"]) == pairing.ERROR_CODES == set(contract["properties"]["error"]["properties"]["code"]["enum"])
+    observed = {"passed": False, "phase": "explicit_approval", "error_code": "unavailable", "diagnostics": value["diagnostics"]}
+    pairing.failure_details(observed)
+    peer = observed["diagnostics"]["peers"]["answerer"]
+    assert peer["last_snapshot"]["contacts"] == peer["last_snapshot"]["pending_invitations"] == 256
+    assert peer["last_snapshot"]["counts_capped"] is True
+    assert peer["last_pairing"] == {"state": "unknown", "code_present": True}
+    assert peer["last_connections"] == {"total": 256, "checked": 256, "ready": 256, "counts_capped": True}
+
+
+@pytest.mark.parametrize("fault", ["subphase", "phase_mismatch", "role", "state", "pairing_code", "private_field",
+    "envelope_field", "error_code", "negative", "oversized", "boolean_count", "string_flag", "inconsistent"])
+def test_pairing_failure_report_rejects_unselected_private_or_unbounded_fields(fault):
+    observed = {"passed": False, "phase": "explicit_approval", "error_code": "unavailable",
+        "diagnostics": {"subphase": "offerer_ready_wait", "deadline_exhausted": True, "peers": {"offerer": {
+            "last_pairing": {"state": "awaiting_approval", "code_present": False},
+            "last_connections": {"total": 1, "checked": 1, "ready": 0, "counts_capped": False}}}}}
+    pairing.failure_details(copy.deepcopy(observed))
+    diagnostics = observed["diagnostics"]
+    peer = diagnostics["peers"]["offerer"]
+    if fault == "subphase": diagnostics["subphase"] = "PRIVATE_TOKEN"
+    elif fault == "phase_mismatch": diagnostics["subphase"] = "offer_begin"
+    elif fault == "role": diagnostics["peers"]["PRIVATE_IDENTITY"] = diagnostics["peers"].pop("offerer")
+    elif fault == "state": peer["last_pairing"]["state"] = "PRIVATE_SDP"
+    elif fault == "pairing_code": peer["last_pairing"]["pairing_code"] = "PRIVATE_PAIRING_CODE"
+    elif fault == "private_field": peer["sdp"] = "PRIVATE_SDP"
+    elif fault == "envelope_field": observed["token"] = "PRIVATE_TOKEN"
+    elif fault == "error_code": observed["error_code"] = "private_token"
+    elif fault == "negative": peer["last_connections"]["total"] = -1
+    elif fault == "oversized": peer["last_connections"]["total"] = 257
+    elif fault == "boolean_count": peer["last_connections"]["total"] = True
+    elif fault == "string_flag": peer["last_connections"]["counts_capped"] = "PRIVATE_TOKEN"
+    else: peer["last_connections"]["ready"] = 2
+    with pytest.raises(ValueError): pairing.failure_details(observed)
 
 
 def test_pairing_relay_settings_serialize_real_public_query_into_accepted_core_update(host):
@@ -336,7 +426,9 @@ def test_actual_independent_app_installs_from_sdk_archive_outside_checkout(recor
         rejected = subprocess.run([node, "pairing-check.mjs"], cwd=directory,
                                   capture_output=True, text=True, timeout=15)
         assert rejected.returncode == 1
-        assert json.loads(rejected.stdout) == {"passed": False, "phase": "arguments", "error_code": "unavailable"}
+        assert json.loads(rejected.stdout) == {"passed": False, "phase": "arguments", "error_code": "unavailable",
+            "diagnostics": {"subphase": "arguments", "deadline_exhausted": False, "peers": {}}}
+        assert pairing.failure_details(json.loads(rejected.stdout))["application_phase"] == "arguments"
     finally:
         staging.cleanup(directory, parent)
     assert not directory.exists()
