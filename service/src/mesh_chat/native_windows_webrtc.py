@@ -287,7 +287,7 @@ class WindowsNativeWebRTCHost:
             with self._lock:
                 lease.started = True
                 lease.task = asyncio.current_task()
-                if lease.cancelled or self._closed:
+                if self._leases.get(resource) is not lease or lease.cancelled or self._closed:
                     raise _HostFailure("native_webrtc_session_closed")
             pc = RTCPeerConnection(self._configure(ice_json))
             session.pc = pc
@@ -333,7 +333,8 @@ class WindowsNativeWebRTCHost:
             with self._lock:
                 lease.cancelled = True
                 session.closed = True
-                self._sessions.pop(resource, None)
+                if self._sessions.get(resource) is session:
+                    self._sessions.pop(resource, None)
             try:
                 await self._dispose_lease(lease)
             except BaseException:
@@ -372,7 +373,34 @@ class WindowsNativeWebRTCHost:
                         lease.creating = False
                         lease.created.set()
                     self._release_finished(lease)
+                if not lease.started and coroutine is not None and not self._loop.is_closed():
+                    # ConcurrentFuture.cancel() is not task completion. Once
+                    # scheduling resumes, observe the actual coroutine/task
+                    # termination, including cancellation before its first step.
+                    try:
+                        self._loop.call_soon_threadsafe(self._watch_creation, lease, coroutine)
+                    except RuntimeError:
+                        pass  # Keep custody if task termination is unobservable.
             return _error(error.code if isinstance(error, _HostFailure) else "native_webrtc_creation_failed")
+
+    def _watch_creation(self, lease, coroutine):
+        if lease.started:
+            return
+        def acknowledged(_=None):
+            with self._lock:
+                if (self._leases.get(lease.resource) is lease and not lease.started
+                        and inspect.getcoroutinestate(coroutine) == inspect.CORO_CLOSED):
+                    lease.creating = False
+                    lease.task = None
+                    lease.created.set()
+                    self._release_finished(lease)
+        if inspect.getcoroutinestate(coroutine) == inspect.CORO_CLOSED:
+            acknowledged()
+            return
+        task = next((task for task in asyncio.all_tasks(self._loop)
+                     if task.get_coro() is coroutine), None)
+        if task is not None:
+            task.add_done_callback(acknowledged)
 
     def createOffer(self, resource, ice_json, channels_json):
         return self._create(resource, ice_json, channels_json)

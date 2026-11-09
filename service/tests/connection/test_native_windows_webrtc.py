@@ -314,6 +314,64 @@ def test_failed_shutdown_keeps_native_loop_and_exact_retirement_available_for_re
         instance.shutdown()
 
 
+def test_queued_creation_cancelled_before_first_task_step_acknowledges_without_leaking_capacity(monkeypatch):
+    from mesh_chat import native_windows_webrtc as native
+    instance, _ = host()
+    blocked, release = Event(), Event()
+    original_submit, original_pc = instance._submit, native.RTCPeerConnection
+    allocated, result = [], []
+    def block_loop():
+        blocked.set()
+        assert release.wait(3)
+    def peer(*args, **kwargs):
+        allocated.append(True)
+        return original_pc(*args, **kwargs)
+    worker = Thread(target=lambda: result.append(json.loads(instance.createOffer("queued", json.dumps(ICE), json.dumps(CHANNELS)))))
+    try:
+        monkeypatch.setattr(native, "RTCPeerConnection", peer)
+        monkeypatch.setattr(native, "OPERATION_TIMEOUT", 0.02)
+        monkeypatch.setattr(instance, "_submit", lambda coroutine, **_: original_submit(coroutine, timeout=0.03))
+        instance._loop.call_soon_threadsafe(block_loop)
+        assert blocked.wait(3)
+        worker.start()
+        worker.join(3)
+        assert not worker.is_alive() and not result[0]["ok"]
+        lease = instance._leases["queued"]
+        assert not lease.started and counts(instance)["creating_count"] == 1
+        with pytest.raises(_HostFailure, match="cleanup_pending"):
+            instance.close("queued")
+        assert counts(instance)["reserved_count"] == 1 and not allocated
+        release.set()
+        deadline = time.monotonic() + 3
+        while counts(instance)["reserved_count"] and time.monotonic() < deadline: time.sleep(0.002)
+        assert counts(instance)["reserved_count"] == 0
+        assert lease.created.is_set() and not lease.started and not allocated
+        instance.close("queued")
+        instance.shutdown()
+        assert not instance._thread.is_alive()
+    finally:
+        release.set()
+        worker.join(3)
+        instance.shutdown()
+
+
+def test_late_old_creation_checks_exact_registered_lease_before_allocating_or_detaching_replacement():
+    instance, _ = host()
+    try:
+        old = instance._reserve("reused")
+        old.creating, old.cancelled = False, True
+        instance._release_finished(old)
+        assert json.loads(instance.createOffer("reused", json.dumps(ICE), json.dumps(CHANNELS)))["ok"]
+        current = instance._leases["reused"]
+        with pytest.raises(_HostFailure):
+            instance._submit(instance._open_session(old, json.dumps(ICE), [("mesh-reticulum", True, True)]))
+        assert instance._leases["reused"] is current
+        assert instance._sessions["reused"] is current.session
+        assert counts(instance)["reserved_count"] == counts(instance)["active_count"] == 1
+    finally:
+        instance.shutdown()
+
+
 @pytest.mark.parametrize("phase", ["offer-created", "accepted", "answer-applied"])
 def test_cancellation_at_each_handshake_phase_retires_exactly_that_session(phase):
     left, left_events = host()
