@@ -51,6 +51,37 @@ private fun capabilities(major: Int = 1): JSONObject = JSONObject()
 
 class CoreClientTest {
     @Test
+    fun missingComposerCapabilityRejectsBeforeAnyMutationFrame() {
+        val transport = Scripted(success("client:1", capabilities()))
+        val client = CoreClient.open(transport)
+        val error = runCatching { client.enqueueDraft(PROFILE, PEER, "a".repeat(64)) }.exceptionOrNull()
+        assertEquals("unsupported_operation", (error as CoreException).code)
+        assertEquals(1, transport.written.size)
+    }
+
+    @Test
+    fun composerSerializesIssuedKeysAndExplicitNullRevision() {
+        val caps = capabilities().put("api_minor", 1).put("operations", org.json.JSONArray(listOf(
+            "peer.composer_query", "peer.composer_update", "message.enqueue_draft")))
+        val limits = caps.getJSONObject("limits")
+        for (name in listOf("composer_text_utf8_bytes", "composers_per_caller_profile", "composers_per_vault",
+                "composer_update_idempotency_seconds", "composer_update_keys_per_caller_profile", "composer_update_keys_per_vault",
+                "composer_send_idempotency_seconds", "composer_send_keys_per_caller_profile", "composer_send_keys_per_vault")) {
+            limits.put(name, 16384)
+        }
+        val transport = Scripted(success("client:1", caps), success("client:2", JSONObject()), success("client:3", JSONObject()))
+        val client = CoreClient.open(transport)
+        client.composerUpdate(PROFILE, PEER, null, "draft", "b".repeat(64))
+        client.enqueueDraft(PROFILE, PEER, "a".repeat(64))
+        val update = JSONObject(transport.written[1])
+        assertEquals("b".repeat(64), update.getString("idempotency_key"))
+        assertTrue(update.getJSONObject("params").isNull("expected_revision"))
+        val enqueue = JSONObject(transport.written[2])
+        assertEquals("a".repeat(64), enqueue.getString("idempotency_key"))
+        assertFalse(enqueue.getJSONObject("params").has("text"))
+    }
+
+    @Test
     fun hostAdmissionErrorsKeepTheirCodeAndCloseTheUncorrelatedSession() {
         for (code in listOf("forbidden", "invalid_request", "resource_exhausted", "unavailable")) {
             val rejection = JSONObject(failure("ignored", code)).put("request_id", JSONObject.NULL).toString()

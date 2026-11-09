@@ -18,7 +18,7 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         private set
 
     companion object {
-        const val VERSION = "0.2.0-experimental"
+        const val VERSION = "0.3.0-experimental"
         const val MAX_FRAME_CHARS = 4 * 1024 * 1024
         const val MAX_BATCH = 128
         const val MAX_DIAGNOSTICS = 256
@@ -177,18 +177,41 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         request("peer.draft_get", JSONObject().put("profile", profile).put("peer", peer))
 
     fun composerQuery(profile: String, peer: String, sendRevision: String? = null): JSONObject {
+        requireComposer()
         val params = JSONObject().put("profile", profile).put("peer", peer)
         if (sendRevision != null) params.put("send_revision", sendRevision)
         return request("peer.composer_query", params)
     }
 
-    fun composerUpdate(profile: String, peer: String, expectedRevision: String?, text: String, updateKey: String): JSONObject =
-        dispatch("peer.composer_update", JSONObject().put("profile", profile).put("peer", peer)
+    fun composerUpdate(profile: String, peer: String, expectedRevision: String?, text: String, updateKey: String): JSONObject {
+        requireComposer()
+        require(text.toByteArray(Charsets.UTF_8).size <= capabilities.getJSONObject("limits").getLong("composer_text_utf8_bytes")) {
+            "composer text exceeds negotiated byte limit"
+        }
+        return dispatch("peer.composer_update", JSONObject().put("profile", profile).put("peer", peer)
             .put("expected_revision", expectedRevision ?: JSONObject.NULL).put("text", text), updateKey)
+    }
 
-    fun enqueueDraft(profile: String, recipient: String, draftRevision: String): JSONObject =
-        dispatch("message.enqueue_draft", JSONObject().put("profile", profile).put("recipient", recipient)
+    fun enqueueDraft(profile: String, recipient: String, draftRevision: String): JSONObject {
+        requireComposer()
+        return dispatch("message.enqueue_draft", JSONObject().put("profile", profile).put("recipient", recipient)
             .put("draft_revision", draftRevision), draftRevision)
+    }
+
+    private fun requireComposer() {
+        val operations = capabilities.optJSONArray("operations") ?: throw CoreException("unsupported_operation")
+        val supported = (0 until operations.length()).map { operations.optString(it) }.toSet()
+        val limits = capabilities.optJSONObject("limits") ?: throw CoreException("unsupported_operation")
+        val names = listOf("composer_text_utf8_bytes", "composers_per_caller_profile", "composers_per_vault",
+            "composer_update_idempotency_seconds", "composer_update_keys_per_caller_profile", "composer_update_keys_per_vault",
+            "composer_send_idempotency_seconds", "composer_send_keys_per_caller_profile", "composer_send_keys_per_vault")
+        val minor = capabilities.opt("api_minor")
+        if (minor !is Number || minor.toDouble() < 1 || !minor.toDouble().isFinite() || minor.toDouble() % 1.0 != 0.0 || !supported.containsAll(
+                listOf("peer.composer_query", "peer.composer_update", "message.enqueue_draft")) ||
+                names.any { name -> val value = limits.opt(name); value !is Number ||
+                    !value.toDouble().isFinite() || value.toDouble() <= 0 || value.toDouble() > 9007199254740991.0 ||
+                    value.toDouble() % 1.0 != 0.0 }) throw CoreException("unsupported_operation")
+    }
 
     fun draftSet(profile: String, peer: String, text: String): JSONObject =
         request("peer.draft_set", JSONObject().put("profile", profile).put("peer", peer)
