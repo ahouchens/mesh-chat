@@ -177,6 +177,10 @@ AndroidX result-registry routing for unrelated results, cancelled registrations,
 replacement challenges and cancelled credential UI. Their explicit component
 scope does not qualify successful OS credential confirmation. The required Core
 API inventory has 13 cases; all four Android suites together require 50 cases.
+The separate required Windows gate now collects nine cases: the original three
+app-pipe cases and six normal app-owned host checks. The latter execute actual
+DPAPI and image-authenticated pipes with explicitly unprotected test Vault
+storage. They do not qualify EFS or the independently installed frozen runtime.
 The fresh-profile case starts with no profile or identity, verifies a signed
 invitation through private preview without any vault write or network/event
 effect, then creates only through
