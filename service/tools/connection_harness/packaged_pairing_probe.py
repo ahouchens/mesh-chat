@@ -46,6 +46,48 @@ def cancel_and_restart(controller, fixtures, invitation_id):
     unapproved_invitation(controller, invitation_id)
 
 
+def approved_path(controller, fixtures):
+    controller.phase = "approved_path"
+    try:
+        ready(controller, fixtures)
+    except TimeoutError:
+        # Keep both strings within the existing host's 64-character, identifier
+        # only diagnostic boundary. No raw stats, identities, SDP or paths leave
+        # this process. dN is data-channel state; aN is attachment (1/0/u);
+        # cN counts host close
+        # calls. The error code retains authoritative carrier/bridge categories.
+        states, native = [], []
+        for slot, session in enumerate(("manual-peer-zero", "manual-peer-one")):
+            carrier, bridge, channel, attached, closes = "unknown", "unknown", "unknown", "u", "u"
+            try:
+                profiles = controller.call(slot, "reconnect_profiles")["profiles"]
+                profile = next((item for item in profiles if item.get("contact_id") == fixtures[slot][2]), {})
+                connection = profile.get("connection") or {}
+                carrier = connection.get("carrier", "absent")
+                bridge = connection.get("bridge", "detached")
+            except Exception:
+                pass
+            try:
+                stats = controller.call(slot, "native_webrtc_stats", session_id=session)
+                channel = stats.get("data_channel_state", "unknown")
+                if type(stats.get("attached")) is bool: attached = str(int(stats["attached"]))
+            except Exception:
+                channel = "unavailable"
+            try:
+                count = controller.action(slot, "counts").get("close", 0)
+                if type(count) is int and count >= 0: closes = str(min(count, 999))
+            except Exception:
+                pass
+            if not isinstance(carrier, str) or carrier not in {"absent", "open", "suspect", "closing"}: carrier = "unknown"
+            if not isinstance(bridge, str) or bridge not in {"detached", "attaching", "path_pending", "ready", "restoring"}: bridge = "unknown"
+            if not isinstance(channel, str) or channel not in {"open", "connecting", "closing", "closed", "unavailable"}: channel = "unknown"
+            states.append(f"p{slot}_{carrier}_{bridge}")
+            native.append(f"d{slot}{channel}_a{slot}{attached}_c{slot}{closes}")
+        controller.phase = "approved_path_" + "_".join(native)
+        controller.error_code = "_".join(states)
+        raise
+
+
 def exercise(controller, directory):
     fixtures = seed_profiles(directory)
     for path, key, contact in fixtures:
@@ -88,21 +130,7 @@ def exercise(controller, directory):
         for slot, (_, _, contact_id) in enumerate(fixtures):
             controller.call(slot, "reconnect_consent_set", contact_id=contact_id,
                 auto_reconnect=False, allow_direct_ip_disclosure=True)
-        controller.phase = "approved_path"
-        try:
-            ready(controller, fixtures)
-        except TimeoutError:
-            states = []
-            for slot in range(2):
-                profiles = controller.call(slot, "reconnect_profiles")["profiles"]
-                connection = profiles[0].get("connection") or {} if profiles else {}
-                carrier = connection.get("carrier", "absent")
-                bridge = connection.get("bridge", "detached")
-                if carrier not in {"absent", "open", "suspect", "closing"}: carrier = "unknown"
-                if bridge not in {"detached", "attaching", "path_pending", "ready", "restoring"}: bridge = "unknown"
-                states.append(f"p{slot}_{carrier}_{bridge}")
-            controller.error_code = "_".join(states)
-            raise
+        approved_path(controller, fixtures)
         controller.phase = "receipt_from_inviter"
         exchange_message(controller, fixtures, 0)
         controller.phase = "receipt_from_acceptor"
