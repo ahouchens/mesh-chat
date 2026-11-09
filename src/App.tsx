@@ -65,6 +65,7 @@ import {
   saveCallSettings,
   saveNetworkSettings,
   coreApiPeerForDestination,
+  coreApiProfile,
   coreApiRequest,
   coreApiCloseGroup,
   coreApiGroupInvitation,
@@ -407,8 +408,12 @@ async function setNotificationPreviews(hidden: boolean): Promise<WorkspaceNotifi
   return await coreApiRuntimeMutate("notification_previews", { hidden }, newOperationId()) as unknown as WorkspaceNotificationState;
 }
 
-async function openNotificationTarget(notificationId: string): Promise<NotificationOpenTarget> {
-  return await coreApiRuntimeMutate("notification_open", { notification_id: notificationId }, newOperationId()) as unknown as NotificationOpenTarget;
+async function openNotificationTarget(notificationId: string, lifetime: ProfileLifetime, generation: number): Promise<NotificationOpenTarget> {
+  const profile = await coreApiProfile();
+  const response = await lifetime.mutate(generation, () => coreApiRequest<{ result?: NotificationOpenTarget }>("runtime.mutate", {
+    profile: profile.profile, action: "notification_open", notification_id: notificationId,
+  }, newOperationId()));
+  return response.result ?? {} as NotificationOpenTarget;
 }
 
 
@@ -6933,7 +6938,7 @@ export default function App() {
       if (!active || !lifetime.active) return;
       const generation = lifetime.capture();
       try {
-        const target = await lifetime.mutate(generation, () => openNotificationTarget(notificationId));
+        const target = await openNotificationTarget(notificationId, lifetime, generation);
         if (active && lifetime.isCurrent(generation)) {
           await refresh(true);
           if (active && lifetime.isCurrent(generation)) setNotificationTarget({ ...target });

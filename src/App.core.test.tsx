@@ -288,6 +288,26 @@ describe("Core application serialization", () => {
     expect(requests("runtime.mutate")).toHaveLength(1);
   });
 
+  it("does not admit a notification mutation when its profile lookup finishes after lock and reopen", async () => {
+    render(<App />);
+    await screen.findByRole("textbox", { name: "Message Taylor" });
+    const stale = deferred<unknown>();
+    const original = host.invoke.getMockImplementation()!;
+    let delaying = true;
+    host.invoke.mockImplementation(async (command, payload) => command === "core_api_profile" && delaying
+      ? stale.promise : original(command, payload));
+    const before = host.invoke.mock.calls.filter(([command]) => command === "core_api_profile").length;
+    act(() => host.openUrls.forEach((accept) => accept([`meshchat://notification/${"b".repeat(64)}`])));
+    await waitFor(() => expect(host.invoke.mock.calls.filter(([command]) => command === "core_api_profile")).toHaveLength(before + 1));
+    fireEvent.click(screen.getByRole("button", { name: "Lock Mesh Chat" }));
+    await screen.findByRole("heading", { name: "Mesh Chat is locked" });
+    delaying = false;
+    fireEvent.click(screen.getByRole("button", { name: "Unlock" }));
+    await screen.findByRole("textbox", { name: "Message Taylor" });
+    await act(async () => stale.resolve({ profile: profileHandle }));
+    expect(requests("runtime.mutate")).toHaveLength(0);
+  });
+
   it("uses a keyed Core mutation for explicit remote propagation approval", async () => {
     current = { ...current, remote_profiles: [{
       id: "remote-access-id", label: "Field access", origin: "manual", expires_at: 2_000_000_000,
