@@ -2,6 +2,7 @@
 
 from io import BytesIO
 import json
+import os
 from pathlib import Path
 import socket
 import struct
@@ -87,6 +88,9 @@ def windows_fixture(monkeypatch):
     peer = object.__new__(peers.WindowsPeer)
     peer.clean_exits = peer.forced_exits = 0
     peer._sequence = 0
+    peer._exchange_lock = threading.Lock()
+    peer._pending_worker = None
+    peer._poisoned = False
     peer._responses = queue.Queue()
     streams = [BytesIO() for _ in range(3)]
     state = {"exit": None, "kills": 0, "waits": 0, "client_closed": False}
@@ -116,6 +120,84 @@ def test_windows_shutdown_failure_still_retires_owned_tree_and_every_stream(monk
     assert peer.process is peer.client is None
     assert all(stream.closed for stream in streams)
     assert peer.clean_exits == 0
+
+
+def test_failed_kill_retains_exact_process_and_does_not_close_active_buffered_stream(monkeypatch):
+    peer, streams, state = windows_fixture(monkeypatch)
+    process = peer.process
+    active = SimpleNamespace(join=lambda timeout: None, is_alive=lambda: True)
+    peer._reader = active
+    peer._poisoned = True
+    def kill_failed(process): raise OSError("own process kill failed")
+    monkeypatch.setattr(peer, "_kill_tree", kill_failed)
+    with pytest.raises(peers.PeerFailure, match="peer_poisoned"):
+        peer.stop()
+    assert peer.process is process and peer._reader is active and peer._poisoned
+    assert not any(stream.closed for stream in streams)
+    assert not state["client_closed"] and peer.clean_exits == 0
+    with pytest.raises(peers.PeerFailure, match="peer_already_started"):
+        peer.start()
+    # Exact retained ownership may retire later; cleanup then closes safely.
+    state["exit"] = -9
+    peer._reader = SimpleNamespace(join=lambda timeout: None, is_alive=lambda: False)
+    with pytest.raises(peers.PeerFailure, match="peer_poisoned"):
+        peer.stop()
+    assert peer.process is None and all(stream.closed for stream in streams)
+
+
+def test_overlapping_windows_exchange_is_rejected_before_another_host_write(monkeypatch):
+    peer, _, _ = windows_fixture(monkeypatch)
+    peer._exchange_lock.acquire()
+    calls = []
+    try:
+        with pytest.raises(peers.PeerFailure, match="peer_exchange_in_progress"):
+            peer._bounded(lambda: calls.append(True))
+    finally:
+        peer._exchange_lock.release()
+    assert calls == []
+
+
+def test_failed_kill_cleanup_returns_while_real_buffered_reader_remains_blocked(monkeypatch):
+    peer, streams, state = windows_fixture(monkeypatch)
+    process = peer.process
+    read_fd, write_fd = os.pipe()
+    reader_stream, writer_stream = os.fdopen(read_fd, "rb"), os.fdopen(write_fd, "wb", buffering=0)
+    process.stdout = reader_stream
+    entered = threading.Event()
+    def read():
+        entered.set()
+        reader_stream.read(1)
+    reader = threading.Thread(target=read, daemon=True)
+    reader.start()
+    assert entered.wait(1)
+    join = reader.join
+    monkeypatch.setattr(reader, "join", lambda timeout: join(min(timeout, 0.025)))
+    peer._reader = reader
+    peer._poisoned = True
+    def denied(process): raise OSError("simulated own-child kill failure")
+    monkeypatch.setattr(peer, "_kill_tree", denied)
+    finished, errors = threading.Event(), []
+    def cleanup():
+        try: peer.stop()
+        except peers.PeerFailure as error: errors.append(error.code)
+        finally: finished.set()
+    cleanup_worker = threading.Thread(target=cleanup, daemon=True)
+    cleanup_worker.start()
+    completed_without_unblocking_reader = finished.wait(1)
+    try:
+        assert completed_without_unblocking_reader
+        assert peer.process is process and peer._poisoned
+        assert not reader_stream.closed and reader.is_alive()
+        assert errors == ["peer_poisoned"]
+    finally:
+        writer_stream.write(b"x")
+        writer_stream.close()
+        join(2)
+        cleanup_worker.join(2)
+        state["exit"] = -9
+        try: peer.stop()
+        except peers.PeerFailure: pass
+        if not reader_stream.closed: reader_stream.close()
 
 
 def test_windows_exit_timeout_kills_tree_and_never_counts_clean_exit(monkeypatch):
@@ -149,7 +231,9 @@ def test_whole_windows_exchange_deadline_covers_blocked_write_or_core_read(monke
         call = lambda: peer.core("application.snapshot")
     with pytest.raises(peers.PeerFailure, match="peer_deadline"):
         call()
-    assert state["kills"] == 1 and state["client_closed"]
+    assert state["kills"] == 1 and not state["client_closed"]
+    with pytest.raises(peers.PeerFailure, match="peer_poisoned"):
+        peer._bounded(lambda: None)
 
 
 def test_android_controller_is_explicitly_excluded_from_all_ordinary_required_suites():
