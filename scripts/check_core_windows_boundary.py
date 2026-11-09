@@ -1,6 +1,7 @@
 """Required Windows app pipe qualification; wrong environments fail explicitly."""
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -55,6 +56,7 @@ def main():
     result = {"v": 1, "source_commit": source,
               "source_tree": subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], cwd=ROOT, text=True).strip(),
               **summary, "passed": summary["passed"] and status == pytest.ExitCode.OK,
+              "inventory_sha256": hashlib.sha256(inventory.read_bytes()).hexdigest() if inventory.exists() else None,
               "scope": "Production Windows app pipe, authenticated image, framed Core and service/vault; no media or physical qualification",
               "evidence_level": "windows_named_pipe_and_inprocess_domain", "wall_seconds": time.monotonic() - started}
     output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")

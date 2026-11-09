@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 from android_qualification import APKS, CORE_APKS, CONSUMER_ARTIFACTS, ROOT, cases
 from connection_evidence import evidence as policy_evidence
+from core_boundary_evidence import UI_LEVEL, WINDOWS_LEVEL, ui_evidence, windows_evidence
 from direct_qualification import SUITES as DIRECT_SUITES, read_suite as direct_suite
 from test_desktop_transport import PYTHON_SOURCES, verified_report as desktop_evidence
 from test_packaged_lifecycle import verify_report as packaged_evidence
@@ -205,6 +206,21 @@ def collect(directory: Path, source: str, tree: str, required):
               report="windows_packaged_pairing", checks=len(pairing["checks"]),
               artifacts={"sidecar": pairing["sidecar_sha256"]}, cleanup="covered_by_checks"),
     ]
+    if "verification" in required:
+        ui_path = directory / "verification/core-ui-boundary.json"
+        ui = ui_evidence(read(ui_path), ui_path.parent, source, tree)
+        windows_path = directory / "desktop/core-windows-boundary.json"
+        windows = windows_evidence(read(windows_path), windows_path.parent, source, tree)
+        reports.update(core_ui_boundary=ui_path, core_windows_boundary=windows_path)
+        for name, record in ui.items():
+            suites.append(suite_record(name, UI_LEVEL, source, tree, report="core_ui_boundary",
+                                       tests=counts(record["execution"]), artifacts=record["artifacts"]))
+        suites.append(suite_record("core_windows_boundary", WINDOWS_LEVEL, source, tree,
+                                  report="core_windows_boundary", tests=counts(windows["execution"]),
+                                  artifacts=windows["artifacts"]))
+        summary.update(core_ui_boundary_python_tests=ui["core_ui_boundary_python"]["execution"]["tests_executed"],
+                       core_ui_boundary_rendered_tests=ui["core_ui_boundary_rendered"]["execution"]["tests_executed"],
+                       core_windows_boundary_tests=windows["execution"]["tests_executed"])
     if "android" in required:
         for record in android["suites"]:
             suites.append(suite_record("android_" + record["suite"], android["evidence_level"], source, tree,
