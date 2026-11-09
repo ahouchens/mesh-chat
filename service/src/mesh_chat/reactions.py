@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import time
 import uuid
+import hashlib
+import json
+from copy import deepcopy
+from dataclasses import dataclass, field
 from typing import Any
 
 import RNS
@@ -23,6 +27,20 @@ MAX_PENDING_REACTIONS_PER_ACTOR = 32
 MAX_REACTION_RECEIPTS_PER_TARGET = 4
 REACTION_SCOPES = frozenset({"direct", "group"})
 REACTION_TRUST = frozenset({TrustState.APPROVED.value, TrustState.VERIFIED.value})
+
+
+@dataclass(frozen=True)
+class PreparedMessageReaction:
+    operation_id: str | None
+    input_fingerprint: str
+    result: dict[str, Any]
+    records: tuple[tuple[str, str, dict[str, Any]], ...]
+    deletions: tuple[tuple[str, str], ...]
+    expected: dict[tuple[str, str], dict[str, Any] | None]
+    expected_collections: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
+    cancel_ids: tuple[str, ...] = ()
+    direct_ids: tuple[str, ...] = ()
+    group_ids: tuple[str, ...] = ()
 
 
 def _opaque_reaction_id(domain: bytes, *values: str) -> str:
@@ -249,6 +267,38 @@ class ReactionServiceMixin:
     def set_message_reaction(
         self, kind: Any, message_id: Any, emoji: Any, active: Any
     ) -> dict[str, Any]:
+        prepared = self._prepare_message_reaction(kind, message_id, emoji, active, None)
+        if prepared.records:
+            self.store.put_and_delete(prepared.records, prepared.deletions)
+            self.finish_prepared_message_reaction(prepared)
+        return dict(prepared.result)
+
+    def validate_message_reaction(self, kind, message_id, emoji, active):
+        """Recheck current authority before a parent serves a keyed replay."""
+        self._require_reaction_identity()
+        scope, identifier, checked_emoji, checked_active = self._validate_reaction_command(kind, message_id, emoji, active)
+        if scope == "direct":
+            self._direct_reaction_target(identifier)
+        else:
+            self._group_reaction_target(identifier)
+        return {"kind": scope, "message_id": identifier, "emoji": checked_emoji, "active": checked_active}
+
+    def _require_reaction_identity(self):
+        if self._identity is None or self._shutdown.is_set():
+            raise ValidationError("Local profile is unavailable")
+        self._require_profile()
+
+    def prepare_message_reaction(self, kind, message_id, emoji, active, operation_id):
+        """Build rows only; the parent owns CAS, receipt and dispatch locking."""
+        self._require_reaction_identity()
+        try:
+            if str(uuid.UUID(operation_id)) != operation_id:
+                raise ValueError
+        except (ValueError, TypeError, AttributeError) as error:
+            raise ValidationError("Reaction operation ID is invalid") from error
+        return self._prepare_message_reaction(kind, message_id, emoji, active, operation_id)
+
+    def _prepare_message_reaction(self, kind, message_id, emoji, active, operation_id):
         scope, checked_message_id, checked_emoji, checked_active = (
             self._validate_reaction_command(kind, message_id, emoji, active)
         )
@@ -263,13 +313,22 @@ class ReactionServiceMixin:
         current = self._reaction_state(
             scope, target_id, checked_message_id, actor
         )
+        result = {"kind": scope, "message_id": checked_message_id, "emoji": checked_emoji, "active": checked_active}
+        fingerprint = hashlib.sha256(json.dumps(result, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()).hexdigest()
+        state_id = self._reaction_record_id(scope, target_id, checked_message_id, actor)
+        expected = {
+            ("profile", "local"): deepcopy(profile),
+            ("message" if scope == "direct" else "group_message", checked_message_id): deepcopy(target),
+            ("contact" if scope == "direct" else "group", target_id): deepcopy(contact if scope == "direct" else group),
+            ("reaction", state_id): deepcopy(current),
+        }
+        if scope == "group":
+            expected.update({("group_manifest", identifier): deepcopy(value)
+                             for identifier, value in self.store.items("group_manifest")
+                             if value.get("group_id") == target_id})
         if not self._reaction_change_required(current, checked_emoji, checked_active):
-            return {
-                "kind": scope,
-                "message_id": checked_message_id,
-                "emoji": checked_emoji,
-                "active": checked_active,
-            }
+            return PreparedMessageReaction(operation_id=operation_id, input_fingerprint=fingerprint,
+                                           result=result, records=(), deletions=(), expected=expected)
         revision = int(current.get("revision", 0) if current else 0) + 1
         if revision > MAX_REACTION_REVISION:
             raise ValidationError("Reaction revision is exhausted")
@@ -284,6 +343,8 @@ class ReactionServiceMixin:
         )
         if scope == "direct":
             operation = self._outbound_record(contact, MessageKind.REACTION, "")
+            if operation_id is not None:
+                operation["id"] = str(uuid.uuid5(uuid.UUID(operation_id), "direct-reaction"))
             operation.update(
                 {
                     "reaction_for": checked_message_id,
@@ -299,33 +360,29 @@ class ReactionServiceMixin:
                 and item.get("contact_id") == contact["id"]
                 and item.get("reaction_for") == checked_message_id
             ]
-            self.store.put_and_delete(
-                [
-                    ("reaction", state["id"], state),
-                    ("message", operation["id"], operation),
-                ],
-                [("message", item["id"]) for item in superseded],
-            )
-            self._cancel_reaction_operations(
-                {item["id"] for item in superseded}
-            )
-            self._attempt(operation["id"])
+            records = [("reaction", state["id"], state), ("message", operation["id"], operation)]
+            deletions = [("message", item["id"]) for item in superseded]
+            direct_ids, group_ids = (operation["id"],), ()
         else:
-            operation_id = str(uuid.uuid4())
+            event_id = str(uuid.uuid4()) if operation_id is None else str(uuid.uuid5(uuid.UUID(operation_id), "group-reaction"))
             recipients = self._reaction_group_recipients(group, target)
             deliveries = [
                 self._delivery_record(
                     group=group,
                     recipient=recipient,
                     kind=MessageKind.GROUP_REACTION,
-                    group_message_id=operation_id,
+                    group_message_id=event_id,
                     reaction_for=checked_message_id,
                     reaction_emoji=checked_emoji,
                     reaction_active=checked_active,
                     reaction_revision=revision,
+                    queue_retry=False,
                 )
                 for recipient in recipients
             ]
+            if operation_id is not None:
+                for delivery in deliveries:
+                    delivery["id"] = str(uuid.uuid5(uuid.UUID(operation_id), "group-reaction:" + delivery["recipient_destination"]))
             superseded = [
                 delivery
                 for delivery in self.store.list("group_delivery")
@@ -333,28 +390,46 @@ class ReactionServiceMixin:
                 and delivery.get("group_id") == group["id"]
                 and delivery.get("reaction_for") == checked_message_id
             ]
-            self.store.put_and_delete(
-                [
-                    ("reaction", state["id"], state),
-                    *[
-                        ("group_delivery", delivery["id"], delivery)
-                        for delivery in deliveries
-                    ],
-                ],
-                [("group_delivery", item["id"]) for item in superseded],
-            )
-            self._cancel_reaction_operations(
-                {item["id"] for item in superseded}
-            )
-            for delivery in deliveries:
-                self._attempt_group_delivery(delivery["id"])
-        self._changed()
-        return {
-            "kind": scope,
-            "message_id": checked_message_id,
-            "emoji": checked_emoji,
-            "active": checked_active,
-        }
+            records = [("reaction", state["id"], state), *[("group_delivery", delivery["id"], delivery) for delivery in deliveries]]
+            deletions = [("group_delivery", item["id"]) for item in superseded]
+            direct_ids, group_ids = (), tuple(delivery["id"] for delivery in deliveries)
+        for kind, identifier in deletions:
+            expected[kind, identifier] = deepcopy(self.store.get(kind, identifier))
+        for kind, identifier, _ in records:
+            if (kind, identifier) not in expected:
+                if operation_id is not None and self.store.get(kind, identifier) is not None:
+                    raise ValidationError("Reaction operation already has durable work")
+                expected[kind, identifier] = None
+        return PreparedMessageReaction(
+            operation_id=operation_id, input_fingerprint=fingerprint, result=result,
+            records=tuple(records), deletions=tuple(deletions), expected=expected,
+            cancel_ids=tuple(item["id"] for item in superseded), direct_ids=direct_ids, group_ids=group_ids)
+
+    def finish_prepared_message_reaction(self, prepared: PreparedMessageReaction):
+        """Reconcile committed IDs only; never invoke this for a cached receipt."""
+        if not prepared.records:
+            return
+        if prepared.operation_id is not None:
+            try:
+                self.validate_message_reaction(**{key: prepared.result[key] for key in ("kind", "message_id", "emoji", "active")})
+            except (ValidationError, ContactNotApproved):
+                return
+        kind, identifier, state = prepared.records[0]
+        if self.store.get(kind, identifier) != state:
+            return
+        self._cancel_reaction_operations(set(prepared.cancel_ids))
+        effects = [*(lambda identifier=identifier: self._attempt(identifier) for identifier in prepared.direct_ids),
+                   *(lambda identifier=identifier: self._finish_prepared_group_reaction(identifier) for identifier in prepared.group_ids), self._changed]
+        for effect in effects:
+            try:
+                effect()
+            except Exception:
+                if prepared.operation_id is None:
+                    raise
+
+    def _finish_prepared_group_reaction(self, identifier):
+        self._queue_group_retry(identifier)
+        self._attempt_group_delivery(identifier)
 
     def _cancel_reaction_operations(self, logical_ids: set[str]) -> None:
         if not logical_ids or self.network is None:
