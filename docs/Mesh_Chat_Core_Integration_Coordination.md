@@ -11,6 +11,33 @@ reports. Exact evidence and limits are in the ledger. Wave 2 is activated below.
 Existing human authorization covers continued implementation, integration and
 worker follow-ups without another permission request.
 
+Current integration is `7eefaf3`, including C's reviewed Android provider correction
+`0bfb95d`. Separate protected catalog authority avoids reading the profile key
+at locked startup; each OS credential confirmation uses its own AndroidX result
+registration. The lead's exact SDK staging and 115 lifecycle/mobile-host checks
+pass, including installed consumers. B may bind the actual Android credential
+facade; Windows remains unsupported until its native provider exists. D adds the
+three registry cases to required Android execution. Compilation and JVM checks
+do not qualify successful OS credential interaction on a device.
+
+Full CI `42683615511` remains pinned to the earlier `21bb99c` checkpoint. Policy,
+Windows packaged first-contact pairing, 649-Python/ten-App boundary, 47 Android
+cases and Linux direct transport are independently validated. Broad verification
+also passes. Windows native interoperability fails during initialization: the
+controller generated a pipe name outside the unchanged production namespace.
+D repairs that harness mismatch; remaining jobs retain their separate outcomes.
+This run cannot qualify the subsequently integrated provider.
+
+C's cancellation/terminal hooks and original pairing deadline are integrated;
+59 actor/native cases pass. A's public producer is held until its absolute
+deadline binding and positive parent recovery tests pass. C's normal Windows
+app-owned host and D's independent launcher are integrated; 15 host components,
+ten launcher/staging checks and the exact nine-case Windows component gate pass.
+These explicitly do not qualify EFS, frozen independent-host traffic or SC21.
+B's native effect-scope helpers pass 13 checks; call-site wiring continues.
+C is repairing Android disposal acknowledgment before claiming actual resource
+retirement. The older checkpoints below retain their chronology.
+
 Current Wave 2 CI `42676194199` at `da81565` fails two synthetic run-context
 fixtures and Windows first-time pairing (`approved_path`, both carriers absent).
 The fixture repair is integrated and passes all 94 matrix checks under CI-like

@@ -64,7 +64,8 @@ def fixture(directory):
         android["suites"].append({"suite": suite, "run_id": run * 32, "tests_collected": len(cases),
             "tests_executed": len(cases), "tests_passed": len(cases), "tests_failed": 0, "tests_skipped": 0,
             "duration_seconds": 1, "scenarios": [{"scenario_id": case["id"], "passed": True,
-                "report_sha256": "b" * 64} for case in cases]})
+                "report_sha256": "b" * 64,
+                **({"scope": case["scope"]} if "scope" in case else {})} for case in cases]})
     transport = {**packaged, "evidence_level": TRANSPORT_LEVEL, "checks": list(TRANSPORT_CHECKS),
                  "counts": dict(TRANSPORT_COUNTS), "run_id": "b" * 32,
                  "native_binary_sha256": desktop["native_binary_sha256"]}
@@ -150,7 +151,7 @@ def test_gate_revalidates_policy_inventory_and_both_platform_component_reports(t
     source, tree, _ = fixture(tmp_path)
     result = matrix.collect(tmp_path, source, tree, ["policy", "verification", "android"])
     assert result["policy_tests_executed"] == 1
-    assert result["android_tests_executed"] == 47
+    assert result["android_tests_executed"] == 50
     assert set(result["windows_transport_checks"]) == CHECKS
     assert set(result["report_sha256"]) == {"policy", "windows_transport", "windows_packaged_lifecycle",
                                           "windows_packaged_transport", "windows_packaged_pairing", "android",
@@ -159,7 +160,7 @@ def test_gate_revalidates_policy_inventory_and_both_platform_component_reports(t
     assert result["windows_packaged_lifecycle_checks"] == list(PACKAGED_CHECKS)
     assert result["core_ui_boundary_python_tests"] == len(PYTHON_SELECTION)
     assert result["core_ui_boundary_rendered_tests"] == len(RENDERED_CASES)
-    assert result["core_windows_boundary_tests"] == 3
+    assert result["core_windows_boundary_tests"] == 9
 
 
 @pytest.mark.parametrize("fault", ["missing", "source", "sidecar", "build", "manifest", "package", "version",
@@ -269,6 +270,26 @@ def test_android_report_without_typed_app_bridge_execution_cannot_qualify(tmp_pa
         suite[key] = len(suite["scenarios"])
     (tmp_path / "android/android-qualification.json").write_text(json.dumps(android))
     with pytest.raises(ValueError, match="scenario execution"):
+        matrix.collect(tmp_path, source, tree, ["policy", "verification", "android"])
+
+
+@pytest.mark.parametrize("fault", ["missing", "not_passed", "scope_missing", "scope_overstated"])
+def test_android_result_registry_execution_and_component_scope_are_required(tmp_path, fault):
+    source, tree, android = fixture(tmp_path)
+    suite = next(item for item in android["suites"] if item["suite"] == "core_api")
+    case = next(item for item in suite["scenarios"] if "NativeProfileResultRegistrationTest" in item["scenario_id"])
+    if fault == "missing":
+        suite["scenarios"].remove(case)
+        for key in ("tests_collected", "tests_executed", "tests_passed"):
+            suite[key] = len(suite["scenarios"])
+    elif fault == "not_passed":
+        case["passed"] = False
+    elif fault == "scope_missing":
+        case.pop("scope")
+    else:
+        case["scope"] = "Successful OS credential confirmation"
+    (tmp_path / "android/android-qualification.json").write_text(json.dumps(android))
+    with pytest.raises(ValueError, match="scenario"):
         matrix.collect(tmp_path, source, tree, ["policy", "verification", "android"])
 
 
@@ -468,7 +489,7 @@ def test_suite_manifest_is_uniform_across_every_required_component(tmp_path):
     windows = next(record for record in records if record["suite"] == "windows_transport")
     assert windows["checks"] == len(CHECKS) and windows["artifacts"]
     boundary = [record for record in records if record["suite"].startswith("core_")]
-    assert [record["tests"]["executed"] for record in boundary] == [len(PYTHON_SELECTION), len(RENDERED_CASES), 3]
+    assert [record["tests"]["executed"] for record in boundary] == [len(PYTHON_SELECTION), len(RENDERED_CASES), len(WINDOWS_CASES)]
     assert all(record["artifacts"]["junit"] for record in boundary)
     assert all("inventory" in record["artifacts"] for record in (boundary[0], boundary[2]))
 

@@ -172,6 +172,15 @@ network/call settings, then start/end an approved audio call and verify the stor
 state and signed queued invite/hangup documents. These assertions qualify call
 signalling, not media execution or peer receipt delivery. The embedded Python
 fixture also executes through mobile Core framing in the fast Python suite.
+Three additional `NativeProfileResultRegistrationTest` cases require actual
+AndroidX result-registry routing for unrelated results, cancelled registrations,
+replacement challenges and cancelled credential UI. Their explicit component
+scope does not qualify successful OS credential confirmation. The required Core
+API inventory has 13 cases; all four Android suites together require 50 cases.
+The separate required Windows gate now collects nine cases: the original three
+app-pipe cases and six normal app-owned host checks. The latter execute actual
+DPAPI and image-authenticated pipes with explicitly unprotected test Vault
+storage. They do not qualify EFS or the independently installed frozen runtime.
 The fresh-profile case starts with no profile or identity, verifies a signed
 invitation through private preview without any vault write or network/event
 effect, then creates only through

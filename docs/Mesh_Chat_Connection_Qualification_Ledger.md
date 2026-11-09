@@ -2,6 +2,117 @@
 
 ## Integration revalidation (2026-11-09)
 
+### Current full run and Android provider integration
+
+Full CI [42683615511](https://github.com/ahouchens/mesh-chat/actions/runs/42683615511)
+targets `21bb99ca338e5c1d16059cbdc5d529d114ba6ede`, tree
+`1a98f05242f29b0950da9ac841861b4d1ef91358`. Selection artifact `13702709168`
+requires all six families and the full native workload; duplicate PR run
+`42683596152` is canceled. The lead pinned 134 validator/source files.
+
+Policy artifact `13703528817` independently validates **3,256 passes, zero
+failures/skips**, duration 187.282s, qualification ID
+`238472989f5b47f390b2a0ba47c1af3e`. ZIP SHA-256:
+`a9cad6ea98d10d74a664f2b532b4010fc3ccb9589f39db8d8b24435e81f1c616`.
+
+Windows packaged first-time pairing now passes all five required checks,
+including explicit approval, cancellation, pending-invitation restart, carrier
+transfer and two authenticated receipts. Preapproved transport also passes its
+three receipts; native lifecycle passes 100 pairs/controls and three cold starts.
+All three required production pipe cases execute without failure or skip.
+The lead validated report schemas/inventories with pinned validators and bound
+six packaged reports to the retained sidecar/build manifest. Every archive entry
+was hashed in memory; no executable extraction was needed:
+
+- Desktop artifact `13704560441`, ZIP SHA-256
+  `4a2e7390b59cf996cee0d617f7cfbdb3dfc558de0479a2b1972850a3f48cadce`.
+- Native artifact `13702964768`, ZIP SHA-256
+  `11a166f38ad63e9b999f72d27a7db03dc62a834c11c44735f79445a1e18226af`.
+- Sidecar: 54,532,753 bytes, SHA-256
+  `fd22f032b8c3f2d78ffc093017cdf864c0fbcb594d9fbeee2859812ba0e27b5b`.
+- Build manifest SHA-256
+  `cfb6f840edc13c15bf822402cabca112bd2e3dbf8cf174cf98ec29eb42be5b0b`;
+  build input SHA-256
+  `44f3ff3467c26d150177b524b09b2d1e17356eb0ebc5a0d3edb4bc8068170b0a`.
+
+Evidence and lead validations are under `.test-tmp/ci-evidence-21bb99c`.
+The seven Python WebView probe source hashes match exact source with Windows
+CRLF checkout bytes. The WebView executable hash remains runner-reported because
+that executable is not in these archives; embedded materials were not locally
+re-extracted. These Windows passes do not establish SC21 or physical/media
+qualification.
+
+Broad verification subsequently passes. Artifact `13705515395` (ZIP SHA-256
+`84cfb6a3ae38301dede1dc3d4819da970e1af7559d0912459f9eb44ba9d8d761`)
+contains independently validated 649-Python/ten-rendered-App XML inventories,
+zero failures/skips, 32.46s. The broader automated run's success is a retained
+runner summary; its complete test XML is not present in this archive.
+
+Android artifact `13705331645` (ZIP SHA-256
+`78605e64020e343215cead5f43c29508bef5861f4964e9cb6eb2ecb17f33fec2`)
+validates 47 required emulator cases: 21 WebRTC, ten signaling, ten Core and six
+independent Binder consumer cases, no skips. Debug artifact `13705006908` has
+ZIP SHA-256 `c4584e039aa5280633432345994c71d5561632e40d4e32ae2b4894ad68ae31ed`.
+The lead hashed every archive entry in memory, matched all seven tested APK/AAR
+hashes, and revalidated each scenario's actual report/run identity. Five retained
+JVM reports add 40 passes without skips. The later provider and three registry
+cases are not part of this source and cannot inherit these passes.
+
+Linux direct artifact `13705632218` (ZIP SHA-256
+`2772f3471f3ea02ad43c0c09c48ffce8df4cb41f9339f94ac2f98bd2f5db77a8`)
+independently validates all 25 fabric, ten recovery and 12 setup cases, zero
+failures/skips. Its runtime binary hashes remain runner-reported; the archive
+contains reports rather than those binaries.
+
+The full run cannot pass: Windows native-interoperability job `129394480007`
+fails at `initialize` with `FileNotFoundError`. Failure artifact `13705616595`
+has ZIP SHA-256 `b5ec990d9a99d15cfa531e2665b416224465acb9afb9767a1d2f003a48249a42`.
+Source review and the actual pipe validator identify the controller's
+`mesh-native-qualification-` prefix as invalid; production requires `mesh-chat-`.
+Initialization succeeds before endpoint construction rejects that name, leaving
+the controller's 15-second connect wait to fail. D owns the harness correction
+and regression; production pipe policy and deadlines remain unchanged. Android
+interop and Windows direct work were still running at this checkpoint. There is
+no passing Windows–Android native traffic evidence from this run.
+
+Subsequent local integration `9cfc3363fb55b8a22a2961fdccf358b65bb2185e`, tree
+`c6018a370cb09f3e24c6afda417846eede62aa45`, includes provider fix `0bfb95d`.
+Its catalog uses separate protected metadata key authority without loading the
+original profile key. Dedicated per-confirmation AndroidX registrations replace
+Tauri's shared activity-result callback. Exact SDK staging passes, followed by
+115 mobile bridge/profile lifecycle/runtime-host checks, zero failures/skips,
+14.14s (`dist/reports/provider-ready.xml`). The first invocation had 109 passes
+and six setup errors from omitted SDK/Node environment; the complete rerun uses
+staged exact-source artifacts and Node 24. C reports 13 JVM passes and production
+plugin compilation; three real AndroidX routing tests only compile so far.
+D is wiring required Android execution. Successful OS credential interaction
+still needs platform evidence. The running `21bb99c` CI excludes this provider.
+
+Further local integrations: `0e681b8` requires all three Android registry cases
+(future inventory total 50), with 158 lead gate checks passing in 13.46s.
+`b2f8701` integrates original pairing deadlines, durable cancellation callbacks,
+terminal custody checkpoints and modern native SCTP SDP; 59 actor/real-bootstrap/
+Windows-native checks pass in 24.43s. A's public producer remains held pending
+positive parent recovery checks and its original-deadline binding.
+
+`95f620a` adds the independent launcher: ten checks pass in 2.51s, including
+eleven subprocess protocol cases and outside-checkout installation using the
+actual `9cfc336` SDK archive (SDK source unchanged). The first invocation omitted
+the artifact environment and failed one prerequisite; the configured rerun is
+complete. `fff258f` adds normal Windows app-owned bootstrap, with 15 component
+checks passing in 2.46s. These use actual DPAPI and authenticated pipes but an
+explicit test-only vault-storage bypass; they do not qualify EFS/frozen traffic.
+`330fa99` adds native effect-scope helpers, with 13 passes; full call-site wiring
+and authoritative native/media retirement remain work in progress.
+
+Exact source `7eefaf313824c79b5986dbfd0195ba63629d3618`, tree
+`43679f2cb63e46638edb85699e99ebc297afc308`, requires nine Windows component
+cases and passes all nine, zero failures/skips, 2.90s. JUnit SHA-256:
+`73a243550596064c826665d9bc1a4ea9334ac6c81214be91098ed4b9ee0c88ce`;
+inventory SHA-256:
+`fc9841a8aa26395c5d96199952a3e76cd0a257b04d2545fc713c90afde5fb43b`.
+A cache-directory permission warning does not affect those executed cases.
+
 ### Corrected pairing and combined qualification checkpoint
 
 Source `6875b00d7a3502ce662b33acdfdc6bc84c0b4ab7`, tree

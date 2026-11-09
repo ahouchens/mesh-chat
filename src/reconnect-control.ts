@@ -1,4 +1,5 @@
-import { serviceCommand } from "./api";
+import { captureEffectScope, effectIsCurrent, type CoreEffectScope } from "./core-admission";
+import { requestEffect } from "./effect-requests";
 import { getWebRTCSession, getWebRTCSessions, type WebRTCSession } from "./webrtc-session";
 
 export const RECONNECT_CAPABILITIES_EVENT = "meshchat:reconnect-capabilities";
@@ -12,6 +13,7 @@ export interface StoredReconnectCapabilities {
 }
 
 interface ControlState {
+  effects: CoreEffectScope;
   contactId: string;
   lastSent: string;
   nextRefreshAt: number;
@@ -37,15 +39,16 @@ function bindKnownContact(session: WebRTCSession, profiles: ContactProfile[]): v
 
 /** Respond on the exact authenticated channel, including existing contacts. */
 export async function resendReconnectCapabilities(session: WebRTCSession): Promise<void> {
+  const effects = captureEffectScope(session.effects);
   const control = session.control;
-  if (!control || control.readyState !== "open" || !getWebRTCSessions().includes(session)) return;
+  if (!effectIsCurrent(effects) || !control || control.readyState !== "open" || !getWebRTCSessions().includes(session)) return;
   if ((requestRetryAt.get(control) ?? -Infinity) > Date.now()) return;
   requestRetryAt.set(control, Date.now() + CAPABILITY_RETRY_MS);
   const peer = session.peerDestination;
   try {
     if (!session.contactId) {
-      const result = await serviceCommand<{ profiles: ContactProfile[] }>("reconnect_profiles");
-      if (session.control !== control || control.readyState !== "open" || session.peerDestination !== peer || !getWebRTCSessions().includes(session)) return;
+      const result = await requestEffect<{ profiles: ContactProfile[] }>(effects, "reconnect_profiles");
+      if (!effectIsCurrent(effects) || session.control !== control || control.readyState !== "open" || session.peerDestination !== peer || !getWebRTCSessions().includes(session)) return;
       bindKnownContact(session, result.profiles);
     }
     maintainReconnectCapabilities();
@@ -78,7 +81,7 @@ export function sendReconnectCapabilities(
       .sort((a, b) => b.createdAt - a.createdAt)[0]
     : getWebRTCSession();
   const control = session?.control;
-  if (!control || control.readyState !== "open") return false;
+  if (!control || control.readyState !== "open" || !effectIsCurrent(session?.effects)) return false;
   // A capability is addressed to one contact. Refuse to send it over a channel
   // whose peer is unknown or is a different contact.
   if (contactId !== undefined && session?.contactId !== contactId) return false;
@@ -93,20 +96,21 @@ export function sendReconnectCapabilities(
 }
 
 /** Store a peer capability received over the control channel. */
-export async function storeReconnectCapabilities(document: string, expectedContactId?: string, expectedPeerDestination?: string): Promise<StoredReconnectCapabilities | undefined> {
+export async function storeReconnectCapabilities(document: string, expectedContactId?: string, expectedPeerDestination?: string, effects: CoreEffectScope = {}): Promise<StoredReconnectCapabilities | undefined> {
   if (typeof document !== "string" || !document) return;
-  const result = await serviceCommand<StoredReconnectCapabilities>("reconnect_capabilities_store", {
+  const result = await requestEffect<StoredReconnectCapabilities>(effects, "reconnect_capabilities_store", {
     document,
     ...(expectedContactId ? { expected_contact_id: expectedContactId } : {}),
     ...(expectedPeerDestination ? { expected_peer_destination: expectedPeerDestination } : {}),
   });
-  window.dispatchEvent(new CustomEvent(RECONNECT_CAPABILITIES_EVENT));
+  if (effectIsCurrent(effects)) window.dispatchEvent(new CustomEvent(RECONNECT_CAPABILITIES_EVENT));
   return result;
 }
 
 /** Called by foreground supervision; no independent timers survive lock/stop. */
 export function maintainReconnectCapabilities(profiles: ContactProfile[] = []): void {
   for (const session of getWebRTCSessions()) {
+    if (!effectIsCurrent(session.effects)) continue;
     bindKnownContact(session, profiles);
     const control = session.control;
     const contactId = session.contactId;
@@ -114,11 +118,12 @@ export function maintainReconnectCapabilities(profiles: ContactProfile[] = []): 
     if (!control || control.readyState !== "open" || !contactId || contactId.startsWith("workspace:")) continue;
     let state = controls.get(control);
     if (!state || state.contactId !== contactId) {
-      state = { contactId, lastSent: "", nextRefreshAt: 0, refreshing: false, receiving: false, pendingDocument: null, lastReceived: "", requested: false };
+      state = { effects: captureEffectScope(session.effects), contactId, lastSent: "", nextRefreshAt: 0, refreshing: false, receiving: false, pendingDocument: null, lastReceived: "", requested: false };
       controls.set(control, state);
       if (session.controlPurpose === "reconnect") {
         const currentState = state;
         control.onmessage = (event) => {
+          if (!controlIsCurrent(session, control, currentState)) return;
           if (typeof event.data !== "string" || event.data.length > MAX_CAPABILITY_LENGTH) return;
           try {
             const message = JSON.parse(event.data) as { type?: unknown; document?: unknown };
@@ -150,7 +155,7 @@ export function maintainReconnectCapabilities(profiles: ContactProfile[] = []): 
 }
 
 function controlIsCurrent(session: WebRTCSession, control: RTCDataChannel, state: ControlState): boolean {
-  return control.readyState === "open" && session.control === control &&
+  return effectIsCurrent(state.effects) && control.readyState === "open" && session.control === control &&
     session.contactId === state.contactId && controls.get(control) === state &&
     getWebRTCSessions().includes(session);
 }
@@ -163,7 +168,7 @@ async function receiveCapabilities(session: WebRTCSession, control: RTCDataChann
       const document = state.pendingDocument;
       state.pendingDocument = null;
       try {
-        await storeReconnectCapabilities(document, state.contactId);
+        await storeReconnectCapabilities(document, state.contactId, undefined, state.effects);
         state.lastReceived = document;
       } catch {
         // Invalid, expired, blocked, or wrong-peer documents never change trust.
@@ -178,7 +183,7 @@ async function refreshCapabilities(session: WebRTCSession, control: RTCDataChann
   state.refreshing = true;
   state.nextRefreshAt = Date.now() + CAPABILITY_RETRY_MS;
   try {
-    const result = await serviceCommand<{ local_capabilities?: string | null }>("reconnect_capabilities_get", { contact_id: state.contactId });
+    const result = await requestEffect<{ local_capabilities?: string | null }>(state.effects, "reconnect_capabilities_get", { contact_id: state.contactId });
     if (!controlIsCurrent(session, control, state)) return;
     const document = result.local_capabilities;
     if (typeof document === "string" && document && document.length <= MAX_CAPABILITY_LENGTH && document !== state.lastSent) {

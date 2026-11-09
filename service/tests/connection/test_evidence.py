@@ -79,7 +79,7 @@ def test_inventory_rejects_incomplete_or_filtered_collection(tmp_path, fault):
     if fault == "missing_suite":
         items.pop()
     session = SimpleNamespace(items=items, testsfailed=int(fault == "collection_error"),
-                              config=SimpleNamespace(option=options))
+                              config=SimpleNamespace(option=options, rootpath=Path(__file__).resolve().parents[2]))
     plugin = TestInventory(tmp_path / "inventory.json", "commit")
     if fault == "plugin_deselected":
         plugin.pytest_deselected([items.pop()])

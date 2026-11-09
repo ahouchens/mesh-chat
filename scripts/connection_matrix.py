@@ -110,13 +110,16 @@ def android_evidence(record, source, tree):
         if not isinstance(run_id, str) or not re.fullmatch(r"[a-f0-9]{32}", run_id) or run_id in run_ids:
             raise ValueError("Android suite run identity is missing or duplicated")
         run_ids.add(run_id)
-        required = [case["id"] for case in cases(expected)]
+        required_cases = cases(expected)
+        required = [case["id"] for case in required_cases]
         scenarios = suite.get("scenarios", [])
         if (suite.get("suite") != expected or not isinstance(scenarios, list)
                 or [case.get("scenario_id") for case in scenarios] != required
                 or any(case.get("passed") is not True for case in scenarios)):
             raise ValueError("Android scenario execution is incomplete")
         hashes({case["scenario_id"]: case.get("report_sha256") for case in scenarios})
+        if any(case.get("scope") != item["scope"] for case, item in zip(scenarios, required_cases) if "scope" in item):
+            raise ValueError("Android component scenario scope is missing or overstated")
         for name, count in {"tests_collected": len(required), "tests_executed": len(required),
                             "tests_passed": len(required), "tests_failed": 0, "tests_skipped": 0}.items():
             if type(suite.get(name)) is not int or suite[name] != count:

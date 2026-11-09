@@ -1,4 +1,5 @@
-import { serviceCommand } from "./api";
+import { captureEffectScope, effectIsCurrent, ProfileRetiredError, type CoreEffectScope } from "./core-admission";
+import { requestEffect } from "./effect-requests";
 import type { CallIceConfiguration } from "./types";
 
 export interface NativeIceServer {
@@ -38,11 +39,12 @@ export const NATIVE_RECONNECT_CHANNELS: NativeChannelSpec[] = [
   { label: "meshchat-reconnect", binary: false, ordered: true },
 ];
 
-const activeSessions = new Set<string>();
-const pendingCreations = new Map<string, object>();
+type NativeRegistration = { readonly effects: CoreEffectScope };
+const activeSessions = new Map<string, NativeRegistration>();
+const pendingCreations = new Map<string, NativeRegistration>();
 
-export function rememberNativeWebRTCSession(sessionId: string): void {
-  activeSessions.add(sessionId);
+export function rememberNativeWebRTCSession(sessionId: string, effects?: CoreEffectScope): void {
+  activeSessions.set(sessionId, { effects: captureEffectScope(effects) });
 }
 
 export function forgetNativeWebRTCSession(sessionId: string): void {
@@ -52,11 +54,11 @@ export function forgetNativeWebRTCSession(sessionId: string): void {
 
 /** Close every native session this WebView created, including onboarding. */
 export async function closeNativeWebRTCSessions(): Promise<void> {
-  const sessions = [...activeSessions];
+  const sessions = [...activeSessions.entries()];
   activeSessions.clear();
   pendingCreations.clear();
-  await Promise.all(sessions.map((sessionId) =>
-    serviceCommand("native_webrtc_close", { session_id: sessionId }).catch(() => undefined)
+  await Promise.all(sessions.map(([sessionId, registration]) =>
+    requestEffect(registration.effects, "native_webrtc_close", { session_id: sessionId }, true).catch(() => undefined)
   ));
 }
 
@@ -64,21 +66,25 @@ async function createNativeSession(
   command: string,
   sessionId: string,
   payload: Record<string, unknown>,
+  effects?: CoreEffectScope,
 ): Promise<NativeSdpResult> {
-  const creation = {};
+  const creation = { effects: captureEffectScope(effects) };
   pendingCreations.set(sessionId, creation);
-  rememberNativeWebRTCSession(sessionId);
+  activeSessions.set(sessionId, creation);
   try {
-    const result = await serviceCommand<NativeSdpResult>(command, payload);
+    const result = await requestEffect<NativeSdpResult>(creation.effects, command, payload);
     if (pendingCreations.get(sessionId) !== creation) {
       // Cancellation may have closed the ID before the native host created it.
-      await serviceCommand("native_webrtc_close", { session_id: sessionId }).catch(() => undefined);
+      if (!activeSessions.has(sessionId)) {
+        await requestEffect(creation.effects, "native_webrtc_close", { session_id: sessionId }, true).catch(() => undefined);
+      }
       throw new Error("Native WebRTC creation was cancelled.");
     }
+    if (!effectIsCurrent(creation.effects)) throw new ProfileRetiredError();
     return result;
   } catch (reason) {
     if (pendingCreations.get(sessionId) === creation) {
-      await nativeWebRTCClose(sessionId).catch(() => undefined);
+      await nativeWebRTCClose(sessionId, creation.effects).catch(() => undefined);
     }
     throw reason;
   } finally {
@@ -103,13 +109,14 @@ export function nativeWebRTCOffer(
   ice: CallIceConfiguration,
   channels: NativeChannelSpec[] = NATIVE_RECONNECT_CHANNELS,
   profileId?: string,
+  effects?: CoreEffectScope,
 ): Promise<NativeSdpResult> {
   return createNativeSession("native_webrtc_offer", sessionId, {
     session_id: sessionId,
     ice: nativeIce(ice),
     channels,
     ...(profileId ? { profile_id: profileId } : {}),
-  });
+  }, effects);
 }
 
 /** Accept an offer through the service's registered platform transport. */
@@ -119,6 +126,7 @@ export function nativeWebRTCAccept(
   ice: CallIceConfiguration,
   channels: NativeChannelSpec[] = NATIVE_RECONNECT_CHANNELS,
   profileId?: string,
+  effects?: CoreEffectScope,
 ): Promise<NativeSdpResult> {
   return createNativeSession("native_webrtc_accept", sessionId, {
     session_id: sessionId,
@@ -126,11 +134,11 @@ export function nativeWebRTCAccept(
     ice: nativeIce(ice),
     channels,
     ...(profileId ? { profile_id: profileId } : {}),
-  });
+  }, effects);
 }
 
-export function nativeWebRTCApplyAnswer(sessionId: string, answerSdp: string): Promise<unknown> {
-  return serviceCommand("native_webrtc_apply_answer", {
+export function nativeWebRTCApplyAnswer(sessionId: string, answerSdp: string, effects: CoreEffectScope = {}): Promise<unknown> {
+  return requestEffect(effects, "native_webrtc_apply_answer", {
     session_id: sessionId,
     answer_sdp: answerSdp,
   });
@@ -140,21 +148,23 @@ export function nativeWebRTCControl(
   sessionId: string,
   label: "mesh-onboarding" | "meshchat-reconnect",
   text: string,
+  effects: CoreEffectScope = {},
 ): Promise<{ accepted: boolean }> {
-  return serviceCommand<{ accepted: boolean }>("native_webrtc_control", {
+  return requestEffect<{ accepted: boolean }>(effects, "native_webrtc_control", {
     session_id: sessionId,
     label,
     text,
   });
 }
 
-export function nativeWebRTCStats(sessionId: string): Promise<NativeWebRTCStats> {
-  return serviceCommand<NativeWebRTCStats>("native_webrtc_stats", { session_id: sessionId });
+export function nativeWebRTCStats(sessionId: string, effects: CoreEffectScope = {}): Promise<NativeWebRTCStats> {
+  return requestEffect<NativeWebRTCStats>(effects, "native_webrtc_stats", { session_id: sessionId });
 }
 
-export function nativeWebRTCClose(sessionId: string): Promise<unknown> {
+export function nativeWebRTCClose(sessionId: string, effects?: CoreEffectScope): Promise<unknown> {
+  const origin = effects ?? activeSessions.get(sessionId)?.effects ?? {};
   forgetNativeWebRTCSession(sessionId);
-  return serviceCommand("native_webrtc_close", { session_id: sessionId });
+  return requestEffect(origin, "native_webrtc_close", { session_id: sessionId }, true);
 }
 
 export function isNativeWebRTCPlatform(userAgent = navigator.userAgent): boolean {

@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from uuid import uuid4
 
+ROOT = Path(__file__).resolve().parents[1]
+
 
 REQUIRED_SUITES = (
     "service/tests/connection",
@@ -40,8 +42,9 @@ class TestInventory:
             raise ValueError("Required qualification collection failed or was empty")
         nodeids = [item.nodeid for item in session.items]
         for suite in self.selection:
-            # Pytest's rootdir is service/, so nodeids omit that prefix.
-            prefix = suite.removeprefix("service/")
+            # Policy uses service/ as root; mixed Windows app/host checks use
+            # the repository root. Bind each selection to the actual root.
+            prefix = (ROOT / suite).relative_to(session.config.rootpath).as_posix()
             if not any(nodeid.startswith(prefix + ("::" if prefix.endswith(".py") else "/"))
                        for nodeid in nodeids):
                 raise ValueError("Required qualification suite was not collected: " + suite)
