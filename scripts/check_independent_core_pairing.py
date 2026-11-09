@@ -39,13 +39,14 @@ PAIRING_STATES = {"reserved", "offer_ready", "awaiting_approval", "transferred",
 SNAPSHOT_COUNTS = {"contacts", "invitations", "pending_invitations", "pending_requests", "approved_contacts"}
 SNAPSHOT_FLAGS = {"matching_pending_request", "matching_approved_contact", "counts_capped"}
 CONNECTION_COUNTS = {"total", "checked", "ready"}
+TIMING_FIELDS = ("invitation_accept_started", "invitation_accept_returned", "pending_request_wait_entered", "failure_observed")
 ERROR_CODES = {"invalid_request", "incompatible_version", "negotiation_required", "unsupported_operation",
     "unauthenticated", "forbidden", "not_found", "locked", "conflict", "idempotency_conflict",
     "idempotency_expired", "resync_required", "resource_exhausted", "rate_limited", "unavailable", "internal"}
 
 
-def bounded_observation(value, counts, flags):
-    if (not isinstance(value, dict) or set(value) != counts | flags
+def bounded_observation(value, counts, flags, extra=frozenset()):
+    if (not isinstance(value, dict) or set(value) != counts | flags | extra
             or any(type(value[key]) is not int or not 0 <= value[key] <= 256 for key in counts)
             or any(type(value[key]) is not bool for key in flags)):
         raise ValueError("Pairing failure observations contain unsafe or unbounded fields")
@@ -57,12 +58,39 @@ def failure_details(value):
             or value["error_code"] not in ERROR_CODES):
         raise ValueError("Pairing failure envelope is invalid")
     diagnostics = value["diagnostics"]
-    if (not isinstance(diagnostics, dict) or set(diagnostics) - {"subphase", "deadline_exhausted", "peers", "failure_probe"}
+    if (not isinstance(diagnostics, dict) or set(diagnostics) - {
+                "subphase", "deadline_exhausted", "peers", "failure_probe", "stage_timing", "post_accept_reads"}
             or not {"subphase", "deadline_exhausted", "peers"} <= set(diagnostics)
             or diagnostics["subphase"] not in SUBPHASES[value["phase"]]
             or type(diagnostics["deadline_exhausted"]) is not bool
             or not isinstance(diagnostics["peers"], dict) or set(diagnostics["peers"]) - {"offerer", "answerer"}):
         raise ValueError("Pairing failure subphase or roles are invalid")
+    if ("stage_timing" in diagnostics) != (value["phase"] != "arguments"):
+        raise ValueError("Pairing failure has no stage timing provenance")
+    offsets = {}
+    if "stage_timing" in diagnostics:
+        timing = diagnostics["stage_timing"]
+        if (not isinstance(timing, dict) or set(timing) != {"offsets_ms", "clipped"}
+                or type(timing["clipped"]) is not bool or not isinstance(timing["offsets_ms"], dict)):
+            raise ValueError("Pairing stage timing is invalid")
+        offsets = timing["offsets_ms"]
+        if (set(offsets) - set(TIMING_FIELDS) or "failure_observed" not in offsets
+                or any(type(value) is not int or not 0 <= value <= 600000 for value in offsets.values())
+                or ("invitation_accept_returned" in offsets and "invitation_accept_started" not in offsets)
+                or ("pending_request_wait_entered" in offsets and "invitation_accept_returned" not in offsets)):
+            raise ValueError("Pairing stage offsets are unbounded or incomplete")
+        ordered = [offsets[key] for key in TIMING_FIELDS if key in offsets]
+        if not timing["clipped"] and ordered != sorted(ordered):
+            raise ValueError("Pairing stage offsets are inconsistent")
+    if ("pending_request_wait_entered" in offsets) != ("post_accept_reads" in diagnostics):
+        raise ValueError("Post-accept read observations have no stage provenance")
+    if "post_accept_reads" in diagnostics:
+        reads = diagnostics["post_accept_reads"]
+        if (not isinstance(reads, dict) or set(reads) != {"attempts", "completed", "clipped", "deadline_exhausted_at_entry"}
+                or any(type(reads[key]) is not int or not 0 <= reads[key] <= 4096 for key in ("attempts", "completed"))
+                or any(type(reads[key]) is not bool for key in ("clipped", "deadline_exhausted_at_entry"))
+                or reads["completed"] > reads["attempts"]):
+            raise ValueError("Post-accept read counts are invalid")
     if "failure_probe" in diagnostics:
         probe = diagnostics["failure_probe"]
         if not isinstance(probe, dict) or set(probe) - {"offerer", "answerer"}:
@@ -80,7 +108,9 @@ def failure_details(value):
         if not isinstance(peer, dict) or not peer or set(peer) - {"last_snapshot", "last_pairing", "last_connections"}:
             raise ValueError("Pairing failure peer observations are invalid")
         if "last_snapshot" in peer:
-            bounded_observation(peer["last_snapshot"], SNAPSHOT_COUNTS, SNAPSHOT_FLAGS)
+            bounded_observation(peer["last_snapshot"], SNAPSHOT_COUNTS, SNAPSHOT_FLAGS, {"observed_subphase"})
+            if peer["last_snapshot"]["observed_subphase"] not in set().union(*SUBPHASES.values()):
+                raise ValueError("Snapshot observation subphase is invalid")
         if "last_connections" in peer:
             bounded_observation(peer["last_connections"], CONNECTION_COUNTS, {"counts_capped"})
             connections = peer["last_connections"]

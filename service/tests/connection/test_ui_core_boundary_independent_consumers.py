@@ -128,6 +128,43 @@ def test_actual_node_pairing_producer_reports_safe_specific_failure_observations
         assert peers[role]["last_connections"] == {"total": 1, "checked": 1, "ready": 0, "counts_capped": False}
 
 
+@pytest.mark.parametrize("fault,completed,entry_expired,failure_ms", [
+    ("late_accept", 0, True, 240100), ("pending_read_reject", 0, False, 1500),
+    ("pending_read_in_flight", 0, False, 1500), ("pending_request_wait", 1, False, 300000)])
+def test_actual_producer_distinguishes_late_acceptance_and_post_accept_reads(tmp_path, fault, completed, entry_expired, failure_ms):
+    node, _ = staging.tools()
+    log = tmp_path / "events.jsonl"
+    process = subprocess.run([node, "--import", (staging.ROOT /
+        "tests/core-ui-boundary/pairing_diagnostic_fixture.mjs").as_uri(),
+        str(staging.APPLICATION / "pairing-check.mjs"), "--runtime", "unused", "--data-directory", "unused"],
+        cwd=staging.ROOT, env={**os.environ, "PAIRING_DIAGNOSTIC_FAULT": fault,
+            "PAIRING_DIAGNOSTIC_LOG": str(log)}, capture_output=True, text=True, timeout=15)
+    assert process.returncode == 1 and len(process.stdout.encode()) <= 4096
+    assert "private" not in (process.stdout + process.stderr).lower()
+    result = pairing.failure_details(json.loads(process.stdout))
+    assert result["application_phase"] == "explicit_approval" and result["error_code"] == "unavailable"
+    diagnostics = result["diagnostics"]
+    assert diagnostics["subphase"] == "pending_request_wait"
+    assert diagnostics["deadline_exhausted"] is (fault in {"late_accept", "pending_request_wait"})
+    assert diagnostics["stage_timing"] == {"offsets_ms": {"invitation_accept_started": 0,
+        "invitation_accept_returned": 240100 if entry_expired else 1000,
+        "pending_request_wait_entered": 240100 if entry_expired else 1000,
+        "failure_observed": failure_ms}, "clipped": False}
+    assert diagnostics["post_accept_reads"] == {"attempts": 0 if entry_expired else 1,
+        "completed": completed, "clipped": False, "deadline_exhausted_at_entry": entry_expired}
+    assert diagnostics["peers"]["offerer"]["last_snapshot"]["observed_subphase"] == (
+        "pending_request_wait" if completed else "offerer_create")
+    assert diagnostics["peers"]["answerer"]["last_snapshot"]["observed_subphase"] == "invitation_guard"
+    events = [json.loads(line) for line in log.read_text().splitlines()]
+    assert [item for item in events if item["event"] == "open"] == [
+        {"event": "open", "role": role, "timeout": 30000} for role in ("offerer", "answerer")]
+    assert len([item for item in events if item["event"] == "post_accept_snapshot"]) == (0 if entry_expired else 1)
+    assert [item["role"] for item in events if item["event"] == "stop"] == ["offerer", "answerer"]
+    accepted = next(index for index, item in enumerate(events) if item["event"] == "accept_returned")
+    following = [item["operation"] for item in events[accepted + 1:] if item["event"] == "request"]
+    assert following == ([] if entry_expired else ["application.snapshot"]) + ["peer.pairing_query", "peer.pairing_query"]
+
+
 @pytest.mark.parametrize("mode", ["reject", "invalid", "advance_clock", "retirement_failure", "uninitialized"])
 def test_failure_probe_preserves_original_failure_and_retirement_with_bounded_requests(tmp_path, mode):
     node, _ = staging.tools()
@@ -146,6 +183,7 @@ def test_failure_probe_preserves_original_failure_and_retirement_with_bounded_re
     probes = [item for item in events if item["event"] == "probe"]
     stops = [item for item in events if item["event"] == "stop"]
     assert details["diagnostics"]["deadline_exhausted"] is False
+    assert details["diagnostics"]["stage_timing"]["offsets_ms"]["failure_observed"] == 0
     if mode == "uninitialized":
         assert probes == [] and stops == [{"event": "stop", "role": "offerer"}]
         assert details["application_phase"] == "fresh_profiles" and details["error_code"] == "forbidden"
@@ -198,11 +236,13 @@ def test_node_diagnostic_projection_caps_counts_and_selects_no_private_payloads(
     script = """
 import {pairingDiagnostics, SUBPHASES, ERROR_CODES} from './examples/typescript-independent-consumer/pairing-diagnostics.mjs';
 const diagnostics = pairingDiagnostics();
+diagnostics.start();
 diagnostics.enter('invitation_wait');
 diagnostics.snapshot('answerer', {contacts: Array(300).fill({trust:'pending_request',destination_hash:'PRIVATE_DESTINATION'}),
   contact_invitations: Array(300).fill({state:'pending',sdp:'PRIVATE_SDP'})}, 'PRIVATE_DESTINATION');
 diagnostics.pairing('answerer', {state:'PRIVATE_STATE',pairing_code:'PRIVATE_PAIRING_CODE',token:'PRIVATE_TOKEN'});
 diagnostics.connections('answerer',300,299,298);
+diagnostics.freezeFailure();
 console.log(JSON.stringify({diagnostics:diagnostics.failure(),subphases:[...SUBPHASES],errors:[...ERROR_CODES]}));
 """
     completed = subprocess.run([node, "--input-type=module", "-e", script], cwd=staging.ROOT,
@@ -221,11 +261,89 @@ console.log(JSON.stringify({diagnostics:diagnostics.failure(),subphases:[...SUBP
     assert peer["last_connections"] == {"total": 256, "checked": 256, "ready": 256, "counts_capped": True}
 
 
+def test_monotonic_stage_offsets_and_read_counts_clip_and_freeze_without_private_values():
+    node, _ = staging.tools()
+    script = """
+import {pairingDiagnostics} from './examples/typescript-independent-consumer/pairing-diagnostics.mjs';
+let now = 100;
+const diagnostics = pairingDiagnostics(() => now);
+diagnostics.start();
+now = 90;
+diagnostics.enter('invitation_accept');
+now = 900000;
+diagnostics.acceptanceReturned();
+diagnostics.pendingWait(false);
+for (let i=0;i<4100;i++) { diagnostics.pendingAttempt(); diagnostics.pendingComplete(); }
+diagnostics.snapshot('offerer',{contacts:[],contact_invitations:[],sdp:'PRIVATE_SDP'},'PRIVATE_DESTINATION');
+now = 'PRIVATE_CLOCK';
+diagnostics.freezeFailure();
+const before = diagnostics.failure();
+now = 2000000;
+diagnostics.acceptanceReturned();
+diagnostics.pendingWait(true);
+diagnostics.pendingAttempt(); diagnostics.pendingComplete();
+console.log(JSON.stringify({before,after:diagnostics.failure()}));
+"""
+    completed = subprocess.run([node, "--input-type=module", "-e", script], cwd=staging.ROOT,
+        capture_output=True, text=True, check=True, timeout=15)
+    assert "PRIVATE" not in completed.stdout
+    result = json.loads(completed.stdout)
+    assert result["before"] == result["after"]
+    diagnostics = result["before"]
+    assert diagnostics["stage_timing"] == {"offsets_ms": {"invitation_accept_started": 0,
+        "invitation_accept_returned": 600000, "pending_request_wait_entered": 600000,
+        "failure_observed": 600000}, "clipped": True}
+    assert diagnostics["post_accept_reads"] == {"attempts": 4096, "completed": 4096,
+        "clipped": True, "deadline_exhausted_at_entry": False}
+    pairing.failure_details({"passed": False, "phase": "explicit_approval", "error_code": "unavailable", "diagnostics": diagnostics})
+
+
+@pytest.mark.parametrize("fault", ["missing_timing", "unknown_timing_field", "absolute_timestamp", "negative_offset",
+    "oversized_offset", "boolean_offset", "nonfinite_offset", "offset_order", "missing_failure", "missing_start",
+    "clip_type", "negative_count", "oversized_count", "boolean_count", "count_order", "entry_type",
+    "missing_entry", "missing_counts", "provenance", "provenance_missing"])
+def test_timing_read_count_and_snapshot_provenance_contract_rejects_unsafe_fields(fault):
+    observed = {"passed": False, "phase": "explicit_approval", "error_code": "unavailable", "diagnostics": {
+        "subphase": "pending_request_wait", "deadline_exhausted": True,
+        "stage_timing": {"offsets_ms": {"invitation_accept_started": 1, "invitation_accept_returned": 2,
+            "pending_request_wait_entered": 2, "failure_observed": 3}, "clipped": False},
+        "post_accept_reads": {"attempts": 1, "completed": 1, "clipped": False, "deadline_exhausted_at_entry": False},
+        "peers": {"offerer": {"last_snapshot": {"contacts": 0, "invitations": 0, "pending_invitations": 0,
+            "pending_requests": 0, "approved_contacts": 0, "matching_pending_request": False,
+            "matching_approved_contact": False, "counts_capped": False, "observed_subphase": "pending_request_wait"}}}}}
+    pairing.failure_details(copy.deepcopy(observed))
+    diagnostics = observed["diagnostics"]
+    offsets = diagnostics["stage_timing"]["offsets_ms"]
+    reads = diagnostics["post_accept_reads"]
+    if fault == "missing_timing": diagnostics.pop("stage_timing")
+    elif fault == "unknown_timing_field": offsets["PRIVATE_IDENTIFIER"] = 1
+    elif fault == "absolute_timestamp": diagnostics["stage_timing"]["wall_clock"] = 1234567890
+    elif fault == "negative_offset": offsets["failure_observed"] = -1
+    elif fault == "oversized_offset": offsets["failure_observed"] = 600001
+    elif fault == "boolean_offset": offsets["failure_observed"] = True
+    elif fault == "nonfinite_offset": offsets["failure_observed"] = float("inf")
+    elif fault == "offset_order": offsets["failure_observed"] = 0
+    elif fault == "missing_failure": offsets.pop("failure_observed")
+    elif fault == "missing_start": offsets.pop("invitation_accept_started")
+    elif fault == "clip_type": diagnostics["stage_timing"]["clipped"] = "PRIVATE_CLOCK"
+    elif fault == "negative_count": reads["attempts"] = -1
+    elif fault == "oversized_count": reads["attempts"] = 4097
+    elif fault == "boolean_count": reads["attempts"] = True
+    elif fault == "count_order": reads["completed"] = 2
+    elif fault == "entry_type": reads["deadline_exhausted_at_entry"] = "PRIVATE_VALUE"
+    elif fault == "missing_entry": offsets.pop("pending_request_wait_entered")
+    elif fault == "missing_counts": diagnostics.pop("post_accept_reads")
+    elif fault == "provenance": diagnostics["peers"]["offerer"]["last_snapshot"]["observed_subphase"] = "PRIVATE_IDENTIFIER"
+    else: diagnostics["peers"]["offerer"]["last_snapshot"].pop("observed_subphase")
+    with pytest.raises(ValueError): pairing.failure_details(observed)
+
+
 @pytest.mark.parametrize("fault", ["subphase", "phase_mismatch", "role", "state", "pairing_code", "private_field",
     "envelope_field", "error_code", "negative", "oversized", "boolean_count", "string_flag", "inconsistent"])
 def test_pairing_failure_report_rejects_unselected_private_or_unbounded_fields(fault):
     observed = {"passed": False, "phase": "explicit_approval", "error_code": "unavailable",
-        "diagnostics": {"subphase": "offerer_ready_wait", "deadline_exhausted": True, "peers": {"offerer": {
+        "diagnostics": {"subphase": "offerer_ready_wait", "deadline_exhausted": True,
+            "stage_timing": {"offsets_ms": {"failure_observed": 1}, "clipped": False}, "peers": {"offerer": {
             "last_pairing": {"state": "awaiting_approval", "code_present": False},
             "last_connections": {"total": 1, "checked": 1, "ready": 0, "counts_capped": False}}}}}
     pairing.failure_details(copy.deepcopy(observed))
@@ -250,7 +368,8 @@ def test_pairing_failure_report_rejects_unselected_private_or_unbounded_fields(f
 @pytest.mark.parametrize("fault", ["role", "state", "code", "timestamp", "error", "expired_type", "unknown_outcome"])
 def test_failure_probe_report_cannot_retain_private_or_unselected_result_fields(fault):
     observed = {"passed": False, "phase": "explicit_approval", "error_code": "forbidden",
-        "diagnostics": {"subphase": "invitation_accept", "deadline_exhausted": False, "peers": {},
+        "diagnostics": {"subphase": "invitation_accept", "deadline_exhausted": False,
+            "stage_timing": {"offsets_ms": {"failure_observed": 1}, "clipped": False}, "peers": {},
             "failure_probe": {"offerer": {"query_outcome": "ok", "state": "transferred", "expired": False}}}}
     pairing.failure_details(copy.deepcopy(observed))
     probe = observed["diagnostics"]["failure_probe"]
