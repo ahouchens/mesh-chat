@@ -4,6 +4,7 @@ import base64
 import json
 import os
 import time
+from types import SimpleNamespace
 
 import pytest
 import RNS
@@ -41,6 +42,10 @@ def inbox(tmp_path, monkeypatch):
 
 def test_native_receipt_survives_reopen_without_a_renderer_or_accepting(inbox, tmp_path):
     service, document, destination, key = inbox
+    closed = []
+    # This fixture inserts a synthetic resource instead of allocating a native
+    # peer. Supply its matching cleanup boundary; no Android/JNI host exists.
+    service._native_host = SimpleNamespace(close=closed.append)
     service._native_webrtc_live.add("phone")
     physical = service._native_resources.reserve("phone")
     service._native_webrtc_peers["phone"] = destination
@@ -54,6 +59,7 @@ def test_native_receipt_survives_reopen_without_a_renderer_or_accepting(inbox, t
     assert service.store.list("contact") == []
     assert service.store.list("message") == []
     service.close()
+    assert closed == [physical]
     reopened = VaultStore(tmp_path, key, allow_unprotected_for_tests=True)
     try:
         recovered = reopened.get("contact_invitation", saved[0]["id"])
