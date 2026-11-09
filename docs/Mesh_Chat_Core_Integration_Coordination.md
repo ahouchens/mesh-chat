@@ -11,6 +11,17 @@ reports. Exact evidence and limits are in the ledger. Wave 2 is activated below.
 Existing human authorization covers continued implementation, integration and
 worker follow-ups without another permission request.
 
+Current Wave 2 CI `42676194199` at `da81565` fails two synthetic run-context
+fixtures and Windows first-time pairing (`approved_path`, both carriers absent).
+The fixture repair is integrated and passes all 94 matrix checks under CI-like
+context. C and D prioritize production handoff diagnosis and bounded probe
+diagnostics before another full dispatch. Local `a899b85` passes the exact
+640-Python/eight-rendered-App gate; `50474ec` adds independently installed public
+SDK application staging, with nine focused passes. These do not establish SC21
+traffic or packaged acceptance. A's call recovery must preserve ordinary
+start/end/start behavior and require actual trusted retirement before replacing
+uncertain media resources. B's group keys remain explicit and capability gated.
+
 Wave 2 local checkpoint: `8950053` passes 420 Python and all eight rendered
 boundary cases, including same-vault reopen and uncertain-send recovery. The
 earlier full policy gate passed 2,630 cases at `6e97db5`. Composer storage,

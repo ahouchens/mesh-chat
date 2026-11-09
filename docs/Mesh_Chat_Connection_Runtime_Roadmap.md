@@ -26,6 +26,14 @@ selected-profile behavior. Actual OS-slot provider installation and renderer
 unknown-call recovery remain work, alongside concrete pairing and the topology
 matrix. The ledger separates these component checkpoints from packaged evidence.
 
+Full CI `42676194199` at `da81565` exposes a Windows first-time pairing failure
+after successful preapproved receipts, plus two synthetic context-fixture
+failures. The fixtures are repaired locally; pairing diagnosis takes priority
+before another dispatch. Exact `a899b85` passes 640 Python and eight rendered-App
+boundary cases, and `50474ec` passes nine independent app staging checks. Public
+app-owned host bootstrap, actual cross-platform consumer traffic and trusted
+media-retirement recovery remain implementation and qualification work.
+
 Integration begins at `435b497150e5f0d12cb1c5dc7b4602da7a66ec4c` on a
 separate lead branch. The [coordination inventory](Mesh_Chat_Core_Integration_Coordination.md)
 assigns exclusive ownership and defines the two-wave implementation gates.

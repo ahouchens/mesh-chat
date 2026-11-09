@@ -40,6 +40,14 @@ but these local checks do not establish native interoperability. Platform OS
 authentication, independent app-owned consumers, remaining mutation families,
 and delayed settings/contact/admin UI admission remain active obligations.
 
+Current full CI `42676194199` at `da81565` fails synthetic run-context fixtures
+and packaged Windows first-time pairing. The fixture repair and final UI API
+admission guards pass local checks; exact `a899b85` boundary evidence is 640
+Python plus eight rendered-App cases, zero skips. Independent application
+staging at `50474ec` passes nine checks, including a real outside-checkout SDK
+install/import. None closes SC21, native topology or actual platform lifecycle
+acceptance. The pairing defect remains under production/harness investigation.
+
 The rows below summarize historical evidence, not qualification of baseline
 `435b497150e5f0d12cb1c5dc7b4602da7a66ec4c` or subsequent integration commits.
 The historical baseline audit supplied to this integration found 25 passing schema tests

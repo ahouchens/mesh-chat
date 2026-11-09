@@ -2,6 +2,43 @@
 
 ## Integration revalidation (2026-11-09)
 
+### Current full CI failure and local repairs
+
+Full run `42676194199` targets `da815655792241629f19f0e7ac02b8402a744790`,
+tree `ea96a33605a4cff7620023bbff8ca4c1e88163a1`. Its retained selection
+requires all six families and the full native workload. The lead verified
+selection artifact `13700217574`, ZIP SHA-256
+`235e2a75c7d219b931a2a4f32cb09bf5c04ec425024d82f82af7ece0f83b6964`.
+The run cannot pass: policy recorded 3,184 passes and two failures, zero skips;
+broad verification recorded 4,389 passes, the same two failures and 51 platform
+skips. Synthetic matrix fixtures inherited the real GitHub run context. Repair
+`3425095` isolates those fixtures while explicit positive/negative CI controls
+retain strict production run/attempt matching. The lead reran all 94 matrix
+checks under an unrelated live-style CI context: zero failures or skips, 4.64s.
+
+Windows also failed explicit first-time pairing at `approved_path`, with both
+carriers absent and bridges detached. Preapproved durable receipts, native
+control/lifecycle, pipe consumers, WebView2 and frozen-material checks had passed.
+Those preceding passes do not qualify first-time pairing. The retained failure
+reports no transport faults or peer stderr; process termination during cleanup
+is not a diagnosed cause. C owns production handoff diagnosis and D owns probe
+diagnostics. Desktop report artifact `13700996616` has verified ZIP SHA-256
+`279dd742957f2b5cafb38b898cbc3a21ce8d941e375b3cd6b79f3d8b88ae9c0f`.
+Reports are retained under `.test-tmp/ci-evidence-da81565/desktop-transport`.
+Its executable hashes remain runner claims until independently checked against
+the executable archive. Required native topology has not executed in this run.
+
+Local source `a899b8576ee2130510b5bf98b6a64b7b44bf7f71`, tree
+`ebd717956b4b7ff7ceb215b8afa4cc4357879b77`, integrates the fixture repair,
+independent group authority tests and the remaining API/component admission
+guards. Its exact boundary gate passes 640 Python plus eight rendered-App cases,
+zero failures/skips, in 34.57s. B reports 719 frontend passes and TypeScript
+compilation passing at `ddf4776`; plain native effect auditing remains separate.
+At `50474ec78d082ad17e4bafd450187780823abd2a`, nine independent consumer staging
+checks pass without skips in 1.36s, including actual offline archive installation
+and public SDK import outside the checkout. This is staging evidence only:
+normal app-owned host bootstrap and public pairing/receipt traffic remain open.
+
 ### Wave 2 interim CI and packaging repairs
 
 Full workflow `42665862417` targets source
