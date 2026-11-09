@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { setTimeout as pause } from "node:timers/promises";
 import { launchRuntime } from "./runtime.mjs";
+import { freshRelaySettings } from "./relay-settings.mjs";
 
 let phase = "arguments";
 let deadline;
@@ -45,7 +46,7 @@ async function create(executable, directory, name, owned) {
   if (["nearby_discovery", "lan_fallback", "help_route"].some(key => settings[key] !== false)) throw new Error();
   const calls = (await client.request("call.settings_query", { profile: peer.profile })).settings;
   await client.request("call.settings_update", { profile: peer.profile,
-    settings: { ...calls, turn_broker_consent: true, relay_only: true } });
+    settings: freshRelaySettings(calls) });
   const applied = (await client.request("call.settings_query", { profile: peer.profile })).settings;
   if (applied.turn_broker_consent !== true || applied.relay_only !== true) throw new Error();
   return peer;
