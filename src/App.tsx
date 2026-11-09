@@ -1,6 +1,7 @@
 import { CallDialog, IncomingCallPrompt, type CallPeer } from "./CallDialog";
 import { CallRecoveryNotice } from "./CallRecoveryNotice";
-import { ProfileLifetime, ProfileLifetimeContext, ProfileRetiredError } from "./profile-lifetime";
+import { ProfileLifetime, ProfileLifetimeContext, ProfileRetiredError, useProfileLifetime } from "./profile-lifetime";
+import type { CoreRequestAdmission } from "./core-admission";
 import { workspaceConnectivityLabel, workspaceStateLabel, workspaceSyncIssueLabel } from "./workspaceLabels";
 import { contactTrustDescription, contactTrustLabel, groupComposerState, groupInvitationBanner, groupInviteDeliveryLabel, groupPolicyLabel, pluralize } from "./groupLabels";
 import { canPrepareDirectHost, directActionLabel, directPhaseLabel, directFailureReport, directReasonLabel, sanitizedDoctorSummary } from "./directLabels";
@@ -345,17 +346,6 @@ async function fetchWorkspaceTimeline(
 ): Promise<Record<string, unknown>> {
   return await coreApiTimelineQuery(
     workspace.core_handle ?? "", view, params);
-}
-
-async function mutateWorkspaceTimeline(
-  workspace: { id: string; core_handle?: string },
-  action: "thread_reply" | "thread_read" | "mentions_read" | "notification_preference" | "workspace_read" | "direct_read" | "channel_message" | "direct_message" | "message_edit" | "message_delete" | "reaction_set",
-  params: Record<string, unknown>,
-  operationId?: string,
-): Promise<Record<string, unknown>> {
-  return await coreApiTimelineMutation(
-    workspace.core_handle ?? "", action, params,
-    operationId ?? newOperationId());
 }
 
 async function loadWorkspaceSnapshot(): Promise<WorkspaceSnapshot> {
@@ -4193,6 +4183,21 @@ type WorkspaceMessageInvalidations = Record<string, {
 }>;
 
 function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageInvalidations, notificationTarget, onNotificationHandled, onLock, initialInvitation, onInvitationHandled, initialPairingCode = "", initialWebRTCJoin = false, onWebRTCJoinHandled, onPairingHandled }: { snapshot: Snapshot; theme: Theme; onThemeChange: (theme: Theme) => void; refresh: (afterCurrent?: boolean) => Promise<Snapshot>; workspaceMessageInvalidations: WorkspaceMessageInvalidations; notificationTarget: NotificationOpenTarget | null; onNotificationHandled: () => void; onLock: () => Promise<void>; initialInvitation: string; onInvitationHandled: () => void; initialPairingCode?: string; initialWebRTCJoin?: boolean; onWebRTCJoinHandled?: () => void; onPairingHandled?: () => void }) {
+  const lifetime = useProfileLifetime();
+  const [profileGeneration] = useState(() => lifetime?.capture());
+  const draftsRetiring = useRef(false);
+  const profileCurrent = useCallback(() => !lifetime || lifetime.isCurrent(profileGeneration!), [lifetime, profileGeneration]);
+  const admitMutation: CoreRequestAdmission = useCallback((request) => lifetime
+    ? lifetime.mutate(profileGeneration!, request) : request(), [lifetime, profileGeneration]);
+  const admitDraft: CoreRequestAdmission = useCallback((request) => lifetime
+    ? lifetime.mutate(profileGeneration!, request, draftsRetiring.current) : request(), [lifetime, profileGeneration]);
+  const mutateWorkspaceTimeline = useCallback((
+    workspace: { id: string; core_handle?: string },
+    action: Parameters<typeof coreApiTimelineMutation>[1],
+    params: Record<string, unknown>,
+    operationId?: string,
+  ) => coreApiTimelineMutation(workspace.core_handle ?? "", action, params,
+    operationId ?? newOperationId(), admitMutation), [admitMutation]);
   const groups = snapshot.groups ?? [];
   const groupMessages = snapshot.group_messages ?? [];
   const groupInvitations = snapshot.group_invitations ?? [];
@@ -4647,7 +4652,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
           ? { conversation: selectedWorkspaceDirect.id, cursor: append ? workspacePage?.next_cursor ?? null : null, limit: 50 }
           : { channel: selectedWorkspaceChannel!.id, cursor: append ? workspacePage?.next_cursor ?? null : null, limit: 50 },
       ) as unknown as WorkspaceMessagePage;
-      if (workspacePageSelection.current !== selectionKey) return;
+      if (!profileCurrent() || workspacePageSelection.current !== selectionKey) return;
       setWorkspacePage((current) => append && current ? { ...page, messages: [...page.messages, ...current.messages] } : page);
       if (!append && selectedWorkspaceConversation.unread_count > 0) {
         await mutateWorkspaceTimeline(selectedWorkspace,
@@ -4658,7 +4663,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       }
     } catch (reason) { setWorkspaceError(errorMessage(reason)); }
     finally { workspacePageInFlight.current = false; setWorkspacePageLoading(false); }
-  }, [selectedWorkspace?.id, selectedWorkspaceConversation?.id, selectedWorkspaceConversation?.unread_count, selectedWorkspaceDirect?.id, selectedWorkspaceChannel?.id, workspacePage?.next_cursor]);
+  }, [selectedWorkspace?.id, selectedWorkspaceConversation?.id, selectedWorkspaceConversation?.unread_count, selectedWorkspaceDirect?.id, selectedWorkspaceChannel?.id, workspacePage?.next_cursor, profileCurrent, mutateWorkspaceTimeline]);
 
   useEffect(() => {
     if (!selectedWorkspace || !selectedWorkspaceConversation) {
@@ -4771,7 +4776,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
         cursor: append ? workspaceThreadPage?.next_cursor ?? null : null,
         limit: 50,
       }) as unknown as WorkspaceThreadPage;
-      if (workspaceThreadSelection.current !== selectionKey) return;
+      if (!profileCurrent() || workspaceThreadSelection.current !== selectionKey) return;
       setWorkspaceThreadPage((current) => append && current ? { ...page, unread_count: current.unread_count, replies: [...page.replies, ...current.replies] } : page);
       if (!append && page.unread_count > 0) {
         await mutateWorkspaceTimeline(selectedWorkspace, "thread_read", {
@@ -4783,7 +4788,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       }
     } catch (reason) { setWorkspaceError(errorMessage(reason)); }
     finally { workspaceThreadInFlight.current = false; setWorkspaceThreadLoading(false); }
-  }, [selectedWorkspace?.id, workspaceThreadRootId, workspaceThreadPage?.next_cursor, refresh]);
+  }, [selectedWorkspace?.id, workspaceThreadRootId, workspaceThreadPage?.next_cursor, refresh, profileCurrent, mutateWorkspaceTimeline]);
 
   useEffect(() => {
     if (!workspaceThreadRootId || !selectedWorkspace) {
@@ -4918,13 +4923,13 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
             threadRoot: typeof write.payload.thread_root_id === "string" ? write.payload.thread_root_id : undefined,
             mentions: Array.isArray(write.payload.mention_member_ids)
               ? write.payload.mention_member_ids.map(String) : undefined,
-          });
+          }, admitDraft);
         return;
       }
       if (write.command === "save_group_draft" && typeof write.payload.group_id === "string") {
         const group = (snapshot.groups ?? []).find((item) => item.id === write.payload.group_id);
         if (!group?.core_handle) throw new Error("core_api_unavailable");
-        await coreApiGroupDraftSet(group.core_handle, String(write.payload.text ?? ""));
+        await coreApiGroupDraftSet(group.core_handle, String(write.payload.text ?? ""), admitDraft);
         return;
       }
       throw new Error("core_api_unavailable");
@@ -4935,6 +4940,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     return result;
   };
   const scheduleDraftWrite = (key: string, write: DraftWrite) => {
+    if (!profileCurrent()) return;
     const slot = draftSlot(key);
     slot.pending = write;
     if (slot.timer !== null) window.clearTimeout(slot.timer);
@@ -4958,6 +4964,22 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     await cancelPendingDraftWrite(key);
     await enqueueDraftWrite(draftSlot(key), write);
   };
+  const retireDrafts = useRef<() => Promise<unknown>>(() => Promise.resolve());
+  retireDrafts.current = async () => {
+    draftsRetiring.current = true;
+    const writes = [...draftWriteSlots.current.values()].map((slot) => {
+      if (slot.timer !== null) window.clearTimeout(slot.timer);
+      slot.timer = null;
+      const pending = slot.pending;
+      slot.pending = null;
+      return pending ? enqueueDraftWrite(slot, pending) : slot.tail;
+    });
+    const results = await Promise.allSettled(writes);
+    if (results.some((result) => result.status === "rejected")) throw new Error("draft_outcome_pending");
+  };
+  useEffect(() => {
+    if (lifetime) return lifetime.register(profileGeneration!, () => retireDrafts.current());
+  }, [lifetime, profileGeneration]);
   const deleteConversation = async () => {
     if (!deleteTarget || deleteBusy) return;
     const target = deleteTarget;
@@ -5035,7 +5057,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       let sent = false;
       if (selectedGroup.core_handle) {
         try {
-          await coreApiSendGroupMessage(selectedGroup.core_handle, text);
+          await coreApiSendGroupMessage(selectedGroup.core_handle, text, admitMutation);
           sent = true;
         } catch (reason) {
           if (!String(reason).includes("core_api_unavailable")) throw reason;
