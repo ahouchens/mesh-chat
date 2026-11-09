@@ -90,6 +90,39 @@ uncertain lock outcomes for retry, and fences delayed notification admission.
 Full renderer-restart call intent recovery and live public profile selection
 remain open. No new packaged qualification is claimed by these local checks.
 
+### Supervisor topology and optional group-key checkpoint
+
+Source `a3a98ce69624d5a7d083c7264da5af3a320d9f09`, tree
+`147ab5d759b3e060da3f0824a22055fe6ccfbc51`, passes all 3,178 required policy
+cases with zero failures or skips in 324.46 seconds. Qualification ID:
+`35a8948d124c4779abb5e52c00097eb4`; reports are
+`dist/reports/policy-supervisor-group.{xml,json,inventory.json}`. Source-bound
+Python/TypeScript SDK staging and isolated imports also pass. The new optional
+group create/enqueue caller keys retain legacy unkeyed SDK behavior; keyed
+acceptance commits primary records, recipient jobs, quota and receipts together.
+This closes two advertised optional extensions, not the remaining mutation audit.
+
+That source also contains D's supervisor-driven topology controller and explicit
+quick/full selection. Full manual qualification requires both direct initiators,
+Windows-initiated TURN UDP/TCP/TLS and impairment cases, selected-path negative
+controls, and 100 receipt iterations per role with ten periodic cold restarts.
+Quick PR smoke has a distinct evidence level and cannot satisfy the full or
+release gate. Neither mode has executed on the combined native artifacts yet.
+
+Follow-ups are integrated at `d4091fdabb4514f85d181865c417d4f5f0263425`, tree
+`c425112e0868173dc460bcf515571a2233157f68`: offline keyed group invalidation
+observations, mobile runtime-host routing and failed-opener channel custody,
+group/workspace draft/send/read admission fences, and crossed-caller call-media
+denial. The lead's exact-source boundary gate passes 640 Python cases plus eight
+rendered-App cases, zero skips, in 48.03 seconds. The focused actual mobile/group
+run passes 63 cases, zero skips, in 13.28 seconds. Reports are
+`dist/reports/core-ui-boundary.json` and `.test-tmp/host-group-final.xml`.
+B separately reports all 708 frontend tests and TypeScript compilation passing
+at `b2b632e`. Remaining delayed settings/contact/admin admission paths are being
+repaired; live platform authentication and independent public consumers remain
+open. Subsequent documentation-only merge `0e110070` clarifies the accepted
+independent-consumer design and ownership; it adds no execution claim.
+
 ### Runtime catalog and installed SDK checkpoint
 
 Source `8ef8dd5388e617ad4dae0a1425318cd05f08d8f7`, tree

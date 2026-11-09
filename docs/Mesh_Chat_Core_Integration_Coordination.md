@@ -82,6 +82,25 @@ supervisor entry and declares quick/full qualification selection. A continues
 atomic optional group keys, then protected call-operation recovery. No new
 packaged run or broader milestone acceptance is implied.
 
+The complete policy checkpoint `a3a98ce` passes 3,178 tests, zero skips. Follow-up
+`d4091fd` passes the exact 640-Python/eight-rendered-App boundary and 63 focused
+mobile/group cases. It includes optional keyed group acceptance, supervisor
+topology control, source-bound quick/full workloads, actual mobile Core routing
+and group/workspace UI admission fences. The next full native CI checkpoint is
+ready for dispatch; platform authentication remains pending and is not inferred
+from OS boundary doubles.
+
+The reviewed SC21 handoff is in `tests/core-ui-boundary/public-consumer-plan.md`.
+A implements public pairing begin/query/cancel after protected call recovery;
+begin and cancel both require caller keys. C owns new ordinary app-owned host
+bootstrap/composition and Android runtime-host packaging, plus the necessary
+`__main__.py` route. A retains `core_api/sidecar_host.py` and `pipe_endpoint.py`.
+Existing Python/TypeScript consumer examples remain A-owned; D creates separate
+independent consumer directories and their build/evidence scripts. The private
+qualifier and seeded cross-UID fixtures cannot qualify SC21. B continues the
+remaining asynchronous admission repairs while C completes the real native
+credential facade. These are authorized implementation handoffs.
+
 ## Active Wave 2 handoff
 
 All workers merge the current lead branch before edits. Source `174728e` is the

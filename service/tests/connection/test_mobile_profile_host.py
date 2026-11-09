@@ -1,6 +1,10 @@
 """Actual encrypted Core/lifecycle; OS key and auth boundary are explicit doubles."""
 import base64
+import hashlib
+import hmac
+import json
 import os
+from threading import Event
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -12,6 +16,9 @@ from mesh_chat.errors import NativeUnavailable
 from mesh_chat.mobile_profile_host import NativeMobileProfileHost, native_key
 from mesh_chat.vault import VaultStore
 from test_pairing_runtime import native_pairing
+from test_mobile_bootstrap import mobile_request
+from mesh_chat import mobile_bridge
+from mesh_chat.service import MeshChatService
 
 
 @pytest.fixture
@@ -159,7 +166,135 @@ def test_lifecycle_change_during_native_credential_issue_cannot_return_token_for
     assert not r.loads
 
 
+def test_native_lock_retains_one_admitted_key_and_reports_pending_until_actual_worker_drain(platform_host):
+    r = platform_host
+    released = Event()
+    r.active._pending_contact_carriers = {"pending": SimpleNamespace(close=lambda: None, wait=released.wait)}
+    try:
+        with pytest.raises(ApiFailure):
+            r.host.lock()
+        admitted = r.host._native_lock_key
+        assert admitted is not None and r.active.store._key is not None
+        with pytest.raises(ApiFailure):
+            r.host.lock()
+        assert r.host._native_lock_key == admitted
+        released.set()
+        r.active._close_finalizer.join(3)
+        assert r.host.lock()["state"] == "locked"
+        assert r.host._native_lock_key is None and r.active.store._key is None
+    finally:
+        released.set()
+
+
 @pytest.mark.parametrize("value", [None, "bad", "A" * 65, base64.b64encode(b"short").decode()])
 def test_native_key_decoder_never_accepts_partial_unbounded_or_non_native_key(value):
     with pytest.raises(NativeUnavailable):
         native_key(value)
+
+
+@pytest.fixture
+def installed_mobile_host(mobile_request, tmp_path, monkeypatch):
+    monkeypatch.setattr(MeshChatService, "_start_network", lambda *_: None)
+    monkeypatch.setattr(MeshChatService, "_prepare_lan_fallback", lambda *_: None)
+    root = tmp_path / "files" / "mesh-chat" / "profile-v1"
+    key = b"b" * 32
+    loads, proof = [], set()
+    def fresh():
+        loads.append(True)
+        return base64.b64encode(key).decode()
+    def consume(challenge, caller, slot):
+        if challenge not in proof or caller != "app.owner" or slot != "primary":
+            return False
+        proof.remove(challenge)
+        return True
+    provider = SimpleNamespace(profileDirectory=lambda: str(root), ownerCaller=lambda: "app.owner", profileKey=fresh,
+        catalogKey=lambda: base64.b64encode(hmac.new(key, b"mesh-chat:profile-host-catalog:v1", hashlib.sha256).digest()).decode(),
+        consumeAuthorization=consume)
+    assert json.loads(mobile_bridge.initialize_native_host(provider, "Synthetic"))["ok"]
+    def request(operation, params=None, operation_key=None, caller="app.owner", scope="owner"):
+        value = {"api_version": 1, "request_id": "native:test", "operation": operation, "params": params or {}}
+        if operation_key is not None:
+            value["idempotency_key"] = operation_key
+        raw = mobile_bridge.core_exchange(caller, base64.b64encode(encode_frame(value)).decode(), scope)
+        return decode_frame(base64.b64decode(raw))
+    capabilities = request("runtime.capabilities")
+    assert capabilities["ok"], capabilities
+    return SimpleNamespace(provider=provider, loads=loads, proof=proof, root=root, request=request,
+                           profile=capabilities["result"]["profiles"][0], legacy_request=mobile_request)
+
+
+def test_actual_mobile_binder_route_uses_runtime_core_while_locked_and_reopens_only_after_native_auth(installed_mobile_host):
+    r = installed_mobile_host
+    original, emitter = mobile_bridge._service, mobile_bridge._service.emit
+    identity = original._identity.hash.hex()
+    assert "profile.catalog" in r.request("runtime.capabilities")["result"]["operations"]
+    assert json.loads(mobile_bridge.lock_profile_host())["result"]["state"] == "locked"
+    assert original._store_closed and original.store._key is None
+    assert mobile_bridge._service is None and mobile_bridge._profile_host is not None
+    assert r.request("profile.catalog")["ok"]
+    assert not json.loads(mobile_bridge.initialize_native(r.legacy_request))["ok"]
+    challenge = json.loads(mobile_bridge.begin_profile_unlock_auth(r.profile))["result"]["challenge"]
+    r.proof.add(challenge)
+    token = json.loads(mobile_bridge.complete_profile_unlock_auth(challenge))["result"]["credential_handle"]
+    unlocked = r.request("profile.unlock", {"profile": r.profile, "credential_handle": token}, str(uuid4()))
+    assert unlocked["ok"], unlocked
+    assert r.loads == [True, True]
+    assert mobile_bridge._service is not original and mobile_bridge._service._identity.hash.hex() == identity
+    assert mobile_bridge._service._connection_policy == "shared-native"
+    assert r.request("runtime.capabilities")["result"]["profiles"] == [r.profile]
+    mobile_bridge.drain_events()
+    emitter({"type": "event", "event": "old-service-private"})
+    assert json.loads(mobile_bridge.drain_events())["result"] == []
+
+
+def test_actual_mobile_cold_catalog_init_stays_locked_without_profile_key_read_or_initializer_fallback(installed_mobile_host):
+    r = installed_mobile_host
+    original_generation = mobile_bridge._profile_host.context()["host_generation"]
+    assert json.loads(mobile_bridge.shutdown())["ok"]
+    assert mobile_bridge._profile_host is None
+    reopened = json.loads(mobile_bridge.initialize_native_host(r.provider))
+    assert reopened == {"ok": False, "error": {"code": "locked"}}
+    assert mobile_bridge._service is None and r.loads == [True]
+    assert mobile_bridge._profile_host.context()["host_generation"] != original_generation
+    assert r.request("runtime.capabilities")["ok"]
+    assert r.request("profile.catalog")["ok"]
+
+
+def test_actual_mobile_native_auth_cannot_be_borrowed_by_other_binder_caller_or_renderer_command(installed_mobile_host):
+    r = installed_mobile_host
+    assert r.request("runtime.capabilities", caller="different.app")["error"]["code"] == "forbidden"
+    assert json.loads(mobile_bridge.begin_profile_unlock_auth("another-profile"))["error"]["code"] == "forbidden"
+    response = json.loads(mobile_bridge.command(json.dumps({"command": "begin_profile_unlock_auth", "payload": {"profile": r.profile}})))
+    assert not response["ok"]
+    from mesh_chat.core_api.native_commands import NATIVE_COMMANDS
+    assert "begin_profile_unlock_auth" not in NATIVE_COMMANDS
+
+
+def test_actual_mobile_failed_open_retains_unpublished_native_response_channel_until_host_shutdown_can_drain(installed_mobile_host, monkeypatch):
+    from mesh_chat.service import NativeStartupIncomplete
+    r = installed_mobile_host
+    assert json.loads(mobile_bridge.lock_profile_host())["ok"]
+    original = mobile_bridge.MeshChatService
+    released, opened = Event(), []
+    def incomplete(*args, **kwargs):
+        service = original(*args, **kwargs)
+        opened.append(service)
+        service._pending_contact_carriers = {"pending": SimpleNamespace(close=lambda: None, wait=released.wait)}
+        raise NativeStartupIncomplete(service)
+    monkeypatch.setattr(mobile_bridge, "MeshChatService", incomplete)
+    challenge = json.loads(mobile_bridge.begin_profile_unlock_auth(r.profile))["result"]["challenge"]
+    r.proof.add(challenge)
+    token = json.loads(mobile_bridge.complete_profile_unlock_auth(challenge))["result"]["credential_handle"]
+    try:
+        assert not r.request("profile.unlock", {"profile": r.profile, "credential_handle": token}, str(uuid4()))["ok"]
+        retiring, = opened
+        assert mobile_bridge._service is None and mobile_bridge._retiring_service is retiring
+        assert mobile_bridge._retiring_channel is retiring._mobile_channel
+        assert retiring.store._key is not None and not json.loads(mobile_bridge.shutdown())["ok"]
+        released.set()
+        retiring._close_finalizer.join(3)
+        assert json.loads(mobile_bridge.shutdown())["ok"]
+        assert retiring.store._key is None and mobile_bridge._retiring_service is None
+        assert mobile_bridge._profile_host is None
+    finally:
+        released.set()

@@ -17,6 +17,7 @@ const api = vi.hoisted(() => {
   });
   return {
   beginCallAudio: vi.fn(async () => ({ granted: true })),
+  coreApiCapabilities: vi.fn(async () => ({ api_major: 1, api_minor: 0, stability: "experimental", operations: [], profiles: [] })),
   coreApiBootstrapPreview: vi.fn(async (kind: string, document: string): Promise<unknown> =>
     serviceCommand(kind === "personal" ? "preview_invitation" : kind === "workspace" ? "preview_workspace_invitation" : "preview_workspace_device_link",
       kind === "device_link" ? { device_link: document } : { invitation: document })),
@@ -238,7 +239,10 @@ const api = vi.hoisted(() => {
   };
 });
 
-vi.mock("./api", () => api);
+vi.mock("./api", async () => {
+  const { admittedApiFixture } = await import("./test/admitted-api");
+  return admittedApiFixture(api);
+});
 
 // Presentation fixtures use the new composer protocol directly. App.core.test
 // and D's independent boundary suite retain the actual native/API serializer.

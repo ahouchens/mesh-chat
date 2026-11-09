@@ -75,6 +75,8 @@ _retiring_service: MeshChatService | None = None
 _retiring_channel: NativeChannel | None = None
 _events: deque[dict[str, Any]] = deque(maxlen=256)
 _event_overflow = False
+_profile_host = None
+_profile_install_lock = threading.RLock()
 
 
 def _loads(raw: str, *, maximum=MAX_JSON_BYTES) -> dict[str, Any]:
@@ -133,6 +135,160 @@ def initialize_native(raw: str) -> str:
     return initialize(raw, connection_policy="shared-native")
 
 
+def _profile_error(error):
+    from .core_api.errors import ApiFailure
+    return (_dumps({"ok": False, "error": {"code": error.code}})
+            if isinstance(error, ApiFailure) else _error(error))
+
+
+def _profile_host_event(value):
+    global _retiring_service, _retiring_channel
+    with _service_lock:
+        if _retiring_service is not None and _retiring_service._store_closed:
+            _retiring_service = _retiring_channel = None
+    _emit(value)
+
+
+def _publish_profile_service(service):
+    global _service, _native_channel, _service_binding, _event_incarnation
+    global _retiring_service, _retiring_channel, _event_overflow
+    with _service_lock:
+        if service is not None and _retiring_service is not None and not _retiring_service._store_closed:
+            raise NativeUnavailable("Previous mobile profile is still retiring")
+        if _service is not None and _service is not service:
+            _retiring_service, _retiring_channel = _service, _native_channel
+        _service = service
+        _native_channel = getattr(service, "_mobile_channel", None)
+        _service_binding = getattr(service, "_mobile_binding", None)
+        with _events_lock:
+            _event_incarnation = getattr(service, "_mobile_event_incarnation", None)
+            _events.clear()
+            _event_overflow = False
+        if _retiring_service is not None and _retiring_service._store_closed:
+            _retiring_service = _retiring_channel = None
+
+
+def _open_profile_slot(directory, key):
+    global _retiring_service, _retiring_channel
+    from .direct_bootstrap_mobile import AndroidBootstrapProcess
+    from .service import NativeStartupIncomplete
+    with _service_lock:
+        if _service is not None or (_retiring_service is not None and not _retiring_service._store_closed):
+            raise NativeUnavailable("Previous mobile profile is still retiring")
+    channel, incarnation = NativeChannel(), uuid.uuid4().hex
+    store = VaultStore(directory, key, native_mobile_protection="android")
+    service = None
+    try:
+        service = MeshChatService(store, directory, lambda value: _emit(value, incarnation=incarnation),
+                                  direct_native=channel, connection_policy="shared-native")
+        service._direct_bootstrap_factory = AndroidBootstrapProcess
+    except Exception as error:
+        failed = getattr(error, "retiring_service", service)
+        if failed is None:
+            store.close()
+        else:
+            failed._mobile_channel = channel
+            failed._mobile_event_incarnation = incarnation
+            try:
+                failed.close()
+            except Exception:
+                with _service_lock:
+                    _retiring_service, _retiring_channel = failed, channel
+                raise NativeStartupIncomplete(failed) from error
+            if not failed._store_closed:
+                with _service_lock:
+                    _retiring_service, _retiring_channel = failed, channel
+                raise NativeStartupIncomplete(failed) from error
+        raise
+    service._mobile_channel, service._mobile_event_incarnation = channel, incarnation
+    service._mobile_binding = (str(directory), hashlib.sha256(key).digest(), "android", "shared-native")
+    return service
+
+
+def initialize_native_host(provider, display_name=None):
+    """Kotlin-only object capability; a registered cold start stays locked."""
+    global _profile_host
+    from .mobile_profile_host import NativeMobileProfileHost, native_key, provider_identity, PROFILE_SLOT
+    catalog = None
+    created_profile = False
+    try:
+        directory, _ = provider_identity(provider)
+        with _profile_install_lock:
+            if _profile_host is not None:
+                _profile_host.rebind(provider)
+                active = _profile_host.core.lifecycle.active
+                return (_dumps({"ok": True, "result": active.snapshot()}) if active is not None
+                        else _dumps({"ok": False, "error": {"code": "locked"}}))
+            with _service_lock:
+                if _retiring_service is not None:
+                    _close_service()
+                    if _retiring_service is not None:
+                        raise NativeUnavailable("Previous mobile profile is still retiring")
+            catalog = VaultStore(directory.parent / "host-v1", native_key(str(provider.catalogKey())),
+                                 native_mobile_protection="android")
+            if catalog.get("host_profile", PROFILE_SLOT) is None and _service is None:
+                request = {"profile_dir": str(directory), "vault_key": str(provider.profileKey()),
+                           "platform": "android"}
+                if display_name is not None:
+                    request["display_name"] = display_name
+                try:
+                    response = json.loads(initialize_native(_dumps(request)))
+                finally:
+                    request.clear()
+                if not response.get("ok"):
+                    raise NativeUnavailable("Native profile bootstrap is unavailable")
+                created_profile = True
+            active = _service
+            if active is not None:
+                active._mobile_channel, active._mobile_event_incarnation = _native_channel, _event_incarnation
+                active._mobile_binding = _service_binding
+            host = NativeMobileProfileHost(provider, catalog, open_profile=_open_profile_slot,
+                publish=_publish_profile_service, active=active, emit=_profile_host_event)
+            _profile_host = host
+            catalog = None  # The runtime host now owns the independent catalog.
+            host._notify()
+            return (_dumps({"ok": True, "result": active.snapshot()}) if active is not None
+                    else _dumps({"ok": False, "error": {"code": "locked"}}))
+    except Exception as error:
+        if catalog is not None:
+            catalog.close()
+        if created_profile:
+            with _service_lock:
+                _close_service()
+        return _profile_error(error)
+
+
+def _native_profile_call(operation, *args):
+    try:
+        host = _profile_host
+        if host is None:
+            from .core_api.errors import ApiFailure
+            raise ApiFailure("unsupported_operation")
+        return _dumps({"ok": True, "result": getattr(host, operation)(*args)})
+    except Exception as error:
+        return _profile_error(error)
+
+
+def begin_profile_unlock_auth(profile):
+    return _native_profile_call("begin_authentication", profile)
+
+
+def complete_profile_unlock_auth(challenge):
+    return _native_profile_call("complete_authentication", challenge)
+
+
+def cancel_profile_unlock_auth(challenge):
+    return _native_profile_call("cancel_authentication", challenge)
+
+
+def lock_profile_host():
+    return _native_profile_call("lock")
+
+
+def profile_runtime_context():
+    return _native_profile_call("context")
+
+
 def initialize(raw: str, *, connection_policy="legacy") -> str:
     """Start from an app-private directory; policy is a trusted host option only."""
 
@@ -167,6 +323,8 @@ def initialize(raw: str, *, connection_policy="legacy") -> str:
         binding = (str(profile_dir), hashlib.sha256(vault_key).digest(), platform_value, connection_policy)
 
         with _service_lock:
+            if _profile_host is not None:
+                raise NativeUnavailable("Native profile host owns initialization")
             if _retiring_service is not None:
                 _close_service()
                 if _retiring_service is not None:
@@ -321,7 +479,8 @@ def core_exchange(caller: str, frame_b64: str, scope: str = "consumer") -> str:
             frame = base64.b64decode(frame_b64, validate=True)
         except Exception as exc:
             raise ValidationError("Core API frame is not valid base64") from exc
-        reply = exchange(_service, caller, frame, scope)
+        host = _profile_host
+        reply = host.exchange(caller, frame, scope) if host is not None else exchange(_service, caller, frame, scope)
         return base64.b64encode(reply).decode("ascii")
     except Exception:
         return base64.b64encode(encode_frame({
@@ -360,7 +519,13 @@ def _close_service() -> None:
 
 
 def shutdown() -> str:
+    global _profile_host
     try:
+        with _profile_install_lock:
+            host = _profile_host
+            if host is not None:
+                host.close()
+                _profile_host = None
         with _service_lock:
             _close_service()
             if (_service is not None or _native_channel is not None
