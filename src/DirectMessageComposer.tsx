@@ -4,11 +4,14 @@ import { openCoreComposer } from "./core-composer";
 import { DirectComposerController } from "./direct-composer";
 import { ProfileRetiredError, useProfileLifetime } from "./profile-lifetime";
 
-interface Props {
-  destination: string;
+export interface SavedComposerProps {
   displayName: string;
   onAccepted: () => Promise<unknown>;
   onSendingChange: (sending: boolean) => void;
+  kind?: "direct" | "group";
+}
+interface Props extends SavedComposerProps {
+  destination: string;
 }
 
 export function DirectMessageComposer(props: Props) {
@@ -50,10 +53,10 @@ export function DirectMessageComposer(props: Props) {
     <button type="button" disabled aria-label="Send message"><Send size={19} /></button>
   </div>;
 
-  return <LoadedComposer {...props} {...resource} />;
+  return <SavedMessageComposer {...props} {...resource} />;
 }
 
-function LoadedComposer({ controller, textUtf8Bytes, ...props }: Props & {
+export function SavedMessageComposer({ controller, textUtf8Bytes, kind = "direct", ...props }: SavedComposerProps & {
   controller: DirectComposerController;
   textUtf8Bytes: number;
 }) {
@@ -63,6 +66,7 @@ function LoadedComposer({ controller, textUtf8Bytes, ...props }: Props & {
   const mounted = useRef(true);
   const [refreshError, setRefreshError] = useState("");
   const tooLarge = new TextEncoder().encode(view.text).byteLength > textUtf8Bytes;
+  const composerId = kind === "group" ? "group-message-composer" : "message-composer";
 
   useEffect(() => {
     mounted.current = true;
@@ -104,10 +108,10 @@ function LoadedComposer({ controller, textUtf8Bytes, ...props }: Props & {
   }, [props.onAccepted, view.saved]);
 
   const send = () => { if (!tooLarge) void controller.send(); };
-  return <div>
+  return <div className="composer-panel">
     {view.saved?.status === "accepted" && <details className="composer-saved" role="status">
       <summary>Message saved on this device. View saved text</summary>
-      <textarea readOnly aria-label="Saved message text" value={view.saved.text} />
+      <textarea readOnly aria-label={kind === "group" ? "Saved group message text" : "Saved message text"} value={view.saved.text} />
     </details>}
     {view.saved?.status === "expired" && <p role="status">The previous saved message is no longer available for replay. Check the conversation before starting another send.</p>}
     {view.recoveryText !== null && <details open className="composer-recovery">
@@ -117,13 +121,13 @@ function LoadedComposer({ controller, textUtf8Bytes, ...props }: Props & {
     </details>}
     <form className="composer" aria-busy={view.phase !== "ready"} onSubmit={(event) => { event.preventDefault(); send(); }}>
       {(view.error || refreshError || tooLarge) && <p className="composer__error" role="alert">{view.error || refreshError || `This draft exceeds the ${textUtf8Bytes}-byte text limit. Shorten it before saving or sending.`}</p>}
-      <label className="sr-only" htmlFor="message-composer">Message {props.displayName}</label>
-      <textarea id="message-composer" rows={1} value={view.text} readOnly={!view.loaded || view.phase === "loading"}
+      <label className="sr-only" htmlFor={composerId}>Message {props.displayName}</label>
+      <textarea id={composerId} rows={1} value={view.text} readOnly={!view.loaded || view.phase === "loading"}
         enterKeyHint="send" onChange={(event) => { setRefreshError(""); controller.edit(event.target.value); }}
         placeholder={`Message ${props.displayName}`} maxLength={textUtf8Bytes}
         onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); send(); } }} />
-      <button type="submit" disabled={!view.canSend || tooLarge} aria-label="Send message"><Send size={19} /></button>
-      {view.retry && <button type="button" disabled={view.phase !== "ready"} onClick={() => { void controller.retry(); }}>{view.retry === "save" ? "Retry draft save" : "Retry previous send"}</button>}
+      <button type="submit" disabled={!view.canSend || tooLarge} aria-label={kind === "group" ? "Send group message" : "Send message"}><Send size={19} /></button>
+      {view.retry && <button type="button" disabled={view.phase !== "ready"} onClick={() => { void controller.retry(); }}>{view.retry === "save" ? "Retry draft save" : kind === "group" ? "Retry previous group send" : "Retry previous send"}</button>}
       {view.error && <button type="button" disabled={view.phase !== "ready"} onClick={() => { void controller.load(); }}>Reload saved draft</button>}
     </form>
   </div>;

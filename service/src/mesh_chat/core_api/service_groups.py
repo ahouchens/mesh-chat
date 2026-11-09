@@ -10,9 +10,10 @@ from .optional_mutations import OptionalMutationJournal
 
 
 class ServiceGroups:
-    def __init__(self, service):
+    def __init__(self, service, *, legacy=False):
         self._service = service
         self._store = service.store
+        self._legacy = legacy
         self._optional = OptionalMutationJournal(self._store)
         transactional = all(callable(getattr(self._store, name, None)) for name in (
             "read_snapshot", "opaque_id", "operation_result", "conditional_put_and_delete", "record_count"))
@@ -186,4 +187,17 @@ class ServiceGroups:
                 self._service.save_group_draft(group_id, text)
             except ValidationError as error:
                 raise ApiFailure("invalid_request") from error
+            return "saved"
+
+    def save_draft_scoped(self, scope, group_id, text):
+        if self._legacy:
+            return self.save_draft(scope.profile, group_id, text)
+        self._require_local(scope.profile)
+        from .service_group_composer import STATE, ServiceGroupComposer
+        with storage_errors():
+            composer = ServiceGroupComposer(self._service)
+            if self._store.get(STATE, composer._id(scope, group_id)) is not None:
+                raise ApiFailure("conflict")
+            self._service._require_group(group_id)
+            self._store.put(*composer._source(scope, group_id), {"group_id": group_id, "text": text})
             return "saved"

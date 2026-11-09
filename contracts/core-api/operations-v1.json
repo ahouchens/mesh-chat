@@ -138,7 +138,10 @@
     "call.operation_abandon",
     "peer.pairing_begin",
     "peer.pairing_query",
-    "peer.pairing_cancel"
+    "peer.pairing_cancel",
+    "group.composer_query",
+    "group.composer_update",
+    "group.message_enqueue_draft"
   ],
   "private_host_operations": [
     "native.command",
@@ -1165,6 +1168,33 @@
       "scope": "profile",
       "mutation": true,
       "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "group.composer_query",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "group.composer_update",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key",
+      "additional_permissions": [
+        "read"
+      ]
+    },
+    {
+      "operation": "group.message_enqueue_draft",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key",
+      "additional_permissions": [
+        "read"
+      ]
     }
   ],
   "limits": {
@@ -1216,7 +1246,16 @@
     "pairing_code_utf8_bytes": 2048,
     "pairing_key_idempotency_seconds": 604800,
     "pairing_keys_per_caller_profile": 4096,
-    "pairing_keys_per_vault": 65536
+    "pairing_keys_per_vault": 65536,
+    "group_composer_text_utf8_bytes": 16384,
+    "group_composers_per_caller_profile": 256,
+    "group_composers_per_vault": 4096,
+    "group_composer_update_idempotency_seconds": 3600,
+    "group_composer_update_keys_per_caller_profile": 8192,
+    "group_composer_update_keys_per_vault": 65536,
+    "group_composer_send_idempotency_seconds": 604800,
+    "group_composer_send_keys_per_caller_profile": 4096,
+    "group_composer_send_keys_per_vault": 65536
   },
   "optional_keyed_operations": [
     "group.create",
@@ -1231,5 +1270,10 @@
     "peer.pairing_begin",
     "peer.pairing_query",
     "peer.pairing_cancel"
+  ],
+  "group_composer_operations": [
+    "group.composer_query",
+    "group.composer_update",
+    "group.message_enqueue_draft"
   ]
 }

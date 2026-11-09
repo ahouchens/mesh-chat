@@ -44,30 +44,38 @@ export interface ExpiredComposerSend {
 
 export type ComposerSendOutcome = AcceptedComposerSend | ExpiredComposerSend;
 
-export interface CoreComposer {
+export interface ComposerSnapshot {
   profile: string;
-  peer: string;
   revision: string | null;
   text: string;
   update_key: string;
   last_send: ComposerSendOutcome | null;
   send_lookup: AcceptedComposerSend | { revision: string; status: "not_accepted" } | null;
 }
+export interface CoreComposer extends ComposerSnapshot { peer: string; }
 
-export interface ComposerUpdate {
+export interface ComposerDraftUpdate {
   applied_revision: string;
   changed: boolean;
-  composer: CoreComposer;
+  composer: ComposerSnapshot;
 }
+export interface ComposerUpdate extends ComposerDraftUpdate { composer: CoreComposer; }
 
-export interface ComposerEnqueue extends MessageAcceptance {
-  peer: string;
+export interface ComposerDraftEnqueue extends MessageAcceptance {
   draft_revision: string;
   draft_disposition: "cleared" | "superseded";
-  composer: CoreComposer;
+  composer: ComposerSnapshot;
+}
+export interface ComposerEnqueue extends ComposerDraftEnqueue { peer: string; composer: CoreComposer; }
+
+export interface ComposerControllerPort {
+  query(sendRevision?: string): Promise<ComposerSnapshot>;
+  update(expectedRevision: string | null, text: string, updateKey: string): Promise<ComposerDraftUpdate>;
+  updateForRetirement?(expectedRevision: string | null, text: string, updateKey: string): Promise<ComposerDraftUpdate>;
+  enqueue(draftRevision: string): Promise<ComposerDraftEnqueue>;
 }
 
-export interface ComposerPort {
+export interface ComposerPort extends ComposerControllerPort {
   query(sendRevision?: string): Promise<CoreComposer>;
   update(expectedRevision: string | null, text: string, updateKey: string): Promise<ComposerUpdate>;
   updateForRetirement?(expectedRevision: string | null, text: string, updateKey: string): Promise<ComposerUpdate>;

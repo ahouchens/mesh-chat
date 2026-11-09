@@ -1,6 +1,8 @@
 import { CallDialog, IncomingCallPrompt, type CallPeer } from "./CallDialog";
 import { CallRecoveryNotice } from "./CallRecoveryNotice";
-import { ProfileLifetime, ProfileLifetimeContext, ProfileRetiredError, useProfileLifetime, useProfileRequestAdmission } from "./profile-lifetime";
+import { ProfileLockScreen, ProfileSelector } from "./ProfileControls";
+import { authenticateProfile, bootProfiles, profileErrorCode, queryProfileCatalog, snapshotForCatalog, submitProfileAction, type ProfileAction, type ProfileCatalog } from "./core-profiles";
+import { ProfileLifetime, ProfileLifetimeContext, ProfileRetiredError, useProfileLifetime, useProfileRequestAdmission, useProfileEffectScope } from "./profile-lifetime";
 import { admitCoreRequest, type CoreRequestAdmission } from "./core-admission";
 import { prepareKeyedGroupCreation, submitKeyedGroupCreation, prepareKeyedGroupSend, submitKeyedGroupSend, type GroupCreationTicket, type GroupSendTicket } from "./core-groups";
 import { workspaceConnectivityLabel, workspaceStateLabel, workspaceSyncIssueLabel } from "./workspaceLabels";
@@ -8,6 +10,7 @@ import { contactTrustDescription, contactTrustLabel, groupComposerState, groupIn
 import { canPrepareDirectHost, directActionLabel, directPhaseLabel, directFailureReport, directReasonLabel, sanitizedDoctorSummary } from "./directLabels";
 import { errorMessage } from "./errors";
 import { DirectMessageComposer } from "./DirectMessageComposer";
+import { GroupMessageComposer } from "./GroupMessageComposer";
 import { newOperationId } from "./operationId";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import {
@@ -2719,6 +2722,8 @@ function GroupConversation({
   reactionError,
   onDraft,
   onSend,
+  onAccepted,
+  onSendingChange,
   onDetailsOpenChange,
   onToggleReactionPicker,
   onReactionCatalogOpenChange,
@@ -2748,6 +2753,8 @@ function GroupConversation({
   reactionError: string;
   onDraft: (value: string) => void;
   onSend: () => void;
+  onAccepted: () => Promise<unknown>;
+  onSendingChange: (sending: boolean) => void;
   onDetailsOpenChange: (open: boolean) => void;
   onToggleReactionPicker: (messageId: string) => void;
   onReactionCatalogOpenChange: (messageId: string, open: boolean) => void;
@@ -2816,14 +2823,16 @@ function GroupConversation({
           </article>
         ))}
       </div>
-      {retrying && <details className="composer-saved" role="status"><summary>Previous group send is not confirmed. View original text</summary><textarea readOnly aria-label="Previous group send text" value={pendingText ?? ""} /></details>}
       {canPost ? (
+        <GroupMessageComposer key={group.core_handle ?? group.id} group={group.core_handle ?? ""} displayName={group.title} onAccepted={onAccepted} onSendingChange={onSendingChange} legacyComposer={<>
+        {retrying && <details className="composer-saved" role="status"><summary>Previous group send is not confirmed. View original text</summary><textarea readOnly aria-label="Previous group send text" value={pendingText ?? ""} /></details>}
         <form className="composer" aria-busy={sending} onSubmit={(event) => { event.preventDefault(); onSend(); }}>
           {sendError && <p className="composer__error" role="alert">{sendError}</p>}
           <label className="sr-only" htmlFor="group-message-composer">Message {group.title}</label>
           <textarea id="group-message-composer" rows={1} value={draft} readOnly={sending} enterKeyHint="send" onChange={(event) => onDraft(event.target.value)} placeholder={`Message ${group.title}`} maxLength={16384} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); onSend(); } }} />
           <button type="submit" disabled={sending || (!retrying && !draft.trim())} aria-label={retrying ? "Retry previous group send" : "Send group message"}><Send size={19} /></button>
         </form>
+        </>} />
       ) : <div className="composer composer--restricted"><LockKeyhole size={17} /><span>{composerReason}</span></div>}
     </section>
   );
@@ -4228,6 +4237,7 @@ type WorkspaceMessageInvalidations = Record<string, {
 }>;
 
 function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageInvalidations, notificationTarget, onNotificationHandled, onLock, initialInvitation, onInvitationHandled, initialPairingCode = "", initialWebRTCJoin = false, onWebRTCJoinHandled, onPairingHandled }: { snapshot: Snapshot; theme: Theme; onThemeChange: (theme: Theme) => void; refresh: (afterCurrent?: boolean) => Promise<Snapshot>; workspaceMessageInvalidations: WorkspaceMessageInvalidations; notificationTarget: NotificationOpenTarget | null; onNotificationHandled: () => void; onLock: () => Promise<void>; initialInvitation: string; onInvitationHandled: () => void; initialPairingCode?: string; initialWebRTCJoin?: boolean; onWebRTCJoinHandled?: () => void; onPairingHandled?: () => void }) {
+  const profileEffects = useProfileEffectScope();
   const admitProfileRequest = useProfileRequestAdmission();
   const lifetime = useProfileLifetime();
   const [profileGeneration] = useState(() => lifetime?.capture());
@@ -4300,7 +4310,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
   const refreshRef = useRef(refresh);
   useEffect(() => { refreshRef.current = refresh; }, [refresh]);
   const [reconnectCoordinator] = useState(() => createReconnectCoordinator({
-    admit: admitProfileRequest,
+    ...profileEffects,
     refresh: async () => { await refreshRef.current(true); },
     onSession: (path) => {
       setWebRtcSessionActive(true);
@@ -6768,6 +6778,8 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
             onSetReaction={(messageId, emoji, active) => void setMessageReaction("group", messageId, emoji, active)}
             onDraft={(value) => { setSendError(""); saveGroupDraft(selectedGroup.id, value); }}
             onSend={() => void sendGroupMessage()}
+            onAccepted={() => refresh(true)}
+            onSendingChange={setGroupSendBusy}
             onBack={() => selectConversation(null)}
             onDelete={() => { setDeleteError(""); setDeleteTarget({ kind: "group", id: selectedGroup.id }); }}
             onRemove={(destinationHash) => void runGroupAction("remove_group_member", { group_id: selectedGroup.id, destination_hash: destinationHash })}
@@ -6850,6 +6862,16 @@ export default function App() {
   const [lockError, setLockError] = useState("");
   const [lockPending, setLockPending] = useState(false);
   const [unlocking, setUnlocking] = useState(false);
+  const [catalog, setCatalog] = useState<ProfileCatalog | null>(null);
+  const catalogRef = useRef<ProfileCatalog | null>(null);
+  const profileAction = useRef<{ ticket: ProfileAction; credential?: string; hostGeneration?: string; blocked: boolean; submitted: boolean } | null>(null);
+  const [pendingProfileAction, setPendingProfileAction] = useState<ProfileAction | null>(null);
+  const [profileReviewRequired, setProfileReviewRequired] = useState(false);
+  const openingProfileGeneration = useRef<number | null>(null);
+  const profilePublication = useRef(0);
+  const hostGeneration = useRef<string | null>(null);
+  const profileBusy = useRef(false);
+  const [profileBusyState, setProfileBusyState] = useState(false);
   const locked = lockState !== "open";
   const lockInFlight = useRef<Promise<void> | null>(null);
   const refreshInFlight = useRef<Promise<Snapshot> | null>(null);
@@ -6970,6 +6992,98 @@ export default function App() {
       setLockError(errorMessage(reason));
     } finally { setUnlocking(false); }
   };
+  const publishCatalog = (value: ProfileCatalog) => { catalogRef.current = value; setCatalog(value); };
+  const hideProfile = (allowCleanup = true): Promise<"pending" | "drained"> => {
+    profilePublication.current += 1;
+    if (openingProfileGeneration.current !== null) {
+      lifetime.failOpening(openingProfileGeneration.current); openingProfileGeneration.current = null;
+    }
+    const retirement = lifetime.retire(allowCleanup);
+    refreshInFlight.current = null;
+    workspaceRefreshInFlight.current = null;
+    mobileReconcileInFlight.current = null;
+    setSnapshot(null); setNotificationTarget(null); setWorkspaceMessageInvalidations({});
+    return retirement;
+  };
+  const openCatalogProfile = async (value: ProfileCatalog) => {
+    const opening = lifetime.beginOpening();
+    openingProfileGeneration.current = opening;
+    const publication = ++profilePublication.current;
+    try {
+      const ready = await snapshotForCatalog(value);
+      if (publication !== profilePublication.current) throw new ProfileRetiredError();
+      if (!lifetime.finishOpening(opening)) throw new ProfileRetiredError();
+      setSnapshot(ready); setFatal(""); setLockState("open");
+    } catch (reason) { lifetime.failOpening(opening); throw reason; }
+    finally { if (openingProfileGeneration.current === opening) openingProfileGeneration.current = null; }
+  };
+  const runProfileAction = async (action?: ProfileAction["action"], profile?: string) => {
+    if (profileBusy.current || profileReviewRequired || profileAction.current?.blocked) return;
+    const owner = profileAction.current ?? (action && profile ? { ticket: Object.freeze({ action, profile, key: newOperationId() }), blocked: false, submitted: false, credential: undefined as string | undefined, hostGeneration: hostGeneration.current ?? undefined } : null);
+    if (!owner) return;
+    profileAction.current = owner; setPendingProfileAction(owner.ticket);
+    profileBusy.current = true; setProfileBusyState(true); setLockError("");
+    const ensureOwner = () => {
+      if (profileAction.current !== owner || owner.blocked
+          || (owner.hostGeneration && hostGeneration.current && owner.hostGeneration !== hostGeneration.current)) throw Object.assign(new Error("resync_required"), { code: "resync_required" });
+    };
+    try {
+      setLockState("locking");
+      setLockPending(await hideProfile() === "pending");
+      ensureOwner();
+      if (owner.ticket.action === "unlock" && !owner.credential) {
+        const authorized = await authenticateProfile(owner.ticket.profile);
+        ensureOwner();
+        if (hostGeneration.current && authorized.host_generation !== hostGeneration.current) throw Object.assign(new Error("resync_required"), { code: "resync_required" });
+        owner.credential = authorized.credential_handle;
+        owner.hostGeneration = authorized.host_generation;
+        hostGeneration.current = authorized.host_generation;
+      }
+      ensureOwner();
+      owner.submitted = true;
+      const result = await submitProfileAction(owner.ticket, owner.credential);
+      ensureOwner();
+      publishCatalog(result);
+      const selected = result.profiles.find((row) => row.selected);
+      if (selected?.state === "retiring") {
+        setLockState("uncertain"); setLockError("Profile retirement is still pending. Retry the same action to check its outcome."); return;
+      }
+      profileAction.current = null; setPendingProfileAction(null); setLockState("locked");
+      if (owner.ticket.action === "unlock" && selected?.profile === owner.ticket.profile && selected.state === "unlocked") await openCatalogProfile(result);
+    } catch (reason) {
+      const code = owner.blocked ? "resync_required" : profileErrorCode(reason);
+      if (code === "resync_required") { owner.blocked = true; setProfileReviewRequired(true); }
+      // Authentication cancellation must retain any earlier uncertain Core submission.
+      if (!owner.submitted && !owner.blocked) { profileAction.current = null; setPendingProfileAction(null); }
+      if (["forbidden", "authentication_required", "authentication_expired", "invalid_credential", "credential_expired"].includes(code)) owner.credential = undefined;
+      setLockError(code === "authentication_cancelled" ? "Device authentication was canceled. Profile content remains hidden."
+        : code === "unsupported_operation" ? "Device authentication is unavailable on this platform. Profile content remains hidden."
+        : code === "forbidden" && owner.ticket.action === "unlock" ? "Device authorization was rejected or expired. Retry to authenticate again."
+        : code === "resync_required" ? "The profile host changed. Review the current profiles before starting another action."
+        : errorMessage(reason));
+      setLockState(owner.submitted || owner.blocked ? "uncertain" : "locked");
+    } finally { profileBusy.current = false; setProfileBusyState(false); }
+  };
+  const reviewProfiles = async () => {
+    if (profileBusy.current) return;
+    profileBusy.current = true; setProfileBusyState(true);
+    try {
+      const current = await queryProfileCatalog(); publishCatalog(current);
+      if (profileAction.current?.blocked) { profileAction.current = null; setPendingProfileAction(null); }
+      setProfileReviewRequired(false);
+      setLockError("");
+    } catch (reason) { setLockError(errorMessage(reason)); }
+    finally { profileBusy.current = false; setProfileBusyState(false); }
+  };
+  const reopenReviewedProfile = async () => {
+    if (profileBusy.current || profileReviewRequired || !catalog) return;
+    profileBusy.current = true; setProfileBusyState(true); setLockError("");
+    try { await openCatalogProfile(catalog); }
+    catch (reason) {
+      if (["resync_required", "locked", "profile_changed"].includes(profileErrorCode(reason))) setProfileReviewRequired(true);
+      setLockError(errorMessage(reason));
+    } finally { profileBusy.current = false; setProfileBusyState(false); }
+  };
   useEffect(() => {
     let active = true;
     const cleanups: Array<() => void> = [];
@@ -6977,6 +7091,19 @@ export default function App() {
     void (async () => {
       try {
         keepCleanup(await onServiceEvent((event) => {
+          if (active && event.event === "profile_lifecycle" && catalogRef.current) {
+            const previous = catalogRef.current;
+            const selected = previous.profiles.find((row) => row.selected);
+            const replaced = hostGeneration.current !== null && event.host_generation !== hostGeneration.current;
+            if (event.host_generation) hostGeneration.current = event.host_generation;
+            if (replaced || ((lifetime.active || openingProfileGeneration.current !== null) && (event.profile !== previous.selected_profile || event.revision !== previous.revision || event.state !== selected?.state))) {
+              void hideProfile(false); setLockState("uncertain");
+              setProfileReviewRequired(true);
+              setLockError("The profile host changed. Review the current profiles before continuing.");
+              if (profileAction.current) profileAction.current.blocked = true;
+            }
+            return;
+          }
           if (!active || !lifetime.active) return;
           // The bridge's own subscriber forwards binary packets. Refreshing
           // the entire UI for each resource fragment competes with that pump
@@ -7012,8 +7139,18 @@ export default function App() {
       if (!lifetime.active) return;
       const generation = lifetime.capture();
       try {
-        const result = await initializeService();
-        if (active && lifetime.isCurrent(generation)) setSnapshot(result);
+        const result = await bootProfiles();
+        if (active && lifetime.isCurrent(generation)) {
+          if (result.catalog) {
+            publishCatalog(result.catalog);
+            if (!result.snapshot) { await hideProfile(); setLockState("locked"); }
+            if (result.error) {
+              setLockError(errorMessage(result.error));
+              if (profileErrorCode(result.error) === "resync_required") setProfileReviewRequired(true);
+            }
+          }
+          if (result.snapshot) setSnapshot(result.snapshot);
+        }
       } catch (reason) {
         if (active && lifetime.isCurrent(generation)) setFatal(errorMessage(reason));
       }
@@ -7121,12 +7258,17 @@ export default function App() {
       document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [lifetime, refresh]);
+  const selectedProfile = catalog?.profiles.find((row) => row.selected);
+  const profilesControl = catalog && <ProfileSelector catalog={catalog} disabled={profileBusyState || profileReviewRequired || Boolean(pendingProfileAction) || selectedProfile?.state === "retiring"} onSelect={(profile) => void runProfileAction("select", profile)} />;
+  if (catalog && locked) return <ProfileLockScreen catalog={catalog} busy={profileBusyState} pending={pendingProfileAction} reviewRequired={profileReviewRequired} retirementPending={lockPending} error={lockError} onAction={runProfileAction} onReview={reviewProfiles} onOpen={reopenReviewedProfile} />;
   if (locked) return <main className="fatal-screen"><LockKeyhole size={36} /><h1>{lockState === "locking" ? "Locking your profile…" : lockState === "uncertain" ? "Lock not confirmed" : "Mesh Chat is locked"}</h1><p>{lockState === "locked" ? "The messaging service is stopped and its keys have been released." : "Profile content is hidden while admitted work and service retirement finish."}</p>{lockPending && <p role="status">Some requests did not finish before locking. Check their saved outcomes after unlocking.</p>}{lockError && <p role="alert">{lockError}</p>}{lockState === "locked" && <Button disabled={unlocking} onClick={() => void unlockProfile()}>{unlocking ? "Opening profile…" : "Unlock"}</Button>}{lockState === "uncertain" && <Button onClick={() => void lockProfile()}>Retry lock</Button>}</main>;
   if (fatal) return <main className="fatal-screen"><LockKeyhole size={36} /><h1>Mesh Chat stopped safely</h1><p>{fatal}</p><p className="muted">No plaintext fallback was used.</p></main>;
   if (!snapshot) return <main className="loading-screen"><Brand /><span className="spinner" /><p>Opening your private profile…</p></main>;
   if (!snapshot.profile) {
     return (
+      <ProfileLifetimeContext.Provider value={lifetime}>
       <Onboarding
+        key={generation}
         initialInvitation={initialInvitation}
         initialPairingCode={initialPairingCode}
         onReady={(ready, pendingInvitation, startWebRTC) => {
@@ -7136,7 +7278,9 @@ export default function App() {
           setSnapshot(ready);
         }}
       />
+      </ProfileLifetimeContext.Provider>
     );
   }
-  return <ProfileLifetimeContext.Provider value={lifetime}><Messenger key={`${generation}:${snapshot.profile.destination_hash}`} snapshot={snapshot} theme={theme} onThemeChange={setTheme} refresh={refreshCurrentProfile} workspaceMessageInvalidations={workspaceMessageInvalidations} notificationTarget={notificationTarget} onNotificationHandled={() => { if (lifetime.isCurrent(generation)) setNotificationTarget(null); }} initialInvitation={initialInvitation} initialPairingCode={initialPairingCode} initialWebRTCJoin={initialWebRTCJoin} onWebRTCJoinHandled={() => setInitialWebRTCJoin(false)} onPairingHandled={() => setInitialPairingCode("")} onInvitationHandled={() => setInitialInvitation("")} onLock={() => lifetime.isCurrent(generation) ? lockProfile() : Promise.resolve()} /></ProfileLifetimeContext.Provider>;
+  const messenger = <Messenger key={`${generation}:${snapshot.profile.destination_hash}`} snapshot={snapshot} theme={theme} onThemeChange={setTheme} refresh={refreshCurrentProfile} workspaceMessageInvalidations={workspaceMessageInvalidations} notificationTarget={notificationTarget} onNotificationHandled={() => { if (lifetime.isCurrent(generation)) setNotificationTarget(null); }} initialInvitation={initialInvitation} initialPairingCode={initialPairingCode} initialWebRTCJoin={initialWebRTCJoin} onWebRTCJoinHandled={() => setInitialWebRTCJoin(false)} onPairingHandled={() => setInitialPairingCode("")} onInvitationHandled={() => setInitialInvitation("")} onLock={() => lifetime.isCurrent(generation) ? catalog && selectedProfile ? runProfileAction("lock", selectedProfile.profile) : lockProfile() : Promise.resolve()} />;
+  return <ProfileLifetimeContext.Provider value={lifetime}>{catalog ? <div className="runtime-profile-shell">{profilesControl}{messenger}</div> : messenger}</ProfileLifetimeContext.Provider>;
 }

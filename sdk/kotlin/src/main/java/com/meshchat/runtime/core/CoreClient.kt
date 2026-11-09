@@ -18,7 +18,7 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         private set
 
     companion object {
-        private val REQUIRED_KEYS = setOf("call.control","call.operation_abandon","connection.retry","events.ack","message.enqueue","message.enqueue_draft","peer.composer_update","peer.pairing_begin","peer.pairing_cancel","profile.create","profile.lock","profile.select","profile.unlock","remote_profile.mutate","route.update","runtime.mutate","workspace.admin_request_approve","workspace.admin_request_cancel","workspace.admin_request_decline","workspace.admin_request_dismiss","workspace.admin_request_submit","workspace.admission_grant_accept","workspace.admission_grant_create","workspace.admission_grant_end","workspace.admission_grant_list","workspace.authority_accept","workspace.authority_finalize","workspace.authority_loss_report","workspace.authority_offer","workspace.channel_archive","workspace.channel_create","workspace.channel_members_update","workspace.channel_recover","workspace.channel_state","workspace.channel_transfer_accept","workspace.channel_transfer_offer","workspace.channel_update","workspace.close","workspace.create","workspace.device_link_approve","workspace.device_link_create","workspace.device_link_decline","workspace.device_link_submit","workspace.device_remove","workspace.direct_open","workspace.display_name_decide","workspace.display_name_request","workspace.draft_set","workspace.invitation_create","workspace.invitation_revoke","workspace.join","workspace.join_approve","workspace.join_decline","workspace.join_prompt","workspace.leave","workspace.member_remove","workspace.member_role","workspace.metadata_update","workspace.policy_update","workspace.read_hint_sync","workspace.remove_data","workspace.retention_update","workspace.timeline_mutation")
+        private val REQUIRED_KEYS = setOf("call.control","call.operation_abandon","connection.retry","events.ack","message.enqueue","message.enqueue_draft","group.composer_update","group.message_enqueue_draft","peer.composer_update","peer.pairing_begin","peer.pairing_cancel","profile.create","profile.lock","profile.select","profile.unlock","remote_profile.mutate","route.update","runtime.mutate","workspace.admin_request_approve","workspace.admin_request_cancel","workspace.admin_request_decline","workspace.admin_request_dismiss","workspace.admin_request_submit","workspace.admission_grant_accept","workspace.admission_grant_create","workspace.admission_grant_end","workspace.admission_grant_list","workspace.authority_accept","workspace.authority_finalize","workspace.authority_loss_report","workspace.authority_offer","workspace.channel_archive","workspace.channel_create","workspace.channel_members_update","workspace.channel_recover","workspace.channel_state","workspace.channel_transfer_accept","workspace.channel_transfer_offer","workspace.channel_update","workspace.close","workspace.create","workspace.device_link_approve","workspace.device_link_create","workspace.device_link_decline","workspace.device_link_submit","workspace.device_remove","workspace.direct_open","workspace.display_name_decide","workspace.display_name_request","workspace.draft_set","workspace.invitation_create","workspace.invitation_revoke","workspace.join","workspace.join_approve","workspace.join_decline","workspace.join_prompt","workspace.leave","workspace.member_remove","workspace.member_role","workspace.metadata_update","workspace.policy_update","workspace.read_hint_sync","workspace.remove_data","workspace.retention_update","workspace.timeline_mutation")
         private val KEYED_ACTIONS = mapOf("workspace.connection" to setOf("invite_contact","prompt_dismiss","prompt_submit","reconnect_consent"),"workspace.history" to setOf("cancel","hide_direct","hide_message","prune","start"),"workspace.access_recommendation" to setOf("apply","apply_by_id","create","send"))
         const val VERSION = "0.3.0-experimental"
         const val MAX_FRAME_CHARS = 4 * 1024 * 1024
@@ -306,6 +306,51 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         requireComposer()
         return dispatch("message.enqueue_draft", JSONObject().put("profile", profile).put("recipient", recipient)
             .put("draft_revision", draftRevision), draftRevision)
+    }
+
+    @JvmOverloads
+    fun groupComposerQuery(profile: String, group: String, sendRevision: String? = null): JSONObject {
+        requireGroupComposer()
+        val params = JSONObject().put("profile", profile).put("group", group)
+        if (sendRevision != null) { groupComposerToken(sendRevision); params.put("send_revision", sendRevision) }
+        return request("group.composer_query", params)
+    }
+
+    fun groupComposerUpdate(profile: String, group: String, expectedRevision: String?, text: String, updateKey: String): JSONObject {
+        requireGroupComposer(); groupComposerToken(updateKey)
+        if (expectedRevision != null) groupComposerToken(expectedRevision)
+        require(text.toByteArray(Charsets.UTF_8).size <= capabilities.getJSONObject("limits").getLong("group_composer_text_utf8_bytes")) {
+            "group composer text exceeds negotiated byte limit"
+        }
+        return dispatch("group.composer_update", JSONObject().put("profile", profile).put("group", group)
+            .put("expected_revision", expectedRevision ?: JSONObject.NULL).put("text", text), updateKey)
+    }
+
+    fun groupEnqueueDraft(profile: String, group: String, draftRevision: String): JSONObject {
+        requireGroupComposer(); groupComposerToken(draftRevision)
+        return dispatch("group.message_enqueue_draft", JSONObject().put("profile", profile).put("group", group)
+            .put("draft_revision", draftRevision), draftRevision)
+    }
+
+    private fun groupComposerToken(token: String) {
+        require(Regex("[0-9a-f]{64}").matches(token)) { "invalid group composer token" }
+    }
+
+    private fun requireGroupComposer() {
+        val operations = capabilities.optJSONArray("operations") ?: throw CoreException("unsupported_operation")
+        val supported = (0 until operations.length()).map { operations.optString(it) }.toSet()
+        val limits = capabilities.optJSONObject("limits") ?: throw CoreException("unsupported_operation")
+        val names = listOf("group_composer_text_utf8_bytes", "group_composers_per_caller_profile", "group_composers_per_vault",
+            "group_composer_update_idempotency_seconds", "group_composer_update_keys_per_caller_profile", "group_composer_update_keys_per_vault",
+            "group_composer_send_idempotency_seconds", "group_composer_send_keys_per_caller_profile", "group_composer_send_keys_per_vault")
+        val minor = capabilities.opt("api_minor")
+        if (minor !is Number || minor.toDouble() < 1 || !minor.toDouble().isFinite() || minor.toDouble() % 1.0 != 0.0 ||
+            minor.toDouble() > 9007199254740991.0 || !supported.containsAll(
+                listOf("group.composer_query", "group.composer_update", "group.message_enqueue_draft")) ||
+            names.any { name -> val value = limits.opt(name); value !is Number || !value.toDouble().isFinite() ||
+                value.toDouble() <= 0 || value.toDouble() > 9007199254740991.0 || value.toDouble() % 1.0 != 0.0 }) {
+            throw CoreException("unsupported_operation")
+        }
     }
 
     private fun requireComposer() {

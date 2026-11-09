@@ -985,14 +985,10 @@ class GroupServiceMixin:
         self._changed()
         return self._public_group(group)
 
-    def validate_group_send(self, group_id, text):
+    def validate_group_composer(self, group_id):
         group = self._require_group(group_id)
         if group.get("status") != "active":
             raise ContactNotApproved("Group is not active")
-        if not isinstance(text, str) or not text.strip():
-            raise ValidationError("Message is empty")
-        if len(text.encode("utf-8")) > MAX_TEXT_BYTES:
-            raise ValidationError("Message exceeds the 16 KiB limit")
         local = self._local_group_member(group)
         if local is None or local.get("status") != "active":
             raise ContactNotApproved("Local identity is not an active group member")
@@ -1011,6 +1007,14 @@ class GroupServiceMixin:
         if not recipients:
             raise ValidationError("No other active group members can receive this message")
         return group, profile, recipients
+
+    def validate_group_send(self, group_id, text):
+        authority = self.validate_group_composer(group_id)
+        if not isinstance(text, str) or not text.strip():
+            raise ValidationError("Message is empty")
+        if len(text.encode("utf-8")) > MAX_TEXT_BYTES:
+            raise ValidationError("Message exceeds the 16 KiB limit")
+        return authority
 
     def prepare_group_send(self, group_id, text, operation_id):
         self._validate_group_operation_id(operation_id)

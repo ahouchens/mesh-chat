@@ -26,6 +26,12 @@ def composer_view(profile, peer, state):
             "last_send": outcome(state.last_send), "send_lookup": outcome(state.send_lookup)}
 
 
+def group_composer_view(profile, group, state):
+    selected = composer_view(profile, group, state)
+    del selected["peer"]
+    return {**selected, "group": group}
+
+
 ENUMS = {
     "desired": {"enabled", "stopped"},
     "execution": {"available", "paused", "locked", "shutting_down"},

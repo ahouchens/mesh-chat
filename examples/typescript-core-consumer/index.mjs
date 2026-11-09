@@ -48,6 +48,24 @@ try {
     const first = await client.sendGroup(profile, group, "SDK qualification group message", "sdk-group-send-key-0001");
     const repeated = await client.sendGroup(profile, group, "SDK qualification group message", "sdk-group-send-key-0001");
     report.accepted = first.accepted; report.same_message = first.message === repeated.message;
+  } else if (process.argv.includes("--exercise-group-composer")) {
+    const group = (await client.groups(profile)).groups[0].group;
+    const initial = await client.groupComposerQuery(profile, group);
+    const saved = await client.groupComposerUpdate(profile, group, initial.revision, "SDK qualification group composer", initial.update_key);
+    const accepted = await client.groupEnqueueDraft(profile, group, saved.applied_revision);
+    const current = await client.groupComposerQuery(profile, group);
+    const newer = await client.groupComposerUpdate(profile, group, current.revision, "SDK newer group draft", current.update_key);
+    const repeated = await client.groupEnqueueDraft(profile, group, saved.applied_revision);
+    Object.assign(report, { accepted: accepted.accepted, draft_empty: accepted.composer.text === "",
+      same_message: repeated.message === accepted.message, superseded: repeated.draft_disposition === "superseded",
+      newer_preserved: JSON.stringify(repeated.composer) === JSON.stringify(newer.composer) });
+  } else if (process.argv.includes("--recover-group-composer")) {
+    const group = (await client.groups(profile)).groups[0].group;
+    const current = await client.groupComposerQuery(profile, group);
+    if (current.last_send?.status !== "accepted") throw new Error("No accepted group outcome to recover");
+    const replay = await client.groupEnqueueDraft(profile, group, current.last_send.revision);
+    Object.assign(report, { recovered_acceptance: replay.message === current.last_send.acceptance.message,
+      draft_empty: replay.composer.text === "" });
   } else if (process.argv.includes("--exercise-profile-lock")) {
     const selected = (await client.profileCatalog()).selected_profile;
     const result = await client.lockProfile(selected, "sdk-profile-lock-key-0001");

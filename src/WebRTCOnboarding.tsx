@@ -1,5 +1,5 @@
-import { useProfileRequestAdmission } from "./profile-lifetime";
-import { admitCoreRequest, type CoreRequestAdmission } from "./core-admission";
+import { useProfileEffectScope, useProfileRequestAdmission } from "./profile-lifetime";
+import { admitCoreRequest, effectIsCurrent, ProfileRetiredError, type CoreRequestAdmission } from "./core-admission";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { Check, Copy, Phone, RefreshCw, X } from "lucide-react";
@@ -196,6 +196,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
   initialPairingCode?: string;
 }) {
   const admitProfileRequest = useProfileRequestAdmission();
+  const profileEffects = useProfileEffectScope();
   const [phase, setPhase] = useState<Phase>("choose");
   const [offerDocument, setOfferDocument] = useState("");
   const [answerDocument, setAnswerDocument] = useState("");
@@ -257,11 +258,12 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
   }, []);
 
   const sendControlText = useCallback(async (text: string): Promise<boolean> => {
+    if (!effectIsCurrent(profileEffects)) return false;
     if (nativeMode) {
       const sessionId = nativeSessionRef.current;
       if (!sessionId) return false;
       try {
-        const result = await nativeWebRTCControl(sessionId, "mesh-onboarding", text);
+        const result = await nativeWebRTCControl(sessionId, "mesh-onboarding", text, profileEffects);
         return result.accepted;
       } catch {
         return false;
@@ -275,25 +277,26 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
     } catch {
       return false;
     }
-  }, [nativeMode]);
+  }, [nativeMode, profileEffects]);
 
   const waitNativeOpen = useCallback(async (sessionId: string, timeoutMs = 20_000): Promise<void> => {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
+      if (!effectIsCurrent(profileEffects)) throw new ProfileRetiredError();
       if (nativeSessionRef.current !== sessionId) throw new Error("Native WebRTC pairing was cancelled.");
       try {
-        const stats = await nativeWebRTCStats(sessionId);
+        const stats = await nativeWebRTCStats(sessionId, profileEffects);
         // Pairing control can be open while approval still forbids a packet bridge.
         // Older hosts only reported attachment; current hosts report channel state.
         const open = stats.data_channel_state === "open" || (stats.data_channel_state === undefined && stats.attached);
-        if (open && nativeSessionRef.current === sessionId) return;
+        if (open && effectIsCurrent(profileEffects) && nativeSessionRef.current === sessionId) return;
       } catch {
         // Native session or Python bridge is still starting.
       }
       await new Promise((resolve) => window.setTimeout(resolve, 250));
     }
     throw new Error("The native WebRTC DataChannel did not open.");
-  }, []);
+  }, [profileEffects]);
 
   const captureDiagnostics = useCallback(async (phase: string, message: string): Promise<string> => {
     const nativeSession = nativeMode ? nativeSessionRef.current : null;
@@ -314,7 +317,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       const fallback = save({ ...detail, native_stats: "unavailable" });
       if (!nativeSession) return fallback;
       try {
-        const stats = await nativeWebRTCStats(nativeSession);
+        const stats = await nativeWebRTCStats(nativeSession, profileEffects);
         return save({ ...detail, native_stats: "available", ...stats });
       } catch (reason) {
         return save({ ...detail, native_stats: "unavailable", native_stats_error: diagnosticErrorCode(reason) });
@@ -351,7 +354,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
     traceRef.current = null;
     const nativeSession = nativeSessionRef.current;
     nativeSessionRef.current = null;
-    if (nativeSession) void nativeWebRTCClose(nativeSession).catch(() => undefined);
+    if (nativeSession) void nativeWebRTCClose(nativeSession, profileEffects).catch(() => undefined);
     const bridge = bridgeRef.current;
     const channel = channelRef.current;
     const control = controlRef.current;
@@ -517,10 +520,10 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
   const handleControlMessage = useCallback(async (raw: string) => {
     const control = controlRef.current;
     const attempt = attemptRef.current;
-    const current = () => nativeMode
+    const current = () => effectIsCurrent(profileEffects) && (nativeMode
       ? attemptRef.current === attempt && nativeSessionRef.current !== null
       : control !== null && controlRef.current === control &&
-        control.readyState === "open" && attemptRef.current === attempt;
+        control.readyState === "open" && attemptRef.current === attempt);
     if (!current()) return;
     let message: ControlMessage;
     try {
@@ -560,7 +563,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         // The joiner's signed capability arrives with its acceptance. The
         // service holds it until approval if the contact request has not
         // arrived yet; storing it never approves the contact.
-        const stored = await storeReconnectCapabilities(message.capabilities, sessionKey ? getWebRTCSessionByKey(sessionKey)?.contactId : undefined, peerDestinationRef.current).catch(() => undefined);
+        const stored = await storeReconnectCapabilities(message.capabilities, sessionKey ? getWebRTCSessionByKey(sessionKey)?.contactId : undefined, peerDestinationRef.current, profileEffects).catch(() => undefined);
         if (!current()) return;
         if (stored?.profile?.contact_id && sessionKey) {
           updateWebRTCSessionContact(stored.profile.contact_id, sessionKey);
@@ -573,7 +576,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       if (typeof message.capabilities === "string" && message.capabilities) {
         const bridge = bridgeRef.current;
         const contactId = bridge ? getWebRTCSessionByKey(`onboarding:${bridge.bridgeId}`)?.contactId : undefined;
-        await storeReconnectCapabilities(message.capabilities, contactId, peerDestinationRef.current).catch(() => undefined);
+        await storeReconnectCapabilities(message.capabilities, contactId, peerDestinationRef.current, profileEffects).catch(() => undefined);
         if (!current()) return;
       }
       clearPairingResume();
@@ -585,7 +588,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       if (typeof message.document === "string" && message.document) {
         const bridge = bridgeRef.current;
         const contactId = bridge ? getWebRTCSessionByKey(`onboarding:${bridge.bridgeId}`)?.contactId : undefined;
-        const stored = await storeReconnectCapabilities(message.document, contactId, peerDestinationRef.current).catch(() => undefined);
+        const stored = await storeReconnectCapabilities(message.document, contactId, peerDestinationRef.current, profileEffects).catch(() => undefined);
         if (current() && bridge && stored?.profile?.contact_id) {
           updateWebRTCSessionContact(stored.profile.contact_id, `onboarding:${bridge.bridgeId}`);
         }
@@ -602,7 +605,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       if (bridge) updateWebRTCSessionApprovalPending(false, `onboarding:${bridge.bridgeId}`);
       setOnboarding("declined");
     }
-  }, [nativeMode, onChanged]);
+  }, [nativeMode, onChanged, profileEffects]);
   handleControlMessageRef.current = handleControlMessage;
 
   const setupControl = useCallback((control: RTCDataChannel) => {
@@ -635,7 +638,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
     try {
       await waitForOpen(channel);
       if (pcRef.current !== pc) return;
-      const bridge = await attachWebRTCBridge(channel, { isCurrent: () => pcRef.current === pc, peerDestination: () => peerDestinationRef.current, onError: (reason) => { setError(errorMessage(reason)); setPhase("error"); }, onClosed: (bridgeId) => removeWebRTCSession(`onboarding:${bridgeId}`) });
+      const bridge = await attachWebRTCBridge(channel, { effects: profileEffects, isCurrent: () => pcRef.current === pc, peerDestination: () => peerDestinationRef.current, onError: (reason) => { setError(errorMessage(reason)); setPhase("error"); }, onClosed: (bridgeId) => removeWebRTCSession(`onboarding:${bridgeId}`) });
       if (pcRef.current !== pc) {
         await bridge.close();
         return;
@@ -645,7 +648,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         const path = await connectionPath(pc);
         if (pcRef.current !== pc) return;
         if (channel.readyState !== "open") throw new Error("The DataChannel closed before the connection completed.");
-        setWebRTCSession({ key: `onboarding:${bridge.bridgeId}`, bridge, channel, pc, control: controlRef.current, controlPurpose: "onboarding", peerDestination: peerDestinationRef.current, path, createdAt: Date.now(), approvalPending: false });
+        setWebRTCSession({ key: `onboarding:${bridge.bridgeId}`, effects: profileEffects, bridge, channel, pc, control: controlRef.current, controlPurpose: "onboarding", peerDestination: peerDestinationRef.current, path, createdAt: Date.now(), approvalPending: false });
         if (capabilityRequestPendingRef.current) void handleControlMessageRef.current?.('{"type":"connection_capabilities_request"}');
         handedOffRef.current = true;
         onConnected?.(path);
@@ -714,7 +717,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         roleRef.current = "offer";
         const sessionId = `onboarding-${crypto.randomUUID()}`;
         nativeSessionRef.current = sessionId;
-        const native = await nativeWebRTCOffer(sessionId, ice, NATIVE_ONBOARDING_CHANNELS);
+        const native = await nativeWebRTCOffer(sessionId, ice, NATIVE_ONBOARDING_CHANNELS, undefined, profileEffects);
         if (attemptRef.current !== attempt) return;
         const sdp = withEndOfCandidates(native.sdp);
         const result = await serviceCommand<OnboardingOfferResult>("webrtc_onboarding_offer", {
@@ -832,7 +835,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
           session_id: sessionId, offer_document: offerDocument, answer_document: answerInput.trim(),
         }, admitProfileRequest);
         if (nativeSessionRef.current !== sessionId) return;
-        await nativeWebRTCApplyAnswer(sessionId, preview.sdp);
+        await nativeWebRTCApplyAnswer(sessionId, preview.sdp, profileEffects);
         await waitNativeOpen(sessionId);
         if (nativeSessionRef.current !== sessionId) return;
         handedOffRef.current = true;
@@ -948,7 +951,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         const sessionId = `onboarding-${crypto.randomUUID()}`;
         nativeSessionRef.current = sessionId;
         operation = "native_webrtc_accept";
-        const native = await nativeWebRTCAccept(sessionId, preview.sdp, ice, NATIVE_ONBOARDING_CHANNELS);
+        const native = await nativeWebRTCAccept(sessionId, preview.sdp, ice, NATIVE_ONBOARDING_CHANNELS, undefined, profileEffects);
         if (attemptRef.current !== attempt) return;
         operation = "native_webrtc_bind_onboarding";
         await serviceCommand("native_webrtc_bind_onboarding", { session_id: sessionId, offer_document: preview.document }, admitProfileRequest);

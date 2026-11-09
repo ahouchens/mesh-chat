@@ -44,6 +44,12 @@ and `send_group` accept an optional final `key`; keyed calls require their names
 in `optional_keyed_operations` and all three positive optional-key limits.
 They never fall back to an unkeyed send. Other legacy mutation gaps remain open.
 
+Group helpers `group_composer_query`, `group_composer_update` and
+`group_enqueue_draft` require the complete API 1.1 family and nine positive
+`group_composer_*` limits. Pass Core's update key and revision; enqueue carries
+no text. Recover `last_send` after restart; replay preserves a newer draft.
+See [the group composer contract](../../contracts/core-api/GROUP_COMPOSER.md).
+
 The host owns forward storage migration. First composer use atomically raises
 the vault floor from 1 to 2. An older format-1 host must refuse that migrated
 vault; binary downgrade is unsupported. Public API minor compatibility is a
