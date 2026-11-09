@@ -85,6 +85,10 @@ def test_android_call_control_fixture_asserts_signed_start_and_end(android_fixtu
 def test_android_fresh_profile_fixture_creates_only_through_keyed_core(android_fixture):
     assert android_fixture.assert_profile_absent() is True
     assert "profile.create" in result("runtime.capabilities")["operations"]
+    android_fixture.capture_preview_state()
+    preview = result("bootstrap.preview", {"kind": "personal", "document": android_fixture.bootstrap_document()})
+    assert preview["kind"] == "personal" and preview["preview"]["display_name"] == "Pre-profile sponsor"
+    assert android_fixture.assert_preview_unchanged() is True
     params, key = {"display_name": "Fresh Android owner"}, "android-fresh-profile-key-0001"
     created = result("profile.create", params, key)
     view = result("profile.query", {"profile": profile()})

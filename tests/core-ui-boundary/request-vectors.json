@@ -1275,5 +1275,14 @@
       "profile": "callerScopedHandle1"
     },
     "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "bootstrap.preview",
+    "params": {
+      "kind": "personal",
+      "document": "signed-personal-invitation"
+    }
   }
 ]

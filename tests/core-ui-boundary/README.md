@@ -12,7 +12,9 @@ and permission admission. The permission-denied session must reject before any
 domain effect. Unsupported future operations are not advertised as implemented.
 The `native.command` vector uses the separate private-host schema and is rejected
 by the public schema. Only the explicit trusted UI fixture bootstrap attaches the
-private native port; ordinary public owner grants do not acquire it.
+private native port; ordinary public owner grants do not acquire it. The separate
+`bootstrap.preview` vector uses the private-bootstrap schema and is also rejected
+by the public schema.
 
 After committing source, run the exact-source fast gate:
 
@@ -48,7 +50,9 @@ network/call settings, then start/end an approved audio call and verify the stor
 state and signed queued invite/hangup documents. These assertions qualify call
 signalling, not media execution or peer receipt delivery. The embedded Python
 fixture also executes through mobile Core framing in the fast Python suite.
-The fresh-profile case starts with no profile or identity, creates only through
+The fresh-profile case starts with no profile or identity, verifies a signed
+invitation through private preview without any vault write or network/event
+effect, then creates only through
 the keyed Core operation, rejects changed-payload key reuse and repeats after a
 service/vault reopen without changing the identity. This is not OS process-death
 evidence. Compilation or emulator execution
