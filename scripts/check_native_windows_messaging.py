@@ -10,7 +10,6 @@ import argparse
 import base64
 import ctypes
 from ctypes import wintypes
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -23,6 +22,7 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "service" / "src"))
 from mesh_chat.ipc import encode_frame, read_frame  # noqa: E402
+from native_windows_evidence import COUNTS, qualify, write_result
 
 TH32CS_SNAPPROCESS = 0x00000002
 INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
@@ -82,10 +82,14 @@ class Sidecar:
         assert self.process.stdin and self.process.stdout and self.process.stderr
         threading.Thread(target=self._read_loop, name="native-sidecar-reader",
                          daemon=True).start()
-        self._request("init", "initialize", {
-            "profile_dir": str(profile),
-            "vault_key": base64.b64encode(os.urandom(32)).decode(),
-            "parent_pid": os.getpid(), "display_name": name})
+        try:
+            self._request("init", "initialize", {
+                "profile_dir": str(profile),
+                "vault_key": base64.b64encode(os.urandom(32)).decode(),
+                "parent_pid": os.getpid(), "display_name": name})
+        except BaseException:
+            self.close()
+            raise
 
     def _read_loop(self):
         while True:
@@ -158,31 +162,15 @@ CHANNELS = [
 ]
 
 
-def digest(path: Path) -> str:
-    value = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            value.update(chunk)
-    return value.hexdigest().upper()
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--sidecar", type=Path)
-    parser.add_argument("--expected-source")
-    args = parser.parse_args()
-    if os.name != "nt":
-        print(json.dumps({"passed": True, "skipped": "requires Windows"}))
-        return 0
-    candidates = sorted((ROOT / "src-tauri" / "binaries").glob("mesh-chat-service-*.exe"))
-    executable = args.sidecar or (candidates[0] if candidates else None)
-    if executable is None or not executable.is_file():
-        raise SystemExit("packaged sidecar was not built")
-    with tempfile.TemporaryDirectory(prefix="mesh-native-messaging-") as directory:
+def exercise(executable):
+    scratch = ROOT / ".test-tmp/native-control"
+    scratch.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="run-", dir=scratch) as directory:
         work = Path(directory)
-        left = Sidecar(executable, work / "left", "Left")
-        right = Sidecar(executable, work / "right", "Right")
+        left = right = None
         try:
+            left = Sidecar(executable, work / "left", "Left")
+            right = Sidecar(executable, work / "right", "Right")
             offer = left._request("offer", "native_webrtc_offer", {
                 "session_id": "native-left", "ice": ICE, "channels": CHANNELS})
             answer = right._request("accept", "native_webrtc_accept", {
@@ -212,25 +200,28 @@ def main() -> int:
             assert json.loads(event["data"]) == {"probe": "packaged-native"}
             tree = descendants(left.process.pid) + descendants(right.process.pid)
             assert not any("msedgewebview2" in name for name in tree), tree
-            print(json.dumps({
-                "passed": True, "sidecar": executable.name,
-                "sidecar_sha256": digest(executable),
-                "source_commit": args.expected_source,
-                "transport": "native_webrtc_datachannel",
-                "channel": "mesh-reticulum",
-                "control_event": event["event"],
-                "owned_processes": sorted(set(tree)),
-                "webview_processes": 0,
-            }, sort_keys=True))
         finally:
-            right.close()
-            left.close()
-            for sidecar in (left, right):
-                if sidecar.process.returncode not in (0, None):
-                    error = sidecar.stderr()
-                    if error:
-                        print(error, file=sys.stderr)
-    return 0
+            errors = []
+            for sidecar in (right, left):
+                if sidecar is not None:
+                    try:
+                        sidecar.close()
+                        if sidecar.process.returncode != 0:
+                            raise AssertionError("Packaged native peer did not exit cleanly")
+                    except Exception as error:
+                        errors.append(error)
+            if errors:
+                raise errors[0]
+    return {"counts": dict(COUNTS["control"])}
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--sidecar", type=Path)
+    parser.add_argument("--expected-source", required=True)
+    parser.add_argument("--output", type=Path, default=ROOT / "dist/reports/native-windows-control.json")
+    args = parser.parse_args()
+    return write_result(args.output, qualify("control", args.expected_source, args.sidecar, exercise))
 
 
 if __name__ == "__main__":

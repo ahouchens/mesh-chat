@@ -23,8 +23,8 @@ from check_native_windows_messaging import (  # noqa: E402
     ICE,
     Sidecar,
     descendants,
-    digest,
 )
+from native_windows_evidence import COUNTS, qualify, write_result
 
 
 def wait_open(sidecar: Sidecar, session: str, deadline: float) -> None:
@@ -73,30 +73,25 @@ def run_cycle(left: Sidecar, right: Sidecar, index: int) -> tuple[float, float]:
     return opened, controlled
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--sidecar", type=Path)
-    parser.add_argument("--iterations", type=int, default=100)
-    parser.add_argument("--expected-source")
-    args = parser.parse_args()
-    if os.name != "nt":
-        print(json.dumps({"passed": True, "skipped": "requires Windows"}))
-        return 0
-    candidates = sorted((ROOT / "src-tauri" / "binaries").glob("mesh-chat-service-*.exe"))
-    executable = args.sidecar or (candidates[0] if candidates else None)
-    if executable is None or not executable.is_file():
-        raise SystemExit("packaged sidecar was not built")
-    if not 1 <= args.iterations <= 500:
-        raise SystemExit("iteration count is out of bounds")
-    with tempfile.TemporaryDirectory(prefix="mesh-native-soak-") as directory:
+def exercise(executable, iterations=100):
+    if type(iterations) is not int or iterations != 100:
+        raise ValueError("Required native lifecycle qualification executes exactly 100 cycles")
+    scratch = ROOT / ".test-tmp/native-lifecycle"
+    scratch.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="run-", dir=scratch) as directory:
         work = Path(directory)
-        left = Sidecar(executable, work / "left", "Soak Left")
-        right = Sidecar(executable, work / "right", "Soak Right")
+        left = right = None
         opened_times, controlled_times, cold_starts = [], [], 0
+        clean_exits = 0
         try:
-            for index in range(args.iterations):
+            left = Sidecar(executable, work / "left", "Soak Left")
+            right = Sidecar(executable, work / "right", "Soak Right")
+            for index in range(iterations):
                 if index and index % 25 == 0:
                     right.close()
+                    if right.process.returncode != 0:
+                        raise AssertionError("Cold-start peer did not exit cleanly")
+                    clean_exits += 1
                     right = Sidecar(executable, work / f"right-{index}", f"Soak Right {index}")
                     cold_starts += 1
                 opened, controlled = run_cycle(left, right, index)
@@ -107,26 +102,35 @@ def main() -> int:
             p95 = statistics.quantiles(controlled_times, n=20)[-1]
             assert max(opened_times) < 20.0, "native channel open exceeded its budget"
             assert max(controlled_times) < 30.0, "native control round trip exceeded its budget"
-            print(json.dumps({
-                "passed": True,
-                "iterations": args.iterations,
-                "cold_starts": cold_starts,
-                "channel_open_ms_max": round(max(opened_times) * 1000, 1),
-                "control_complete_ms_max": round(max(controlled_times) * 1000, 1),
-                "control_complete_ms_p95": round(p95 * 1000, 1),
-                "sidecar": executable.name,
-                "sidecar_sha256": digest(executable),
-                "source_commit": args.expected_source,
-                "webview_processes": 0,
-                "scope": "native transport lifecycle; durable messages and receipts not claimed",
-            }, sort_keys=True))
         finally:
+            errors = []
             for sidecar in (left, right):
-                try:
-                    sidecar.close()
-                except Exception:
-                    pass
-    return 0
+                if sidecar is not None:
+                    try:
+                        sidecar.close()
+                        if sidecar.process.returncode != 0:
+                            raise AssertionError("Packaged native peer did not exit cleanly")
+                        clean_exits += 1
+                    except Exception as error:
+                        errors.append(error)
+            if errors:
+                raise errors[0]
+    return {"counts": {**COUNTS["lifecycle"], "channel_pairs": len(opened_times),
+                       "controls_received": len(controlled_times), "cold_starts": cold_starts,
+                       "processes_started": 2 + cold_starts, "clean_exits": clean_exits},
+            "timings_ms": {"open_max": max(opened_times) * 1000,
+                           "control_max": max(controlled_times) * 1000, "control_p95": p95 * 1000}}
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--sidecar", type=Path)
+    parser.add_argument("--iterations", type=int, default=100)
+    parser.add_argument("--expected-source", required=True)
+    parser.add_argument("--output", type=Path, default=ROOT / "dist/reports/native-windows-lifecycle.json")
+    args = parser.parse_args()
+    return write_result(args.output, qualify("lifecycle", args.expected_source, args.sidecar,
+                                             lambda binary: exercise(binary, args.iterations)))
 
 
 if __name__ == "__main__":
