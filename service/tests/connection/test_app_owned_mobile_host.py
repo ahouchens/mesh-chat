@@ -94,3 +94,62 @@ def test_reopening_waits_for_actual_prior_native_allocation_ack(ordinary):
     token = json.loads(mobile_bridge.complete_profile_unlock_auth(challenge))["result"]["credential_handle"]
     assert not r.request("profile.unlock", {"profile": r.profile, "credential_handle": token}, str(uuid4()))["ok"]
     assert mobile_bridge._service is None and mobile_bridge._opening_channel is None
+
+
+def test_startup_publication_cannot_expose_the_legacy_native_port(ordinary, monkeypatch):
+    from mesh_chat import mobile_profile_host
+    r = ordinary
+    assert json.loads(mobile_bridge.shutdown())["ok"]
+    monkeypatch.setattr(r.provider, "profileDirectory",
+        lambda: str(r.root.parent.parent / "second" / "mesh-core-runtime" / "profile-v1"))
+    constructor = mobile_profile_host.NativeMobileProfileHost
+    observed = []
+    def inspect_publication(*args, **kwargs):
+        assert mobile_bridge._service is not None and mobile_bridge._profile_host is None
+        observed.append(r.request("runtime.capabilities"))
+        return constructor(*args, **kwargs)
+    monkeypatch.setattr(mobile_profile_host, "NativeMobileProfileHost", inspect_publication)
+    assert json.loads(mobile_bridge.initialize_app_owned_host(r.provider))["ok"]
+    assert len(observed) == 1 and observed[0]["error"]["code"] == "unavailable"
+    assert "native.command" not in r.request("runtime.capabilities")["result"]["operations"]
+
+
+def test_failed_install_retains_metadata_key_until_close_ack(ordinary, mobile_request, monkeypatch):
+    from mesh_chat import mobile_profile_host
+    r = ordinary
+    assert json.loads(mobile_bridge.shutdown())["ok"]
+    monkeypatch.setattr(r.provider, "profileDirectory",
+        lambda: str(r.root.parent.parent / "second" / "mesh-core-runtime" / "profile-v1"))
+    stores, release = [], []
+    vault = mobile_bridge.VaultStore
+    def catalog(*args, **kwargs):
+        store = vault(*args, **kwargs)
+        if store.profile_dir.name != "host-v1":
+            return store
+        close = store.close
+        def blocked_close():
+            if not release:
+                raise OSError("metadata cleanup pending")
+            close()
+        store.close = blocked_close
+        stores.append(store)
+        return store
+    def failed_install(*args, **kwargs):
+        assert mobile_bridge._service is not None
+        raise OSError("host installation failed")
+    monkeypatch.setattr(mobile_bridge, "VaultStore", catalog)
+    monkeypatch.setattr(mobile_profile_host, "NativeMobileProfileHost", failed_install)
+    try:
+        assert not json.loads(mobile_bridge.initialize_app_owned_host(r.provider))["ok"]
+        assert len(stores) == 1 and mobile_bridge._retiring_catalog is stores[0]
+        assert stores[0]._key is not None
+        assert mobile_bridge._service is None and mobile_bridge._retiring_service is None
+        assert not json.loads(mobile_bridge.initialize_native(mobile_request))["ok"]
+        assert not json.loads(mobile_bridge.shutdown())["ok"]
+        assert mobile_bridge._retiring_catalog is stores[0] and stores[0]._key is not None
+        assert not json.loads(mobile_bridge.initialize_app_owned_host(r.provider))["ok"]
+        assert len(stores) == 1
+    finally:
+        release.append(True)
+    assert json.loads(mobile_bridge.shutdown())["ok"]
+    assert stores[0]._key is None and mobile_bridge._retiring_catalog is None

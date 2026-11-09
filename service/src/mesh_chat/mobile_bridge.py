@@ -78,6 +78,8 @@ _events: deque[dict[str, Any]] = deque(maxlen=256)
 _event_overflow = False
 _profile_host = None
 _profile_install_lock = threading.RLock()
+_profile_installing = False
+_retiring_catalog = None
 
 
 class _StoreRetirement:
@@ -276,7 +278,27 @@ def initialize_app_owned_host(provider):
 
 
 def _initialize_native_host(provider, display_name, *, public_only):
+    global _profile_installing
+    with _profile_install_lock:
+        with _service_lock:
+            _profile_installing = True
+        try:
+            return _install_native_host(provider, display_name, public_only=public_only)
+        finally:
+            with _service_lock:
+                _profile_installing = False
+
+
+def _close_retiring_catalog():
+    global _retiring_catalog
+    if _retiring_catalog is not None:
+        _retiring_catalog.close()
+        _retiring_catalog = None
+
+
+def _install_native_host(provider, display_name, *, public_only):
     global _profile_host
+    global _retiring_catalog
     from .mobile_profile_host import NativeMobileProfileHost, native_key, provider_identity, PROFILE_SLOT
     catalog = None
     created_profile = False
@@ -296,6 +318,7 @@ def _initialize_native_host(provider, display_name, *, public_only):
                     _close_service()
                     if _retiring_service is not None:
                         raise NativeUnavailable("Previous mobile profile is still retiring")
+            _close_retiring_catalog()
             catalog = VaultStore(directory.parent / "host-v1", native_key(str(provider.catalogKey())),
                                  native_mobile_protection="android")
             if catalog.get("host_profile", PROFILE_SLOT) is None and _service is None:
@@ -326,11 +349,19 @@ def _initialize_native_host(provider, display_name, *, public_only):
             return (_dumps({"ok": True, "result": active.snapshot()}) if active is not None
                     else _dumps({"ok": False, "error": {"code": "locked"}}))
     except Exception as error:
-        if catalog is not None:
-            catalog.close()
-        if created_profile:
-            with _service_lock:
-                _close_service()
+        try:
+            if created_profile:
+                with _service_lock:
+                    _close_service()
+        except Exception as cleanup_error:
+            error = cleanup_error
+        finally:
+            if catalog is not None:
+                _retiring_catalog = catalog
+                try:
+                    _close_retiring_catalog()
+                except Exception:
+                    pass  # Exact metadata key ownership survives failed close.
         return _profile_error(error)
 
 
@@ -399,7 +430,7 @@ def initialize(raw: str, *, connection_policy="legacy") -> str:
         binding = (str(profile_dir), hashlib.sha256(vault_key).digest(), platform_value, connection_policy)
 
         with _service_lock:
-            if _profile_host is not None:
+            if _profile_host is not None or _profile_installing or _retiring_catalog is not None:
                 raise NativeUnavailable("Native profile host owns initialization")
             if _retiring_service is not None:
                 _close_service()
@@ -555,8 +586,13 @@ def core_exchange(caller: str, frame_b64: str, scope: str = "consumer") -> str:
             frame = base64.b64decode(frame_b64, validate=True)
         except Exception as exc:
             raise ValidationError("Core API frame is not valid base64") from exc
-        host = _profile_host
-        reply = host.exchange(caller, frame, scope) if host is not None else exchange(_service, caller, frame, scope)
+        with _service_lock:
+            host, service, installing = _profile_host, _service, _profile_installing
+        if installing and host is None:
+            reply = encode_frame({"api_version": 1, "request_id": None, "ok": False,
+                "error": {"code": "unavailable", "retry_after_ms": None}})
+        else:
+            reply = host.exchange(caller, frame, scope) if host is not None else exchange(service, caller, frame, scope)
         return base64.b64encode(reply).decode("ascii")
     except Exception:
         return base64.b64encode(encode_frame({
@@ -602,11 +638,12 @@ def shutdown() -> str:
             if host is not None:
                 host.close()
                 _profile_host = None
-        with _service_lock:
-            _close_service()
-            if (_service is not None or _native_channel is not None
-                    or _retiring_service is not None or _retiring_channel is not None or _opening_channel is not None):
-                raise NativeUnavailable("Mobile runtime retirement is incomplete")
+            with _service_lock:
+                _close_service()
+                if (_service is not None or _native_channel is not None
+                        or _retiring_service is not None or _retiring_channel is not None or _opening_channel is not None):
+                    raise NativeUnavailable("Mobile runtime retirement is incomplete")
+            _close_retiring_catalog()
         return _dumps({"ok": True, "result": None})
     except Exception as exc:
         return _error(exc)
