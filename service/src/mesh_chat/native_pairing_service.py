@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from hashlib import sha256
 import json
+import math
 import time
 from weakref import ref
 from uuid import UUID, uuid4, uuid5
@@ -28,7 +29,7 @@ class NativePairingServiceMixin:
 
     def native_pairing_begin(self, operation_id, *, role, authorized,
                              pairing_code=None, allow_direct_ip_disclosure=False,
-                             cancel_requested=None, on_terminal=None):
+                             cancel_requested=None, on_terminal=None, expires_at=None):
         """Trusted host admission; A binds caller/key before invoking this port."""
         with self._dispatch_lock:
             if (getattr(self, "_connection_policy", "legacy") != "shared-native"
@@ -46,9 +47,17 @@ class NativePairingServiceMixin:
             if base is None:
                 raise NativeUnavailable("Signaling mailbox is not configured")
             imported = parse_pairing(pairing_code, base) if role == "answer" else None
-            operation_id, digest, replay = self._workspace_operation("native.pairing", operation_id, {
+            if expires_at is not None:
+                if (type(expires_at) not in (int, float) or not math.isfinite(expires_at)
+                        or not 0 < expires_at <= time.time() + 300):
+                    raise ValidationError("Native pairing deadline is invalid")
+                expires_at = float(expires_at)
+            inputs = {
                 "role": role, "pairing_digest": sha256((pairing_code or "").encode()).hexdigest(),
-                "allow_direct_ip_disclosure": allow_direct_ip_disclosure})
+                "allow_direct_ip_disclosure": allow_direct_ip_disclosure}
+            if expires_at is not None:
+                inputs["expires_at"] = expires_at
+            operation_id, digest, replay = self._workspace_operation("native.pairing", operation_id, inputs)
             contexts = self._native_pairing_contexts = getattr(self, "_native_pairing_contexts", {})
             if replay is not None:
                 context = contexts.get(operation_id)
@@ -66,7 +75,8 @@ class NativePairingServiceMixin:
                        "runtime_epoch": self._runtime_incarnation, "identity": ref(self._identity),
                        "identity_hash": profile["identity_hash"], "mailbox_url": base,
                        "session": "pairing-" + uuid4().hex, "code": pairing_code,
-                       "expires_at": min(time.time() + 300, imported["expires_at"] if imported else float("inf")),
+                       "expires_at": min(time.time() + 300, expires_at if expires_at is not None else float("inf"),
+                                         imported["expires_at"] if imported else float("inf")),
                        "direct": allow_direct_ip_disclosure, "state": "reserved", "admitted": False,
                        "physical": None, "source": None, "allocation_attempted": False}
             contexts[operation_id] = context
@@ -114,7 +124,12 @@ class NativePairingServiceMixin:
 
     def _native_pairing_reconcile_cancel(self, context):
         callback = context.get("cancel_requested")
-        if callback is None or context["state"] in {"retired", "transferred"}:
+        if context["state"] in {"retired", "transferred"}:
+            return False
+        if time.time() >= context["expires_at"]:
+            self._native_pairing_cancel_context(context)
+            return True
+        if callback is None:
             return False
         try:
             cancelled = callback()

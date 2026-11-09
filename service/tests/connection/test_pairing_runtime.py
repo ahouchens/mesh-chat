@@ -440,6 +440,50 @@ def test_failed_terminal_checkpoint_retries_without_repeating_native_disposal(na
     assert attempts == ["retired", "retired"] and len(closed) == 1
 
 
+def test_original_public_deadline_cannot_be_extended_by_late_actor_admission(native_pairing, monkeypatch):
+    from mesh_chat import native_pairing_service as pairing_module
+    import time
+    create, documents = native_pairing
+    service, _, created, closed, *_ = create()
+    original = time.time() + 300
+    monkeypatch.setattr(pairing_module, "time", SimpleNamespace(time=lambda: original + 1))
+    operation, terminal = str(uuid4()), []
+    with pytest.raises(ContactNotApproved):
+        service.native_pairing_begin(operation, role="offer", authorized=lambda: True,
+            expires_at=original, on_terminal=terminal.append)
+    context = service._native_pairing_contexts[operation]
+    assert context["expires_at"] == original and context["state"] == "retired"
+    assert terminal == ["retired"] and not created and not closed and not documents
+    with pytest.raises(ContactNotApproved):
+        service.native_pairing_begin(operation, role="offer", authorized=lambda: True, expires_at=original)
+    with pytest.raises(ValidationError):
+        service.native_pairing_begin(operation, role="offer", authorized=lambda: True, expires_at=original + 100)
+    assert not created and terminal == ["retired"]
+
+
+def test_original_deadline_fences_async_mailbox_work_and_waits_for_physical_retirement(native_pairing, monkeypatch):
+    from mesh_chat import native_pairing_service as pairing_module
+    import time
+    create, documents = native_pairing
+    service, _, created, closed, *_ = create()
+    now = [time.time()]
+    monkeypatch.setattr(pairing_module, "time", SimpleNamespace(time=lambda: now[0]))
+    operation, terminal = str(uuid4()), []
+    deadline = now[0] + 10
+    service.native_pairing_begin(operation, role="offer", authorized=lambda: True,
+        expires_at=deadline, on_terminal=terminal.append)
+    run_until(service, lambda: service.native_pairing_status(operation)["pairing_code"] is not None)
+    context = service._native_pairing_contexts[operation]
+    assert context["expires_at"] == deadline and len(created) == 1
+    published = dict(documents)
+    now[0] = deadline + 1
+    with pytest.raises(ContactNotApproved): service._native_pairing_fetch(context, "answer")
+    assert context["state"] == "retiring" and not terminal
+    run_until(service, lambda: context["state"] == "retired")
+    assert documents == published and len(created) == len(closed) == 1
+    assert terminal == ["retired"]
+
+
 def test_current_caller_revocation_during_native_create_prevents_publish_and_retires_exact_allocation(native_pairing):
     create, documents = native_pairing
     service, host, created, closed, _, _ = create()
