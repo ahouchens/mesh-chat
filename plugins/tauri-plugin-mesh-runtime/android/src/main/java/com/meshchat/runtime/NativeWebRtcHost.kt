@@ -75,6 +75,12 @@ object NativeWebRtcHost {
         val sampleSequence = AtomicLong()
         val sampling = AtomicBoolean()
         val retirement = Any()
+        val registeredChannels = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<DataChannel, Boolean>())
+        val disposal = NativePeerDisposal<DataChannel>(
+            closeChannel = { channel ->
+                if (registeredChannels.contains(channel)) channel.unregisterObserver()
+                channel.close()
+            }, disposeChannel = { it.dispose() }, closePeer = { pc.close() }, disposePeer = { pc.dispose() })
         val callbacksDrained = AtomicBoolean()
         val disposing = AtomicBoolean()
         val callbacks = NativeCallbackQueue({ notifyPython("overflow", id, "") })
@@ -316,38 +322,49 @@ object NativeWebRtcHost {
 
     private fun scheduleDisposal(session: Session) {
         synchronized(session.retirement) {
-            if (session.disposed.count == 0L || !session.callbacksDrained.get()
-                || !session.disposing.compareAndSet(false, true)) return
+            if (session.closed && !session.callbacksDrained.get()) return
+            if (session.disposed.count == 0L && session.disposal.pendingChannels() == 0) return
+            if (!session.closed && session.disposal.pendingDiscards() == 0) return
+            if (!session.disposing.compareAndSet(false, true)) return
         }
         try {
             disposalExecutor.execute {
-                try { disposeSession(session) }
-                catch (_: Throwable) { notifyPython("overflow", session.id, "") }
-                finally { session.disposing.set(false) }
+                var completed = false
+                try {
+                    synchronized(session) {
+                        if (session.closed && session.callbacksDrained.get()) disposeSession(session)
+                        else if (!session.closed) session.disposal.disposeDiscards()
+                        completed = true
+                    }
+                } catch (_: Throwable) {
+                    // Failed discarded channels also remain owned by this peer.
+                    cancelSession(session.id)
+                    notifyPython("overflow", session.id, "")
+                } finally {
+                    session.disposing.set(false)
+                    if (completed && ((session.closed && session.callbacksDrained.get() && session.disposed.count != 0L)
+                        || session.disposal.pendingDiscards() > 0)) scheduleDisposal(session)
+                }
             }
         } catch (_: RejectedExecutionException) {
-            session.disposing.set(false)
-            notifyPython("overflow", session.id, "")
+            try {
+                cancelSession(session.id)
+                notifyPython("overflow", session.id, "")
+            } finally { session.disposing.set(false) }
         }
     }
 
     private fun disposeSession(session: Session) {
-        synchronized(session) {
-            for (channel in session.channels.values) {
-                try { channel.unregisterObserver() } catch (_: Throwable) { }
-                disposeUnusedChannel(channel)
-            }
-            session.channels.clear()
-            try { session.pc.close() } catch (_: Throwable) { }
-            // Failed disposal retains the exact peer and lease for a retry.
-            session.pc.dispose()
-            synchronized(session.retirement) {
-                reservations.disposed(session.lease)
-                retiringSessions.remove(session.id, session)
-                session.disposed.countDown()
-            }
+        if (!session.disposal.dispose()) return
+        session.channels.clear()
+        session.registeredChannels.clear()
+        synchronized(session.retirement) {
+            reservations.disposed(session.lease)
+            retiringSessions.remove(session.id, session)
+            session.disposed.countDown()
         }
     }
+
     @JvmStatic
     fun closeAll() {
         val leases = reservations.ids().mapNotNull(::cancelSession)
@@ -558,14 +575,18 @@ object NativeWebRtcHost {
             override fun onRemoveStream(stream: MediaStream) = Unit
 
             override fun onDataChannel(channel: DataChannel) {
+                if (!session.disposal.own(channel)) {
+                    cancelSession(session.id)
+                    notifyPython("overflow", session.id, "")
+                }
                 if (!isCurrent(session)) {
-                    disposeUnusedChannel(channel)
+                    discardChannel(session, channel)
                     return
                 }
-                enqueueChannelEvent(session, { disposeUnusedChannel(channel) }) {
+                enqueueChannelEvent(session, { discardChannel(session, channel) }) {
                     val label = channel.label()
                     if (label !in session.expectedChannels || label !in setOf("mesh-reticulum", "mesh-onboarding", "meshchat-reconnect")) {
-                        disposeUnusedChannel(channel)
+                        discardChannel(session, channel)
                         return@enqueueChannelEvent
                     }
                     registerChannel(session, label, channel)
@@ -582,10 +603,15 @@ object NativeWebRtcHost {
         label: String,
         channel: DataChannel,
     ) {
+        if (!session.disposal.own(channel)) {
+            cancelSession(session.id)
+            throw IllegalStateException("native_webrtc_channel_limit")
+        }
         if (session.channels.putIfAbsent(label, channel) != null) {
-            disposeUnusedChannel(channel)
+            discardChannel(session, channel)
             return
         }
+        session.registeredChannels.add(channel)
         channel.registerObserver(object : DataChannel.Observer {
             override fun onBufferedAmountChange(previousAmount: Long) = Unit
 
@@ -636,11 +662,10 @@ object NativeWebRtcHost {
         return pc.localDescription ?: offer
     }
 
-    private fun disposeUnusedChannel(channel: DataChannel) {
-        try { channel.close() } catch (_: Throwable) { }
-        try { channel.dispose() } catch (_: Throwable) { }
+    private fun discardChannel(session: Session, channel: DataChannel) {
+        session.disposal.discard(channel)
+        scheduleDisposal(session)
     }
-
     private fun enqueueChannelEvent(session: Session, discarded: () -> Unit = {}, block: () -> Unit) {
         if (!isCurrent(session)) { discarded(); return }
         session.callbacks.submit(discarded) {
