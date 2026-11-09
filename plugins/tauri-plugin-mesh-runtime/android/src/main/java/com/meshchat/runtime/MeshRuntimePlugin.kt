@@ -554,7 +554,10 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
                     acquire()
                 }
                 createNotificationChannels()
-                val initialized = bridge("initialize", request.toString())
+                val initialized = bridge(
+                    if (BuildConfig.MESH_SHARED_NATIVE) "initialize_native" else "initialize",
+                    request.toString(),
+                )
                 runtimeInitialized = JSONObject(initialized).optBoolean("ok", false)
                 if (!runtimeInitialized) {
                     resolve(invoke, initialized)

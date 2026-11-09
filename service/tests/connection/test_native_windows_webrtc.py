@@ -72,6 +72,16 @@ def test_native_host_exchanges_binary_packets_and_controls():
         assert stats["ok"] and stats["result"]["data_channel_state"] == "open"
         assert stats["result"]["received_packets"] == 1
         assert json.loads(right.stats("right"))["result"]["received_controls"] == 0
+        left_path = json.loads(left.pathEvidence("left"))["result"]
+        right_path = json.loads(right.pathEvidence("right"))["result"]
+        assert left_path["status"] == right_path["status"] == "selected"
+        assert left_path["pair"]["local"] == right_path["pair"]["remote"]
+        assert left_path["pair"]["remote"] == right_path["pair"]["local"]
+        assert left_path["pair"]["relay_protocol"] == "not_applicable"
+        assert left_path["application"]["enqueued_bytes"] == len(packet)
+        assert left_path["application"]["received_bytes"] == len(b"reply") + len(b"control text")
+        assert not left_path["availability"]["pair_bytes"]
+        assert left_path["pair"]["bytes_sent"] is None
     finally:
         left.shutdown()
         right.shutdown()
@@ -83,6 +93,7 @@ def test_close_is_exact_and_reports_closed_once():
         left.close("left")
         wait_for(left_events, lambda event: event == ("closed", "left", ""))
         assert json.loads(left.stats("left"))["error"] == "native_webrtc_session_missing"
+        assert json.loads(left.pathEvidence("left"))["error"] == "native_webrtc_session_missing"
         deadline = time.monotonic() + 5
         while right.send("right", b"after close") is not False:
             assert time.monotonic() < deadline, "remote session never observed closure"

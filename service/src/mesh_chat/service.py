@@ -165,6 +165,14 @@ def _payload(
     return value
 
 
+class NativeStartupIncomplete(NativeUnavailable):
+    """Private construction failure retaining the exact retiring runtime."""
+
+    def __init__(self, service):
+        super().__init__("Native runtime startup cleanup is incomplete")
+        self.retiring_service = service
+
+
 class MeshChatService(
     ContactInvitationsMixin,
     NativeWebRTCServiceMixin,
@@ -494,6 +502,7 @@ class MeshChatService(
                 raise NativeUnavailable("Recoverable native host lacks quarantine or activation capability")
         self._connection_policy = connection_policy
         self._connection_runtime = None
+        self._runtime_incarnation = uuid.uuid4().hex
         from .link_previews import LinkPreviews
         self._link_previews = LinkPreviews()
         self.store = store
@@ -577,22 +586,31 @@ class MeshChatService(
                 self._recover_outbox()
 
         self._retry_thread = threading.Thread(target=self._retry_loop, daemon=True)
-        self._retry_thread.start()
-        from .native_webrtc_events import NativeEventInbox
-        self._native_webrtc_events = NativeEventInbox()
-        self._native_webrtc_event_thread = threading.Thread(
-            target=self._native_webrtc_event_loop,
-            daemon=True,
-            name="mesh-chat-native-webrtc-events",
-        )
-        self._native_webrtc_event_thread.start()
-        self._direct_recovery.start()
-        if self._connection_policy == "shared-native":
-            from .connection.composition import native_runtime
-            self._connection_runtime = native_runtime(self)
-            self._connection_runtime.start()
-        if self._background_availability_enabled():
-            self._sync_background_reconnect()
+        try:
+            self._retry_thread.start()
+            from .native_webrtc_events import NativeEventInbox
+            self._native_webrtc_events = NativeEventInbox()
+            self._native_webrtc_event_thread = threading.Thread(
+                target=self._native_webrtc_event_loop,
+                daemon=True,
+                name="mesh-chat-native-webrtc-events",
+            )
+            self._native_webrtc_event_thread.start()
+            self._direct_recovery.start()
+            if self._connection_policy == "shared-native":
+                from .connection.composition import native_runtime
+                self._connection_runtime = native_runtime(self)
+                self._connection_runtime.start()
+            if self._background_availability_enabled():
+                self._sync_background_reconnect()
+        except Exception:
+            try:
+                self.close()
+            except Exception as error:
+                raise NativeStartupIncomplete(self) from error
+            if not self._store_closed:
+                raise NativeStartupIncomplete(self)
+            raise
 
     def _start_network(self, display_name: str) -> None:
         if self._identity is None or self.network is not None:
@@ -650,6 +668,8 @@ class MeshChatService(
             return self._create_profile(display_name, operation_id)
 
     def _create_profile(self, display_name: str, operation_id: str | None) -> dict[str, Any]:
+        if self._close_started or (self._shutdown.is_set() and self._connection_policy == "shared-native"):
+            raise NativeUnavailable("Profile runtime is shutting down")
         name = _display_name(display_name)
         existing = self.store.get("profile", "local")
         if existing is not None and self._identity is None:
@@ -691,15 +711,35 @@ class MeshChatService(
             ("profile", "local", profile.to_dict()),
             ("settings", "network", self.settings.to_dict()),
         ]
-        if operation_id is None:
-            self.store.put_many(records)
-        else:
-            self.store.commit_operation(operation_id, digest, profile.to_dict(), records)
+        try:
+            if operation_id is None:
+                self.store.put_many(records)
+            else:
+                self.store.commit_operation(operation_id, digest, profile.to_dict(), records)
+        except Exception:
+            # A committed write may lose its return path. Install only this
+            # generated identity after verifying the exact durable receipt.
+            if operation_id is not None:
+                try:
+                    committed = self.store.operation_result(operation_id, digest)
+                    if committed == profile.to_dict() and self.store.get("profile", "local") == committed:
+                        self._activate_created_profile(identity, name)
+                except Exception:
+                    pass
+            raise
+        self._activate_created_profile(identity, name)
+        self._changed()
+        return profile.to_dict()
+
+    def _activate_created_profile(self, identity, name):
+        if self._close_started or (self._shutdown.is_set() and self._connection_policy == "shared-native"):
+            raise NativeUnavailable("Profile runtime is shutting down")
         self._identity = identity
         self._prepare_lan_fallback()
         self._start_network(name)
-        self._changed()
-        return profile.to_dict()
+        runtime = self._connection_runtime
+        if runtime is not None:
+            runtime.synchronize()
 
     def invitation(
         self,
@@ -5876,16 +5916,40 @@ class MeshChatService(
 
     def close(self) -> None:
         with self._close_lock:
-            if self._close_started:
+            finalizer = self._close_finalizer
+            if (self._store_closed or getattr(self, "_close_active", False)
+                    or (finalizer is not None and finalizer.is_alive())):
                 return
             self._close_started = True
+            self._close_active = True
         self._shutdown.set()
-        self._closing_contact_carriers = tuple(getattr(self, "_pending_contact_carriers", {}).values())
+        try:
+            self._retire_service_resources()
+        finally:
+            with self._close_lock:
+                self._close_active = False
+
+    def _retire_service_resources(self) -> None:
+        carriers = {id(carrier): carrier for carrier in getattr(self, "_closing_contact_carriers", ())}
+        carriers.update({id(carrier): carrier for carrier in getattr(self, "_pending_contact_carriers", {}).values()})
+        self._closing_contact_carriers = tuple(carriers.values())
+        if not hasattr(self, "_closing_native_handles"):
+            self._closing_native_handles = {}
+        for session in self._native_webrtc_live | self._native_webrtc_creating:
+            physical = self._native_resources.physical(session)
+            if physical is not None:
+                self._closing_native_handles[physical] = session
         for carrier in self._closing_contact_carriers:
             carrier.close()
         contact_carriers_stopped = all(carrier.wait(timeout=0.1) for carrier in self._closing_contact_carriers)
         connection_runtime = getattr(self, "_connection_runtime", None)
         connection_stopped = connection_runtime is None or connection_runtime.stop(timeout=0.5)
+        for physical, session in tuple(self._closing_native_handles.items()):
+            if self._native_resources.current(session, physical):
+                self.native_webrtc_close(session, expected_physical=physical)
+            else:
+                self._native_webrtc_host().close(physical)
+            self._closing_native_handles.pop(physical)
         getattr(self, "_signal_pairing_contexts", {}).clear()
         native_events = getattr(self, "_native_webrtc_events", None)
         if native_events is not None:

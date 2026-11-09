@@ -129,7 +129,7 @@ def test_gate_revalidates_policy_inventory_and_both_platform_component_reports(t
                                           "windows_native_control", "windows_native_lifecycle"}
     assert result["windows_packaged_lifecycle_checks"] == list(PACKAGED_CHECKS)
     assert result["core_ui_boundary_python_tests"] == len(PYTHON_SELECTION)
-    assert result["core_ui_boundary_rendered_tests"] == 6
+    assert result["core_ui_boundary_rendered_tests"] == len(RENDERED_CASES)
     assert result["core_windows_boundary_tests"] == 3
 
 
@@ -341,7 +341,7 @@ def test_suite_manifest_is_uniform_across_every_required_component(tmp_path):
     windows = next(record for record in records if record["suite"] == "windows_transport")
     assert windows["checks"] == len(CHECKS) and windows["artifacts"]
     boundary = [record for record in records if record["suite"].startswith("core_")]
-    assert [record["tests"]["executed"] for record in boundary] == [len(PYTHON_SELECTION), 6, 3]
+    assert [record["tests"]["executed"] for record in boundary] == [len(PYTHON_SELECTION), len(RENDERED_CASES), 3]
     assert all(record["artifacts"]["junit"] for record in boundary)
     assert all("inventory" in record["artifacts"] for record in (boundary[0], boundary[2]))
 
@@ -424,7 +424,7 @@ def test_final_gate_revalidates_every_boundary_execution(tmp_path, component, fa
         elif component == "rendered_ui":
             document = ET.parse(junit)
             cases = document.getroot().findall("testcase")
-            # Keep six passing cases while substituting or duplicating one identity.
+            # Keep the passing count while substituting or duplicating one identity.
             cases[0].set("name", "unrelated case" if fault == "inventory" else cases[1].get("name"))
             document.write(junit)
             suite.update(junit_summary(junit))

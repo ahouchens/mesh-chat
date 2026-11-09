@@ -25,6 +25,7 @@ def start(service, *, pipe_name, client_image):
         scope="owner",
         private_native=True,
         private_profile_bootstrap=True,
+        private_composer_legacy=True,
     )
     endpoint = PipeEndpoint(pipe_name, config)
     endpoint.start(service)

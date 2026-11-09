@@ -11,6 +11,37 @@ from mesh_chat import vault
 from mesh_chat.vault import ProfileLock, VaultStore
 
 
+def test_conditional_batch_checks_original_read_set_before_format_or_write(tmp_path):
+    from mesh_chat.vault import RecordConflict
+
+    with VaultStore(tmp_path, os.urandom(32), allow_unprotected_for_tests=True) as store:
+        store.put("source", "one", {"revision": 1})
+        expected = {("source", "one"): {"revision": 1}}
+        store.put("source", "one", {"revision": 2})
+        with pytest.raises(RecordConflict):
+            store.conditional_put_and_delete(expected,
+                [("source", "one", {"revision": 3})], write_fences=[("legacy", "one")], schema_floor=2)
+        assert store.get("source", "one") == {"revision": 2}
+        assert store.list("record_write_fence") == []
+        assert store._db.execute("SELECT value FROM meta WHERE name='schema_version'").fetchone()[0] == "1"
+
+
+def test_persistent_generic_fence_survives_reopen_without_domain_registration(tmp_path):
+    from mesh_chat.vault import RecordConflict
+
+    key = os.urandom(32)
+    with VaultStore(tmp_path, key, allow_unprotected_for_tests=True) as store:
+        store.put("legacy", "one", {"text": "source"})
+        store.conditional_put_and_delete({("legacy", "one"): {"text": "source"}},
+            [("current", "one", {"text": "migrated"})], [("legacy", "one")],
+            write_fences=[("legacy", "one")], schema_floor=2)
+    with VaultStore(tmp_path, key, allow_unprotected_for_tests=True) as store:
+        with pytest.raises(RecordConflict):
+            store.put("legacy", "one", {"text": "late writer"})
+        store.delete("legacy", "one")
+        assert store.get("current", "one") == {"text": "migrated"}
+
+
 def test_transaction_begin_failure_releases_the_vault_lock() -> None:
     begin_error = RuntimeError("begin failed")
 

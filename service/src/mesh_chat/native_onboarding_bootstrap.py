@@ -18,6 +18,7 @@ from .invitations import _b64decode
 class PendingContactCarrier:
     def __init__(self, service, session, public_identity, expires_at):
         self.service, self.session = service, session
+        self.incarnation = getattr(service, "_runtime_incarnation", None)
         self.physical = service._native_resources.require(session)
         self.peer = bytes.fromhex(service._native_webrtc_peers[session])
         self.public_identity = public_identity
@@ -34,6 +35,7 @@ class PendingContactCarrier:
     def current(self):
         service = self.service
         if (self._stop.is_set() or service._shutdown.is_set() or service._identity is None
+                or self.incarnation != getattr(service, "_runtime_incarnation", None)
                 or not service._native_work_allowed()
                 or time.monotonic() >= self.deadline or time.time() >= self.expires_at):
             return False

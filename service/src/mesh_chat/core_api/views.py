@@ -9,6 +9,23 @@ from .messages import IDEMPOTENCY_SECONDS
 from ..message_journal import RETENTION_SECONDS
 
 
+def composer_view(profile, peer, state):
+    def outcome(value):
+        if value is None:
+            return None
+        selected = {"revision": value["revision"], "status": value["status"]}
+        if value["status"] == "accepted":
+            selected.update(acceptance=acceptance_view(profile, value["acceptance"]),
+                            text=value["text"], draft_disposition=value["draft_disposition"])
+        elif value["status"] == "expired":
+            selected.update(accepted_at=value["accepted_at"],
+                            idempotency_expires_at=value["idempotency_expires_at"])
+        return selected
+    return {"profile": profile, "peer": peer, "revision": state.revision,
+            "text": state.text, "update_key": state.update_key,
+            "last_send": outcome(state.last_send), "send_lookup": outcome(state.send_lookup)}
+
+
 ENUMS = {
     "desired": {"enabled", "stopped"},
     "execution": {"available", "paused", "locked", "shutting_down"},
