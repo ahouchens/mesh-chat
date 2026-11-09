@@ -57,6 +57,19 @@ class _Session:
     remote_type: str | None = None
 
 
+@dataclass
+class _Lease:
+    resource: str
+    creating: bool = True
+    started: bool = False
+    cancelled: bool = False
+    session: _Session | None = None
+    task: object = None
+    notified: bool = False
+    created: object = field(default_factory=asyncio.Event)
+    disposal: object = field(default_factory=asyncio.Lock)
+
+
 def _error(code):
     return json.dumps({"ok": False, "error": code}, separators=(",", ":"))
 
@@ -150,6 +163,8 @@ class WindowsNativeWebRTCHost:
         self._lock = threading.RLock()
         self._sessions = {}
         self._reservations = set()
+        self._leases = {}
+        self._retire_futures = {}
         self._adapter_epoch = uuid4().hex
         self._sampling = {}
         self._loop = asyncio.new_event_loop()
@@ -175,7 +190,11 @@ class WindowsNativeWebRTCHost:
         if self._closed or self._loop.is_closed() or not self._thread.is_alive():
             coroutine.close()
             raise _HostFailure("native_webrtc_unavailable")
-        future = asyncio.run_coroutine_threadsafe(coroutine, self._loop)
+        try:
+            future = asyncio.run_coroutine_threadsafe(coroutine, self._loop)
+        except BaseException:
+            coroutine.close()
+            raise
         try:
             return future.result(timeout)
         except TimeoutError as exc:
@@ -195,20 +214,25 @@ class WindowsNativeWebRTCHost:
         with self._lock:
             if self._closed:
                 raise _HostFailure("native_webrtc_unavailable")
-            if (resource in self._reservations or resource in self._sessions
-                    or len(self._reservations) + len(self._sessions) >= MAX_SESSIONS):
+            if resource in self._leases or len(self._leases) >= MAX_SESSIONS:
                 raise _HostFailure("native_webrtc_session_limit")
             self._reservations.add(resource)
+            lease = self._leases[resource] = _Lease(resource)
+            return lease
 
-    def _release_reservation(self, resource):
+    def _release_finished(self, lease):
         with self._lock:
-            self._reservations.discard(resource)
+            if self._leases.get(lease.resource) is not lease:
+                return
+            if not lease.creating:
+                self._reservations.discard(lease.resource)
+            if lease.cancelled and not lease.creating and lease.session is None:
+                del self._leases[lease.resource]
 
-    def _publish(self, session):
+    def _publish(self, lease, session):
         with self._lock:
-            if session.resource not in self._reservations or self._closed:
+            if self._leases.get(session.resource) is not lease or lease.cancelled or self._closed:
                 raise _HostFailure("native_webrtc_session_closed")
-            self._reservations.discard(session.resource)
             self._sessions[session.resource] = session
 
     async def _gather(self, pc):
@@ -254,12 +278,21 @@ class WindowsNativeWebRTCHost:
             session.received_controls += 1
             self._emit("control", session, f"{label}:{payload}")
 
-    async def _open_session(self, resource, ice_json, specs, offer=None, expected=None):
+    async def _open_session(self, lease, ice_json, specs, offer=None, expected=None):
+        resource = lease.resource
         session = _Session(resource, None, frozenset(expected or (label for label, _, _ in specs)))
         pc = None
+        succeeded = False
         try:
+            with self._lock:
+                lease.started = True
+                lease.task = asyncio.current_task()
+                if lease.cancelled or self._closed:
+                    raise _HostFailure("native_webrtc_session_closed")
             pc = RTCPeerConnection(self._configure(ice_json))
             session.pc = pc
+            with self._lock:
+                lease.session = session
             if offer is None:
                 for label, _binary, ordered in specs:
                     channel = pc.createDataChannel(label, ordered=ordered)
@@ -291,45 +324,62 @@ class WindowsNativeWebRTCHost:
             sdp = _sha256_only(pc.localDescription.sdp)
             if _relay_only(ice_json):
                 sdp = _relay_filtered(sdp)
-            self._publish(session)
+            self._publish(lease, session)
             for channel in session.channels.values():
                 self._channel_state(session, channel, channel.label)
+            succeeded = True
             return _success(sdp)
         except BaseException as exc:
-            if pc is not None:
-                try:
-                    await pc.close()
-                except Exception:
-                    pass
+            with self._lock:
+                lease.cancelled = True
+                session.closed = True
+                self._sessions.pop(resource, None)
+            try:
+                await self._dispose_lease(lease)
+            except BaseException:
+                # Keep the exact peer and capacity after failed/cancelled
+                # disposal. Explicit close can retry this same lease.
+                pass
             if isinstance(exc, _HostFailure):
                 raise
             raise _HostFailure("native_webrtc_creation_failed") from exc
+        finally:
+            with self._lock:
+                lease.creating = False
+                lease.task = None
+                if not succeeded:
+                    lease.cancelled = True
+                lease.created.set()
+                self._release_finished(lease)
+
+    def _create(self, resource, ice_json, channels_json, offer=None):
+        lease, coroutine = None, None
+        try:
+            specs = _channels(channels_json)
+            lease = self._reserve(resource)
+            coroutine = self._open_session(lease, ice_json, specs, offer=offer)
+            return self._submit(coroutine)
+        except Exception as error:
+            if lease is not None:
+                with self._lock:
+                    lease.cancelled = True
+                    # Only a known never-submitted coroutine releases its own
+                    # reservation. Unknown timeout keeps custody until finish.
+                    if not lease.started and coroutine is not None and (
+                            inspect.getcoroutinestate(coroutine) == inspect.CORO_CLOSED
+                            or (isinstance(error, _HostFailure) and error.code == "native_webrtc_unavailable")):
+                        coroutine.close()
+                        lease.creating = False
+                        lease.created.set()
+                    self._release_finished(lease)
+            return _error(error.code if isinstance(error, _HostFailure) else "native_webrtc_creation_failed")
 
     def createOffer(self, resource, ice_json, channels_json):
-        try:
-            specs = _channels(channels_json)
-            self._reserve(resource)
-            return self._submit(self._open_session(resource, ice_json, specs))
-        except _HostFailure as failure:
-            self._release_reservation(resource)
-            return _error(failure.code)
-        except Exception:
-            self._release_reservation(resource)
-            return _error("native_webrtc_creation_failed")
+        return self._create(resource, ice_json, channels_json)
 
     def acceptOffer(self, resource, offer_sdp, ice_json, channels_json):
-        try:
-            specs = _channels(channels_json)
-            self._reserve(resource)
-            return self._submit(self._open_session(
-                resource, ice_json, specs,
-                offer=RTCSessionDescription(sdp=offer_sdp, type="offer")))
-        except _HostFailure as failure:
-            self._release_reservation(resource)
-            return _error(failure.code)
-        except Exception:
-            self._release_reservation(resource)
-            return _error("native_webrtc_answer_failed")
+        return self._create(resource, ice_json, channels_json,
+                            RTCSessionDescription(sdp=offer_sdp, type="offer"))
 
     def applyAnswer(self, resource, answer_sdp):
         try:
@@ -502,33 +552,81 @@ class WindowsNativeWebRTCHost:
         self._require(resource)
 
     def resourceAccounting(self):
-        """Private observations; a routing map is not proof of native disposal.
-
-        This backend currently drops closing peers before disposal finishes.
-        Explicit unavailable counts prevent qualification from accepting an
-        empty map as zero retained physical resources.
-        """
-        names = ("reserved_count", "creating_count", "allocated_count", "active_count", "retiring_count")
+        """Private snapshot of actual creation/disposal capacity custody."""
         with self._lock:
-            result = {"v": 1, "complete": False, "semantics": "native_allocation_leases",
-                      "capacity": MAX_SESSIONS, **dict.fromkeys(names),
-                      "availability": {"capacity": True, **dict.fromkeys(names, False)},
-                      "routable_count": len(self._sessions),
-                      "creation_reservations_count": len(self._reservations)}
+            leases = tuple(self._leases.values())
+            counts = {"capacity": MAX_SESSIONS, "reserved_count": len(leases),
+                      "creating_count": sum(lease.creating for lease in leases),
+                      "allocated_count": sum(lease.session is not None for lease in leases),
+                      "active_count": sum(lease.session is not None and not lease.cancelled for lease in leases),
+                      "retiring_count": sum(lease.session is not None and lease.cancelled for lease in leases)}
+            result = {"v": 1, "complete": True, "semantics": "native_allocation_leases",
+                      **counts, "availability": dict.fromkeys(counts, True)}
         return json.dumps({"ok": True, "result": result}, separators=(",", ":"))
 
     def close(self, resource):
         with self._lock:
-            self._reservations.discard(resource)
-            session = self._sessions.pop(resource, None)
-        if session is None:
+            lease = self._leases.get(resource)
+        if lease is None:
             return
-        session.closed = True
-        self._emit("closed", session, "")
         try:
-            self._submit(self._close_session(session))
-        except Exception:
-            pass
+            self._retirement(lease).result(timeout=OPERATION_TIMEOUT)
+        except Exception as error:
+            # Do not cancel disposal on caller timeout. It retains its exact
+            # lease and one future until actual acknowledgement or retry.
+            raise _HostFailure("native_webrtc_cleanup_pending") from error
+
+    def _retirement(self, lease):
+        with self._lock:
+            lease.cancelled = True
+            if lease.session is not None:
+                lease.session.closed = True
+                if self._sessions.get(lease.resource) is lease.session:
+                    self._sessions.pop(lease.resource, None)
+            task = lease.task
+            if task is not None:
+                def cancel_creation():
+                    # A second cancel can interrupt the creation task's own
+                    # disposal. Its first cancellation already fences publish.
+                    if not task.done() and not task.cancelling():
+                        task.cancel()
+                self._loop.call_soon_threadsafe(cancel_creation)
+            pending = self._retire_futures.get(lease.resource)
+            if pending is not None and pending[0] is lease and not pending[1].done():
+                return pending[1]
+            if self._loop.is_closed() or not self._thread.is_alive():
+                raise _HostFailure("native_webrtc_unavailable")
+            coroutine = self._retire_lease(lease)
+            try:
+                future = asyncio.run_coroutine_threadsafe(coroutine, self._loop)
+            except BaseException:
+                coroutine.close()
+                raise
+            self._retire_futures[lease.resource] = lease, future
+            def completed(_):
+                with self._lock:
+                    current = self._retire_futures.get(lease.resource)
+                    if current is not None and current[1] is future:
+                        self._retire_futures.pop(lease.resource, None)
+            future.add_done_callback(completed)
+            return future
+
+    async def _retire_lease(self, lease):
+        await lease.created.wait()
+        await self._dispose_lease(lease)
+
+    async def _dispose_lease(self, lease):
+        async with lease.disposal:
+            session = lease.session
+            if session is not None:
+                await self._close_session(session)
+                with self._lock:
+                    if lease.session is session:
+                        lease.session = None
+                    if not lease.notified:
+                        lease.notified = True
+                        self._emit("closed", session, "")
+            self._release_finished(lease)
 
     async def _close_session(self, session):
         for channel in list(session.channels.values()):
@@ -537,31 +635,29 @@ class WindowsNativeWebRTCHost:
             except Exception:
                 pass
         session.channels.clear()
-        try:
-            await session.pc.close()
-        except Exception:
-            pass
+        await session.pc.close()
 
     def shutdown(self):
         with self._lock:
             self._closed = True
-            sessions = list(self._sessions.values())
-            self._sessions.clear()
-            self._reservations.clear()
-        for session in sessions:
-            session.closed = True
-            self._emit("closed", session, "")
-        if sessions and not self._loop.is_closed():
-            pending = [asyncio.run_coroutine_threadsafe(
-                self._close_session(session), self._loop) for session in sessions]
-            for future in pending:
-                try:
-                    future.result(timeout=5)
-                except Exception:
-                    pass
+            leases = tuple(self._leases.values())
+        deadline = time.monotonic() + 5
+        pending = [self._retirement(lease) for lease in leases]
+        for future in pending:
+            try:
+                future.result(timeout=max(0, deadline - time.monotonic()))
+            except Exception:
+                pass
+        with self._lock:
+            if self._leases:
+                # Keep the loop alive for pending disposal and a bounded retry;
+                # a stopped loop cannot substantiate physical cleanup.
+                raise _HostFailure("native_webrtc_cleanup_pending")
         if not self._loop.is_closed():
             self._loop.call_soon_threadsafe(self._loop.stop)
         self._thread.join(timeout=5)
+        if self._thread.is_alive():
+            raise _HostFailure("native_webrtc_cleanup_pending")
 
     def closeAll(self):
         self.shutdown()

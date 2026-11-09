@@ -1,15 +1,18 @@
 """Native Windows WebRTC host conformance over real aiortc data channels."""
 
 import base64
+import asyncio
 import json
 import queue
 import time
+from threading import Event, Thread
 
 import pytest
 
 aiortc = pytest.importorskip("aiortc")
 
 from mesh_chat.native_windows_webrtc import WindowsNativeWebRTCHost
+from mesh_chat.native_windows_webrtc import _HostFailure
 
 
 ICE = {"iceServers": [], "iceTransportPolicy": "all"}
@@ -174,6 +177,141 @@ def test_session_capacity_is_bounded():
         assert refused["error"] == "native_webrtc_session_limit"
     finally:
         host_instance.shutdown()
+
+
+def counts(instance):
+    return json.loads(instance.resourceAccounting())["result"]
+
+
+def test_failed_disposal_keeps_exact_native_capacity_and_closed_notification_until_retry(monkeypatch):
+    instance, events = host()
+    original = instance._close_session
+    try:
+        assert json.loads(instance.createOffer("peer", json.dumps(ICE), json.dumps(CHANNELS)))["ok"]
+        async def failed(_): raise OSError("native close acknowledgement failed")
+        monkeypatch.setattr(instance, "_close_session", failed)
+        with pytest.raises(_HostFailure, match="cleanup_pending"):
+            instance.close("peer")
+        value = counts(instance)
+        assert value["complete"] and value["reserved_count"] == value["retiring_count"] == 1
+        assert value["active_count"] == 0 and not instance._sessions
+        assert not any(event[0] == "closed" for event in list(events.queue))
+        monkeypatch.setattr(instance, "_close_session", original)
+        instance.close("peer")
+        assert counts(instance)["reserved_count"] == 0
+        assert [event for event in list(events.queue) if event[0] == "closed"] == [("closed", "peer", "")]
+    finally:
+        monkeypatch.setattr(instance, "_close_session", original)
+        instance.shutdown()
+
+
+def test_timed_out_disposal_keeps_one_pending_future_and_consumes_capacity(monkeypatch):
+    from mesh_chat import native_windows_webrtc as native
+    instance, events = host()
+    original = instance._close_session
+    release, entered = Event(), Event()
+    async def delayed(session):
+        entered.set()
+        while not release.is_set(): await asyncio.sleep(0.001)
+        await original(session)
+    try:
+        assert json.loads(instance.createOffer("peer", json.dumps(ICE), json.dumps(CHANNELS)))["ok"]
+        monkeypatch.setattr(instance, "_close_session", delayed)
+        monkeypatch.setattr(native, "OPERATION_TIMEOUT", 0.02)
+        for _ in range(2):
+            with pytest.raises(_HostFailure, match="cleanup_pending"):
+                instance.close("peer")
+        assert entered.is_set() and len(instance._retire_futures) == 1
+        assert counts(instance)["retiring_count"] == counts(instance)["reserved_count"] == 1
+        assert not any(event[0] == "closed" for event in list(events.queue))
+        monkeypatch.setattr(instance, "_close_session", original)
+        for index in range(15):
+            assert json.loads(instance.createOffer(str(index), json.dumps(ICE), json.dumps(CHANNELS)))["ok"]
+        assert counts(instance)["reserved_count"] == 16
+        assert not json.loads(instance.createOffer("overflow", json.dumps(ICE), json.dumps(CHANNELS)))["ok"]
+        release.set()
+        wait_for(events, lambda event: event == ("closed", "peer", ""))
+        assert counts(instance)["reserved_count"] == 15
+    finally:
+        release.set()
+        monkeypatch.setattr(instance, "_close_session", original)
+        instance.shutdown()
+
+
+def test_late_cancelled_create_retains_creation_and_physical_lease_until_actual_cleanup(monkeypatch):
+    from mesh_chat import native_windows_webrtc as native
+    instance, events = host()
+    entered, released, cancelled = Event(), Event(), Event()
+    original_gather, original_submit = instance._gather, instance._submit
+    async def pending(pc):
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            while not released.is_set(): await asyncio.sleep(0.001)
+        await original_gather(pc)
+    result = []
+    worker = Thread(target=lambda: result.append(json.loads(instance.createOffer("peer", json.dumps(ICE), json.dumps(CHANNELS)))))
+    try:
+        monkeypatch.setattr(instance, "_gather", pending)
+        monkeypatch.setattr(instance, "_submit", lambda coroutine, **_: original_submit(coroutine, timeout=0.05))
+        monkeypatch.setattr(native, "OPERATION_TIMEOUT", 0.02)
+        worker.start()
+        assert entered.wait(3)
+        worker.join(3)
+        assert not worker.is_alive() and not result[0]["ok"] and cancelled.wait(3)
+        value = counts(instance)
+        assert value["creating_count"] == value["retiring_count"] == value["reserved_count"] == 1
+        with pytest.raises(_HostFailure, match="cleanup_pending"):
+            instance.close("peer")
+        assert counts(instance)["reserved_count"] == 1
+        released.set()
+        wait_for(events, lambda event: event == ("closed", "peer", ""))
+        deadline = time.monotonic() + 3
+        while counts(instance)["reserved_count"] and time.monotonic() < deadline: time.sleep(0.002)
+        assert counts(instance)["reserved_count"] == 0
+    finally:
+        released.set()
+        worker.join(3)
+        instance.shutdown()
+
+
+def test_prestart_submit_failure_and_duplicate_cannot_release_another_lease(monkeypatch):
+    instance, _ = host()
+    original = instance._submit
+    try:
+        assert json.loads(instance.createOffer("owned", json.dumps(ICE), json.dumps(CHANNELS)))["ok"]
+        assert not json.loads(instance.createOffer("owned", json.dumps(ICE), json.dumps(CHANNELS)))["ok"]
+        def unavailable(coroutine):
+            coroutine.close()
+            raise _HostFailure("native_webrtc_unavailable")
+        monkeypatch.setattr(instance, "_submit", unavailable)
+        assert not json.loads(instance.createOffer("unscheduled", json.dumps(ICE), json.dumps(CHANNELS)))["ok"]
+        assert set(instance._leases) == {"owned"}
+        assert counts(instance)["reserved_count"] == counts(instance)["active_count"] == 1
+    finally:
+        monkeypatch.setattr(instance, "_submit", original)
+        instance.shutdown()
+
+
+def test_failed_shutdown_keeps_native_loop_and_exact_retirement_available_for_retry(monkeypatch):
+    instance, _ = host()
+    original = instance._close_session
+    try:
+        assert json.loads(instance.createOffer("peer", json.dumps(ICE), json.dumps(CHANNELS)))["ok"]
+        async def failed(_): raise OSError("native close did not finish")
+        monkeypatch.setattr(instance, "_close_session", failed)
+        with pytest.raises(_HostFailure, match="cleanup_pending"):
+            instance.shutdown()
+        assert instance._thread.is_alive() and counts(instance)["retiring_count"] == 1
+        assert not json.loads(instance.createOffer("replacement", json.dumps(ICE), json.dumps(CHANNELS)))["ok"]
+        monkeypatch.setattr(instance, "_close_session", original)
+        instance.shutdown()
+        assert not instance._thread.is_alive() and counts(instance)["reserved_count"] == 0
+    finally:
+        monkeypatch.setattr(instance, "_close_session", original)
+        instance.shutdown()
 
 
 @pytest.mark.parametrize("phase", ["offer-created", "accepted", "answer-applied"])
