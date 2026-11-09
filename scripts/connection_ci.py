@@ -39,7 +39,7 @@ CLI_PRODUCTION = frozenset({
     "service/src/mesh_chat/core_api/cli.py",
 })
 KOTLIN_CLIENT_PRODUCTION = frozenset(
-    "plugins/tauri-plugin-mesh-runtime/android/src/main/java/com/meshchat/runtime/core/" + name
+    "sdk/kotlin/src/main/java/com/meshchat/runtime/core/" + name
     for name in ("CoreClient.kt", "CoreTransport.kt", "CoreExchangeTransport.kt")
 )
 
