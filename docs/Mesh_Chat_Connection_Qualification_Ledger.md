@@ -141,6 +141,29 @@ an owned loopback HTTP server and a lost reply after encrypted storage. Three
 separate external-Worker tests skipped because no test Worker was configured;
 they are not counted as passing execution.
 
+The integrated background-preference and aggregate-evidence batch at `2f44bf5`
+passed 159 focused cases. Authority checkpoint `68bbd69` then passed 45 focused
+cases, including all 16 independently authored consent and signed-removal
+regressions. Its exact-source gates passed 291 Python cases, six rendered-App
+cases and three actual Windows pipe cases, with zero skips. The new retained
+report validators independently accepted their real source/tree, hashes,
+collection inventories and executed case identities.
+
+Core runtime key forwarding at `7f1a503` passed 38 focused cases. The complete
+required policy inventory on that exact source passed **2,429 cases, zero skips**
+in 223.69 seconds. An additional 132 workspace cases outside that required
+selection passed at `6407b76` (29.70 seconds). Subsequent independent audit added
+two repair inputs: channel-sync replay after signed removal, and an accepted
+member-role no-op that failed to bind its key. These were not part of the
+passing 2,429-case checkpoint.
+
+Parent consent integration exposed a distinction between manifest device IDs
+and signed reconnect protocol device IDs. C's corrective helper batch at
+`56ae789` passed 60 focused cases, including actual capability exchange followed
+by preparation. The parent transactions and route resource reservations still
+require integration and final-source qualification. No Wave 1 acceptance or
+general Wave 2 activation is claimed.
+
 ### Baseline findings (historical audit)
 
 The current integration baseline is
