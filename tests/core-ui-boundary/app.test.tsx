@@ -83,13 +83,22 @@ async function compose(text: string) {
   return composer as HTMLTextAreaElement;
 }
 
+async function liveComposer() {
+  return waitFor(() => {
+    const field = screen.getByRole("textbox", { name: "Message Boundary Blair" }) as HTMLTextAreaElement;
+    expect(field.readOnly).toBe(false);
+    expect(field.disabled).toBe(false);
+    return field;
+  });
+}
+
 describe("rendered UI through the production framed Core session", () => {
   it("restores an unsent composer after renderer remount and real vault reopen", async () => {
     await startHost();
     const caps = await host.invoke("core_api_capabilities") as { operations: string[] };
     expect(caps.operations).toEqual(expect.arrayContaining(["peer.composer_query", "peer.composer_update", "message.enqueue_draft"]));
     render(<App />);
-    const composer = await screen.findByRole("textbox", { name: "Message Boundary Blair" });
+    const composer = await liveComposer();
     fireEvent.change(composer, { target: { value: "Durable unsent composer" } });
     await waitFor(() => expect(transport.invoke.mock.calls.some(([command, args]) => command === "core_api_request"
       && args.operation === "peer.composer_update" && args.params.text === "Durable unsent composer")).toBe(true));
@@ -101,8 +110,8 @@ describe("rendered UI through the production framed Core session", () => {
     cleanup();
     await host.invoke("fixture_reopen");
     render(<App />);
-    const restored = await screen.findByRole("textbox", { name: "Message Boundary Blair" });
-    await waitFor(() => expect((restored as HTMLTextAreaElement).value).toBe("Durable unsent composer"));
+    await liveComposer();
+    await waitFor(() => expect((screen.getByRole("textbox", { name: "Message Boundary Blair" }) as HTMLTextAreaElement).value).toBe("Durable unsent composer"));
     expect(transport.invoke.mock.calls.some(([command]) => command === "core_api_send_message")).toBe(false);
     expect(await host.invoke("fixture_inspect")).toMatchObject({ messages: [] });
   });
@@ -112,7 +121,7 @@ describe("rendered UI through the production framed Core session", () => {
     const caps = await host.invoke("core_api_capabilities") as { operations: string[] };
     expect(caps.operations).toEqual(expect.arrayContaining(["peer.composer_query", "peer.composer_update", "message.enqueue_draft"]));
     render(<App />);
-    const composer = await screen.findByRole("textbox", { name: "Message Boundary Blair" });
+    const composer = await liveComposer();
     fireEvent.change(composer, { target: { value: "Committed composer remount" } });
     await waitFor(() => expect(transport.invoke.mock.calls.some(([command, args]) => command === "core_api_request"
       && args.operation === "peer.composer_update" && args.params.text === "Committed composer remount")).toBe(true));
@@ -126,8 +135,8 @@ describe("rendered UI through the production framed Core session", () => {
     cleanup();
     await host.invoke("fixture_reopen");
     render(<App />);
-    const restored = await screen.findByRole("textbox", { name: "Message Boundary Blair" });
-    await waitFor(() => expect((restored as HTMLTextAreaElement).value).toBe(""));
+    await liveComposer();
+    await waitFor(() => expect((screen.getByRole("textbox", { name: "Message Boundary Blair" }) as HTMLTextAreaElement).value).toBe(""));
     const stored = await host.invoke("fixture_inspect") as { messages: { text: string }[] };
     expect(stored.messages.map(message => message.text)).toEqual(["Committed composer remount"]);
     const sends = transport.invoke.mock.calls.filter(([command, args]) => command === "core_api_request" && args.operation === "message.enqueue_draft");
