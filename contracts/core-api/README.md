@@ -64,6 +64,15 @@ cannot be mistaken for current media evidence or enqueue another call. The
 contain no SDP, ICE candidates or signed documents. This does not qualify media
 transport or make external mailbox HTTP atomic with the vault.
 
+`call.control`/`signal_publish` commits a durable intent before mailbox HTTP.
+Uncertain retries reuse the same verified pairing and remote endpoint within
+that service incarnation; they do not allocate another mailbox room. Pairing
+secrets and SDP remain ephemeral, outside the receipt. HTTP success is not
+claimed atomic with storage. Restart, expired pairing, or changed mailbox
+authority returns `resync_required` without another publication. At most 32
+unexpired operation contexts are retained; exhaustion rejects new work without
+evicting an uncertain operation. `signal_fetch` is a verification/read query.
+
 Composite workspace operations distinguish queries from mutations at action
 granularity. `keyed_actions` in the manifest, schema conditions and production
 parser require an envelope key for mutating connection, history and access

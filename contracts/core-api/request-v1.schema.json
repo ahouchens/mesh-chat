@@ -2442,7 +2442,7 @@
             "candidate": {"type": "string", "minLength": 1, "maxLength": 4096},
             "document": {"type": "string", "minLength": 1, "maxLength": 65536},
             "role": {"enum": ["caller", "callee", "offer", "answer"]},
-            "session": {"type": "string", "minLength": 1, "maxLength": 256},
+            "session": {"type": "string", "minLength": 1, "maxLength": 2048},
             "session_id": {"type": "string", "minLength": 1, "maxLength": 256},
             "mailbox_token": {"type": "string", "minLength": 1, "maxLength": 4096}
           },

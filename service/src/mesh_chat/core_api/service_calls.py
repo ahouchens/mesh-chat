@@ -1,7 +1,7 @@
 """Private adapter for typed call settings through the existing domain rules."""
 
-from ..errors import ValidationError
-from ..call_manager import CallOutcomeRequiresResync
+from ..errors import MailboxRateLimited, MailboxUnauthorized, NetworkUnavailable, ValidationError
+from ..call_manager import CallOutcomeRequiresResync, CallOperationCapacityExceeded
 from .calls import CallIceObservation, CallMediaObservation, CallSettingsObservation
 from .errors import ApiFailure
 from .service_messages import storage_errors
@@ -74,9 +74,9 @@ class ServiceCallSettings:
                     value = self._service.keyed_call_control(action, params, operation_id)
                 elif action == "signal_publish":
                     role = {"caller": "offer", "callee": "answer"}.get(params["role"], params["role"])
-                    value = self._service.signal_publish(params["document"], role,
-                                                        params.get("session_id"),
-                                                        params.get("mailbox_token"))
+                    value = self._service.keyed_signal_publish(params["document"], role, operation_id,
+                                                               params.get("session_id"),
+                                                               params.get("mailbox_token"))
                 elif action == "signal_fetch":
                     role = {"caller": "offer", "callee": "answer"}.get(params["role"], params["role"])
                     value = self._service.signal_fetch(params["session"], role,
@@ -85,6 +85,14 @@ class ServiceCallSettings:
                     raise ApiFailure("invalid_request")
             except CallOutcomeRequiresResync as error:
                 raise ApiFailure("resync_required") from error
+            except CallOperationCapacityExceeded as error:
+                raise ApiFailure("resource_exhausted") from error
+            except MailboxRateLimited as error:
+                raise ApiFailure("rate_limited") from error
+            except MailboxUnauthorized as error:
+                raise ApiFailure("forbidden") from error
+            except NetworkUnavailable as error:
+                raise ApiFailure("unavailable") from error
             except ValidationError as error:
                 raise ApiFailure("invalid_request") from error
             if not isinstance(value, dict):
