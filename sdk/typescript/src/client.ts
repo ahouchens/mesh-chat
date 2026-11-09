@@ -15,6 +15,8 @@ import type {
   Acknowledgment,
   Capabilities,
   ProfileCatalog,
+  CallOperationCatalog,
+  CallOperationResult,
   ConnectionView,
   DiagnosticsView,
   EventPage,
@@ -70,7 +72,7 @@ export interface RequestOptions {
   signal?: AbortSignal;
 }
 
-const REQUIRED_KEYS = new Set(["call.control", "connection.retry", "events.ack", "message.enqueue", "message.enqueue_draft", "peer.composer_update", "profile.create", "profile.lock", "profile.select", "profile.unlock", "remote_profile.mutate", "route.update", "runtime.mutate", "workspace.admin_request_approve", "workspace.admin_request_cancel", "workspace.admin_request_decline", "workspace.admin_request_dismiss", "workspace.admin_request_submit", "workspace.admission_grant_accept", "workspace.admission_grant_create", "workspace.admission_grant_end", "workspace.admission_grant_list", "workspace.authority_accept", "workspace.authority_finalize", "workspace.authority_loss_report", "workspace.authority_offer", "workspace.channel_archive", "workspace.channel_create", "workspace.channel_members_update", "workspace.channel_recover", "workspace.channel_state", "workspace.channel_transfer_accept", "workspace.channel_transfer_offer", "workspace.channel_update", "workspace.close", "workspace.create", "workspace.device_link_approve", "workspace.device_link_create", "workspace.device_link_decline", "workspace.device_link_submit", "workspace.device_remove", "workspace.direct_open", "workspace.display_name_decide", "workspace.display_name_request", "workspace.draft_set", "workspace.invitation_create", "workspace.invitation_revoke", "workspace.join", "workspace.join_approve", "workspace.join_decline", "workspace.join_prompt", "workspace.leave", "workspace.member_remove", "workspace.member_role", "workspace.metadata_update", "workspace.policy_update", "workspace.read_hint_sync", "workspace.remove_data", "workspace.retention_update", "workspace.timeline_mutation"]);
+const REQUIRED_KEYS = new Set(["call.control", "call.operation_abandon", "connection.retry", "events.ack", "message.enqueue", "message.enqueue_draft", "peer.composer_update", "profile.create", "profile.lock", "profile.select", "profile.unlock", "remote_profile.mutate", "route.update", "runtime.mutate", "workspace.admin_request_approve", "workspace.admin_request_cancel", "workspace.admin_request_decline", "workspace.admin_request_dismiss", "workspace.admin_request_submit", "workspace.admission_grant_accept", "workspace.admission_grant_create", "workspace.admission_grant_end", "workspace.admission_grant_list", "workspace.authority_accept", "workspace.authority_finalize", "workspace.authority_loss_report", "workspace.authority_offer", "workspace.channel_archive", "workspace.channel_create", "workspace.channel_members_update", "workspace.channel_recover", "workspace.channel_state", "workspace.channel_transfer_accept", "workspace.channel_transfer_offer", "workspace.channel_update", "workspace.close", "workspace.create", "workspace.device_link_approve", "workspace.device_link_create", "workspace.device_link_decline", "workspace.device_link_submit", "workspace.device_remove", "workspace.direct_open", "workspace.display_name_decide", "workspace.display_name_request", "workspace.draft_set", "workspace.invitation_create", "workspace.invitation_revoke", "workspace.join", "workspace.join_approve", "workspace.join_decline", "workspace.join_prompt", "workspace.leave", "workspace.member_remove", "workspace.member_role", "workspace.metadata_update", "workspace.policy_update", "workspace.read_hint_sync", "workspace.remove_data", "workspace.retention_update", "workspace.timeline_mutation"]);
 const KEYED_ACTIONS: Record<string, string[]> = {"workspace.connection": ["invite_contact", "prompt_dismiss", "prompt_submit", "reconnect_consent"], "workspace.history": ["cancel", "hide_direct", "hide_message", "prune", "start"], "workspace.access_recommendation": ["apply", "apply_by_id", "create", "send"]};
 
 export class CoreClient {
@@ -245,6 +247,30 @@ export class CoreClient {
 
   async unlockProfile(profile: string, credentialHandle: string, idempotencyKey: string): Promise<ProfileCatalog> {
     this.#requireProfileRuntime(); return this.request("profile.unlock", { profile, credential_handle: credentialHandle }, { idempotencyKey });
+  }
+
+  #requireCallRecovery(): void {
+    const caps = this.capabilities;
+    const operations = ["call.operation_list", "call.operation_query", "call.operation_abandon"];
+    const limits = ["call_operations_per_caller_profile", "call_operations_per_vault", "call_operation_retention_seconds",
+      "call_operation_keys_per_caller_profile", "call_operation_keys_per_vault"];
+    if (!Number.isSafeInteger(caps.api_minor) || caps.api_minor < 1 || !Array.isArray(caps.operations) ||
+        operations.some(name => !caps.operations.includes(name)) || typeof caps.limits !== "object" || caps.limits === null ||
+        limits.some(name => !Number.isSafeInteger(caps.limits[name]) || caps.limits[name]! <= 0)) {
+      throw new CoreError("unsupported_operation", null, null);
+    }
+  }
+
+  async callOperationList(profile: string): Promise<CallOperationCatalog> {
+    this.#requireCallRecovery(); return this.request("call.operation_list", { profile });
+  }
+
+  async callOperationQuery(profile: string, operation: string): Promise<CallOperationResult> {
+    this.#requireCallRecovery(); return this.request("call.operation_query", { profile, operation });
+  }
+
+  async callOperationAbandon(profile: string, operation: string, idempotencyKey: string): Promise<CallOperationResult> {
+    this.#requireCallRecovery(); return this.request("call.operation_abandon", { profile, operation }, { idempotencyKey });
   }
 
   async profileQuery(profile: string): Promise<ProfileView> {

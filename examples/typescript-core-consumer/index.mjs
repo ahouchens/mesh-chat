@@ -12,6 +12,15 @@ try {
     installed_package: import.meta.resolve("@mesh-chat/core-client").includes("node_modules"), sdk_only: true };
   if (process.argv.includes("--create-profile")) {
     report.created = (await client.createProfile("SDK qualification", "sdk-create-profile-key-0001")).display_name === "SDK qualification";
+  } else if (process.argv.includes("--recover-call")) {
+    const operation = (await client.callOperationList(profile)).operations[0].operation;
+    const queried = (await client.callOperationQuery(profile, operation)).operation;
+    const abandoned = (await client.callOperationAbandon(profile, operation, "sdk-call-abandon-key-0001")).operation;
+    const repeated = (await client.callOperationAbandon(profile, operation, "sdk-call-abandon-key-0001")).operation;
+    report.recovered = queried.operation === operation;
+    report.cleanup_pending = abandoned.disposition === "cleanup_pending";
+    report.replacement_blocked = !abandoned.replacement_safe;
+    report.same_operation = JSON.stringify(repeated) === JSON.stringify(abandoned);
   } else if (process.argv.includes("--exercise-keyed-group-create")) {
     const peer = (await client.profileQuery(profile)).peers[0];
     const first = await client.createGroup(profile, "SDK qualification group", "members", [peer], "sdk-group-create-key-0001");

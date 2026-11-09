@@ -358,6 +358,31 @@
             "optional_keys_per_vault": {
               "type": "integer",
               "const": 65536
+            },
+            "call_operations_per_caller_profile": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "call_operations_per_vault": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "call_operation_retention_seconds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "call_operation_keys_per_caller_profile": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "call_operation_keys_per_vault": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
             }
           }
         },
@@ -735,6 +760,87 @@
                 "contains": {
                   "const": "group.message_enqueue"
                 }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operations": {
+                "contains": {
+                  "const": "call.operation_list"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "api_minor": {
+                "minimum": 1
+              },
+              "limits": {
+                "required": [
+                  "call_operations_per_caller_profile",
+                  "call_operations_per_vault",
+                  "call_operation_retention_seconds",
+                  "call_operation_keys_per_caller_profile",
+                  "call_operation_keys_per_vault"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operations": {
+                "contains": {
+                  "const": "call.operation_query"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "api_minor": {
+                "minimum": 1
+              },
+              "limits": {
+                "required": [
+                  "call_operations_per_caller_profile",
+                  "call_operations_per_vault",
+                  "call_operation_retention_seconds",
+                  "call_operation_keys_per_caller_profile",
+                  "call_operation_keys_per_vault"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operations": {
+                "contains": {
+                  "const": "call.operation_abandon"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "api_minor": {
+                "minimum": 1
+              },
+              "limits": {
+                "required": [
+                  "call_operations_per_caller_profile",
+                  "call_operations_per_vault",
+                  "call_operation_retention_seconds",
+                  "call_operation_keys_per_caller_profile",
+                  "call_operation_keys_per_vault"
+                ]
               }
             }
           }

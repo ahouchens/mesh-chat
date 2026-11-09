@@ -29,6 +29,17 @@ export interface ProfileCatalog {
   revision: number;
 }
 
+export interface CallOperation {
+  operation: string; call: string; runtime: string;
+  action: "start" | "answer" | "restart" | "answer_restart";
+  accepted_at: number; expires_at: number; expired: boolean; current_runtime: boolean;
+  state: string | null;
+  disposition: "live" | "terminal_unretired" | "unknown_runtime" | "cleanup_pending" | "retired";
+  replacement_safe: boolean;
+}
+export interface CallOperationCatalog { profile: string; operations: CallOperation[] }
+export interface CallOperationResult { profile: string; operation: CallOperation }
+
 export interface ProfileView {
   profile: string;
   display_name: string;
