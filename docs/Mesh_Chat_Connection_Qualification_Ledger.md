@@ -7,7 +7,7 @@
 The current feature-branch checkpoint is `577250e7b0dad8fca7a9d460f5e990dcc29af8dc`
 (tree `2ff3f7c8aac2d558e9af05a1d3aaca04e0a6048b`). Full manual CI
 [42711039872](https://github.com/ahouchens/mesh-chat/actions/runs/42711039872)
-is running. Its retained selection independently confirms all six suite families
+completed failed at **22:46:32 UTC**. Its retained selection confirms all six families
 and native workload `full`; duplicate PR run `42711014339` was canceled.
 
 At this exact source, SDK staging and **3,529 required policy tests** pass using
@@ -16,19 +16,39 @@ only the service source path. The App/Core boundary passes **670 Python plus
 all with zero failures and skips. These local results do not qualify actual
 Android execution, frozen Windows pairing, or cross-platform receipts.
 
-CI update: the required policy independently passes **3,529 cases**, and broad
-verification passes. Retained boundary XML independently confirms **670 Python
-and 12 rendered cases**, zero skips. Windows public pairing fails after 245.79s
-at **pending_request_wait**: an invitation reached the answerer and its accept
-call returned. The last retained offerer snapshot is empty, but it may predate
-acceptance: the wait checks the shared deadline before its first read, so no
-post-accept poll is proven. Both fresh public pairing probes report `retired`
-with `expired: false`. These observations identify the failed public substep,
-not acceptance duration, request delivery, or retirement cause. A/C/D investigate
-the Core operation, actor/bootstrap timing and delivery, and consumer diagnostics.
-Normal Windows bootstrap with actual DPAPI/EFS and nine components independently
-pass against the retained executable. Later packaged gates did not run. Android
-and direct jobs continue; this full run cannot pass because Windows failed.
+The completed run independently passes **3,529 policy cases**, the **670 Python
+and 12 rendered boundary cases**, normal Windows bootstrap with actual DPAPI/EFS,
+nine Windows components, and both direct-platform suites (25 transport, ten
+recovery and 12 setup cases each), all zero skips. Broad verification also passes.
+Android independently passes **all 50 existing emulator cases**, including the
+three repaired cleanup cases, with seven retained APK/AAR hashes and 62 JVM
+passes. Its two new independent-consumer cases never run because runtime-host
+Gradle configuration fails on an AGP 9.3.1 source-set type cast. There is no
+overall Android acceptance. Native interoperability is skipped after prerequisite
+failure; later Windows packaged gates also do not run.
+
+Windows public pairing fails after 245.79s at **pending_request_wait**. An
+invitation reached the answerer and its accept call returned. Last snapshots may
+predate acceptance: the wait checks the shared deadline before its first read,
+so no post-accept poll is proven. Both fresh public probes report `retired` with
+`expired: false`. Neither acceptance timing nor delivery/retirement cause is
+established. A finds no missing public operation or dropped effect wiring.
+C's controlled direct-permitted source reproduction delivers the request quickly;
+it does not reproduce the CI relay route.
+
+D's isolated diagnostics `1f177e4` are integrated at `f0372da`, with **349 focused
+lead checks passing** without skips in 16.23s. Monotonic stage offsets, bounded
+post-accept read counts and snapshot provenance preserve existing requests,
+deadlines, original failures and cleanup. C owns the narrow Gradle configuration
+repair. The next source still requires exact local gates and full CI.
+
+C's one-file repair `595b1bf` is now integrated: runtime-host uses the public
+`com.android.build.api.dsl.LibraryExtension` receiver, preserving its configuration
+body, generated-source provider, task dependencies and publication. An actual
+cached AGP 9.3.1 object rejects the old cast and accepts the new one; the exact
+configuration body compiles against cached AGP/Gradle APIs. Twenty-six focused
+distribution checks pass. This is API/component evidence; the independent
+publication, APK build and two installed cases still require CI execution.
 
 This checkpoint includes the clean SDK import repair, ordinary independent
 Android consumer and ADB stdin repair, supported Windows readiness query and
@@ -83,6 +103,24 @@ Normal bootstrap run `74ca552be65e450ab7923d6b75a57ef6` binds that runtime,
 the retained installed SDK and all nine consumer source files. D separately
 validates the failed report with the exact-source strict failure parser; this
 is valid failure evidence, not successful pairing qualification.
+
+At `577250e`, Android debug artifact `13717720185` has archive SHA-256
+`d5bab65c4687de051c51fc70c38ac34eac0fea1ea4a17e1ad82cbde0f91adef3`;
+qualification artifact `13716109078` has
+`be31503f0244a616302322def92e4f4e1caaa54914fd19d243f7435f5ce36206`.
+The lead validates every one of the 50 executed case reports against its exact
+inventory/run identity and retained APK/AAR hashes, plus all 62 JVM results.
+The absent `core_independent` inventory is explicitly excluded, not counted as
+passed or skipped. The Gradle error is at runtime-host `build.gradle.kts:32`:
+the actual source-set class cannot cast to the legacy `AndroidLibrarySourceSet`.
+
+Linux direct artifact `13717875392`, archive SHA-256
+`ee5a42cebf2d274760a9b07b79d0fa89c02967ed94ceca483f4898d9088072eb`,
+and Windows artifact `13716998197`, archive
+`26b24c473d9afe0a7a855b4702e7692874833926c100ab6dcf6ee3cf56896b5b`,
+each independently validate 25/10/12 transport/recovery/setup cases. Their binary
+digests remain runner assertions because these report archives do not retain
+the tested executables. No full-gate or cross-platform receipt claim follows.
 
 ### Clean Android consumer integration and Windows bootstrap evidence
 
