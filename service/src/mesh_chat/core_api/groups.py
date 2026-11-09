@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
+from .messages import MessageScope
 
 
 @dataclass(frozen=True)
@@ -17,6 +18,9 @@ class GroupObservation:
 @dataclass(frozen=True)
 class GroupMessageObservation:
     text: str
+    message_id: str | None = None
+    accepted_at: float | None = None
+    idempotency_expires_at: float | None = None
 
 
 @dataclass(frozen=True)
@@ -58,3 +62,13 @@ class Groups(Protocol):
 
     def decline_invitation(self, profile: str,
                            invitation_id: str) -> GroupMembershipObservation: ...
+
+
+class KeyedGroups(Protocol):
+    optional_keyed_operations: Sequence[str]
+
+    def create_keyed(self, scope: MessageScope, title: str, member_ids: Sequence[str],
+                     posting_policy: str, operation_id: str) -> GroupObservation: ...
+
+    def send_keyed(self, scope: MessageScope, group_id: str, text: str,
+                   operation_id: str) -> GroupMessageObservation: ...

@@ -34,6 +34,10 @@ const api = vi.hoisted(() => {
   coreApiPeerForDestination: vi.fn(async (_destination: string): Promise<{ profile: string; peer: string; destination: string }> => { throw new Error("core_api_unavailable"); }),
   coreApiProfile: vi.fn(async () => ({ profile: "presentation-profile" })),
   coreApiRequest: vi.fn(async (operation: string, params?: Record<string, unknown>): Promise<unknown> => {
+    if (operation === "runtime.mutate" && params) {
+      const { profile: _profile, action, ...payload } = params;
+      return { result: await api.coreApiRuntimeMutate(String(action), payload) };
+    }
     if (operation === "call.control" && params) {
       const { profile: _profile, action, ...payload } = params;
       return { result: await api.coreApiCallControl(String(action), payload) };
@@ -520,6 +524,10 @@ afterEach(async () => {
   api.coreApiCreateInvitation.mockImplementation(async (payload: Record<string, unknown>) => api.serviceCommand("create_invitation", payload));
   api.coreApiPeerForDestination.mockImplementation(async () => { throw new Error("core_api_unavailable"); });
   api.coreApiRequest.mockImplementation(async (operation: string, params?: Record<string, unknown>) => {
+    if (operation === "runtime.mutate" && params) {
+      const { profile: _profile, action, ...payload } = params;
+      return { result: await api.coreApiRuntimeMutate(String(action), payload) };
+    }
     if (operation === "call.control" && params) {
       const { profile: _profile, action, ...payload } = params;
       return { result: await api.coreApiCallControl(String(action), payload) };

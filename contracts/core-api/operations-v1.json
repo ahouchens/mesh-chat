@@ -142,7 +142,12 @@
     "profile.create",
     "bootstrap.preview"
   ],
-  "runtime_host_operations": ["profile.catalog", "profile.select", "profile.unlock", "profile.lock"],
+  "runtime_host_operations": [
+    "profile.catalog",
+    "profile.select",
+    "profile.unlock",
+    "profile.lock"
+  ],
   "keyed_actions": {
     "workspace.connection": [
       "invite_contact",
@@ -1148,6 +1153,13 @@
     "profile_slots": 8,
     "profile_lifecycle_keys_per_host": 4096,
     "profile_lifecycle_keys_per_caller_profile": 256,
-    "profile_unlock_credentials": 128
-  }
+    "profile_unlock_credentials": 128,
+    "optional_key_idempotency_seconds": 604800,
+    "optional_keys_per_caller_profile": 4096,
+    "optional_keys_per_vault": 65536
+  },
+  "optional_keyed_operations": [
+    "group.create",
+    "group.message_enqueue"
+  ]
 }

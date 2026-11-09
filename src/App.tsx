@@ -1,5 +1,6 @@
 import { CallDialog, IncomingCallPrompt, type CallPeer } from "./CallDialog";
 import { CallRecoveryNotice } from "./CallRecoveryNotice";
+import { ProfileLifetime, ProfileLifetimeContext, ProfileRetiredError } from "./profile-lifetime";
 import { workspaceConnectivityLabel, workspaceStateLabel, workspaceSyncIssueLabel } from "./workspaceLabels";
 import { contactTrustDescription, contactTrustLabel, groupComposerState, groupInvitationBanner, groupInviteDeliveryLabel, groupPolicyLabel, pluralize } from "./groupLabels";
 import { canPrepareDirectHost, directActionLabel, directPhaseLabel, directFailureReport, directReasonLabel, sanitizedDoctorSummary } from "./directLabels";
@@ -64,6 +65,7 @@ import {
   saveCallSettings,
   saveNetworkSettings,
   coreApiPeerForDestination,
+  coreApiProfile,
   coreApiRequest,
   coreApiCloseGroup,
   coreApiGroupInvitation,
@@ -406,8 +408,12 @@ async function setNotificationPreviews(hidden: boolean): Promise<WorkspaceNotifi
   return await coreApiRuntimeMutate("notification_previews", { hidden }, newOperationId()) as unknown as WorkspaceNotificationState;
 }
 
-async function openNotificationTarget(notificationId: string): Promise<NotificationOpenTarget> {
-  return await coreApiRuntimeMutate("notification_open", { notification_id: notificationId }, newOperationId()) as unknown as NotificationOpenTarget;
+async function openNotificationTarget(notificationId: string, lifetime: ProfileLifetime, generation: number): Promise<NotificationOpenTarget> {
+  const profile = await coreApiProfile();
+  const response = await lifetime.mutate(generation, () => coreApiRequest<{ result?: NotificationOpenTarget }>("runtime.mutate", {
+    profile: profile.profile, action: "notification_open", notification_id: notificationId,
+  }, newOperationId()));
+  return response.result ?? {} as NotificationOpenTarget;
 }
 
 
@@ -6738,6 +6744,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
 }
 
 export default function App() {
+  const [lifetime] = useState(() => new ProfileLifetime());
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [initialInvitation, setInitialInvitation] = useState("");
@@ -6746,7 +6753,12 @@ export default function App() {
   const [workspaceMessageInvalidations, setWorkspaceMessageInvalidations] = useState<WorkspaceMessageInvalidations>({});
   const [notificationTarget, setNotificationTarget] = useState<NotificationOpenTarget | null>(null);
   const [fatal, setFatal] = useState("");
-  const [locked, setLocked] = useState(false);
+  const [lockState, setLockState] = useState<"open" | "locking" | "locked" | "uncertain">("open");
+  const [lockError, setLockError] = useState("");
+  const [lockPending, setLockPending] = useState(false);
+  const [unlocking, setUnlocking] = useState(false);
+  const locked = lockState !== "open";
+  const lockInFlight = useRef<Promise<void> | null>(null);
   const refreshInFlight = useRef<Promise<Snapshot> | null>(null);
   const workspaceRefreshInFlight = useRef<Promise<WorkspaceSnapshot> | null>(null);
   const mobileReconcileInFlight = useRef<Promise<void> | null>(null);
@@ -6758,10 +6770,13 @@ export default function App() {
     try { void setNativeTheme(theme).catch(() => undefined); } catch { /* Browser previews do not expose the native bridge. */ }
   }, [theme]);
   const refresh = useCallback(function requestSnapshot(afterCurrent = false): Promise<Snapshot> {
+    if (!lifetime.active) return Promise.reject(new ProfileRetiredError());
+    const generation = lifetime.capture();
+    const trailing = () => lifetime.isCurrent(generation) ? requestSnapshot(false) : Promise.reject(new ProfileRetiredError());
     if (workspaceRefreshInFlight.current) {
       return workspaceRefreshInFlight.current.then(
-        () => requestSnapshot(false),
-        () => requestSnapshot(false),
+        trailing,
+        trailing,
       );
     }
     if (refreshInFlight.current) {
@@ -6772,43 +6787,96 @@ export default function App() {
       // coalesce because the first continuation installs the next in-flight
       // request before the other continuations run.
       return current.then(
-        () => requestSnapshot(false),
-        () => requestSnapshot(false),
+        trailing,
+        trailing,
       );
     }
     const request = (coreApiSnapshot() as unknown as Promise<Snapshot>).then((latest) => {
-      setSnapshot(latest);
+      if (!lifetime.isCurrent(generation)) throw new ProfileRetiredError();
+      setSnapshot((current) => lifetime.isCurrent(generation) ? latest : current);
       return latest;
     });
     refreshInFlight.current = request;
     const clear = () => { if (refreshInFlight.current === request) refreshInFlight.current = null; };
     void request.then(clear, clear);
     return request;
-  }, []);
+  }, [lifetime]);
   const refreshWorkspace = useCallback(function requestWorkspaceSnapshot(afterCurrent = false): Promise<WorkspaceSnapshot> {
+    if (!lifetime.active) return Promise.reject(new ProfileRetiredError());
+    const generation = lifetime.capture();
+    const trailing = () => lifetime.isCurrent(generation) ? requestWorkspaceSnapshot(false) : Promise.reject(new ProfileRetiredError());
     if (refreshInFlight.current) {
       return refreshInFlight.current.then(
-        () => requestWorkspaceSnapshot(false),
-        () => requestWorkspaceSnapshot(false),
+        trailing,
+        trailing,
       );
     }
     if (workspaceRefreshInFlight.current) {
       const current = workspaceRefreshInFlight.current;
       if (!afterCurrent) return current;
       return current.then(
-        () => requestWorkspaceSnapshot(false),
-        () => requestWorkspaceSnapshot(false),
+        trailing,
+        trailing,
       );
     }
     const request = loadWorkspaceSnapshot().then((latest) => {
-      setSnapshot((current) => current ? { ...current, ...latest } : current);
+      if (!lifetime.isCurrent(generation)) throw new ProfileRetiredError();
+      setSnapshot((current) => lifetime.isCurrent(generation) && current ? { ...current, ...latest } : current);
       return latest;
     });
     workspaceRefreshInFlight.current = request;
     const clear = () => { if (workspaceRefreshInFlight.current === request) workspaceRefreshInFlight.current = null; };
     void request.then(clear, clear);
     return request;
-  }, []);
+  }, [lifetime]);
+
+  const generation = lifetime.active ? lifetime.capture() : -1;
+  const refreshCurrentProfile = useCallback((afterCurrent?: boolean) => lifetime.isCurrent(generation)
+    ? refresh(afterCurrent) : Promise.reject(new ProfileRetiredError()), [lifetime, generation, refresh]);
+
+  const lockProfile = useCallback((): Promise<void> => {
+    if (lockInFlight.current) return lockInFlight.current;
+    const retirement = lifetime.retire();
+    refreshInFlight.current = null;
+    workspaceRefreshInFlight.current = null;
+    mobileReconcileInFlight.current = null;
+    setSnapshot(null);
+    setNotificationTarget(null);
+    setWorkspaceMessageInvalidations({});
+    setLockError("");
+    setLockState("locking");
+    const request = (async () => {
+      try {
+        setLockPending(await retirement === "pending");
+        await lockService();
+        setLockState("locked");
+      } catch (reason) {
+        setLockError(errorMessage(reason));
+        setLockState("uncertain");
+      }
+    })();
+    lockInFlight.current = request;
+    void request.then(() => { if (lockInFlight.current === request) lockInFlight.current = null; });
+    return request;
+  }, [lifetime]);
+
+  const unlockProfile = async () => {
+    if (unlocking || lockState !== "locked") return;
+    setUnlocking(true);
+    setLockError("");
+    const generation = lifetime.beginOpening();
+    try {
+      const ready = await initializeService();
+      if (lifetime.finishOpening(generation)) {
+        setSnapshot(ready);
+        setFatal("");
+        setLockState("open");
+      }
+    } catch (reason) {
+      lifetime.failOpening(generation);
+      setLockError(errorMessage(reason));
+    } finally { setUnlocking(false); }
+  };
   useEffect(() => {
     let active = true;
     const cleanups: Array<() => void> = [];
@@ -6816,6 +6884,7 @@ export default function App() {
     void (async () => {
       try {
         keepCleanup(await onServiceEvent((event) => {
+          if (!active || !lifetime.active) return;
           // The bridge's own subscriber forwards binary packets. Refreshing
           // the entire UI for each resource fragment competes with that pump
           // and with call signaling on the same service command queue.
@@ -6847,11 +6916,13 @@ export default function App() {
         // The focus and visible-window refresh below still self-heal a missed listener.
       }
       if (!active) return;
+      if (!lifetime.active) return;
+      const generation = lifetime.capture();
       try {
         const result = await initializeService();
-        if (active) setSnapshot(result);
+        if (active && lifetime.isCurrent(generation)) setSnapshot(result);
       } catch (reason) {
-        if (active) setFatal(errorMessage(reason));
+        if (active && lifetime.isCurrent(generation)) setFatal(errorMessage(reason));
       }
     })();
     void onInvitation((value) => {
@@ -6864,37 +6935,41 @@ export default function App() {
       }
     }).then(keepCleanup).catch(() => undefined);
     void onNotificationOpen(async (notificationId) => {
+      if (!active || !lifetime.active) return;
+      const generation = lifetime.capture();
       try {
-        const target = await openNotificationTarget(notificationId);
-        if (active) {
+        const target = await openNotificationTarget(notificationId, lifetime, generation);
+        if (active && lifetime.isCurrent(generation)) {
           await refresh(true);
-          if (active) setNotificationTarget({ ...target });
+          if (active && lifetime.isCurrent(generation)) setNotificationTarget({ ...target });
         }
       } catch (reason) {
-        if (active) setNotificationTarget({ available: false, reason: "unavailable", message: errorMessage(reason) });
+        if (active && lifetime.isCurrent(generation)) setNotificationTarget({ available: false, reason: "unavailable", message: errorMessage(reason) });
       }
     }).then(keepCleanup).catch(() => undefined);
     return () => { active = false; cleanups.forEach((cleanup) => cleanup()); };
-  }, [refresh, refreshWorkspace]);
+  }, [lifetime, refresh, refreshWorkspace]);
   useEffect(() => {
     if (!snapshot?.profile || locked) return;
+    const generation = lifetime.capture();
     let active = true;
     let busy = false;
+    const current = () => active && lifetime.isCurrent(generation);
     const visible = () => document.visibilityState !== "hidden";
     const restoreBackground = async () => {
-      if (!active || busy || !visible()) return;
+      if (!current() || busy || !visible()) return;
       busy = true;
       try {
-        if (await runtimePlatform() !== "android" || !active) return;
+        if (await runtimePlatform() !== "android" || !current()) return;
         const background = await fetchBackgroundStatus();
-        if (!active || background?.native?.enabled !== true) return;
+        if (!current() || background?.native?.enabled !== true) return;
         let capability = await notificationCapability();
-        if (!active) return;
+        if (!current()) return;
         if (capability.permission_state === "not_requested") capability = await requestNotificationPermission();
-        if (!active || !visible() || capability.permission_state !== "allowed") return;
+        if (!current() || !visible() || capability.permission_state !== "allowed") return;
         // Native permission callbacks restore the saved preference. The UI
         // must never turn an opt-out back on after an asynchronous prompt.
-        if (active) await refresh(true);
+        if (current()) await refresh(true);
       } catch {
         // Native status retains permission/start failures for Settings to show.
       } finally {
@@ -6910,16 +6985,18 @@ export default function App() {
       window.removeEventListener("focus", restore);
       document.removeEventListener("visibilitychange", restore);
     };
-  }, [snapshot?.profile?.destination_hash, locked, refresh]);
+  }, [snapshot?.profile?.destination_hash, locked, lifetime, refresh]);
   useEffect(() => {
     let active = true;
     let timer: number | undefined;
     let mobile = false;
     const reconcileMobile = () => {
+      if (!lifetime.active) return Promise.resolve();
+      const generation = lifetime.capture();
       if (mobileReconcileInFlight.current) return mobileReconcileInFlight.current;
-      const request = serviceCommand("reconcile_mobile_lifecycle")
-        .then(() => refresh(true))
-        .catch(() => refresh())
+      const request = lifetime.mutate(generation, () => serviceCommand("reconcile_mobile_lifecycle"))
+        .then(() => lifetime.isCurrent(generation) ? refresh(true) : undefined)
+        .catch(() => lifetime.isCurrent(generation) ? refresh() : undefined)
         .then(() => undefined);
       mobileReconcileInFlight.current = request;
       const clear = () => {
@@ -6929,7 +7006,7 @@ export default function App() {
       return request;
     };
     const refreshVisible = () => {
-      if (!active || document.visibilityState !== "visible") return;
+      if (!active || !lifetime.active || document.visibilityState !== "visible") return;
       if (mobile) {
         void reconcileMobile().catch(() => undefined);
       } else {
@@ -6950,8 +7027,8 @@ export default function App() {
       window.removeEventListener("focus", refreshVisible);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [refresh]);
-  if (locked) return <main className="fatal-screen"><LockKeyhole size={36} /><h1>Mesh Chat is locked</h1><p>The messaging service is stopped and its keys have been released.</p><Button onClick={async () => { setSnapshot(await initializeService()); setLocked(false); }}>Unlock</Button></main>;
+  }, [lifetime, refresh]);
+  if (locked) return <main className="fatal-screen"><LockKeyhole size={36} /><h1>{lockState === "locking" ? "Locking your profile…" : lockState === "uncertain" ? "Lock not confirmed" : "Mesh Chat is locked"}</h1><p>{lockState === "locked" ? "The messaging service is stopped and its keys have been released." : "Profile content is hidden while admitted work and service retirement finish."}</p>{lockPending && <p role="status">Some requests did not finish before locking. Check their saved outcomes after unlocking.</p>}{lockError && <p role="alert">{lockError}</p>}{lockState === "locked" && <Button disabled={unlocking} onClick={() => void unlockProfile()}>{unlocking ? "Opening profile…" : "Unlock"}</Button>}{lockState === "uncertain" && <Button onClick={() => void lockProfile()}>Retry lock</Button>}</main>;
   if (fatal) return <main className="fatal-screen"><LockKeyhole size={36} /><h1>Mesh Chat stopped safely</h1><p>{fatal}</p><p className="muted">No plaintext fallback was used.</p></main>;
   if (!snapshot) return <main className="loading-screen"><Brand /><span className="spinner" /><p>Opening your private profile…</p></main>;
   if (!snapshot.profile) {
@@ -6960,6 +7037,7 @@ export default function App() {
         initialInvitation={initialInvitation}
         initialPairingCode={initialPairingCode}
         onReady={(ready, pendingInvitation, startWebRTC) => {
+          if (!lifetime.isCurrent(generation)) return;
           setInitialWebRTCJoin(Boolean(startWebRTC));
           setInitialInvitation(pendingInvitation ?? "");
           setSnapshot(ready);
@@ -6967,5 +7045,5 @@ export default function App() {
       />
     );
   }
-  return <Messenger snapshot={snapshot} theme={theme} onThemeChange={setTheme} refresh={refresh} workspaceMessageInvalidations={workspaceMessageInvalidations} notificationTarget={notificationTarget} onNotificationHandled={() => setNotificationTarget(null)} initialInvitation={initialInvitation} initialPairingCode={initialPairingCode} initialWebRTCJoin={initialWebRTCJoin} onWebRTCJoinHandled={() => setInitialWebRTCJoin(false)} onPairingHandled={() => setInitialPairingCode("")} onInvitationHandled={() => setInitialInvitation("")} onLock={async () => { await lockService(); setSnapshot(null); setLocked(true); }} />;
+  return <ProfileLifetimeContext.Provider value={lifetime}><Messenger key={`${generation}:${snapshot.profile.destination_hash}`} snapshot={snapshot} theme={theme} onThemeChange={setTheme} refresh={refreshCurrentProfile} workspaceMessageInvalidations={workspaceMessageInvalidations} notificationTarget={notificationTarget} onNotificationHandled={() => { if (lifetime.isCurrent(generation)) setNotificationTarget(null); }} initialInvitation={initialInvitation} initialPairingCode={initialPairingCode} initialWebRTCJoin={initialWebRTCJoin} onWebRTCJoinHandled={() => setInitialWebRTCJoin(false)} onPairingHandled={() => setInitialPairingCode("")} onInvitationHandled={() => setInitialInvitation("")} onLock={() => lifetime.isCurrent(generation) ? lockProfile() : Promise.resolve()} /></ProfileLifetimeContext.Provider>;
 }

@@ -44,12 +44,14 @@ export class CallOperation {
   private cancellation: "completed" | "declined" | "cancelled" | null = null;
   private cancellationDone: Promise<void> | null = null;
   private resolveCancellation: (() => void) | null = null;
+  private cancellationAttempt: Promise<void> | null = null;
   private uncertain = false;
   private errorCode: string | null = null;
   private listeners = new Set<() => void>();
   private view: CallOperationView = { pending: false, busy: false, uncertain: false, cancelling: false, errorCode: null };
 
-  constructor(readonly name: string, initialCallId?: string, private readonly verifyIncomingScope?: () => Promise<string>) { this.callId = initialCallId; }
+  constructor(readonly name: string, initialCallId?: string, private readonly verifyIncomingScope?: () => Promise<string>,
+              private readonly submitTicket: (ticket: CallControlTicket, retiring: boolean) => Promise<Result> = submitCallControl) { this.callId = initialCallId; }
 
   getSnapshot = () => this.view;
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
@@ -95,12 +97,22 @@ export class CallOperation {
     recoverySessions.add(this);
     this.emit();
     const previous = this.attempt;
-    void (async () => {
+    this.cancellationAttempt = (async () => {
       if (previous) await previous;
       if (this.pending) await this.retry();
       else this.finishCancellation();
+      while (this.attempt) await this.attempt;
     })();
     return this.cancellationDone;
+  }
+
+  async retireForProfile(): Promise<void> {
+    const wasCancelling = this.cancellation !== null;
+    void this.cancel();
+    await this.cancellationAttempt;
+    if (wasCancelling && this.pending && !this.attempt) await this.retry();
+    while (this.attempt) await this.attempt;
+    if (this.pending) throw new Error("call_cleanup_pending");
   }
 
   private begin(action: string, params: Record<string, unknown>): Promise<Result> {
@@ -128,7 +140,7 @@ export class CallOperation {
           return;
         }
         pending.invoked = true;
-        const result = await submitCallControl(pending.ticket);
+        const result = await this.submitTicket(pending.ticket, this.cancellation !== null);
         if (pending.action === "start" && typeof result.id !== "string") throw new Error("core_api_protocol");
         if ((pending.action === "start" || pending.action === "answer") && typeof result.id === "string") this.callId = result.id;
         if (pending.action === "end") this.callId = undefined;

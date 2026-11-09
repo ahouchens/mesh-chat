@@ -72,6 +72,16 @@ acknowledgment when a retiring service still holds its vault and removes the
 Windows long-lived initialization-key reference. B's bounded UI lifetime barrier
 must keep such pending shutdown outcomes uncertain, with a retry action.
 
+The next checkpoint `ec967947` includes the reviewed private supervisor pairing
+entry and truthful mobile retirement acknowledgment (76 lead checks pass),
+unwired mobile profile host foundation (14 lead checks pass), and B's bounded
+UI lifetime guards (700 frontend tests and the recorded worker boundary pass).
+C continues actual platform provider/authentication wiring; B consumes that
+contract when available. D migrates the topology controller to the private
+supervisor entry and declares quick/full qualification selection. A continues
+atomic optional group keys, then protected call-operation recovery. No new
+packaged run or broader milestone acceptance is implied.
+
 ## Active Wave 2 handoff
 
 All workers merge the current lead branch before edits. Source `174728e` is the

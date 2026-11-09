@@ -62,6 +62,34 @@ contains the two-role topology infrastructure, whose actual execution and
 supervisor-owned pairing-entry followup remain pending. Passing its controller
 component tests is not transport qualification.
 
+### Native retirement and UI lifetime follow-up
+
+Source `5a523d75940e903a023f5637c5cb37074631e4f1` integrates the private,
+marked-profile supervisor pairing entry, immediate routing removal after a lost
+native creation return, and truthful mobile shutdown acknowledgment. Android
+keeps its native response pump alive until deferred vault cleanup finishes.
+The lead's combined Windows host, private pairing, mobile bootstrap and profile
+lifecycle check passed 76 tests, zero skips, in 6.74 seconds. The retained report
+is `.test-tmp/native-retirement-review.xml`.
+
+Source `0f19638a58aa2086af97813ce2cdf78ff8167dbb` adds the private mobile profile
+host foundation. Its 14 encrypted-vault/Core lifecycle tests passed in 2.39
+seconds with zero skips (`.test-tmp/mobile-profile-review.xml`). OS key retrieval
+and authentication are explicit boundary doubles in this run; production
+Kotlin/Binder/provider wiring remains pending.
+
+UI worker source `bb14d2bce5f043df9e8ae129901e7217c8d1815c` passed 630 Python
+boundary cases plus eight rendered-App cases, zero skips, in 41.81 seconds.
+Final worker source `002ddd4fae9b979748f2c6d45d6f7c9d913d27af` changes only the
+notification presentation fixture after that gate and passes all 700 frontend
+tests across 43 files in 58.98 seconds, plus TypeScript compilation. These are
+worker-reported checks, not a claim that the exact final worker head repeated
+the Python boundary gate. The batch is integrated at `ec96794708876675ee02d9fea97a8a6cd25fa362`.
+It hides retired profile content, bounds final UI work to one second, preserves
+uncertain lock outcomes for retry, and fences delayed notification admission.
+Full renderer-restart call intent recovery and live public profile selection
+remain open. No new packaged qualification is claimed by these local checks.
+
 ### Runtime catalog and installed SDK checkpoint
 
 Source `8ef8dd5388e617ad4dae0a1425318cd05f08d8f7`, tree

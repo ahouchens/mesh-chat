@@ -590,12 +590,21 @@ def group_view(profile, group, value):
             "posting_policy": value.posting_policy}
 
 
-def group_message_sent_view(profile, group, value):
+def group_message_sent_view(profile, group, value, message=None):
     if (any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
             for item in (profile, group))
             or not isinstance(value.text, str) or not value.text):
         raise ValueError("Invalid group message observation")
-    return {"profile": profile, "group": group, "sent": True}
+    result = {"profile": profile, "group": group, "sent": True}
+    if message is not None:
+        if (re.fullmatch(r"[0-9a-f]{64}", message) is None
+                or any(type(number) not in {int, float} or not math.isfinite(number) or number <= 0
+                       for number in (value.accepted_at, value.idempotency_expires_at))
+                or value.idempotency_expires_at <= value.accepted_at):
+            raise ValueError("Invalid keyed group acceptance")
+        result.update(message=message, accepted=True, accepted_at=value.accepted_at,
+                      idempotency_expires_at=value.idempotency_expires_at)
+    return result
 
 
 def group_membership_view(profile, group, value):

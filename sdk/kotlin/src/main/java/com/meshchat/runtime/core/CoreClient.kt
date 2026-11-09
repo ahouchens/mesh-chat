@@ -29,7 +29,8 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         fun open(transport: CoreTransport): CoreClient {
             val client = CoreClient(transport)
             val capabilities = client.request("runtime.capabilities", JSONObject())
-            if (capabilities.optInt("api_major", -1) != 1) {
+            val major = capabilities.opt("api_major")
+            if (major !is Number || major.toDouble() != 1.0) {
                 client.close()
                 throw CoreException("incompatible_version")
             }
@@ -47,7 +48,7 @@ class CoreClient private constructor(private val transport: CoreTransport) {
 
     private fun dispatch(operation: String, params: JSONObject, key: String?): JSONObject {
         if (closed) throw CoreException("transport_closed")
-        if (operation in REQUIRED_KEYS || params.optString("action") in (KEYED_ACTIONS[operation] ?: emptySet())) {
+        if (key != null || operation in REQUIRED_KEYS || params.optString("action") in (KEYED_ACTIONS[operation] ?: emptySet())) {
             require(key != null && Regex("[A-Za-z0-9._:-]{16,128}").matches(key)) {
                 "operation requires a caller-provided idempotency key"
             }
@@ -144,10 +145,28 @@ class CoreClient private constructor(private val transport: CoreTransport) {
     fun unblock(profile: String, peer: String): JSONObject =
         request("peer.unblock", JSONObject().put("profile", profile).put("peer", peer))
 
+    @JvmOverloads
     fun createGroup(profile: String, title: String, postingPolicy: String,
-                    members: List<String>): JSONObject =
-        request("group.create", JSONObject().put("profile", profile).put("title", title)
-            .put("posting_policy", postingPolicy).put("members", JSONArray(members)))
+                    members: List<String>, idempotencyKey: String? = null): JSONObject {
+        val params = JSONObject().put("profile", profile).put("title", title)
+            .put("posting_policy", postingPolicy).put("members", JSONArray(members))
+        if (idempotencyKey == null) return request("group.create", params)
+        requireOptionalKeyed("group.create")
+        return dispatch("group.create", params, idempotencyKey)
+    }
+
+    private fun requireOptionalKeyed(operation: String) {
+        val operations = capabilities.optJSONArray("optional_keyed_operations") ?: throw CoreException("unsupported_operation")
+        val implemented = capabilities.optJSONArray("operations") ?: throw CoreException("unsupported_operation")
+        val limits = capabilities.optJSONObject("limits") ?: throw CoreException("unsupported_operation")
+        val minor = capabilities.opt("api_minor")
+        if (minor !is Number || !minor.toDouble().isFinite() || minor.toDouble() < 1 || minor.toDouble() % 1.0 != 0.0 ||
+            !(0 until operations.length()).any { operations.optString(it) == operation } ||
+            !(0 until implemented.length()).any { implemented.optString(it) == operation } ||
+            listOf("optional_key_idempotency_seconds", "optional_keys_per_caller_profile", "optional_keys_per_vault").any { name ->
+                val value = limits.opt(name); value !is Number || !value.toDouble().isFinite() || value.toDouble() <= 0 ||
+                    value.toDouble() > 9007199254740991.0 || value.toDouble() % 1.0 != 0.0 }) throw CoreException("unsupported_operation")
+    }
 
     fun retryGroupInvitation(profile: String, group: String, member: String): JSONObject =
         request("group.invitation_retry", JSONObject().put("profile", profile)
@@ -167,9 +186,13 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         request("group.member_remove", JSONObject().put("profile", profile)
             .put("group", group).put("member", member))
 
-    fun sendGroup(profile: String, group: String, text: String): JSONObject =
-        request("group.message_enqueue", JSONObject().put("profile", profile)
-            .put("group", group).put("text", text))
+    @JvmOverloads
+    fun sendGroup(profile: String, group: String, text: String, idempotencyKey: String? = null): JSONObject {
+        val params = JSONObject().put("profile", profile).put("group", group).put("text", text)
+        if (idempotencyKey == null) return request("group.message_enqueue", params)
+        requireOptionalKeyed("group.message_enqueue")
+        return dispatch("group.message_enqueue", params, idempotencyKey)
+    }
 
     fun groups(profile: String): JSONObject =
         request("group.query", JSONObject().put("profile", profile))
