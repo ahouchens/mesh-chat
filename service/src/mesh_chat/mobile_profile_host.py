@@ -189,19 +189,34 @@ class NativeMobileProfileHost:
             reply = decode_frame(self.exchange(self.caller, encode_frame(request), "owner"))
             if not reply.get("ok"):
                 raise ApiFailure(reply["error"]["code"])
+        context = self.context()
+        if context["state"] != "locked":
+            raise ApiFailure("unavailable")
         self._native_lock_key = None
-        return self.context()
+        return context
 
     def close(self):
         if self._closed:
+            self.store.close()
             return
-        self.lock()
-        if self.core.lifecycle.query()["state"] != "locked":
-            raise NativeUnavailable("Native profile retirement is incomplete")
-        with self._session_lock:
-            sessions, self._sessions = tuple(self._sessions.values()), {}
-        for session in sessions:
-            session.close()
-        self.store.close()
-        self._challenges.clear()
-        self._closed = True
+        sessions = ()
+        try:
+            # Serialize host teardown with Core admission. Close framed clients
+            # after releasing this lock: a client may already be waiting on it.
+            with self.core._lock:
+                # Host termination can drain an interrupted unlock without
+                # authorizing it to open again. Its old-host journal intent
+                # deliberately resolves to resync after a cold host restart.
+                self.core.lifecycle.reconcile()
+                if self.core.lifecycle.active is not None:
+                    self.lock()
+                if self.core.lifecycle.query()["state"] != "locked":
+                    raise NativeUnavailable("Native profile retirement is incomplete")
+                self._closed = True
+                with self._session_lock:
+                    sessions, self._sessions = tuple(self._sessions.values()), {}
+                self.store.close()
+                self._challenges.clear()
+        finally:
+            for session in sessions:
+                session.close()
