@@ -15,7 +15,7 @@ vi.mock("@tauri-apps/plugin-deep-link", () => ({
 }));
 vi.mock("@tauri-apps/api/app", () => ({ onBackButtonPress: vi.fn() }));
 
-import { beginCallAudio, coreApiCreateProfile, coreApiRequest, coreApiSendMessage, lockService, onInvitation, pickInvitationFile, requestMediaPermission, serviceCommand, type ServiceEvent } from "./api";
+import { beginCallAudio, coreApiBootstrapPreview, coreApiCreateProfile, coreApiRequest, coreApiSendMessage, lockService, onInvitation, pickInvitationFile, requestMediaPermission, serviceCommand, type ServiceEvent } from "./api";
 import { loadPairingResume, savePairingResume } from "./pairing-resume";
 
 it("forgets encrypted pairing secrets when locking the service", async () => {
@@ -55,6 +55,29 @@ it("serializes the caller's retained profile-create key without inventing profil
   expect(tauri.invoke).toHaveBeenCalledWith("core_api_request", {
     operation: "profile.create", params: { display_name: "Alex" }, idempotencyKey: "profile-creation-operation",
   });
+});
+
+it.each([
+  ["personal", { display_name: "Taylor", identity_hash: "11".repeat(16), destination_hash: "22".repeat(16), fingerprint: "AAAA BBBB", hints: [], expires_at: 2_000_000_000 }],
+  ["workspace", { name: "Lakewatcher", description: "Field coordination", owner_fingerprint: "AAAA BBBB", member_count: 1, retention_days: 90, expires_at: 2_000_000_000 }],
+  ["device_link", { name: "Lakewatcher", member_display_name: "Alex", sponsor_fingerprint: "AAAA BBBB", device_count: 1, expires_at: 2_000_000_000 }],
+] as const)("serializes trusted pre-profile %s verification without profile or mutation key", async (kind, preview) => {
+  tauri.invoke.mockResolvedValue({ kind, preview });
+  await expect(coreApiBootstrapPreview(kind, "signed-document")).resolves.toEqual(preview);
+  expect(tauri.invoke).toHaveBeenCalledTimes(1);
+  expect(tauri.invoke).toHaveBeenCalledWith("core_api_request", {
+    operation: "bootstrap.preview", params: { kind, document: "signed-document" }, idempotencyKey: null,
+  });
+});
+
+it.each([
+  { kind: "workspace", preview: {} },
+  { kind: "personal", preview: null },
+  { kind: "personal", preview: {} },
+])("rejects an invalid bootstrap preview result without falling back", async (result) => {
+  tauri.invoke.mockResolvedValue(result);
+  await expect(coreApiBootstrapPreview("personal", "signed-document")).rejects.toMatchObject({ code: "core_api_protocol" });
+  expect(tauri.invoke).toHaveBeenCalledTimes(1);
 });
 
 describe("workspace composite operation envelopes", () => {
