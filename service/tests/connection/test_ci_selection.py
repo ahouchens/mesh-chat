@@ -2,11 +2,13 @@
 import importlib.util
 from pathlib import Path
 import subprocess
+import sys
 
 import pytest
 
 
 SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "connection_ci.py"
+sys.path.insert(0, str(SCRIPT.parent))
 KOTLIN_CLIENT = "sdk/kotlin/src/main/java/com/meshchat/runtime/core/"
 spec = importlib.util.spec_from_file_location("connection_ci", SCRIPT)
 ci = importlib.util.module_from_spec(spec)
@@ -34,11 +36,24 @@ def test_documentation_exclusion_is_explicit_and_does_not_hide_mixed_changes():
 @pytest.mark.parametrize("paths", [None, [], ["../README.md"], ["/README.md"], ["docs\\guide.md"]])
 def test_missing_empty_or_ambiguous_diff_expands_coverage(paths):
     assert ci.select(paths)["required"] == list(ci.SUITES)
+    assert ci.select(paths)["native_workload"] == "full"
 
 
 @pytest.mark.parametrize("event", ["workflow_dispatch", "merge_group", "release", "schedule", "unknown"])
 def test_manual_release_merge_queue_and_unknown_events_cannot_narrow_coverage(event):
     assert ci.select(["README.md"], event=event)["required"] == list(ci.SUITES)
+    assert ci.select(["README.md"], event=event)["native_workload"] == "full"
+
+
+def test_known_affected_pr_keeps_actual_native_smoke_but_push_remains_full():
+    path = "service/src/mesh_chat/service.py"
+    plan = ci.select([path], event="pull_request")
+    assert "native_interop" in plan["required"] and plan["native_workload"] == "quick"
+    assert ci.select([path], event="push")["native_workload"] == "full"
+    assert ci.select(None, event="pull_request")["native_workload"] == "full"
+    plan["native_workload"] = "full"
+    with pytest.raises(ValueError):
+        ci.validate(plan, {suite: {"result": "success"} for suite in ci.SUITES})
 
 
 def test_complete_selected_execution_passes_but_omitted_job_does_not():

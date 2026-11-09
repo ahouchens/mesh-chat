@@ -27,6 +27,7 @@ jobs:
       direct: ${{ steps.select.outputs.direct }}
       layout: ${{ steps.select.outputs.layout }}
       native_interop: ${{ steps.select.outputs.native_interop }}
+      native_workload: ${{ steps.select.outputs.native_workload }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -71,6 +72,8 @@ jobs:
       contents: read
       actions: read
     uses: ./.github/workflows/native-interop.yml
+    with:
+      workload: ${{ needs.plan.outputs.native_workload }}
 
   gate:
     name: Required connection qualification gate

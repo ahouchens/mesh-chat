@@ -13,10 +13,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "service/src"))
 
 from native_interop_artifacts import GithubArtifacts, context_from_environment
-from native_interop_evidence import LEVEL, PATH_CASES, SCENARIOS, SCOPE, Samples, accounting, digest, selection, traffic
+from native_interop_evidence import SCENARIOS, Samples, accounting, digest, selection, traffic
 from native_interop_peers import AndroidEmulator, AndroidPeer, PeerFailure, WindowsPeer
 from native_interop_preflight import android_environment, outbound_services
 from native_interop_rendezvous import Rendezvous
+from native_interop_workload import workload as required_workload
 from test_packaged_lifecycle import source_identity
 
 OFFERS = {"direct": "offer", **{name: "offer_" + name for name in SCENARIOS[1:5]}}
@@ -65,7 +66,7 @@ def binding(role, source, tree):
 
 
 class Controller:
-    def __init__(self, role, peer, transport, rendezvous, context):
+    def __init__(self, role, peer, transport, rendezvous, context, *, workload="full"):
         self.role, self.peer, self.transport, self.rendezvous, self.context = role, peer, transport, rendezvous, context
         self.partner = "android" if role == "windows" else "windows"
         self.samples = Samples()
@@ -75,6 +76,7 @@ class Controller:
         self.profile = self.contact = None
         self.identity = None
         self.pairing = None
+        self.workload = required_workload(workload)
 
     def wait(self, action, *, timeout=90, interval=0.25):
         deadline = min(self.deadline, time.monotonic() + timeout)
@@ -324,9 +326,9 @@ class Controller:
         previous_message = None
         warm_resources = None
         warm_host = None
-        for index in range(100):
+        for index in range(self.workload["iterations"]):
             previous = self.peer.inventory()["service_incarnation"]
-            restarted = index % 10 == 0
+            restarted = index % self.workload["cold_start_every"] == 0
             if restarted:
                 self.peer.stop(crash=True)
                 current = self.peer.start()
@@ -364,7 +366,7 @@ class Controller:
         self.rendezvous.bind_partner(self.transport.wait(self.partner, "key", timeout=900))
         # Both roles execute this fixed source-bound inventory. Keep bootstrap
         # uploads <=9/job, leaving room for the final retained report artifact.
-        for scenario, initiator in PATH_CASES: self.path_case(scenario, initiator)
+        for scenario, initiator in self.workload["paths"]: self.path_case(scenario, initiator)
         self.cold_starts()
         self.phase = "clean_host_retirement"
         self.native("reconnect_consent_set", contact_id=self.contact["id"], auto_reconnect=False,
@@ -389,13 +391,18 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--role", required=True, choices=("windows", "android"))
     parser.add_argument("--expected-source", required=True)
+    parser.add_argument("--workload", required=True, choices=("quick", "full"))
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    result = {"v": 1, "passed": False, "evidence_level": LEVEL, "role": args.role, "scope": SCOPE}
+    plan = required_workload(args.workload)
+    result = {"v": 1, "passed": False, "evidence_level": plan["level"], "role": args.role, "scope": plan["scope"], "workload": args.workload}
     peer = transport = rendezvous = controller = emulator = None
     phase = "source_artifact_binding"
     try:
         source, tree = source_identity(args.expected_source)
+        from connection_ci import current_plan
+        if current_plan()["native_workload"] != args.workload:
+            raise ValueError("Native workload differs from source-bound event selection")
         context = context_from_environment()
         if context["source_commit"] != source: raise ValueError("Workflow source differs from checkout")
         binary, artifacts = binding(args.role, source, tree)
@@ -415,7 +422,7 @@ def main():
             peer = AndroidPeer(key)
         transport = GithubArtifacts(context, args.role, ROOT / ".test-tmp/native-interop-rendezvous")
         rendezvous = Rendezvous(context, args.role)
-        controller = Controller(args.role, peer, transport, rendezvous, context)
+        controller = Controller(args.role, peer, transport, rendezvous, context, workload=args.workload)
         execution = controller.run()
         if source_identity(source) != (source, tree): raise ValueError("Source changed during native qualification")
         result.update(passed=True, context=context, source_commit=source, source_tree=tree,
@@ -423,7 +430,7 @@ def main():
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(result, indent=2) + "\n")
     except Exception as error:
-        result = {"v": 1, "passed": False, "evidence_level": LEVEL, "role": args.role, "scope": SCOPE,
+        result = {"v": 1, "passed": False, "evidence_level": plan["level"], "role": args.role, "scope": plan["scope"], "workload": args.workload,
                   "phase": controller.phase if controller is not None else phase, "failure_type": type(error).__name__}
         if isinstance(error, PeerFailure): result["error_code"] = error.code
         elif isinstance(getattr(error, "code", None), str): result["error_code"] = PeerFailure(error.code).code
