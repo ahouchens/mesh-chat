@@ -16,6 +16,18 @@ only the service source path. The App/Core boundary passes **670 Python plus
 all with zero failures and skips. These local results do not qualify actual
 Android execution, frozen Windows pairing, or cross-platform receipts.
 
+CI update: the required policy independently passes **3,529 cases**, and broad
+verification passes. Retained boundary XML independently confirms **670 Python
+and 12 rendered cases**, zero skips. Windows public pairing fails after 245.79s
+at **pending_request_wait**: an invitation reached the answerer and its accept
+call returned, but offerer snapshots remained empty. Both fresh public pairing
+probes report `retired` with `expired: false`. This localizes the missing contact
+request; it does not identify the retirement cause. A/C/D investigate the Core
+operation, actual actor/bootstrap delivery, and consumer ordering respectively.
+Normal Windows bootstrap with actual DPAPI/EFS and nine components independently
+pass against the retained executable. Later packaged gates did not run. Android
+and direct jobs continue; this full run cannot pass because Windows failed.
+
 This checkpoint includes the clean SDK import repair, ordinary independent
 Android consumer and ADB stdin repair, supported Windows readiness query and
 bounded pairing failure diagnostics, and the Android cancellation test repair.
@@ -48,8 +60,27 @@ inventory `6e971b93a93995ed2dd79daefec1deb9f37532ae1d232445691e98a97920e216`.
 
 Selection artifact `13715257587` has archive SHA-256
 `1c949a81cd1b53082607b10897fcb2d2085cc78384e099c00fdd971d2cb7f601`.
-The lead retains 146 validator source files pinned to the candidate and will
-rebuild evidence from the actual reports. No platform result is claimed yet.
+The lead retains 146 validator source files pinned to the candidate and rebuilds
+evidence from the actual reports. Platform passes remain limited to the
+independently validated subsets below.
+
+Current CI policy qualification `3f26edfa8dd24644a7909b17e009b92f` is
+reconstructed from artifact `13714838414`, archive SHA-256
+`ce16f74dcba6b3d7cee497208aeded2156f61b39b4903fdf974a65c020b56c37`.
+Verification artifact `13715489962`, archive
+`81ad273befe1bea8e8a83c36a6c0cdc8ea75f403b9f9b66d6559fdf76e7f2c59`,
+contains the independently checked boundary and passing broad runner summary.
+
+Windows desktop artifact `13715963206` has archive SHA-256
+`ab1cd7f35c59cc80d5ac57d18ed16b3f341d78aca71eaec45dd74c80d3e25bb6`;
+native artifact `13716975306` has
+`097e1704312dcfc3c84a62f882912068efee974c4fae0e29f1d1ce2dea0afaaf`.
+All entries were independently hashed; the tested executable is 54,570,175 bytes,
+SHA-256 `5fe19776a8b7ac90325c663e8664d9982bc65e716990319e749812c873cbd59e`.
+Normal bootstrap run `74ca552be65e450ab7923d6b75a57ef6` binds that runtime,
+the retained installed SDK and all nine consumer source files. D separately
+validates the failed report with the exact-source strict failure parser; this
+is valid failure evidence, not successful pairing qualification.
 
 ### Clean Android consumer integration and Windows bootstrap evidence
 

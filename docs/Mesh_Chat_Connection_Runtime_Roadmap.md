@@ -22,6 +22,18 @@ only the service source path. The App/Core boundary passes **670 Python plus
 all with zero failures and skips. These local results do not qualify actual
 Android execution, frozen Windows pairing, or cross-platform receipts.
 
+CI update: the required policy independently passes **3,529 cases**, and broad
+verification passes. Retained boundary XML independently confirms **670 Python
+and 12 rendered cases**, zero skips. Windows public pairing fails after 245.79s
+at **pending_request_wait**: an invitation reached the answerer and its accept
+call returned, but offerer snapshots remained empty. Both fresh public pairing
+probes report `retired` with `expired: false`. This localizes the missing contact
+request; it does not identify the retirement cause. A/C/D investigate the Core
+operation, actual actor/bootstrap delivery, and consumer ordering respectively.
+Normal Windows bootstrap with actual DPAPI/EFS and nine components independently
+pass against the retained executable. Later packaged gates did not run. Android
+and direct jobs continue; this full run cannot pass because Windows failed.
+
 This checkpoint includes the clean SDK import repair, ordinary independent
 Android consumer and ADB stdin repair, supported Windows readiness query and
 bounded pairing failure diagnostics, and the Android cancellation test repair.
