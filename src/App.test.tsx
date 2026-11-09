@@ -238,18 +238,10 @@ const api = vi.hoisted(() => {
   };
 });
 
-vi.mock("./api", () => Object.fromEntries(Object.entries(api).map(([name, operation]) => {
-  if (!/^(coreApi.+|saveCallSettings|saveNetworkSettings|serviceCommand)$/.test(name)) return [name, operation];
-  // Keep old presentation assertions at their adapter boundary. Production
-  // admission after asynchronous lookups is exercised by App.core/API tests.
-  return [name, (...args: unknown[]) => {
-    const admit = args.at(-1);
-    if (typeof admit !== "function") return (operation as (...args: unknown[]) => unknown)(...args);
-    const params = args.slice(0, -1);
-    while (params.length && params.at(-1) === undefined) params.pop();
-    return admit(() => (operation as (...args: unknown[]) => unknown)(...params));
-  }];
-})));
+vi.mock("./api", async () => {
+  const { admittedApiFixture } = await import("./test/admitted-api");
+  return admittedApiFixture(api);
+});
 
 // Presentation fixtures use the new composer protocol directly. App.core.test
 // and D's independent boundary suite retain the actual native/API serializer.

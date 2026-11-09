@@ -14,7 +14,9 @@ const mocks = vi.hoisted(() => ({
   desktopServiceHealth: vi.fn(),
 }));
 
-vi.mock("./api", () => ({
+vi.mock("./api", async () => {
+  const { admittedApiFixture } = await import("./test/admitted-api");
+  return admittedApiFixture(({
   serviceCommand: mocks.serviceCommand,
   coreApiCallControl: async (action: string, params: Record<string, unknown>) =>
     mocks.serviceCommand(action, action === "signal_fetch"
@@ -32,6 +34,7 @@ vi.mock("./api", () => ({
   onServiceEvent: mocks.onServiceEvent,
   desktopServiceHealth: mocks.desktopServiceHealth,
 }));
+});
 vi.mock("./webrtc-onboarding", async (importOriginal) => ({
   ...await importOriginal<typeof import("./webrtc-onboarding")>(),
   attachWebRTCBridge: mocks.attachWebRTCBridge,

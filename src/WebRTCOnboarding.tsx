@@ -1,3 +1,5 @@
+import { useProfileRequestAdmission } from "./profile-lifetime";
+import { admitCoreRequest, type CoreRequestAdmission } from "./core-admission";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { Check, Copy, Phone, RefreshCw, X } from "lucide-react";
@@ -177,12 +179,12 @@ function operationId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`;
 }
 
-async function signalPublish(document: string, role: "offer" | "answer"): Promise<{ session_id: string }> {
-  return await coreApiCallControl("signal_publish", { document, role }, operationId()) as unknown as { session_id: string };
+async function signalPublish(document: string, role: "offer" | "answer", admit: CoreRequestAdmission = admitCoreRequest): Promise<{ session_id: string }> {
+  return await coreApiCallControl("signal_publish", { document, role }, operationId(), admit) as unknown as { session_id: string };
 }
 
-async function signalFetch(session: string, role: "offer" | "answer"): Promise<{ document: string }> {
-  return await coreApiCallControl("signal_fetch", { session, role }, operationId()) as unknown as { document: string };
+async function signalFetch(session: string, role: "offer" | "answer", admit: CoreRequestAdmission = admitCoreRequest): Promise<{ document: string }> {
+  return await coreApiCallControl("signal_fetch", { session, role }, operationId(), admit) as unknown as { document: string };
 }
 
 export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFallback, workspaces = [], initialPairingCode = "" }: {
@@ -193,6 +195,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
   workspaces?: Array<{ id: string; name: string; core_handle?: string }>;
   initialPairingCode?: string;
 }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   const [phase, setPhase] = useState<Phase>("choose");
   const [offerDocument, setOfferDocument] = useState("");
   const [answerDocument, setAnswerDocument] = useState("");
@@ -495,7 +498,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         const workspace = workspaces.find((item) => item.id === selectedWorkspaceId);
         if (!workspace?.core_handle) throw new Error("core_api_unavailable");
         const invitation = await coreApiCreateWorkspaceInvitation(
-          workspace.core_handle, { connection_mode: "webrtc" }, crypto.randomUUID());
+          workspace.core_handle, { connection_mode: "webrtc" }, crypto.randomUUID(), admitProfileRequest);
         workspaceDocument = (invitation as WorkspaceInvitationFormats).value;
       }
       if (attemptRef.current !== attempt) return;
@@ -533,7 +536,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
           peer: peerDestinationRef.current,
           ...(typeof message.workspace_document === "string" && message.workspace_document
             ? { workspace_document: message.workspace_document } : {}),
-        }) as unknown as ContactInvitation;
+        }, admitProfileRequest) as unknown as ContactInvitation;
         await onChanged();
         if (!current()) return;
         if (saved.state !== "pending") {
@@ -717,12 +720,12 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         const result = await serviceCommand<OnboardingOfferResult>("webrtc_onboarding_offer", {
           sdp,
           dtls_fingerprint: native.fingerprint || fingerprint(sdp),
-        });
+        }, admitProfileRequest);
         if (attemptRef.current !== attempt) return;
         setOfferDocument(result.document);
         if (relaySettings?.signal_mailbox_url) {
           try {
-            const published = await signalPublish(result.document, "offer");
+            const published = await signalPublish(result.document, "offer", admitProfileRequest);
             if (attemptRef.current !== attempt) return;
             setMailboxCode(published.session_id);
             savePairingResume(published.session_id, "offer");
@@ -760,13 +763,13 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       const result = await serviceCommand<OnboardingOfferResult>("webrtc_onboarding_offer", {
         sdp,
         dtls_fingerprint: fingerprint(sdp),
-      });
+      }, admitProfileRequest);
       if (pcRef.current !== pc) return;
       traceRef.current?.record("signed-offer-ready");
       setOfferDocument(result.document);
       if (relaySettings?.signal_mailbox_url) {
         try {
-          const published = await signalPublish(result.document, "offer");
+          const published = await signalPublish(result.document, "offer", admitProfileRequest);
           if (pcRef.current !== pc) return;
           setMailboxCode(published.session_id);
           savePairingResume(published.session_id, "offer");
@@ -821,13 +824,13 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         const preview = await serviceCommand<OnboardingAnswerPreview>("verify_webrtc_onboarding_answer", {
           offer_document: offerDocument,
           answer_document: answerInput.trim(),
-        });
+        }, admitProfileRequest);
         if (attemptRef.current !== attempt) return;
         peerDestinationRef.current = preview.signer_destination;
         setAnswerPreview(preview);
         await serviceCommand("native_webrtc_bind_onboarding", {
           session_id: sessionId, offer_document: offerDocument, answer_document: answerInput.trim(),
-        });
+        }, admitProfileRequest);
         if (nativeSessionRef.current !== sessionId) return;
         await nativeWebRTCApplyAnswer(sessionId, preview.sdp);
         await waitNativeOpen(sessionId);
@@ -860,7 +863,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       const preview = await serviceCommand<OnboardingAnswerPreview>("verify_webrtc_onboarding_answer", {
         offer_document: offerDocument,
         answer_document: answerInput.trim(),
-      });
+      }, admitProfileRequest);
       if (pcRef.current !== pc) return;
       peerDestinationRef.current = preview.signer_destination;
       const bridge = bridgeRef.current;
@@ -914,7 +917,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       let rawOffer = normalizeWebRTCOfferInput(offerInput);
       if (!rawOffer.includes("\"type\"")) {
         operation = "signal_fetch";
-        const fetched = await signalFetch(rawOffer, "offer");
+        const fetched = await signalFetch(rawOffer, "offer", admitProfileRequest);
         if (attemptRef.current !== attempt) return;
         rawOffer = fetched.document;
         setOfferInput(rawOffer);
@@ -931,7 +934,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       operation = "verify_webrtc_onboarding_offer";
       const preview = await serviceCommand<OnboardingOfferPreview>("verify_webrtc_onboarding_offer", {
         document: rawOffer,
-      });
+      }, admitProfileRequest);
       if (attemptRef.current !== attempt) return;
       offerVerified = true;
       peerDestinationRef.current = preview.signer_destination;
@@ -948,7 +951,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         const native = await nativeWebRTCAccept(sessionId, preview.sdp, ice, NATIVE_ONBOARDING_CHANNELS);
         if (attemptRef.current !== attempt) return;
         operation = "native_webrtc_bind_onboarding";
-        await serviceCommand("native_webrtc_bind_onboarding", { session_id: sessionId, offer_document: preview.document });
+        await serviceCommand("native_webrtc_bind_onboarding", { session_id: sessionId, offer_document: preview.document }, admitProfileRequest);
         if (attemptRef.current !== attempt) return;
         const sdp = withEndOfCandidates(native.sdp);
         operation = "webrtc_onboarding_answer";
@@ -956,14 +959,14 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
           offer_document: preview.document,
           sdp,
           dtls_fingerprint: native.fingerprint || fingerprint(sdp),
-        });
+        }, admitProfileRequest);
         if (attemptRef.current !== attempt) return;
         setOfferDocument(rawOffer);
         setAnswerDocument(result.document);
         setAnswerPreview({ ...preview, sdp, dtls_fingerprint: native.fingerprint || fingerprint(sdp), document: result.document });
         if (relaySettings?.signal_mailbox_url) {
           try {
-            const published = await signalPublish(result.document, "answer");
+            const published = await signalPublish(result.document, "answer", admitProfileRequest);
             if (attemptRef.current !== attempt) return;
             setMailboxCode(published.session_id);
             savePairingResume(published.session_id, "answer");
@@ -1039,13 +1042,13 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         offer_document: preview.document,
         sdp,
         dtls_fingerprint: fingerprint(sdp),
-      });
+      }, admitProfileRequest);
       if (pcRef.current !== pc) return;
       traceRef.current?.record("signed-answer-ready");
       setAnswerDocument(result.document);
       if (relaySettings?.signal_mailbox_url) {
         try {
-          const published = await signalPublish(result.document, "answer");
+          const published = await signalPublish(result.document, "answer", admitProfileRequest);
           if (pcRef.current !== pc) return;
           setMailboxCode(published.session_id);
           savePairingResume(published.session_id, "answer");
@@ -1078,7 +1081,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
     try {
       if (!contactInvitationIdRef.current) throw new Error("No contact invitation is available.");
       const accepted = await coreApiContactInvitation(
-        "decide", { invitation: contactInvitationIdRef.current, accept: true },
+        "decide", { invitation: contactInvitationIdRef.current, accept: true }, admitProfileRequest
       ) as { id?: string; reconnect_capabilities?: string };
       if (accepted.id) updateWebRTCSessionContact(accepted.id, bridgeRef.current ? `onboarding:${bridgeRef.current.bridgeId}` : undefined);
       await sendControlText(JSON.stringify({
@@ -1100,7 +1103,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
   const declineContact = async () => {
     setOnboardingBusy(true);
     try {
-      await coreApiContactInvitation("decide", { invitation: contactInvitationIdRef.current, accept: false });
+      await coreApiContactInvitation("decide", { invitation: contactInvitationIdRef.current, accept: false }, admitProfileRequest);
       await sendControlText(JSON.stringify({ type: "invitation_declined" })).catch(() => undefined);
       setOnboarding("declined");
       await onChanged();
@@ -1120,7 +1123,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
     answerFetchBusyRef.current = true;
     setFetchingAnswer(true);
     try {
-      const fetched = await signalFetch(session, "answer");
+      const fetched = await signalFetch(session, "answer", admitProfileRequest);
       if (!current()) return;
       setAnswerInput(fetched.document);
     } catch (reason) {
@@ -1165,7 +1168,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         turn_broker_consent: true,
         signal_mailbox_url: relaySettings.signal_mailbox_url ?? null,
         relay_only: relaySettings.relay_only,
-      }) as unknown as CallSettings;
+      }, admitProfileRequest) as unknown as CallSettings;
       setRelaySettings(updated);
     } catch (reason) {
       setRelayError(errorMessage(reason));
@@ -1190,7 +1193,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         signal_mailbox_url: relaySettings.signal_mailbox_default_url,
         relay_only: relaySettings.relay_only,
         store_call_signaling: relaySettings.store_call_signaling ?? true,
-      }) as unknown as CallSettings;
+      }, admitProfileRequest) as unknown as CallSettings;
       if (attemptRef.current !== attempt) return;
       setRelaySettings(updated);
       setError("");

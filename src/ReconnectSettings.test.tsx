@@ -6,7 +6,10 @@ const mocks = vi.hoisted(() => ({
   sendReconnectCapabilities: vi.fn(() => true),
 }));
 
-vi.mock("./api", () => ({ serviceCommand: mocks.serviceCommand }));
+vi.mock("./api", async () => {
+  const { admittedApiFixture } = await import("./test/admitted-api");
+  return admittedApiFixture(({ serviceCommand: mocks.serviceCommand }));
+});
 vi.mock("./reconnect-control", () => ({
   RECONNECT_CAPABILITIES_EVENT: "meshchat:reconnect-capabilities",
   sendReconnectCapabilities: mocks.sendReconnectCapabilities,

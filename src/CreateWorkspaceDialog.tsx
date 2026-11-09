@@ -1,3 +1,4 @@
+import { useProfileRequestAdmission } from "./profile-lifetime";
 import { useState } from "react";
 import { ShieldCheck, Users, WifiOff } from "lucide-react";
 import { coreApiCreateWorkspace } from "./api";
@@ -11,6 +12,7 @@ export function CreateWorkspaceDialog({ onClose, onCreated }: {
   onClose: () => void;
   onCreated: (workspace: Workspace) => Promise<void>;
 }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [busy, setBusy] = useState(false);
@@ -20,7 +22,7 @@ export function CreateWorkspaceDialog({ onClose, onCreated }: {
     setBusy(true); setError("");
     try {
       const workspace = await coreApiCreateWorkspace(
-        name.trim(), description.trim(), newOperationId()) as unknown as Workspace;
+        name.trim(), description.trim(), newOperationId(), admitProfileRequest) as unknown as Workspace;
       await onCreated(workspace);
     } catch (reason) { setError(errorMessage(reason)); }
     finally { setBusy(false); }
