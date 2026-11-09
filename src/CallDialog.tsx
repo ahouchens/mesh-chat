@@ -3,8 +3,9 @@ import { createPortal } from "react-dom";
 import { Mic, MicOff, Phone, PhoneOff, RefreshCw, Video, VideoOff } from "lucide-react";
 import { loadCallIceServers, requestMediaPermission, runtimePlatform } from "./api";
 import { acquireCallAudio, releaseCallAudio } from "./call-audio";
-import { fetchCallMedia, incomingCallProfile } from "./call-core";
+import { fetchCallMedia, incomingCallProfile, submitCallControl } from "./call-core";
 import { CallOperation, callRecovery } from "./call-operation";
+import { useProfileLifetime } from "./profile-lifetime";
 import { connectionPath, waitForCandidates } from "./webrtc-peer";
 import { errorMessage } from "./errors";
 import { Dialog } from "./Dialog";
@@ -24,10 +25,19 @@ function callHasNetworkCandidate(sdp: string): boolean {
 
 export type CallPeer = { id: string; display_name: string };
 
+function useCallOperation(name: string, incoming?: CallSummary) {
+  const lifetime = useProfileLifetime();
+  const [generation] = useState(() => lifetime?.active ? lifetime.capture() : -1);
+  const [controls] = useState(() => new CallOperation(name, incoming?.id,
+    incoming ? () => incomingCallProfile(incoming) : undefined,
+    (ticket, retiring) => lifetime ? lifetime.mutate(generation, () => submitCallControl(ticket), retiring) : submitCallControl(ticket)));
+  return { controls, lifetime, generation };
+}
+
 export function IncomingCallPrompt({ call, name, onReview, onChanged }: {
   call: CallSummary; name: string; onReview: () => void; onChanged: () => Promise<void>;
 }) {
-  const [controls] = useState(() => new CallOperation(name, call.id, () => incomingCallProfile(call)));
+  const { controls, lifetime, generation } = useCallOperation(name, call);
   const operationView = useSyncExternalStore(controls.subscribe, controls.getSnapshot, controls.getSnapshot);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -44,7 +54,13 @@ export function IncomingCallPrompt({ call, name, onReview, onChanged }: {
       setBusy(false);
     }
   };
-  useEffect(() => () => { if (controls.getSnapshot().pending) void controls.cancel("declined"); }, [controls]);
+  useEffect(() => {
+    const unregister = lifetime?.register(generation, () => controls.getSnapshot().pending ? controls.retireForProfile() : Promise.resolve());
+    return () => {
+      if (controls.getSnapshot().pending) void controls.cancel("declined").then(unregister);
+      else unregister?.();
+    };
+  }, [controls, lifetime, generation]);
   // Keep the alert above Settings and an invitation dialog which may still be
   // open. Receiving an invitation never starts microphone or camera capture.
   return createPortal(<Dialog title={`Incoming ${call.media === "video" ? "video" : "audio"} call`} onClose={() => void decline()}>
@@ -69,8 +85,7 @@ export function CallDialog({
   onClose: () => void;
   onChanged: () => Promise<void>;
 }) {
-  const [controls] = useState(() => new CallOperation(contact.display_name, initialCall?.id,
-    initialCall ? () => incomingCallProfile(initialCall) : undefined));
+  const { controls, lifetime, generation } = useCallOperation(contact.display_name, initialCall);
   const operationView = useSyncExternalStore(controls.subscribe, controls.getSnapshot, controls.getSnapshot);
   const pendingCleanup = useSyncExternalStore(callRecovery.subscribe, callRecovery.getSnapshot, callRecovery.getSnapshot);
   const [call, setCall] = useState<CallSummary | undefined>(initialCall);
@@ -147,7 +162,10 @@ export function CallDialog({
     setPhase("error");
   }, [cleanup, controls, onChanged]);
 
-  useEffect(() => () => { cleanup(); controls.cancel(); }, [cleanup, controls]);
+  useEffect(() => {
+    const unregister = lifetime?.register(generation, () => { cleanup(); return controls.retireForProfile(); });
+    return () => { cleanup(); void controls.cancel().then(unregister); };
+  }, [cleanup, controls, lifetime, generation]);
 
   useEffect(() => {
     if (phase !== "ringing" || !call?.id) return;
@@ -368,12 +386,13 @@ export function CallDialog({
         throw new Error(media === "video" ? "Microphone and camera access are required for a video call." : "Microphone access is required for an audio call.");
       }
     }
+    if (lifetime && !lifetime.isCurrent(generation)) throw new Error("The profile changed before media capture.");
     if (callRecovery.getSnapshot().length > 0) throw new Error("Finish the previous call cleanup before starting media.");
     return navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       video: media === "video" ? { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } } : false,
     });
-  }, []);
+  }, [lifetime, generation]);
 
   const attemptRestart = useCallback(async () => {
     const callId = callIdRef.current;

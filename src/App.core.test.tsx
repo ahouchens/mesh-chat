@@ -3,11 +3,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Snapshot, Workspace, WorkspaceChannel, WorkspaceMessage } from "./types";
 import { ComposerHostFixture, composerCapabilities } from "./test/composer-host";
 
-const host = vi.hoisted(() => ({ invoke: vi.fn() }));
+const host = vi.hoisted(() => ({ invoke: vi.fn(), openUrls: [] as Array<(urls: string[]) => void>,
+  events: [] as Array<{ name: string; callback: (event: { payload: unknown }) => void }> }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: host.invoke }));
-vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async () => () => undefined) }));
+vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async (name, callback) => {
+  host.events.push({ name, callback });
+  return () => undefined;
+}) }));
 vi.mock("@tauri-apps/plugin-deep-link", () => ({
-  getCurrent: vi.fn(async () => []), onOpenUrl: vi.fn(async () => () => undefined),
+  getCurrent: vi.fn(async () => []), onOpenUrl: vi.fn(async (callback) => {
+    host.openUrls.push(callback);
+    return () => undefined;
+  }),
 }));
 vi.mock("@tauri-apps/api/app", () => ({ onBackButtonPress: vi.fn() }));
 
@@ -69,6 +76,8 @@ const requests = (operation: string) => host.invoke.mock.calls
 const sends = () => requests("message.enqueue_draft");
 
 beforeEach(() => {
+  host.openUrls.length = 0;
+  host.events.length = 0;
   snapshotsFail = false;
   current = {
     profile, contacts: [contact], messages: [], drafts: [], service_error: null,
@@ -85,6 +94,7 @@ beforeEach(() => {
   mutation = async (params) => ({ ...root, id: params.event_id, direction: "outbound", text: params.text, reply_count: 0 });
   host.invoke.mockImplementation(async (command: string, payload: Record<string, unknown> = {}) => {
     if (command === "initialize_service") return current;
+    if (command === "lock_service") return;
     if (command === "runtime_platform") return "desktop";
     if (command === "core_api_capabilities") return composerCapabilities;
     if (command === "core_api_peer_for_destination") return { profile: profileHandle, peer: "e".repeat(40), destination: contact.destination_hash };
@@ -134,6 +144,170 @@ afterEach(() => {
 });
 
 describe("Core application serialization", () => {
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((finish) => { resolve = finish; });
+    return { promise, resolve };
+  }
+
+  const nativeLocks = () => host.invoke.mock.calls.filter(([command]) => command === "lock_service");
+
+  it("ignores an old snapshot and its queued trailing refresh after lock and unlock", async () => {
+    render(<App />);
+    await screen.findByRole("textbox", { name: "Message Taylor" });
+    const stale = deferred<Snapshot>();
+    const original = host.invoke.getMockImplementation()!;
+    let delay = true;
+    host.invoke.mockImplementation(async (command, payload) => command === "core_api_request"
+      && payload.operation === "application.snapshot" && delay ? stale.promise : original(command, payload));
+    const count = requests("application.snapshot").length;
+    await act(async () => { window.dispatchEvent(new Event("focus")); });
+    await waitFor(() => expect(requests("application.snapshot")).toHaveLength(count + 1));
+    // The service event queues a trailing snapshot behind the stalled one.
+    act(() => host.events.filter(({ name }) => name === "mesh-chat://service-event")
+      .forEach(({ callback }) => callback({ payload: { event: "profile_changed" } })));
+    fireEvent.click(screen.getByRole("button", { name: "Lock Mesh Chat" }));
+    expect(screen.queryByRole("textbox", { name: "Message Taylor" })).toBeNull();
+    await screen.findByRole("heading", { name: "Mesh Chat is locked" });
+    delay = false;
+    current = { ...current, profile: { ...profile, display_name: "Blair", destination_hash: "99".repeat(16) },
+      contacts: [{ ...contact, display_name: "Morgan" }] };
+    fireEvent.click(screen.getByRole("button", { name: "Unlock" }));
+    await screen.findByRole("textbox", { name: "Message Morgan" });
+    const snapshots = requests("application.snapshot").length;
+    await act(async () => stale.resolve({ ...current, profile, contacts: [contact] }));
+    expect(screen.queryByRole("textbox", { name: "Message Taylor" })).toBeNull();
+    expect(screen.getByRole("textbox", { name: "Message Morgan" })).toBeTruthy();
+    expect(requests("application.snapshot")).toHaveLength(snapshots);
+  });
+
+  it("flushes one exact draft update before native lock and never saves again on unmount", async () => {
+    const composer = await composeDirect("Final unsaved draft");
+    const saved = deferred<unknown>();
+    const original = directComposer.request.bind(directComposer);
+    vi.spyOn(directComposer, "request").mockImplementation(async (...args) => {
+      const result = await original(...args);
+      return args[0] === "peer.composer_update" ? saved.promise.then(() => result) : result;
+    });
+    const key = directComposer.snapshot().update_key;
+    fireEvent.click(screen.getByRole("button", { name: "Lock Mesh Chat" }));
+    expect(composer.isConnected).toBe(false);
+    await waitFor(() => expect(requests("peer.composer_update")).toHaveLength(1));
+    expect(nativeLocks()).toHaveLength(0);
+    expect(requests("peer.composer_update")[0]).toEqual({ operation: "peer.composer_update", params: {
+      profile: profileHandle, peer: "e".repeat(40), expected_revision: null, text: "Final unsaved draft",
+    }, idempotencyKey: key });
+    await act(async () => saved.resolve(undefined));
+    await screen.findByRole("heading", { name: "Mesh Chat is locked" });
+    expect(nativeLocks()).toHaveLength(1);
+    await act(async () => { window.dispatchEvent(new Event("focus")); });
+    expect(requests("peer.composer_update")).toHaveLength(1);
+    expect(sends()).toHaveLength(0);
+  });
+
+  it("locks despite a never resolving draft reply and blocks late enqueue after reopening", async () => {
+    await composeDirect("Pending save before send");
+    const reply = deferred<unknown>();
+    const original = directComposer.request.bind(directComposer);
+    vi.spyOn(directComposer, "request").mockImplementation(async (...args) => {
+      const result = await original(...args);
+      return args[0] === "peer.composer_update" ? reply.promise.then(() => result) : result;
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(requests("peer.composer_update")).toHaveLength(1));
+    fireEvent.click(screen.getByRole("button", { name: "Lock Mesh Chat" }));
+    expect(screen.queryByRole("textbox", { name: "Message Taylor" })).toBeNull();
+    await screen.findByRole("heading", { name: "Mesh Chat is locked" }, { timeout: 2000 });
+    expect(nativeLocks()).toHaveLength(1);
+    expect(screen.getByRole("status").textContent).toContain("did not finish");
+    fireEvent.click(screen.getByRole("button", { name: "Unlock" }));
+    await screen.findByRole("textbox", { name: "Message Taylor" });
+    await act(async () => reply.resolve(undefined));
+    expect(sends()).toHaveLength(0);
+    expect(requests("peer.composer_update")).toHaveLength(1);
+  });
+
+  it.each([
+    new Error("service_write_failed"),
+    JSON.stringify({ code: "unavailable", outcome: "unknown", retry_after_ms: null }),
+  ])("keeps profile content hidden and offers retry when native lock rejects with %s", async (failure) => {
+    render(<App />);
+    await screen.findByRole("button", { name: "Lock Mesh Chat" });
+    const original = host.invoke.getMockImplementation()!;
+    // Lock is asynchronous behind the retirement barrier.
+    host.invoke.mockImplementation(async (command, payload) => {
+      if (command === "lock_service") throw failure;
+      return original(command, payload);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Lock Mesh Chat" }));
+    await screen.findByRole("heading", { name: "Lock not confirmed" });
+    expect(screen.queryByText("The messaging service is stopped and its keys have been released.")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Unlock" })).toBeNull();
+    host.invoke.mockImplementation(original);
+    fireEvent.click(screen.getByRole("button", { name: "Retry lock" }));
+    await screen.findByRole("heading", { name: "Mesh Chat is locked" });
+    expect(nativeLocks()).toHaveLength(2);
+  });
+
+  it("ignores a prior lifetime's workspace snapshot after reopening the same profile", async () => {
+    render(<App />);
+    await screen.findByRole("textbox", { name: "Message Taylor" });
+    const stale = deferred<unknown>();
+    const original = host.invoke.getMockImplementation()!;
+    host.invoke.mockImplementation(async (command, payload) => command === "core_api_request"
+      && payload.operation === "workspace.snapshot" ? stale.promise : original(command, payload));
+    act(() => host.events.filter(({ name }) => name === "mesh-chat://service-event")
+      .forEach(({ callback }) => callback({ payload: { event: "workspace_changed", workspace_id: workspace.id } })));
+    await waitFor(() => expect(requests("workspace.snapshot")).toHaveLength(1));
+    fireEvent.click(screen.getByRole("button", { name: "Lock Mesh Chat" }));
+    await screen.findByRole("heading", { name: "Mesh Chat is locked" });
+    fireEvent.click(screen.getByRole("button", { name: "Unlock" }));
+    await screen.findByRole("textbox", { name: "Message Taylor" });
+    await act(async () => stale.resolve({ workspaces: [workspace], workspace_channels: [channel] }));
+    expect(screen.queryByText("Lakewatcher")).toBeNull();
+  });
+
+  it("does not publish or refresh for an old notification result after bounded lock and reopen", async () => {
+    render(<App />);
+    await screen.findByRole("textbox", { name: "Message Taylor" });
+    const stale = deferred<unknown>();
+    const original = host.invoke.getMockImplementation()!;
+    host.invoke.mockImplementation(async (command, payload) => command === "core_api_request"
+      && payload.operation === "runtime.mutate" ? stale.promise : original(command, payload));
+    act(() => host.openUrls.forEach((accept) => accept([`meshchat://notification/${"a".repeat(64)}`])));
+    await waitFor(() => expect(requests("runtime.mutate")).toHaveLength(1));
+    fireEvent.click(screen.getByRole("button", { name: "Lock Mesh Chat" }));
+    expect(nativeLocks()).toHaveLength(0);
+    await screen.findByRole("heading", { name: "Mesh Chat is locked" }, { timeout: 2000 });
+    fireEvent.click(screen.getByRole("button", { name: "Unlock" }));
+    await screen.findByRole("textbox", { name: "Message Taylor" });
+    const count = requests("application.snapshot").length;
+    await act(async () => stale.resolve({ result: { available: false, message: "Old profile notification" } }));
+    expect(screen.queryByText("Old profile notification")).toBeNull();
+    expect(requests("application.snapshot")).toHaveLength(count);
+    expect(requests("runtime.mutate")).toHaveLength(1);
+  });
+
+  it("does not admit a notification mutation when its profile lookup finishes after lock and reopen", async () => {
+    render(<App />);
+    await screen.findByRole("textbox", { name: "Message Taylor" });
+    const stale = deferred<unknown>();
+    const original = host.invoke.getMockImplementation()!;
+    let delaying = true;
+    host.invoke.mockImplementation(async (command, payload) => command === "core_api_profile" && delaying
+      ? stale.promise : original(command, payload));
+    const before = host.invoke.mock.calls.filter(([command]) => command === "core_api_profile").length;
+    act(() => host.openUrls.forEach((accept) => accept([`meshchat://notification/${"b".repeat(64)}`])));
+    await waitFor(() => expect(host.invoke.mock.calls.filter(([command]) => command === "core_api_profile")).toHaveLength(before + 1));
+    fireEvent.click(screen.getByRole("button", { name: "Lock Mesh Chat" }));
+    await screen.findByRole("heading", { name: "Mesh Chat is locked" });
+    delaying = false;
+    fireEvent.click(screen.getByRole("button", { name: "Unlock" }));
+    await screen.findByRole("textbox", { name: "Message Taylor" });
+    await act(async () => stale.resolve({ profile: profileHandle }));
+    expect(requests("runtime.mutate")).toHaveLength(0);
+  });
+
   it("uses a keyed Core mutation for explicit remote propagation approval", async () => {
     current = { ...current, remote_profiles: [{
       id: "remote-access-id", label: "Field access", origin: "manual", expires_at: 2_000_000_000,

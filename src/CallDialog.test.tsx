@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 const host = vi.hoisted(() => ({ invoke: vi.fn() }));
@@ -10,6 +10,7 @@ vi.mock("@tauri-apps/api/app", () => ({ onBackButtonPress: vi.fn() }));
 import { CallDialog } from "./CallDialog";
 import { CallRecoveryNotice } from "./CallRecoveryNotice";
 import { callRecovery } from "./call-operation";
+import { ProfileLifetime, ProfileLifetimeContext } from "./profile-lifetime";
 import type { CallSummary } from "./types";
 
 const sdp = "v=0\r\na=fingerprint:sha-256 AA:BB\r\na=candidate:1 1 udp 1 192.0.2.1 1234 typ host\r\n";
@@ -96,6 +97,41 @@ function open() {
   fireEvent.click(screen.getByRole("button", { name: "Audio call" }));
   return { ...view, closed };
 }
+
+it("stops media synchronously and drains an admitted start and exact cleanup before retirement", async () => {
+  const lifetime = new ProfileLifetime();
+  let release!: () => void;
+  delayStart = () => new Promise<void>((resolve) => { release = resolve; });
+  render(<ProfileLifetimeContext.Provider value={lifetime}><CallDialog contact={{ id: "contact", display_name: "Taylor" }}
+    onClose={() => undefined} onChanged={async () => undefined} /></ProfileLifetimeContext.Provider>);
+  fireEvent.click(screen.getByRole("button", { name: "Audio call" }));
+  await waitFor(() => expect(calls).toBe(1));
+  let retirement!: ReturnType<ProfileLifetime["retire"]>;
+  act(() => { retirement = lifetime.retire(); });
+  expect(stop).toHaveBeenCalled();
+  expect(Peer.instances[0].close).toHaveBeenCalled();
+  await act(async () => { release(); await retirement; });
+  await expect(retirement).resolves.toBe("drained");
+  expect(mutations().map(({ params }) => params.action)).toEqual(["start", "start", "end"]);
+  expect(mutations()[1]).toEqual(mutations()[0]);
+  expect(capture).toHaveBeenCalledTimes(1);
+  expect(callRecovery.getSnapshot()).toHaveLength(0);
+});
+
+it("stops capture returned after retirement without starting a call", async () => {
+  const lifetime = new ProfileLifetime();
+  let release!: (value: unknown) => void;
+  capture.mockImplementation(() => new Promise((resolve) => { release = resolve; }));
+  render(<ProfileLifetimeContext.Provider value={lifetime}><CallDialog contact={{ id: "contact", display_name: "Taylor" }}
+    onClose={() => undefined} onChanged={async () => undefined} /></ProfileLifetimeContext.Provider>);
+  fireEvent.click(screen.getByRole("button", { name: "Audio call" }));
+  await waitFor(() => expect(capture).toHaveBeenCalledOnce());
+  await act(async () => { await lifetime.retire(); });
+  await act(async () => release({ getTracks: () => [{ kind: "audio", stop }] }));
+  expect(stop).toHaveBeenCalled();
+  expect(mutations()).toEqual([]);
+  expect(Peer.instances).toHaveLength(0);
+});
 
 it("resolves a committed start with the same ticket and original SDP without recapturing media", async () => {
   open();
