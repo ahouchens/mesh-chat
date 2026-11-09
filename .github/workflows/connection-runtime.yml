@@ -17,6 +17,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - uses: pnpm/setup@v3
         with:
           version: 11.25.0
@@ -64,6 +66,7 @@ jobs:
           name: core-sdk-policy-${{ github.sha }}
           path: |
             dist/sdk/**
+            dist/sdk-upgrade/**
             dist/reports/core-sdk-distribution-staging.json
           if-no-files-found: error
 
