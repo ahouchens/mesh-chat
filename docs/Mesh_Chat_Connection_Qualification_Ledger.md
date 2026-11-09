@@ -2,6 +2,35 @@
 
 ## Integration revalidation (2026-11-09)
 
+### Wave 2 interim CI and packaging repairs
+
+Full workflow `42665862417` targets source
+`dcac85ef30a0ff60f51d7862ad03c3fe692b0299`, tree
+`5271a0f95e3f33d20a99cb23ac0a2363d46dede5`. The lead independently reconstructed
+the retained policy report using that source's validators: 2,871 collected,
+executed and passed, zero failures or skips, qualification ID
+`517aba734b0f4586bb04929837e5688f`. This is simulated/in-process evidence.
+The workflow is not accepted: Windows failed frozen-material verification;
+broad verification passed 4,075 tests but failed one stale frontend history
+assertion (51 environment-specific skips); Android instrumentation compilation
+could not resolve its transitive Binder SDK dependency. Direct jobs were still
+running when this checkpoint was recorded.
+
+Read-only inspection of the retained Windows executable confirmed SHA-256
+`1b9d37786c8c626fcd28c4d9e8021480c95e63c9c070255798a87fe4927df8b2` and identified
+the declaration basename mismatch and repository CRLF/LF inconsistency. Worker D
+also checked 34 notice/metadata files across 17 distributions, 161 DLL/PYD files,
+all 36 PyAV wheel DLL hashes, and required PYZ modules. This diagnosis neither
+runs the executable nor qualifies repaired source. The lead retained the archive
+hash index and build manifest, then removed its temporary executable copy.
+
+Source `67ff95bd346771e1a6d62205a5ecb612c0da6a39` integrates basename and canonical
+repository-byte repairs plus prepared reaction/invitation hooks. The lead ran
+225 focused domain, legacy behavior, archive and aggregate cases: all passed,
+zero skips, 12.30 seconds. Invitation preparation does not itself establish atomic
+personal adoption/workspace join; parent integration remains required. Runtime
+profile host binding and actual Windows–Android topology remain pending.
+
 ### Wave 2 combined policy and upgrade checkpoint
 
 Source `538ba22692657c8af557e0095dd27dc1d23541e9` passes the complete required

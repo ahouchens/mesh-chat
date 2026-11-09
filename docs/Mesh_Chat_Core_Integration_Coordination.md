@@ -43,6 +43,15 @@ drivers; 37 focused cases pass. Concrete pairing composition, private profile
 host admission, remaining mutation-key extensions and actual topology execution
 remain active. Only Wave 1 has complete accepted packaged CI evidence.
 
+Interim CI `42665862417` at `dcac85e` passed the independently reconstructed
+2,871-case policy gate, but exposed Windows archive verification, Android test
+dependency and stale frontend history assertion failures. B owns the narrow
+`service/tests/test_frontend_layout.py` correction; D coordinates the Android
+instrumentation repair with C's Gradle ownership. Archive repairs and B's pure
+reaction/invitation hooks are integrated at `67ff95b` (225 focused passes, no
+skips). A's runtime profile host remains under review for persisted-selection
+versus active-vault authority. No new packaged acceptance is claimed.
+
 ## Active Wave 2 handoff
 
 All workers merge the current lead branch before edits. Source `174728e` is the
