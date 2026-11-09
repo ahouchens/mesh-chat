@@ -276,7 +276,7 @@ def collect(directory: Path, source: str, tree: str, required):
             name = "native_interop_" + role
             reports[name] = paths[role]
             suites.append(suite_record("native_" + role + "_peer", NATIVE_INTEROP_LEVEL, source, tree,
-                report=name, checks=108, artifacts=peer["artifacts"], cleanup=peer["execution"]["cleanup"]))
+                report=name, checks=109, artifacts=peer["artifacts"], cleanup=peer["execution"]["cleanup"]))
         summary["native_interop"] = {"receipt_iterations_per_role": 100, "periodic_cold_starts_per_role": 10,
                                      "selected_paths": ["direct", "turn_udp", "turn_tcp", "turn_tls"],
                                      "impairment": "Linux kernel netem plus counted selected-socket block controls"}

@@ -37,9 +37,10 @@ def interop_reports(source="a" * 40, tree="b" * 40, android_artifacts=None):
     for role in ("windows", "android"):
         cases, iterations = [], []
         identity = evidence.digest([role, "identity"])
-        for name in evidence.SCENARIOS[:5]:
-            before = selection(name, role, role + "initial", name, 0, 1)
-            after = selection(name, role, role + "initial", name, 1, 2)
+        for name, initiator in evidence.PATH_CASES:
+            case_id = name + ":" + initiator
+            before = selection(case_id, role, role + "initial", name, 0, 1)
+            after = selection(case_id, role, role + "initial", name, 1, 2)
             negative = None
             if name in {"turn_tcp", "turn_tls", "impaired"}:
                 negative = {"blocked_packets": 2 if role == "android" else None, "delivered_while_blocked": False,
@@ -52,9 +53,11 @@ def interop_reports(source="a" * 40, tree="b" * 40, android_artifacts=None):
                     "jitter_ms_each_way": 10, "loss_percent_each_way": 0.1, "added_nominal_rtt_ms": 150,
                     "socket_correlation": "unique_own_pid_socket_and_kernel_flow", "loss_observed": False,
                     "counters": {direction: {"bytes": 1000, "packets": 10, "dropped": 0} for direction in ("egress", "ingress")}}
-            cases.append({"scenario": name, "before": before, "after": after,
+            cases.append({"scenario": name, "initiator": initiator, "supervisor_pairing": {
+                "operation": evidence.digest([role, case_id, "operation"]), "role": "offer" if role == initiator else "answer",
+                "state": "transferred", "transferred_cancel_preserves_carrier": True}, "before": before, "after": after,
                 "native_delta": {name: 1 for name in evidence.APPLICATION},
-                "messages": [message(f"{name}:{index}", role) for index in range(20 if name == "impaired" else 1)],
+                "messages": [message(f"{case_id}:{index}", role) for index in range(20 if name == "impaired" else 1)],
                 "impairment": impairment, "negative": negative, "retired_host_accounting": counts()})
         for index in range(100):
             generation = index // 10 + 1
@@ -88,12 +91,12 @@ def test_complete_two_role_fixture_is_accepted_only_with_cross_matching_actual_m
 @pytest.mark.parametrize("fault", ["source", "tree", "scope", "platform", "missing_case", "wrong_selected_protocol", "packet_delta",
     "no_receipt", "duplicate_message", "missing_negative", "block_no_packet", "delivered_under_block", "no_restore",
     "iteration_missing", "process_count", "cold_schedule", "old_service", "warm_growth", "native_lease_growth", "unknown_native_zero",
-    "unretired_native", "identity_changed", "cleanup", "raw_extra"])
+    "unretired_native", "identity_changed", "cleanup", "wrong_initiator", "manual_pairing", "cancel_reclaimed", "raw_extra"])
 def test_native_matrix_rejects_partial_or_unexecuted_required_evidence(role, fault):
     reports = interop_reports()
     value = reports[0 if role == "windows" else 1]
     execution = value["execution"]
-    case = execution["scenarios"][2]
+    case = next(case for case in execution["scenarios"] if case["scenario"] == "turn_tcp")
     if fault == "source": value["source_commit"] = "c" * 40
     elif fault == "tree": value["source_tree"] = "c" * 40
     elif fault == "scope": value["scope"] = "physical full native and media qualification"
@@ -118,6 +121,9 @@ def test_native_matrix_rejects_partial_or_unexecuted_required_evidence(role, fau
         execution["scenarios"][0]["retired_host_accounting"].update(reserved_count=1, allocated_count=1, retiring_count=1)
     elif fault == "identity_changed": execution["receipt_iterations"][-1]["identity"] = "f" * 64
     elif fault == "cleanup": execution["cleanup"] = "unavailable"
+    elif fault == "wrong_initiator": case["initiator"] = "android"
+    elif fault == "manual_pairing": case["supervisor_pairing"]["role"] = "manual"
+    elif fault == "cancel_reclaimed": case["supervisor_pairing"]["transferred_cancel_preserves_carrier"] = False
     else: case["after"]["raw_sdp"] = "secret"
     with pytest.raises(ValueError): evidence.verify_pair(*reports, "a" * 40, "b" * 40)
 
@@ -129,7 +135,7 @@ def test_pair_cannot_mix_runs_peers_or_impairment_profiles(fault):
     elif fault == "attempt": android["context"]["run_attempt"] += 1
     elif fault == "same_identity": android["execution"]["identity"] = windows["execution"]["identity"]
     elif fault == "other_message": android["execution"]["scenarios"][0]["messages"][0]["inbound"] = "f" * 64
-    elif fault == "other_negative": android["execution"]["scenarios"][2]["negative"]["inbound"] = "f" * 64
+    elif fault == "other_negative": next(case for case in android["execution"]["scenarios"] if case["scenario"] == "turn_tcp")["negative"]["inbound"] = "f" * 64
     elif fault == "other_iteration": android["execution"]["receipt_iterations"][-1]["message"]["inbound"] = "f" * 64
     elif fault == "loss_profile": android["execution"]["scenarios"][-1]["impairment"]["loss_percent_each_way"] = 1
     elif fault == "fake_loss": android["execution"]["scenarios"][-1]["impairment"]["loss_observed"] = True
@@ -177,3 +183,12 @@ def test_workflow_keeps_two_actual_concurrent_platform_jobs_and_owned_emulator_l
         assert any(step.get("if") == "always()" and step.get("uses", "").startswith("actions/upload-artifact@") for step in job["steps"])
     assert not any(step.get("uses", "").startswith("reactivecircus/") for step in android["steps"])
     assert any("system-images;android-35;google_apis;x86_64" in step.get("run", "") for step in android["steps"])
+
+
+def test_controller_uses_supervisor_pairing_and_both_direct_initiators():
+    source = Path(controller.__file__).read_text()
+    assert all(name in source for name in ("pairing_begin", "pairing_status", "pairing_cancel"))
+    assert all(name not in source for name in ("native_webrtc_offer", "native_webrtc_accept",
+        "native_webrtc_bind_onboarding", "native_webrtc_apply_answer", "signal_publish", "signal_fetch"))
+    assert [(name, role) for name, role in evidence.PATH_CASES if name == "direct"] == [
+        ("direct", "windows"), ("direct", "android")]

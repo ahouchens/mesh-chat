@@ -107,9 +107,12 @@ and [artifact REST provenance/digest fields](https://docs.github.com/en/rest/act
 
 The Node Action owns its KVM emulator for the whole controller lifetime. Both
 roles rehash the exact retained producer artifacts before starting product
-hosts. Initial contact approval follows signed native onboarding over the
-production encrypted mailbox. Each role requires direct and selected TURN
-UDP/TCP/TLS receipts, then 100 receipt iterations with a same-vault process
+hosts. The trusted private pairing port delegates native offer/answer creation,
+signing, mailbox polling and custody transfer to the production supervisor.
+Controllers supply explicit Core contact decisions and disclosure consent.
+Direct paths run with both Windows and Android initiating; TURN UDP/TCP/TLS and
+impairment paths run with Windows initiating. Both platforms exchange messages
+and receipts in every case, then run 100 receipt iterations with a same-vault process
 restart every ten iterations. Native allocation accounting must be complete;
 unavailable disposal counts cannot stand in for zero leases. Every path retires
 its exact native reservations, and the soak compares actual allocations with
