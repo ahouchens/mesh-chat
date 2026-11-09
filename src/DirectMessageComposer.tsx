@@ -21,13 +21,14 @@ export function DirectMessageComposer(props: Props) {
   const [reload, setReload] = useState(0);
   useEffect(() => {
     let active = true;
+    let controller: DirectComposerController | null = null;
     if (lifetime && !lifetime.active) return;
     const generation = lifetime?.capture();
     setResource(null);
     setError("");
     void openCoreComposer(props.destination).then(async ({ port, textUtf8Bytes }) => {
       if (!active || (lifetime && !lifetime.isCurrent(generation!))) return;
-      const controller = new DirectComposerController(lifetime ? {
+      controller = new DirectComposerController(lifetime ? {
         query: (...args) => lifetime.isCurrent(generation!) ? port.query(...args) : Promise.reject(new ProfileRetiredError()),
         update: (...args) => lifetime.mutate(generation!, () => port.update(...args)),
         updateForRetirement: (...args) => lifetime.mutate(generation!, () => port.update(...args), true),
@@ -43,7 +44,10 @@ export function DirectMessageComposer(props: Props) {
           : code === "locked" ? "Unlock your profile before loading this draft."
             : "The saved draft is unavailable. Reload it before sending.");
     });
-    return () => { active = false; };
+    return () => {
+      active = false;
+      if (!lifetime || lifetime.active) void controller?.freezeAndFlush();
+    };
   }, [props.destination, reload, lifetime]);
 
   if (!resource) return <div className="composer" aria-busy={!error}>
@@ -80,10 +84,6 @@ export function SavedMessageComposer({ controller, textUtf8Bytes, kind = "direct
     return () => window.clearTimeout(timer);
   }, [controller, view.canSave, view.text, tooLarge]);
 
-  useEffect(() => () => {
-    if ((!lifetime || lifetime.active) && controller.getSnapshot().canSave) void controller.save();
-  }, [controller, lifetime]);
-
   useEffect(() => {
     if (!lifetime || !lifetime.active) return;
     return lifetime.register(lifetime.capture(), async () => {
@@ -98,7 +98,7 @@ export function SavedMessageComposer({ controller, textUtf8Bytes, kind = "direct
   }, [props.onSendingChange, view.phase]);
 
   useEffect(() => {
-    if (view.saved?.status !== "accepted" || acceptedRevision.current === view.saved.revision) return;
+    if (!mounted.current || view.saved?.status !== "accepted" || acceptedRevision.current === view.saved.revision) return;
     acceptedRevision.current = view.saved.revision;
     const revision = view.saved.revision;
     setRefreshError("");

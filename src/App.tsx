@@ -2724,6 +2724,7 @@ function GroupConversation({
   onSend,
   onAccepted,
   onSendingChange,
+  isPostingAllowed,
   onDetailsOpenChange,
   onToggleReactionPicker,
   onReactionCatalogOpenChange,
@@ -2755,6 +2756,7 @@ function GroupConversation({
   onSend: () => void;
   onAccepted: () => Promise<unknown>;
   onSendingChange: (sending: boolean) => void;
+  isPostingAllowed: () => boolean;
   onDetailsOpenChange: (open: boolean) => void;
   onToggleReactionPicker: (messageId: string) => void;
   onReactionCatalogOpenChange: (messageId: string, open: boolean) => void;
@@ -2824,7 +2826,7 @@ function GroupConversation({
         ))}
       </div>
       {canPost ? (
-        <GroupMessageComposer key={group.core_handle ?? group.id} group={group.core_handle ?? ""} displayName={group.title} onAccepted={onAccepted} onSendingChange={onSendingChange} legacyComposer={<>
+        <GroupMessageComposer key={group.core_handle ?? group.id} group={group.core_handle ?? ""} displayName={group.title} onAccepted={onAccepted} onSendingChange={onSendingChange} isPostingAllowed={isPostingAllowed} legacyComposer={<>
         {retrying && <details className="composer-saved" role="status"><summary>Previous group send is not confirmed. View original text</summary><textarea readOnly aria-label="Previous group send text" value={pendingText ?? ""} /></details>}
         <form className="composer" aria-busy={sending} onSubmit={(event) => { event.preventDefault(); onSend(); }}>
           {sendError && <p className="composer__error" role="alert">{sendError}</p>}
@@ -4255,6 +4257,8 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
   ) => coreApiTimelineMutation(workspace.core_handle ?? "", action, params,
     operationId ?? newOperationId(), admitMutation), [admitMutation]);
   const groups = snapshot.groups ?? [];
+  const currentGroups = useRef(groups);
+  currentGroups.current = groups;
   const groupMessages = snapshot.group_messages ?? [];
   const groupInvitations = snapshot.group_invitations ?? [];
   const workspaces = snapshot.workspaces ?? [];
@@ -6780,6 +6784,10 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
             onSend={() => void sendGroupMessage()}
             onAccepted={() => refresh(true)}
             onSendingChange={setGroupSendBusy}
+            isPostingAllowed={() => {
+              const current = currentGroups.current.find((item) => item.id === selectedGroup.id);
+              return Boolean(current && groupComposerState(current, snapshot.profile?.destination_hash ?? "").canPost);
+            }}
             onBack={() => selectConversation(null)}
             onDelete={() => { setDeleteError(""); setDeleteTarget({ kind: "group", id: selectedGroup.id }); }}
             onRemove={(destinationHash) => void runGroupAction("remove_group_member", { group_id: selectedGroup.id, destination_hash: destinationHash })}

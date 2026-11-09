@@ -126,7 +126,9 @@ object MeshCoreRuntime {
                 }
                 NativeProtectedKeyStore.load("mesh-core-runtime-profile-key-v1", keys, "profile-key")
             }, loadCatalogKey = {
-                NativeProtectedKeyStore.load("mesh-core-runtime-catalog-key-v1", keys, "catalog-key")
+                NativeProfileKeyPolicy.catalog(profile, { keys.contains("catalog-key") }) {
+                    NativeProtectedKeyStore.load("mesh-core-runtime-catalog-key-v1", keys, "catalog-key")
+                }
             }, authorization = gate, beforeOpen = { NativeWebRtcBridge.attach(app) })
             .also { provider = it }
         try {

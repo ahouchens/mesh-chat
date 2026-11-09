@@ -1,6 +1,17 @@
 package com.meshchat.runtime
 
 import android.util.Base64
+import java.io.File
+
+/** Existing encrypted metadata never authorizes replacement key creation. */
+internal object NativeProfileKeyPolicy {
+    fun catalog(profile: File, hasKey: () -> Boolean, load: () -> ByteArray): ByteArray {
+        val catalog = profile.parentFile!!.resolve("host-v1/mesh-chat.vault")
+        check(!profile.resolve("mesh-chat.vault").exists() || catalog.exists()) { "native_key_unavailable" }
+        check(!catalog.exists() || hasKey()) { "native_key_unavailable" }
+        return load()
+    }
+}
 
 /** One current native device-credential confirmation; no renderer facts grant it. */
 class NativeProfileAuthorization(private val now: () -> Long = { System.nanoTime() / 1_000_000 }) {

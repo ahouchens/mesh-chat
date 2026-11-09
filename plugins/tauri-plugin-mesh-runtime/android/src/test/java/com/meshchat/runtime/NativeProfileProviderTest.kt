@@ -7,6 +7,60 @@ class NativeProfileProviderTest {
     private val first = "a".repeat(32)
     private val second = "b".repeat(32)
 
+    @Test fun catalogPolicyRefusesReplacementBeforeCallingTheKeyLoader() {
+        val root = java.nio.file.Files.createTempDirectory("mesh-catalog-policy").toFile()
+        try {
+            val profile = root.resolve("profile-v1")
+            val catalog = root.resolve("host-v1/mesh-chat.vault")
+            catalog.parentFile!!.mkdirs()
+            catalog.writeBytes(byteArrayOf(1))
+            val error = assertThrows(IllegalStateException::class.java) {
+                NativeProfileKeyPolicy.catalog(profile, { false }) { error("Key loader must not run") }
+            }
+            assertEquals("native_key_unavailable", error.message)
+            val existing = ByteArray(32) { 7 }
+            assertSame(existing, NativeProfileKeyPolicy.catalog(profile, { true }) { existing })
+            assertArrayEquals(byteArrayOf(1), catalog.readBytes())
+        } finally { root.deleteRecursively() }
+    }
+
+    @Test fun profileWithoutItsCatalogCannotCreateANewMetadataAuthority() {
+        val root = java.nio.file.Files.createTempDirectory("mesh-catalog-policy").toFile()
+        try {
+            val profile = root.resolve("profile-v1")
+            profile.mkdirs()
+            profile.resolve("mesh-chat.vault").writeBytes(byteArrayOf(1))
+            assertThrows(IllegalStateException::class.java) {
+                NativeProfileKeyPolicy.catalog(profile, { true }) { error("Key loader must not run") }
+            }
+        } finally { root.deleteRecursively() }
+    }
+
+    @Test fun onlyAnEmptyNamespaceCanCreateItsFirstCatalogKey() {
+        val root = java.nio.file.Files.createTempDirectory("mesh-catalog-policy").toFile()
+        try {
+            val fresh = ByteArray(32)
+            assertSame(fresh, NativeProfileKeyPolicy.catalog(root.resolve("profile-v1"), { false }) { fresh })
+        } finally { root.deleteRecursively() }
+    }
+
+    @Test fun failedCatalogKeyDoesNotReadOrOpenTheProfile() {
+        val failure = IllegalStateException("native_key_unavailable")
+        val provider = NativeProfileProvider("fixed-path", "app.owner",
+            { error("Must not read the profile key") }, { throw failure }, NativeProfileAuthorization(),
+            beforeOpen = { error("Must not open the profile") })
+        assertSame(failure, assertThrows(IllegalStateException::class.java) { provider.catalogKey() })
+    }
+
+    @Test fun malformedCatalogKeyIsClearedWithoutOpeningTheProfile() {
+        val malformed = ByteArray(16) { 7 }
+        val provider = NativeProfileProvider("fixed-path", "app.owner",
+            { error("Must not read the profile key") }, { malformed }, NativeProfileAuthorization(),
+            beforeOpen = { error("Must not open the profile") }, encodeKey = { error("Must not encode it") })
+        assertThrows(IllegalStateException::class.java) { provider.catalogKey() }
+        assertTrue(malformed.all { it == 0.toByte() })
+    }
+
     @Test fun unverifiedOrDifferentChallengeCannotIssueAuthorization() {
         val gate = NativeProfileAuthorization()
         assertTrue(gate.begin(first))

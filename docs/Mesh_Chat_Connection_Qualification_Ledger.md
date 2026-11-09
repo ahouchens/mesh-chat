@@ -2,6 +2,34 @@
 
 ## Integration revalidation (2026-11-09)
 
+### Atomic group integration and completed profile CI
+
+Lead source `02f83b8` includes A's atomic group producer `76ed4fb`, its additional
+expiry/target controls `306feb3`, B's gated UI `86366d0` and D's explicit
+relay-only Windows producer correction `2cf3f41` (applied as `b156300`). At
+`5f9f614`, exact SDK staging passes, then **275 producer/contract/installed-SDK
+cases**, **41 UI/controller cases**, **51 TypeScript SDK cases** and strict
+model/reducer typing pass. Relay consumer/matrix checks separately pass 159
+cases, no skips, in 13.09s. The exact boundary at `02f83b8` is **not passing**:
+663 Python pass and one fails the missing group-operation vector inventory;
+nine rendered cases pass and one fails the old group-send retry fixture.
+D owns these independent test repairs. B owns a queued-send-after-navigation
+correction discovered in follow-up review. No complete group acceptance yet.
+
+Profile CI `42693457737` has finished failed. Both controlled direct platforms
+independently validate 25 fabric, ten recovery and 12 setup passes with no skips.
+Linux artifact `13710340526` archive SHA-256:
+`5248d706fe58efd37f0d45e8cae232f36cb526c7b14129f09a2e50f9957612be`;
+Windows `13708739825`:
+`b618aac9c476bcc683c6882373e5287c7b237e48d4649c4cdc2af2a26bacfdf5`.
+The verification artifact `13709365916`, SHA-256
+`037c8c37187968daeab142d63c6f33ca5394888407078ad0af46b356c6120860`,
+independently validates all 664 Python and ten rendered boundary cases at
+`5ea2949`; its broader automated summary correctly remains failed. Validators
+and reports are retained under `.test-tmp/ci-evidence-5ea2949`. The direct
+archives retain reports, not native binaries; their binary digests remain
+runner assertions. These passes do not qualify later group source.
+
 ### Repairs after the profile checkpoint
 
 Run `42693457737` at `5ea2949` cannot pass. The lead independently validated
