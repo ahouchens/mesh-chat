@@ -359,6 +359,56 @@ def test_first_retirement_write_failure_still_fences_and_cleans_exact_resources(
     assert len(removed) == 1
 
 
+@pytest.mark.parametrize("completed", [False, True])
+def test_lost_retirement_and_cleanup_handle_after_reopen_still_holds_full_lease_capacity(hosts, monkeypatch, completed):
+    open_host, mappings, removed, _, _ = hosts
+    service = open_host()
+    intent = reserve(service)
+    access = service.materialize_participant_host_intent(intent["id"], intent["input_digest"])
+    if completed:
+        _, writes = completion(service, intent, access)
+        service.store.put_and_delete(writes, [])
+    persisted = service.store.get("participant_host_intent", intent["id"])
+    persisted["maximum_expires_at"] = int(time.time()) - 1
+    service.store.put("participant_host_intent", intent["id"], persisted)
+    original_put = service.store.put
+    original_cleanup = participant_service.remove_port_mapping
+
+    def failed_put(kind, identifier, value):
+        if kind == "participant_host_intent" and identifier == intent["id"]:
+            raise OSError("retirement writes unavailable")
+        return original_put(kind, identifier, value)
+
+    def failed_cleanup(value):
+        raise OSError("mapping cleanup unavailable")
+
+    monkeypatch.setattr(service.store, "put", failed_put)
+    monkeypatch.setattr(participant_service, "remove_port_mapping", failed_cleanup)
+    with pytest.raises(OSError, match="retirement writes"):
+        service.retire_participant_host_intent(intent["id"], intent["input_digest"])
+    assert service.store.get("participant_host", intent["host_session_id"]) is None
+    assert service.store.get("participant_host_intent", intent["id"]) == persisted
+    assert removed == [] and service.network.listeners == {}
+    service.close()
+    monkeypatch.setattr(service.store, "put", original_put)
+    monkeypatch.setattr(participant_service, "remove_port_mapping", original_cleanup)
+    reopened = open_host()
+    assert reopened.store.get("participant_host_intent", intent["id"]) == persisted
+    for _ in range(7):
+        reserve(reopened)
+    with pytest.raises(ValidationError, match="Too many participant host reservations"):
+        reserve(reopened)
+    with pytest.raises(ParticipantReservationUnavailable):
+        reopened.materialize_participant_host_intent(intent["id"], intent["input_digest"])
+    retired = reopened.store.get("participant_host_intent", intent["id"])
+    assert retired["state"] == "retired" and not retired.get("cleanup")
+    assert retired["uncertain_lease_until"] == persisted["maximum_expires_at"] + participant_service.DEFAULT_MAPPING_LIFETIME
+    with pytest.raises(ValidationError, match="Too many participant host reservations"):
+        reserve(reopened)
+    assert len(mappings) == 1 and removed == []
+    assert reopened.network.created == 0
+
+
 def test_full_private_history_capacity_recovers_without_freeing_active_or_uncertain_keys(hosts):
     open_host, mappings, _, _, _ = hosts
     service = open_host()
