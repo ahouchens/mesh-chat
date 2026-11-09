@@ -4,6 +4,7 @@ import uuid
 
 from ..errors import (ContactNotApproved, DirectConnectionUnavailable, InvitationExpired,
                       InvitationInvalid, ValidationError)
+from ..participant_service import ParticipantReservationCapacity, ParticipantReservationUnavailable
 from .errors import ApiFailure
 from .service_messages import storage_errors
 from .workspace_admin import (WorkspaceMetadata, WorkspaceRetention,ChannelEdit, ChannelSummary, DeviceLink, DeviceLinkPreview,
@@ -1217,13 +1218,19 @@ class ServiceWorkspaceAdmin:
                 if action == "preview":
                     return dict(self._service.preview_route_update(params["update"]))
                 if action == "apply":
-                    result = self._service.apply_route_update(params["update"])
+                    result = self._service.apply_route_update(params["update"], operation_id=operation_id)
                     return dict(result) if isinstance(result, dict) else {}
                 if action == "create":
                     result = self._service.create_route_update_command(
                         params["scope_kind"], params["scope_id"],
-                        params.get("peer_destination"))
+                        params.get("peer_destination"), operation_id=operation_id)
                     return dict(result)
+            except ParticipantReservationUnavailable as error:
+                raise ApiFailure("resync_required") from error
+            except ParticipantReservationCapacity as error:
+                raise ApiFailure("resource_exhausted") from error
+            except DirectConnectionUnavailable as error:
+                raise ApiFailure("unavailable") from error
             except (ValidationError, ValueError) as error:
                 raise ApiFailure("invalid_request") from error
             raise ApiFailure("invalid_request")
