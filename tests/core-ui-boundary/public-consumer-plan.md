@@ -1,6 +1,7 @@
 # Independent public consumer qualification proposal
 
-Status: design handoff for A/C review, not implemented or qualified. The private
+Status: direction accepted by lead with keyed cancellation and separate D-owned
+consumer directories; not implemented or qualified. The private
 Windows/Android topology controller remains a separate transport test.
 
 ## Observed gaps
@@ -29,7 +30,7 @@ Add a bounded public pairing intent family, backed by C's existing actor:
 | --- | --- | --- |
 | `peer.pairing_begin` | `profile`, `role: offer|answer`, optional `pairing_code` (answer only, 1..2048 UTF-8 bytes), optional `allow_direct_ip_disclosure` (boolean, default false); required caller envelope idempotency key | `profile`, caller/profile-scoped opaque `pairing` handle, `state`, `expires_at`, nullable `pairing_code`; requires current approve permission |
 | `peer.pairing_query` | `profile`, `pairing` | Same selected projection, including shareable code; current approve permission plus original caller/profile binding |
-| `peer.pairing_cancel` | `profile`, `pairing` | Same projection; approve permission; convergent cancellation of this exact intent |
+| `peer.pairing_cancel` | `profile`, `pairing`; required explicit caller envelope idempotency key | Same projection; approve permission; durable cancellation of this exact intent |
 
 Use actual actor states: reserved, offer_ready, awaiting_approval, transferred,
 retiring, retired. Offer codes are shareable admission material, not SDP. An
@@ -43,6 +44,10 @@ to the exact service incarnation and profile identity. Recheck authority on
 begin replay, query, cancel and each asynchronous effect. Preserve the existing
 actor's resync requirement after an interrupted runtime; do not invent an
 automatic fresh intent. Advertise only when the concrete native actor is bound.
+Bind cancellation's own caller key and input digest durably before returning
+success, and recheck current authority before replay. A cancellation key cannot
+be reused for another pairing target or the begin action. Replaying an accepted
+cancellation must not cancel a replacement intent or an adopted carrier.
 Document the actual 32-intent bound, one active onboarding intent, 300-second
 maximum expiry and byte limit. SDKs must require the advertised feature and
 limits, with no retries or replacement keys.
@@ -54,7 +59,7 @@ operation is needed. Disclosure consent remains explicit. Later reconnect uses
 the existing public connection intent and consent semantics.
 
 A file boundary: `contracts/core-api/operations-v1.json`,
-`contracts/core-api/request.schema.json`, `service/src/mesh_chat/core_api/requests.py`,
+`contracts/core-api/request-v1.schema.json`, `service/src/mesh_chat/core_api/requests.py`,
 `session.py`, `views.py`, `pairing.py`, `service_pairing.py`, `composition.py`,
 the relevant keyed-action/capability implementation, and thin helpers/types in
 `sdk/typescript/src/` and `sdk/kotlin/src/main/java/com/meshchat/runtime/core/`.
@@ -110,13 +115,26 @@ state and verify one durable message per logical identity. Repeat with swapped
 platform initiators, then add real restart/reopen, caller isolation and event
 recovery cases as separate declared inventories.
 
-D owns `examples/typescript-core-consumer/`, `examples/android-core-consumer/`,
-consumer packaging/orchestration scripts, native workflow wiring and strict
+D owns NEW `examples/typescript-independent-consumer/` and
+`examples/android-independent-consumer/`, consumer packaging/orchestration scripts,
+native workflow wiring and strict
 source/artifact/run evidence. Test infrastructure can terminate processes or
 impair networking externally, but cannot initialize product internals or supply
 private authority. Retain installed SDK/runtime/APK hashes and actual case
 identities. Missing supported bootstrap/pairing fails the required qualification;
 component archive/import/Binder checks never stand in for receipt traffic.
+
+Planned exact D files: `examples/typescript-independent-consumer/package.json`,
+`consumer.mjs`, `README.md`; `examples/android-independent-consumer/settings.gradle.kts`,
+`build.gradle.kts`, `gradle.properties`, `README.md`, `app/build.gradle.kts`,
+`app/src/main/AndroidManifest.xml`,
+`app/src/main/java/com/meshchat/core/independent/ConsumerApplication.kt`,
+`app/src/androidTest/java/com/meshchat/core/independent/IndependentConsumerTest.kt`;
+`scripts/stage_independent_core_consumers.py`,
+`scripts/verify_independent_core_consumers.py`, and
+`scripts/check_independent_core_consumers.py`. A retains the existing
+TypeScript/Python consumer examples. Existing Android Binder consumer remains
+unchanged as its separate cross-UID component inventory.
 
 This first traffic batch does not close physical qualification, a supported
 release/upgrade matrix, the full SC21–SC26 inventory, UI media or the separate
