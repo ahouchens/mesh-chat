@@ -70,6 +70,16 @@ def test_product_process_never_inherits_artifact_or_repository_bearers():
         "INPUT_ROLE": "windows", "PATH": "public", "SYSTEMROOT": "C:/Windows"}) == {"PATH": "public", "SYSTEMROOT": "C:/Windows"}
 
 
+def test_windows_peer_pipe_is_unique_and_accepted_by_the_actual_host_policy():
+    from mesh_chat.core_api.pipe_policy import pipe_name
+    first, second = peers.windows_pipe_name(), peers.windows_pipe_name()
+    assert first != second
+    assert pipe_name(first) == first and pipe_name(second) == second
+    assert first.startswith(r"\\.\pipe\mesh-chat-native-qualification-")
+    with pytest.raises(ValueError):
+        pipe_name(r"\\.\pipe\mesh-native-qualification-" + "a" * 32)
+
+
 @pytest.mark.parametrize("leaf", ["../existing", "absolute/path", "a" * 31, "g" * 32])
 def test_android_controller_cannot_choose_arbitrary_existing_profile_paths(leaf):
     with pytest.raises(peers.PeerFailure, match="invalid_profile_leaf"):
