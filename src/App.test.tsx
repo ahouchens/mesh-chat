@@ -31,7 +31,14 @@ const api = vi.hoisted(() => {
   coreApiCreateWorkspace: vi.fn(async (name: string, description: string, key: string): Promise<unknown> => serviceCommand("create_workspace", { operation_id: key, name, description })),
   coreApiCreateInvitation: vi.fn(async (payload: Record<string, unknown>): Promise<unknown> => serviceCommand("create_invitation", payload)),
   coreApiPeerForDestination: vi.fn(async (_destination: string): Promise<{ profile: string; peer: string; destination: string }> => { throw new Error("core_api_unavailable"); }),
-  coreApiRequest: vi.fn(async (_operation: string, _params?: Record<string, unknown>): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiProfile: vi.fn(async () => ({ profile: "presentation-profile" })),
+  coreApiRequest: vi.fn(async (operation: string, params?: Record<string, unknown>): Promise<unknown> => {
+    if (operation === "call.control" && params) {
+      const { profile: _profile, action, ...payload } = params;
+      return { result: await api.coreApiCallControl(String(action), payload) };
+    }
+    throw new Error("core_api_unavailable");
+  }),
   coreApiCallControl: vi.fn(async (action: string, params: Record<string, unknown>): Promise<unknown> => {
     const command = action === "start" ? "start_call"
       : action === "answer" ? "answer_call"
@@ -511,7 +518,13 @@ afterEach(async () => {
   api.coreApiAcceptInvitation.mockImplementation(async (invitation: string, i2pConsent = false) => api.serviceCommand("accept_invitation", { invitation, ...(i2pConsent ? { i2p_consent: true } : {}) }));
   api.coreApiCreateInvitation.mockImplementation(async (payload: Record<string, unknown>) => api.serviceCommand("create_invitation", payload));
   api.coreApiPeerForDestination.mockImplementation(async () => { throw new Error("core_api_unavailable"); });
-  api.coreApiRequest.mockImplementation(async () => { throw new Error("core_api_unavailable"); });
+  api.coreApiRequest.mockImplementation(async (operation: string, params?: Record<string, unknown>) => {
+    if (operation === "call.control" && params) {
+      const { profile: _profile, action, ...payload } = params;
+      return { result: await api.coreApiCallControl(String(action), payload) };
+    }
+    throw new Error("core_api_unavailable");
+  });
   vi.unstubAllGlobals();
   window.localStorage.clear();
   document.documentElement.removeAttribute("data-theme");

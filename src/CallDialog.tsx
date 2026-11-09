@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { Mic, MicOff, Phone, PhoneOff, RefreshCw, Video, VideoOff } from "lucide-react";
 import { loadCallIceServers, requestMediaPermission, runtimePlatform } from "./api";
 import { acquireCallAudio, releaseCallAudio } from "./call-audio";
-import { callControl, fetchCallMedia } from "./call-core";
+import { fetchCallMedia } from "./call-core";
+import { CallOperation, callRecovery } from "./call-operation";
 import { connectionPath, waitForCandidates } from "./webrtc-peer";
 import { errorMessage } from "./errors";
 import { Dialog } from "./Dialog";
@@ -26,6 +27,8 @@ export type CallPeer = { id: string; display_name: string };
 export function IncomingCallPrompt({ call, name, onReview, onChanged }: {
   call: CallSummary; name: string; onReview: () => void; onChanged: () => Promise<void>;
 }) {
+  const [controls] = useState(() => new CallOperation(name, call.id));
+  const operationView = useSyncExternalStore(controls.subscribe, controls.getSnapshot, controls.getSnapshot);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const decline = async () => {
@@ -33,7 +36,7 @@ export function IncomingCallPrompt({ call, name, onReview, onChanged }: {
     setBusy(true);
     setError("");
     try {
-      await callControl("end", { call_id: call.id, reason: "declined" });
+      await controls.control("end", { call_id: call.id, reason: "declined" });
       await onChanged();
     } catch {
       setError("The call could not be dismissed. Try again.");
@@ -41,11 +44,13 @@ export function IncomingCallPrompt({ call, name, onReview, onChanged }: {
       setBusy(false);
     }
   };
+  useEffect(() => () => { if (controls.getSnapshot().pending) void controls.cancel("declined"); }, [controls]);
   // Keep the alert above Settings and an invitation dialog which may still be
   // open. Receiving an invitation never starts microphone or camera capture.
   return createPortal(<Dialog title={`Incoming ${call.media === "video" ? "video" : "audio"} call`} onClose={() => void decline()}>
     <p>{name} is calling.</p>
     {error && <p className="form-error" role="alert">{error}</p>}
+    {operationView.uncertain && <div role="alert"><p>The decline response was not confirmed.</p><Button disabled={operationView.busy} onClick={() => { void controls.retry(); }}>Resolve previous call operation</Button></div>}
     <div className="dialog-actions">
       <Button variant="secondary" disabled={busy} onClick={() => void decline()}>Decline</Button>
       <Button disabled={busy} onClick={onReview}>Review</Button>
@@ -64,6 +69,9 @@ export function CallDialog({
   onClose: () => void;
   onChanged: () => Promise<void>;
 }) {
+  const [controls] = useState(() => new CallOperation(contact.display_name, initialCall?.id));
+  const operationView = useSyncExternalStore(controls.subscribe, controls.getSnapshot, controls.getSnapshot);
+  const pendingCleanup = useSyncExternalStore(callRecovery.subscribe, callRecovery.getSnapshot, callRecovery.getSnapshot);
   const [call, setCall] = useState<CallSummary | undefined>(initialCall);
   const [media, setMedia] = useState<CallMedia | null>(null);
   const [phase, setPhase] = useState<"idle" | "preparing" | "calling" | "ringing" | "connecting" | "in_call" | "ended" | "error">(
@@ -132,16 +140,13 @@ export function CallDialog({
   }, []);
 
   const failCall = useCallback((message: string) => {
-    const callId = callIdRef.current;
     cleanup();
-    if (callId) {
-      void callControl("end", { call_id: callId, reason: "cancelled" }).catch(() => undefined);
-    }
+    void controls.cancel().then(() => onChanged()).catch(() => undefined);
     setError(message);
     setPhase("error");
-  }, [cleanup]);
+  }, [cleanup, controls, onChanged]);
 
-  useEffect(() => cleanup, [cleanup]);
+  useEffect(() => () => { cleanup(); controls.cancel(); }, [cleanup, controls]);
 
   useEffect(() => {
     if (phase !== "ringing" || !call?.id) return;
@@ -154,6 +159,7 @@ export function CallDialog({
         const latest = await fetchCallMedia(call);
         if (!active) return;
         if (["ended", "declined", "busy", "no_answer", "failed"].includes(latest.state)) {
+          controls.observeEnded();
           cleanup();
           setPhase(latest.state === "failed" ? "error" : "ended");
           if (latest.state === "failed") setError("The call ended unexpectedly.");
@@ -165,7 +171,7 @@ export function CallDialog({
       }
     }, 1000);
     return () => { active = false; window.clearInterval(timer); };
-  }, [call?.id, cleanup, phase]);
+  }, [call?.id, cleanup, controls, phase]);
 
   useEffect(() => {
     const onOnline = () => {
@@ -281,6 +287,7 @@ export function CallDialog({
         setMedia(latest);
         setCall((current) => current ? { ...current, ...latest } : current);
         if (["ended", "declined", "busy", "no_answer", "failed"].includes(latest.state)) {
+          controls.observeEnded();
           cleanup();
           setPhase(latest.state === "failed" ? "error" : "ended");
           if (latest.state === "failed") setError("The call ended unexpectedly.");
@@ -303,6 +310,7 @@ export function CallDialog({
           roleRef.current === "callee" &&
           lastRestartOfferRef.current !== latest.restart_offer &&
           !restartAnswerInFlightRef.current
+          && !controls.getSnapshot().pending
         ) {
           restartAnswerInFlightRef.current = true;
           try {
@@ -317,7 +325,7 @@ export function CallDialog({
               if (!current()) return;
               const sdp = pc.localDescription?.sdp;
               if (sdp) {
-                await callControl("answer_restart", {
+                await controls.control("answer_restart", {
                   call_id: callId,
                   sdp,
                   dtls_fingerprint: callFingerprint(sdp),
@@ -347,7 +355,7 @@ export function CallDialog({
         if (pollBusyRef.current === poll) pollBusyRef.current = null;
       }
     }, 1000);
-  }, [cleanup, failCall, inspectPath]);
+  }, [cleanup, controls, failCall, inspectPath]);
 
   const prepareMedia = useCallback(async (media: "audio" | "video") => {
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -368,7 +376,7 @@ export function CallDialog({
   const attemptRestart = useCallback(async () => {
     const callId = callIdRef.current;
     const pc = pcRef.current;
-    if (!callId || !pc || restartInFlightRef.current) return;
+    if (!callId || !pc || restartInFlightRef.current || controls.getSnapshot().pending) return;
     if (roleRef.current !== "caller" || pc.signalingState !== "stable" ||
         !["disconnected", "failed"].includes(pc.connectionState)) return;
     const operation = mediaOperationRef.current;
@@ -385,7 +393,7 @@ export function CallDialog({
       const sdp = pc.localDescription?.sdp;
       if (!sdp) throw new Error("The reconnecting call offer could not be created.");
       if (!callHasNetworkCandidate(sdp)) throw new Error("No call network candidate was found. Check the connection or configure TURN.");
-      await callControl("restart", {
+      await controls.control("restart", {
         call_id: callId,
         sdp,
         dtls_fingerprint: callFingerprint(sdp),
@@ -397,7 +405,7 @@ export function CallDialog({
     } finally {
       if (current()) restartInFlightRef.current = false;
     }
-  }, [failCall, waitForCandidates]);
+  }, [controls, failCall, waitForCandidates]);
   restartRef.current = () => { void attemptRestart(); };
 
   const configureVideoSender = useCallback(async (pc: RTCPeerConnection, stream: MediaStream) => {
@@ -429,7 +437,7 @@ export function CallDialog({
   }, []);
 
   const startCall = useCallback(async (media: "audio" | "video") => {
-    if (mediaOperationPendingRef.current) return;
+    if (mediaOperationPendingRef.current || !controls.reset()) return;
     mediaOperationPendingRef.current = true;
     const operation = ++mediaOperationRef.current;
     const current = () => operation === mediaOperationRef.current;
@@ -472,14 +480,13 @@ export function CallDialog({
       const sdp = pc.localDescription?.sdp;
       if (!sdp) throw new Error("The call offer could not be created.");
       if (!callHasNetworkCandidate(sdp)) throw new Error("No call network candidate was found. Check the connection or configure TURN.");
-      const result = await callControl("start", {
+      const result = await controls.control("start", {
         contact_id: contact.id,
         media,
         sdp,
         dtls_fingerprint: callFingerprint(sdp),
       }) as unknown as CallSummary;
       if (!current()) {
-        await callControl("end", { call_id: result.id, reason: "cancelled" }).catch(() => undefined);
         throw new Error("Call cancelled.");
       }
       callIdRef.current = result.id;
@@ -500,10 +507,10 @@ export function CallDialog({
     } finally {
       if (current()) mediaOperationPendingRef.current = false;
     }
-  }, [attachPeer, configureVideoSender, contact.id, failCall, onChanged, prepareMedia, startPolling, waitForCandidates]);
+  }, [attachPeer, configureVideoSender, contact.id, controls, failCall, onChanged, prepareMedia, startPolling, waitForCandidates]);
 
   const acceptCall = useCallback(async () => {
-    if (!call || mediaOperationPendingRef.current) return;
+    if (!call || mediaOperationPendingRef.current || controls.getSnapshot().pending) return;
     mediaOperationPendingRef.current = true;
     const operation = ++mediaOperationRef.current;
     const current = () => operation === mediaOperationRef.current;
@@ -541,7 +548,7 @@ export function CallDialog({
       const sdp = pc.localDescription?.sdp;
       if (!sdp) throw new Error("The call answer could not be created.");
       if (!callHasNetworkCandidate(sdp)) throw new Error("No call network candidate was found. Check the connection or configure TURN.");
-      const result = await callControl("answer", {
+      const result = await controls.control("answer", {
         call_id: call.id,
         sdp,
         dtls_fingerprint: callFingerprint(sdp),
@@ -564,31 +571,24 @@ export function CallDialog({
     } finally {
       if (current()) mediaOperationPendingRef.current = false;
     }
-  }, [attachPeer, call, configureVideoSender, failCall, onChanged, prepareMedia, startPolling, waitForCandidates]);
+  }, [attachPeer, call, configureVideoSender, controls, failCall, onChanged, prepareMedia, startPolling, waitForCandidates]);
 
   const hangup = useCallback(async (reason: "completed" | "declined" | "cancelled") => {
-    const callId = callIdRef.current;
     cleanup();
+    void controls.cancel(reason).then(() => onChanged()).catch(() => undefined);
     setPhase("ended");
-    if (callId) {
-      try {
-        await callControl("end", { call_id: callId, reason });
-        await onChanged();
-      } catch {
-        // The call may already have ended on the other side.
-      }
-    }
     onClose();
-  }, [cleanup, onChanged, onClose]);
+  }, [cleanup, controls, onChanged, onClose]);
 
   const closeCall = useCallback(() => {
     if (phase === "idle" || phase === "ended" || phase === "error") {
       cleanup();
+      controls.cancel();
       onClose();
       return;
     }
     void hangup("cancelled");
-  }, [cleanup, hangup, onClose, phase]);
+  }, [cleanup, controls, hangup, onClose, phase]);
 
   const toggleMute = useCallback(() => {
     const next = !muted;
@@ -608,6 +608,12 @@ export function CallDialog({
   return createPortal(
     <Dialog title={incoming ? `Call from ${contact.display_name}` : `Call ${contact.display_name}`} onClose={closeCall}>
       <div className="stack">
+        {operationView.uncertain && !operationView.cancelling && <div role="alert">
+          <p>{operationView.errorCode === "resync_required"
+            ? "The call runtime changed. The previous operation is kept for review; close the call to stop local media."
+            : "The call response was not confirmed. Resolve the previous operation before changing the call."}</p>
+          <Button disabled={operationView.busy} onClick={() => { void controls.retry(); }}>Resolve previous call operation</Button>
+        </div>}
         <audio ref={audioRef} autoPlay playsInline hidden />
         <video ref={localVideoRef} className="call-video call-video--local" autoPlay muted playsInline hidden={!cameraEnabled || phase === "ended" || phase === "error"} />
         <video ref={remoteVideoRef} className="call-video" autoPlay muted playsInline hidden={call?.media !== "video" || phase === "ended" || phase === "error"} />
@@ -616,8 +622,8 @@ export function CallDialog({
             <p className="muted">Audio and video are sent directly to {contact.display_name} over the authenticated call path. Your microphone and camera start only after you choose a call.</p>
             <div className="dialog-actions">
               <Button variant="secondary" onClick={onClose}>Cancel</Button>
-              <Button onClick={() => void startCall("audio")}><Phone size={17} /> Audio call</Button>
-              <Button onClick={() => void startCall("video")}><Video size={17} /> Video call</Button>
+              <Button disabled={pendingCleanup.length > 0} onClick={() => void startCall("audio")}><Phone size={17} /> Audio call</Button>
+              <Button disabled={pendingCleanup.length > 0} onClick={() => void startCall("video")}><Video size={17} /> Video call</Button>
             </div>
           </>
         )}
@@ -655,7 +661,7 @@ export function CallDialog({
         {phase === "ended" && <><p className="muted">Call ended.</p><div className="dialog-actions"><Button onClick={closeCall}>Close</Button></div></>}
         {phase === "error" && <p className="form-error" role="alert">{error || "The call could not connect."}</p>}
         {media && active && <p className="muted">{media.candidate_count} network candidate{media.candidate_count === 1 ? "" : "s"} exchanged.</p>}
-        {phase === "error" && <div className="dialog-actions">{call && <Button onClick={() => void startCall(call.media)}>Try again</Button>}<Button variant="secondary" onClick={closeCall}>Close</Button></div>}
+        {phase === "error" && <div className="dialog-actions">{call && <Button disabled={pendingCleanup.length > 0} onClick={() => void startCall(call.media)}>Try again</Button>}<Button variant="secondary" onClick={closeCall}>Close</Button></div>}
       </div>
     </Dialog>, document.body
   );

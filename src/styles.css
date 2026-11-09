@@ -277,6 +277,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .invitation-members { display: flex; flex-wrap: wrap; gap: 6px; }.invitation-members span { padding: 5px 8px; color: #425249; background: #e9ede8; border-radius: 999px; font-size: .72rem; }
 
 .main-pane { display: flex; min-width: 0; min-height: 0; height: 100%; flex-direction: column; overflow: hidden; }
+.call-cleanup-notice { position: fixed; z-index: 20; right: 16px; bottom: 16px; left: 16px; margin: auto; width: min(560px, calc(100% - 32px)); box-shadow: var(--shadow); }
 .main-pane > .conversation, .main-pane > .empty-state { min-height: 0; flex: 1; }
 .service-warning { display: flex; align-items: center; justify-content: center; gap: 9px; padding: 10px 16px; color: #6f431d; background: #fff0ce; border-bottom: 1px solid #e5c990; font-size: .8rem; line-height: 1.4; }
 .service-warning svg { flex: 0 0 auto; }
