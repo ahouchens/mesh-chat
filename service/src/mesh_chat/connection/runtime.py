@@ -45,6 +45,8 @@ class ConnectionRuntime:
         self._quarantined = False
         self._prepare = prepare
         self._handoff = handoff
+        self._handoff_attempts = {}
+        self._transferred_pairings = {}
         self.executor = executor_factory(self.owner.is_current, self.profile)
         self.runner = BoundedEffectRunner(self.executor, policy, now=now)
 
@@ -212,10 +214,28 @@ class ConnectionRuntime:
             else:
                 if isinstance(event, Failed):
                     event = replace(event, jitter=self._random())
+                transferred = self._transferred_pairings.get(event.operation.key)
+                if transferred is not None and (event.allocated is None or event.allocated == transferred[1]):
+                    # This actor surrendered cleanup authority. Late results
+                    # cannot retire its transferred resource; a new actor's
+                    # normal retirement remains fully enabled.
+                    continue
+                before = self.owner.snapshot(event.operation.key)
+                accepted_handoff = (isinstance(event, Result) and event.handoff
+                                    and before.negotiation is not None
+                                    and before.negotiation.operation == event.operation
+                                    and event.operation.key not in self._handoff_attempts)
                 state = self.owner.dispatch(event.operation.key, event)
-                if (isinstance(event, Result) and event.handoff and event.allocated is not None
+                if (accepted_handoff and event.allocated is not None
                         and state.reason == "pairing_ready"):
-                    if self._handoff is None or not self._handoff(event.operation, event.allocated):
+                    self._handoff_attempts[event.operation.key] = event.operation
+                    try:
+                        transferred_ok = self._handoff is not None and self._handoff(event.operation, event.allocated)
+                    except Exception:
+                        transferred_ok = False
+                    if transferred_ok:
+                        self._transferred_pairings[event.operation.key] = event.operation, event.allocated
+                    else:
                         self._pending[Retire(event.allocated)] = None
 
     def _effects(self):

@@ -1,5 +1,7 @@
 """Private pairing policy traces; these are simulated, not transport evidence."""
 from dataclasses import replace
+from threading import Event
+from time import monotonic
 
 import pytest
 
@@ -9,6 +11,8 @@ from mesh_chat.connection.model import (
 )
 from mesh_chat.connection.projection import snapshot
 from mesh_chat.connection.reducer import transition
+from mesh_chat.connection.runtime import ConnectionRuntime
+from mesh_chat.connection.model import Execution
 
 
 def pairing(preferred=True):
@@ -78,3 +82,47 @@ def test_ordinary_reconnect_cannot_skip_attachment_and_path_with_pairing_handoff
     failed = transition(result.state, Result(work.operation, 0.1, allocated=work.resource, handoff=True))
     assert failed.reason == "invalid_handoff" and failed.state.blocked
     assert Retire(work.resource) in failed.effects
+
+
+@pytest.mark.parametrize("handoff_fails", [False, True])
+def test_actual_runtime_handoff_is_once_and_exception_keeps_exact_cleanup(handoff_fails):
+    results, retired, attempts = [], [], []
+    profile = {"id": "intent", "scope_kind": "pairing", "local_device_id": "local",
+               "active": True, "effective": {"ready": True, "preferred": True}}
+    class Executor:
+        def execute(self, work, cancellation):
+            result = Result(work.operation, monotonic(),
+                allocated=work.resource if work.phase is Phase.CHECKING else None,
+                verified=work.phase is Phase.CHECKING, handoff=work.phase is Phase.CHECKING)
+            results.append(result)
+            return result
+        def retire(self, resource): retired.append(resource)
+    def handoff(operation, resource):
+        attempts.append((operation, resource))
+        if handoff_fails: raise OSError("handoff failed after owner release")
+        return True
+    runtime = ConnectionRuntime("epoch", lambda *_: Executor(), profiles=lambda: {"profiles": [profile]},
+        execution=lambda: Execution.AVAILABLE, activate=lambda _: pytest.fail("Pairing activated reconnect"), handoff=handoff)
+    try:
+        deadline = monotonic() + 3
+        while not attempts and monotonic() < deadline:
+            runtime.step()
+            Event().wait(0.002)
+        assert len(attempts) == 1
+        handed = next(result for result in results if result.handoff)
+        # Duplicate handoff and an older allocation result exercise the real
+        # completion queue after the original actor has surrendered its lease.
+        runtime.runner._completed.put(handed)
+        runtime.runner._completed.put(replace(results[1], allocated=handed.allocated))
+        for _ in range(10):
+            runtime.step()
+            Event().wait(0.002)
+        assert len(attempts) == 1
+        if handoff_fails:
+            assert attempts[0][1] in retired
+        else:
+            assert retired == []
+        assert not runtime.snapshots()["intent"]["messaging_ready"]
+    finally:
+        runtime.stop()
+        runtime.wait()
