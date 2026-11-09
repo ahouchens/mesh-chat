@@ -12,6 +12,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 import stage_independent_core_consumers as staging
 import check_independent_core_consumers as bootstrap
+import check_independent_core_pairing as pairing
 
 
 def test_application_owned_runtime_framing_and_retirement_use_real_subprocesses():
@@ -48,6 +49,31 @@ def bootstrap_record(source="a" * 40, tree="b" * 40):
             "sdk_artifact": bootstrap.SDK_ARTIFACT,
             "application": {"installed_outside_checkout": True, "imports_public_package": True,
                 "application_files": {name: "c" * 64 for name in staging.FILES}}}
+
+
+def pairing_record(source="a" * 40, tree="b" * 40):
+    return {**bootstrap_record(source, tree), "evidence_level": pairing.LEVEL, "scope": pairing.SCOPE,
+            "checks": dict(pairing.CHECKS), "run_id": "7" * 32, "bootstrap_report_sha256": "b" * 64}
+
+
+@pytest.mark.parametrize("fault", ["bootstrap_scope", "SC21_scope", "implicit_approval", "missing_receipt",
+    "duplicate_records", "missing_transfer", "missing_cancel", "unready", "efs", "receipt_boolean", "cleanup", "missing_bootstrap_binding"])
+def test_public_pairing_report_requires_exact_receipts_consent_and_normal_host_provenance(fault):
+    record = pairing_record()
+    pairing.verify_report(record, "a" * 40, "b" * 40)
+    if fault == "bootstrap_scope": record["evidence_level"] = bootstrap.LEVEL
+    elif fault == "SC21_scope": record["scope"] = "Windows-Android SC21 qualification"
+    elif fault == "implicit_approval": record["checks"]["explicit_contact_decisions"] = 0
+    elif fault == "missing_receipt": record["checks"]["authenticated_receipts"] = 1
+    elif fault == "duplicate_records": record["checks"]["single_inbound_and_outbound_records"] = False
+    elif fault == "missing_transfer": record["checks"]["supervisor_transfers"] = 1
+    elif fault == "missing_cancel": record["checks"]["transferred_cancel_preserves_delivery"] = False
+    elif fault == "unready": record["checks"]["public_messaging_ready"] = 0
+    elif fault == "efs": record["checks"]["efs_vault_files"] = 0
+    elif fault == "receipt_boolean": record["checks"]["original_message_key_replay"] = 1
+    elif fault == "cleanup": record["cleanup"] = "pending"
+    else: record.pop("bootstrap_report_sha256")
+    with pytest.raises(ValueError): pairing.verify_report(record, "a" * 40, "b" * 40)
 
 
 @pytest.mark.parametrize("fault", ["source", "tree", "scope", "component_scope", "failed", "efs",
@@ -132,6 +158,10 @@ def test_actual_independent_app_installs_from_sdk_archive_outside_checkout(recor
         assert report["installed_sdk_entry"].startswith("node_modules/@mesh-chat/core-client/")
         assert set(report["application_files"]) == set(staging.FILES)
         rejected = subprocess.run([node, "bootstrap-check.mjs"], cwd=directory,
+                                  capture_output=True, text=True, timeout=15)
+        assert rejected.returncode == 1
+        assert json.loads(rejected.stdout) == {"passed": False, "phase": "arguments", "error_code": "unavailable"}
+        rejected = subprocess.run([node, "pairing-check.mjs"], cwd=directory,
                                   capture_output=True, text=True, timeout=15)
         assert rejected.returncode == 1
         assert json.loads(rejected.stdout) == {"passed": False, "phase": "arguments", "error_code": "unavailable"}

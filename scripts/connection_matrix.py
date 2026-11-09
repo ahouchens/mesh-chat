@@ -14,6 +14,7 @@ from core_boundary_evidence import UI_LEVEL, WINDOWS_LEVEL, ui_evidence, windows
 from native_windows_evidence import verify_report as native_evidence
 from native_runtime_materials import verify_report as runtime_materials_evidence
 from check_independent_core_consumers import verify_report as independent_bootstrap_evidence
+from check_independent_core_pairing import verify_report as independent_pairing_evidence
 from native_interop_evidence import verify_pair as native_interop_pair
 from native_interop_workload import workload as required_native_workload
 from direct_qualification import SUITES as DIRECT_SUITES, read_suite as direct_suite
@@ -269,6 +270,20 @@ def collect(directory: Path, source: str, tree: str, required, *, native_workloa
         reports["windows_independent_bootstrap"] = path
         suites.append(suite_record("windows_independent_bootstrap", record["evidence_level"], source, tree,
                                    report="windows_independent_bootstrap", checks=len(record["checks"]),
+                                   cleanup=record["cleanup"],
+                                   artifacts={field: record[field] for field in (*bindings, "sdk_sha256")}))
+        bootstrap = record
+        bootstrap_path = path
+        path = directory / "desktop/windows-independent-pairing.json"
+        record = independent_pairing_evidence(read(path), source, tree)
+        if (any(record[field] != bootstrap[field] for field in (*bindings, "sdk_sha256"))
+                or record["application"]["application_files"] != bootstrap["application"]["application_files"]
+                or record["bootstrap_report_sha256"] != hashlib.sha256(bootstrap_path.read_bytes()).hexdigest()
+                or record["run_id"] in {item["run_id"] for item in (*native_records, packaged, transport, pairing, bootstrap)}):
+            raise ValueError("Independent public pairing did not execute its exact bootstrap artifacts in a distinct run")
+        reports["windows_independent_pairing"] = path
+        suites.append(suite_record("windows_independent_pairing", record["evidence_level"], source, tree,
+                                   report="windows_independent_pairing", checks=len(record["checks"]),
                                    cleanup=record["cleanup"],
                                    artifacts={field: record[field] for field in (*bindings, "sdk_sha256")}))
     if "android" in required:

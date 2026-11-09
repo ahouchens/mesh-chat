@@ -90,13 +90,17 @@ def fixture(directory):
             native["timings_ms"] = {"open_max": 100, "control_max": 200, "control_p95": 150}
         (directory / f"desktop/native-windows-{kind}.json").write_text(json.dumps(native))
     (directory / "desktop/native-runtime-materials.json").write_text(json.dumps(materials_report(source, tree)))
-    from test_ui_core_boundary_independent_consumers import bootstrap_record
+    from test_ui_core_boundary_independent_consumers import bootstrap_record, pairing_record
     bootstrap = bootstrap_record(source, tree)
     sdk = directory / "desktop" / bootstrap["sdk_artifact"]
     sdk.parent.mkdir()
     sdk.write_bytes(b"Synthetic SDK bytes for report rejection checks only")
     bootstrap["sdk_sha256"] = hashlib.sha256(sdk.read_bytes()).hexdigest()
     (directory / "desktop/windows-independent-bootstrap.json").write_text(json.dumps(bootstrap))
+    paired = pairing_record(source, tree)
+    paired["sdk_sha256"] = bootstrap["sdk_sha256"]
+    paired["bootstrap_report_sha256"] = digest(directory / "desktop/windows-independent-bootstrap.json")
+    (directory / "desktop/windows-independent-pairing.json").write_text(json.dumps(paired))
     return source, tree, android
 
 
@@ -165,7 +169,7 @@ def test_gate_revalidates_policy_inventory_and_both_platform_component_reports(t
                                           "windows_packaged_transport", "windows_packaged_pairing", "android",
                                           "core_ui_boundary", "core_windows_boundary",
                                           "windows_native_control", "windows_native_lifecycle", "windows_runtime_materials",
-                                          "windows_independent_bootstrap"}
+                                          "windows_independent_bootstrap", "windows_independent_pairing"}
     assert result["windows_packaged_lifecycle_checks"] == list(PACKAGED_CHECKS)
     assert result["core_ui_boundary_python_tests"] == len(PYTHON_SELECTION)
     assert result["core_ui_boundary_rendered_tests"] == len(RENDERED_CASES)
@@ -217,6 +221,25 @@ def test_required_installed_windows_host_cannot_use_components_or_another_runtim
         elif fault == "sdk_missing": (path.parent / record["sdk_artifact"]).unlink()
         elif fault == "sdk_changed": (path.parent / record["sdk_artifact"]).write_bytes(b"Other SDK bytes")
         else: record["cleanup"] = "pending"
+        path.write_text(json.dumps(record))
+    with pytest.raises((ValueError, FileNotFoundError)):
+        matrix.collect(tmp_path, source, tree, ["verification"])
+
+
+@pytest.mark.parametrize("fault", ["missing", "bootstrap_binding", "sdk", "runtime", "application", "reused_run", "receipt", "scope"])
+def test_public_windows_pairing_requires_its_exact_normal_bootstrap_and_receipts(tmp_path, fault):
+    source, tree, _ = fixture(tmp_path)
+    path = tmp_path / "desktop/windows-independent-pairing.json"
+    record = json.loads(path.read_text())
+    if fault == "missing": path.unlink()
+    else:
+        if fault == "bootstrap_binding": record["bootstrap_report_sha256"] = "a" * 64
+        elif fault == "sdk": record["sdk_sha256"] = "a" * 64
+        elif fault == "runtime": record["sidecar_sha256"] = "a" * 64
+        elif fault == "application": record["application"]["application_files"]["pairing-check.mjs"] = "a" * 64
+        elif fault == "reused_run": record["run_id"] = "6" * 32
+        elif fault == "receipt": record["checks"]["authenticated_receipts"] = 1
+        else: record["scope"] = "Windows-Android SC21 traffic"
         path.write_text(json.dumps(record))
     with pytest.raises((ValueError, FileNotFoundError)):
         matrix.collect(tmp_path, source, tree, ["verification"])
@@ -499,7 +522,7 @@ def test_suite_manifest_is_uniform_across_every_required_component(tmp_path):
         "policy", "windows_transport", "windows_packaged_lifecycle",
         "windows_packaged_transport", "windows_packaged_pairing",
         "core_ui_boundary_python", "core_ui_boundary_rendered", "core_windows_boundary",
-        "windows_native_control", "windows_native_lifecycle", "windows_runtime_materials", "windows_independent_bootstrap",
+        "windows_native_control", "windows_native_lifecycle", "windows_runtime_materials", "windows_independent_bootstrap", "windows_independent_pairing",
         "android_webrtc", "android_signaling", "android_core_api", "android_core_consumer",
         *("direct_Linux_" + name for name in DIRECT_SUITES),
         *("direct_Windows_" + name for name in DIRECT_SUITES)]
