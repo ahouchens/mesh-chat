@@ -52,6 +52,17 @@ class NativeSessionReservations(private val capacity: Int) {
     @Synchronized
     fun ids(): List<String> = leases.keys.toList()
 
+    /** Creating overlaps allocated/retiring; reserved is the total capacity held. */
+    @Synchronized
+    fun accounting(): Map<String, Int> = mapOf(
+        "capacity" to capacity,
+        "reserved_count" to leases.size,
+        "creating_count" to leases.values.count { it.creating },
+        "allocated_count" to leases.values.count { it.allocated },
+        "active_count" to leases.values.count { it.allocated && !it.cancelled },
+        "retiring_count" to leases.values.count { it.allocated && it.cancelled },
+    )
+
     private fun releaseFinished(lease: Lease) {
         if (lease.cancelled && !lease.creating && !lease.allocated) leases.remove(lease.id)
     }

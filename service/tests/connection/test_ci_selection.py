@@ -195,7 +195,7 @@ def test_isolated_pipe_production_changes_skip_platform_recompilation():
 @pytest.mark.parametrize("name", ["CoreClient.kt", "CoreTransport.kt", "CoreExchangeTransport.kt"])
 def test_isolated_kotlin_client_keeps_android_consumer_and_contract_qualification(name):
     plan = ci.select([KOTLIN_CLIENT + name])
-    assert plan["required"] == ["policy", "verification", "android"]
+    assert plan["required"] == ["policy", "verification", "android", "native_interop"]
     assert plan["reason"] == "isolated_kotlin_client"
     jobs = {suite: {"result": "success" if suite in plan["required"] else "skipped"}
             for suite in ci.SUITES}
@@ -322,3 +322,24 @@ def test_isolated_cli_production_skips_platform_recompilation():
 def test_cli_narrowing_is_limited_to_branch_events(event):
     assert ci.select(["service/src/mesh_chat/core_api/cli.py"],
                      event=event)["required"] == list(ci.SUITES)
+
+
+@pytest.mark.parametrize("status", ["failure", "cancelled", "skipped", None])
+def test_android_and_verification_dependency_changes_cannot_hide_missing_native_topology(status):
+    plan = ci.select([KOTLIN_CLIENT + "CoreClient.kt"])
+    assert {"verification", "android", "native_interop"} <= set(plan["required"])
+    jobs = {suite: {"result": "success"} for suite in ci.SUITES}
+    jobs["native_interop"]["result"] = status
+    with pytest.raises(ValueError, match="native_interop"): ci.validate(plan, jobs)
+
+
+def test_native_topology_starts_after_both_real_packages_and_is_a_required_final_dependency():
+    import yaml
+    value = yaml.safe_load((SCRIPT.parents[1] / ".github/workflows/connection-qualification.yml").read_text())
+    jobs = value["jobs"]
+    assert set(jobs["native_interop"]["needs"]) == {"plan", "verification", "android"}
+    assert jobs["native_interop"]["uses"] == "./.github/workflows/native-interop.yml"
+    assert "native_interop" in jobs["gate"]["needs"] and jobs["gate"]["if"] == "always()"
+    downloads = [step.get("with", {}).get("name", "") for step in jobs["gate"]["steps"] if step.get("uses", "").startswith("actions/download-artifact@")]
+    assert any(name.startswith("native-interop-windows-") for name in downloads)
+    assert any(name.startswith("native-interop-android-") for name in downloads)

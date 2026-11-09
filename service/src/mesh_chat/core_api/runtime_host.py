@@ -105,11 +105,19 @@ class CoreRuntimeHost:
     def _open(self, profile):
         self._recheck_invocation()
         opened = profile.open()  # Existing OS key slot is authoritative; never cached here.
-        if (hasattr(getattr(opened, "store", None), "opaque_id")
-                and bytes.fromhex(opened.store.opaque_id("core-api-handle-key", "v1")) != profile.handle_key):
-            error = NativeUnavailable("Profile opener returned a different key slot")
+        if (opened is None or not callable(getattr(opened, "close", None))
+                or not callable(getattr(getattr(opened, "_shutdown", None), "is_set", None))
+                or type(getattr(opened, "_store_closed", None)) is not bool
+                or not isinstance(getattr(opened, "_runtime_incarnation", None), str)):
+            return opened  # The lifecycle port quarantines a malformed provider.
+        try:
+            if bytes.fromhex(opened.store.opaque_id("core-api-handle-key", "v1")) != profile.handle_key:
+                raise NativeUnavailable("Profile opener returned a different key slot")
+        except Exception as error:
+            # Acquisition transferred custody. Preserve it for every validation
+            # failure, including storage exceptions and malformed key material.
             error.retiring_service = opened
-            raise error
+            raise
         return opened
 
     def _publish(self, service):
@@ -310,7 +318,9 @@ class RuntimeSession:
                     if self.host.lifecycle.active is not None and self.host.lifecycle.query()["selected_profile"] in grant.profiles:
                         result = dict(self._current_inner(grant).request(value)["result"])
                         result["operations"] = sorted(set(result["operations"]) | set(RUNTIME_OPERATIONS))
-                    result["profiles"] = [row["profile"] for row in self.host.catalog(grant)["profiles"]]
+                    catalog = self.host.catalog(grant)
+                    result["profiles"] = ([catalog["selected_profile"]] if catalog["selected_profile"] is not None else []) + [
+                        row["profile"] for row in catalog["profiles"] if row["profile"] != catalog["selected_profile"]]
                     result["limits"] = {**result["limits"], "profile_slots": 8, "profile_lifecycle_keys_per_host": MAX_HOST_OPERATIONS,
                         "profile_lifecycle_keys_per_caller_profile": MAX_CALLER_OPERATIONS, "profile_unlock_credentials": MAX_CREDENTIALS}
                 elif operation == "profile.catalog":

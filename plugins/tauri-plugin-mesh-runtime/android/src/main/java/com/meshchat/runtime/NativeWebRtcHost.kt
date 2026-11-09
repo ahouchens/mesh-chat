@@ -314,6 +314,19 @@ object NativeWebRtcHost {
         for (sessionId in reservations.ids()) close(sessionId)
     }
 
+    /** Private qualification accounting includes asynchronous disposal leases. */
+    @JvmStatic
+    fun resourceAccounting(): String {
+        val counts = reservations.accounting()
+        val result = JSONObject().put("v", 1).put("complete", true)
+            .put("semantics", "native_allocation_leases")
+            .put("availability", JSONObject().apply {
+                for (name in counts.keys) put(name, true)
+            })
+        for ((name, count) in counts) result.put(name, count)
+        return JSONObject().put("ok", true).put("result", result).toString()
+    }
+
     @JvmStatic
     fun stats(sessionId: String): String {
         val session = sessions[sessionId] ?: return error("native_webrtc_session_missing")

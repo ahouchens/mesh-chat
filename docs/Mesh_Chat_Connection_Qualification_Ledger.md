@@ -13,8 +13,11 @@ executed and passed, zero failures or skips, qualification ID
 The workflow is not accepted: Windows failed frozen-material verification;
 broad verification passed 4,075 tests but failed one stale frontend history
 assertion (51 environment-specific skips); Android instrumentation compilation
-could not resolve its transitive Binder SDK dependency. Direct jobs were still
-running when this checkpoint was recorded.
+could not resolve its transitive Binder SDK dependency. Direct jobs subsequently
+completed successfully: both Windows and Linux passed 25 fabric, 10 recovery
+and 12 setup cases with zero skips. The lead validated each retained inventory
+and report using pinned `dcac85e` validators. Binary hashes in these report-only
+archives remain runner claims. The final workflow gate failed.
 
 Read-only inspection of the retained Windows executable confirmed SHA-256
 `1b9d37786c8c626fcd28c4d9e8021480c95e63c9c070255798a87fe4927df8b2` and identified
@@ -30,6 +33,45 @@ repository-byte repairs plus prepared reaction/invitation hooks. The lead ran
 zero skips, 12.30 seconds. Invitation preparation does not itself establish atomic
 personal adoption/workspace join; parent integration remains required. Runtime
 profile host binding and actual Windows–Android topology remain pending.
+
+### Combined native custody review
+
+Source `5cf3478f45bd8052d1e0dd4684c2c0ada4a7362d` integrates concrete supervisor
+pairing, complete private native lease accounting, the queued-creation
+cancellation fix, and the Android instrumentation dependency correction. Strict
+model/reducer typing passes. The complete local required run executed 2,982 cases:
+2,977 passed, five failed, zero skipped in 287.14 seconds. Four failures were
+boundary vectors still routing runtime lifecycle requests through the ordinary
+service session or omitting `profile.catalog`; D owns their correction. The
+remaining Bash fixture failed sandbox path traversal and passed independently
+with the necessary filesystem access. This is not a passing policy gate.
+
+Follow-up `02db485`, integrated at `8e396b7`, retains an acquired profile service
+through any handle-authority validation failure. The full corrected policy run
+and packaged CI remain required. Supervisor-owned initial pairing still needs
+its trusted host entry wired into the topology controller; a manually driven
+native handshake does not establish that coverage.
+
+### Runtime catalog and installed SDK checkpoint
+
+Source `8ef8dd5388e617ad4dae0a1425318cd05f08d8f7`, tree
+`609d4f4797eac4b90c3b62d8df87e3cf17ad738a`, stages the updated public SDK archives
+and passes 239 runtime-host, installed SDK, pinned upgrade and contract cases
+without skips in 35.28 seconds. The encrypted host catalog survives profile-vault
+closure, preserves derived opaque-handle authority and fences active services
+against the final persisted selection. A two-slot constructor race rejects the
+changed selection before publication. Trusted platform key-slot openers are still
+required; this is not installed Windows/Android lifecycle evidence.
+
+Source `d8869d06c92cc1f6dae3eb8ce1e8a5b97ac52d0e` keeps the selected profile first
+in capability results for existing clients. The lead ran the four pinned Python
+and TypeScript 0.2 consumer cases with both selected slots: four passed, zero
+skips, 4.68 seconds (27 unrelated cases explicitly deselected). The earlier
+frontend history repair at `5fa62a9` passes all seven layout checks in 0.39 seconds.
+
+Renderer-restart recovery of an unknown call start still needs a protected Core
+operation query and authoritative cleanup disposition. An in-memory UI ticket or
+a bare `resync_required` response does not close that obligation.
 
 ### Wave 2 combined policy and upgrade checkpoint
 

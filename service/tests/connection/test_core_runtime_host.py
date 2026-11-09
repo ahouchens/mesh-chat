@@ -12,6 +12,7 @@ from mesh_chat.core_api.session import Grant
 from mesh_chat.core_api.wire_codec import decode_frame, encode_frame
 from mesh_chat.service import MeshChatService
 from mesh_chat.vault import VaultStore, RecordConflict
+from mesh_chat.errors import StorageUnavailable
 from test_core_sdk_distribution import run_consumer, installed_consumer
 from test_core_sdk_upgrade import pinned_install, old_consumer
 
@@ -224,13 +225,19 @@ def test_superseded_or_old_host_epoch_receipt_never_reopens(runtime):
 
 
 @pytest.mark.parametrize("language", ["python", "typescript"])
-def test_actual_pinned_old_sdk_negotiates_runtime_host_capabilities_and_enqueues(runtime, pinned_install, language):
+@pytest.mark.parametrize("selected", ["alpha", "beta"])
+def test_actual_pinned_old_sdk_negotiates_runtime_host_capabilities_and_enqueues(runtime, pinned_install, language, selected):
     r = runtime
+    if selected == "beta":
+        profile = r["profiles"]["beta"]
+        assert r["invoke"]("profile.select", {"profile": profile}, "runtime-old-sdk-select-key-0001")["ok"]
+        credential = r["host"].issue_unlock_credential(r["grants"][0].caller, "beta")
+        assert r["invoke"]("profile.unlock", {"profile": profile, "credential_handle": credential}, "runtime-old-sdk-unlock-key-0001")["ok"]
     stream = r["host"].bind(lambda: r["grants"][0])
     report = run_consumer(old_consumer(pinned_install, language), None, "--old", session=stream)
     assert report["accepted"] and report["api_minor"] == 1
-    assert len(r["first"].store.list("message")) == 1
-    assert not r["first"]._store_closed
+    assert len(r["host"].lifecycle.active.store.list("message")) == 1
+    assert not r["host"].lifecycle.active._store_closed
 
 
 def test_credential_cannot_cross_an_intervening_lifecycle_revision(runtime):
@@ -409,3 +416,67 @@ def test_constructor_selection_change_before_commit_refuses_stale_active_binding
         r["build"](r["first"], selected="alpha")
     assert not r["published"]
     assert not r["first"]._store_closed
+
+
+@pytest.mark.parametrize("fault", ["storage_failure", "malformed_key", "missing_store"])
+def test_post_open_authority_check_failure_retains_exact_service_until_drain(runtime, monkeypatch, fault):
+    r = runtime
+    profile = r["profiles"]["alpha"]
+    assert r["invoke"]("profile.lock", {"profile": profile}, "runtime-authority-open-lock-key-0001")["ok"]
+    original_registration = r["host"].profiles["alpha"]
+    acquired = []
+    def opener():
+        service = original_registration.open()
+        store = service.store
+        acquired.append((service, service.close, store, store.opaque_id))
+        def fail(*_):
+            if fault == "storage_failure":
+                raise StorageUnavailable("injected authority storage failure")
+            return "malformed"
+        if fault == "missing_store":
+            monkeypatch.setattr(service, "store", None)
+        else:
+            monkeypatch.setattr(service.store, "opaque_id", fail)
+        monkeypatch.setattr(service, "close", lambda: None)
+        return service
+    host = r["build"](None, registered=(replace(original_registration, open=opener), r["host"].profiles["beta"]))
+    stream = host.bind(lambda: r["grants"][0])
+    try:
+        assert r["invoke"]("runtime.capabilities", endpoint=stream)["ok"]
+        credential = host.issue_unlock_credential(r["grants"][0].caller, "alpha")
+        params = {"profile": profile, "credential_handle": credential}
+        assert r["invoke"]("profile.unlock", params, "runtime-authority-open-key-0001", endpoint=stream)["error"]["code"] == "unavailable"
+        service, close, store, opaque = acquired[0]
+        assert host.lifecycle._retiring is service and host.lifecycle.active is None
+        assert service._shutdown.is_set() and not service._store_closed
+        credential = host.issue_unlock_credential(r["grants"][0].caller, "alpha")
+        pending = r["invoke"]("profile.unlock", {"profile": profile, "credential_handle": credential}, "runtime-authority-open-key-0001", endpoint=stream)
+        assert pending["ok"] and pending["result"]["profiles"][0]["state"] == "retiring"
+        assert len(acquired) == 1
+        monkeypatch.setattr(service, "store", store)
+        monkeypatch.setattr(store, "opaque_id", opaque)
+        monkeypatch.setattr(service, "close", close)
+        host.lifecycle.reconcile()
+        assert service._store_closed and service.store._key is None
+        assert len(acquired) == 1 and host.lifecycle.active is None
+    finally:
+        stream.close()
+
+
+def test_malformed_opener_quarantine_prevents_a_second_unknown_open(runtime):
+    r = runtime
+    profile = r["profiles"]["alpha"]
+    assert r["invoke"]("profile.lock", {"profile": profile}, "runtime-malformed-lock-key-0001")["ok"]
+    calls = []
+    original = r["host"].profiles["alpha"]
+    host = r["build"](None, registered=(replace(original, open=lambda: calls.append(True)), r["host"].profiles["beta"]))
+    stream = host.bind(lambda: r["grants"][0])
+    try:
+        assert r["invoke"]("runtime.capabilities", endpoint=stream)["ok"]
+        for _ in range(2):
+            credential = host.issue_unlock_credential(r["grants"][0].caller, "alpha")
+            result = r["invoke"]("profile.unlock", {"profile": profile, "credential_handle": credential}, "runtime-malformed-open-key-0001", endpoint=stream)
+            assert result["error"]["code"] == "unavailable"
+        assert calls == [True] and host.lifecycle.query()["state"] == "retiring"
+    finally:
+        stream.close()
