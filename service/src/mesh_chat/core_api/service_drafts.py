@@ -1,15 +1,15 @@
 """Private adapter for typed direct-message drafts."""
 
-from uuid import uuid4
-
 from .drafts import DraftObservation
 from .errors import ApiFailure
 from .service_messages import storage_errors
+from .service_composer import STATE
 
 
 class ServiceDrafts:
-    def __init__(self, service):
+    def __init__(self, service, *, legacy=False):
         self._service = service
+        self._legacy = legacy
 
     def _contact(self, profile, contact_id):
         if profile != "local":
@@ -21,25 +21,29 @@ class ServiceDrafts:
             raise ApiFailure("forbidden")
         return contact
 
-    def get(self, profile, contact_id):
+    def _target(self, scope, contact_id):
+        self._contact(scope.profile, contact_id)
+        storage = getattr(self._service.store, "_core_composer_storage", None)
+        if storage is not None:
+            identifier = storage.identifier("composer:v1", scope.caller, scope.profile, contact_id)
+            if self._service.store.get(STATE, identifier) is not None:
+                raise ApiFailure("conflict")
+        if self._legacy:
+            return "draft", contact_id
+        identifier = self._service.store.opaque_id("core-legacy-draft:v1",
+            scope.caller, scope.profile, contact_id)
+        return "api_legacy_draft", identifier
+
+    def get(self, scope, contact_id):
         with storage_errors():
-            self._contact(profile, contact_id)
-            draft = self._service.store.get("draft", contact_id) or {}
+            draft = self._service.store.get(*self._target(scope, contact_id)) or {}
             text = draft.get("text", "")
             if not isinstance(text, str):
                 raise ApiFailure("internal")
             return DraftObservation(text)
 
-    def set(self, profile, contact_id, text):
+    def set(self, scope, contact_id, text):
         with storage_errors():
-            self._contact(profile, contact_id)
-            response, should_stop = self._service.dispatch({
-                "v": 1, "id": uuid4().hex, "command": "save_draft",
-                "payload": {"contact_id": contact_id, "text": text},
-            })
-            if should_stop or response.get("ok") is not True:
-                raise ApiFailure("invalid_request")
-            saved = response.get("result")
-            if not isinstance(saved, dict) or not isinstance(saved.get("text"), str):
-                raise ApiFailure("internal")
-            return DraftObservation(saved["text"])
+            kind, identifier = self._target(scope, contact_id)
+            self._service.store.put(kind, identifier, {"contact_id": contact_id, "text": text})
+            return DraftObservation(text)

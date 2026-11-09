@@ -21,7 +21,8 @@ class BoundaryHost:
     def __init__(self, directory, *, fresh_profile=False):
         MeshChatService._start_network = lambda *_: None
         MeshChatService._prepare_lan_fallback = lambda *_: None
-        store = VaultStore(directory, os.urandom(32), allow_unprotected_for_tests=True)
+        self.directory, self.key = directory, os.urandom(32)
+        store = VaultStore(directory, self.key, allow_unprotected_for_tests=True)
         self.service = MeshChatService(store, directory, lambda _: None)
         self.workspace_id = self.channel_id = self.root = None
         if not fresh_profile:
@@ -35,6 +36,9 @@ class BoundaryHost:
             self.channel_id = self.service.workspace_snapshot()["workspace_channels"][0]["id"]
             self.root = self.service.send_workspace_message(
                 self.workspace_id, self.channel_id, "Boundary root message", str(uuid4()), str(uuid4()))
+        self._bind_session()
+
+    def _bind_session(self):
         permissions = frozenset({"observe", "read", "send", "approve", "pair", "connect",
                                  "diagnose", "runtime_owner", "profile_owner"})
         self.session = bind_service_stream(self.service, lambda: Grant("boundary-ui", permissions, ("local",)),
@@ -56,6 +60,13 @@ class BoundaryHost:
         return self.call("profile.query", {"profile": capabilities["result"]["profiles"][0]})
 
     def invoke(self, command, args):
+        if command == "fixture_reopen":
+            self.session.close()
+            self.service.close()
+            store = VaultStore(self.directory, self.key, allow_unprotected_for_tests=True)
+            self.service = MeshChatService(store, self.directory, lambda _: None)
+            self._bind_session()
+            return {"ok": True, "result": {"reopened": True}}
         if command == "initialize_service":
             return self.call("application.snapshot")
         if command == "core_api_capabilities":

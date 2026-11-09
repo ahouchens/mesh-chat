@@ -39,7 +39,8 @@ source commit/tree, retained JUnit and collection digests, run identities and
 zero-failure/zero-skip execution. The uniform manifest includes separate
 `core_ui_boundary_python`, `core_ui_boundary_rendered` and
 `core_windows_boundary` records. Rendered execution must contain all six named
-cases; Windows must contain all three named cases. Python counts come from the
+cases (eight after the Wave 2 composer remount additions); Windows must contain
+all three named cases. Python counts come from the
 complete collection of the required boundary files, rather than a historical
 case count. The final gate requires only the standard library.
 
@@ -60,6 +61,23 @@ five actions. `test_ui_core_boundary_noop_idempotency.py` reproduces each throug
 framed Core requests, requiring identical retries to converge and changed
 payloads to conflict. The audit records that source checkpoint; it does not
 qualify later source or replace A/C's separate parent-durability work.
+
+Wave 2 adds independent framed composer cases for pure scoped reads, opaque
+update-ticket consumption including unchanged text, changed-payload rejection,
+current grant/contact authority, actual vault reopen after a discarded committed
+send reply, preservation of a newer draft on late replay, and real SQLite
+seal/write/commit rollback. Two rendered App cases cross renderer remount and
+vault reopen. They intentionally fail at missing composer capabilities until
+the production port and UI integration land; no fallback, skipped feature, or
+mocked composer result qualifies them.
+
+Native packaged control/lifecycle checks separately bind the clean source/tree,
+sidecar build fingerprint, strict build manifest and tested binary hash before
+and after execution. Missing Windows/binary and incomplete execution fail.
+The lifecycle check requires 100 actual control cycles, three cold starts and
+five clean process exits. It remains control/resource-lifecycle evidence;
+product pairing, Windows-Android delivery, authenticated receipts, selected
+paths, impairment and media coexistence require their own actual evidence.
 
 For development, run `python tests/core-ui-boundary/run_python.py --source <HEAD SHA> --junit .test-tmp/boundary.xml`
 or `vitest run --config tests/core-ui-boundary/vitest.config.ts` directly.

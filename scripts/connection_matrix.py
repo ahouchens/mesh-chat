@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from android_qualification import APKS, CORE_APKS, CONSUMER_ARTIFACTS, ROOT, cases
 from connection_evidence import evidence as policy_evidence
 from core_boundary_evidence import UI_LEVEL, WINDOWS_LEVEL, ui_evidence, windows_evidence
+from native_windows_evidence import verify_report as native_evidence
 from direct_qualification import SUITES as DIRECT_SUITES, read_suite as direct_suite
 from test_desktop_transport import PYTHON_SOURCES, verified_report as desktop_evidence
 from test_packaged_lifecycle import verify_report as packaged_evidence
@@ -221,6 +222,24 @@ def collect(directory: Path, source: str, tree: str, required):
         summary.update(core_ui_boundary_python_tests=ui["core_ui_boundary_python"]["execution"]["tests_executed"],
                        core_ui_boundary_rendered_tests=ui["core_ui_boundary_rendered"]["execution"]["tests_executed"],
                        core_windows_boundary_tests=windows["execution"]["tests_executed"])
+        native_records = []
+        for kind in ("control", "lifecycle"):
+            name = "windows_native_" + kind
+            path = directory / f"desktop/native-windows-{kind}.json"
+            record = native_evidence(read(path), source, tree, kind)
+            if (record["sidecar_sha256"] != packaged["sidecar_sha256"]
+                    or record["build_input_sha256"] != packaged["build_input_sha256"]):
+                raise ValueError("Native and packaged checks did not execute the same built sidecar")
+            reports[name] = path
+            native_records.append(record)
+            suites.append(suite_record(name, record["evidence_level"], source, tree, report=name,
+                                       checks=len(record["checks"]), cleanup="covered_by_checks",
+                                       artifacts={field: record[field] for field in
+                                                  ("sidecar_sha256", "build_input_sha256", "build_manifest_sha256")}))
+            summary[name + "_counts"] = record["counts"]
+        if (native_records[0]["build_manifest_sha256"] != native_records[1]["build_manifest_sha256"]
+                or len({record["run_id"] for record in (*native_records, packaged, transport, pairing)}) != 5):
+            raise ValueError("Native packaged runs require the same build manifest and distinct run identities")
     if "android" in required:
         for record in android["suites"]:
             suites.append(suite_record("android_" + record["suite"], android["evidence_level"], source, tree,

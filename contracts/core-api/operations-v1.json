@@ -2,7 +2,7 @@
   "v": 1,
   "status": "experimental_design",
   "api_major": 1,
-  "api_minor": 0,
+  "api_minor": 1,
   "implemented_operations": [],
   "experimental_component_operations": [
     "runtime.capabilities",
@@ -125,10 +125,19 @@
     "peer.pairing_preview",
     "workspace.join_prompt",
     "workspace.create",
-    "profile.create"
+    "profile.create",
+    "peer.composer_query",
+    "peer.composer_update",
+    "message.enqueue_draft"
   ],
-  "private_host_operations": ["native.command", "bootstrap.preview"],
-  "bootstrap_operations": ["profile.create", "bootstrap.preview"],
+  "private_host_operations": [
+    "native.command",
+    "bootstrap.preview"
+  ],
+  "bootstrap_operations": [
+    "profile.create",
+    "bootstrap.preview"
+  ],
   "keyed_actions": {
     "workspace.connection": [
       "invite_contact",
@@ -1070,6 +1079,27 @@
       "scope": "profile",
       "mutation": true,
       "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "peer.composer_query",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "peer.composer_update",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "message.enqueue_draft",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
     }
   ],
   "limits": {
@@ -1093,6 +1123,15 @@
     "received_scan_count": 128,
     "received_batch_bytes": 1048576,
     "diagnostic_count": 256,
-    "diagnostic_bytes": 262144
+    "diagnostic_bytes": 262144,
+    "composer_text_utf8_bytes": 16384,
+    "composers_per_caller_profile": 256,
+    "composers_per_vault": 4096,
+    "composer_update_idempotency_seconds": 3600,
+    "composer_update_keys_per_caller_profile": 8192,
+    "composer_update_keys_per_vault": 65536,
+    "composer_send_idempotency_seconds": 604800,
+    "composer_send_keys_per_caller_profile": 4096,
+    "composer_send_keys_per_vault": 65536
   }
 }

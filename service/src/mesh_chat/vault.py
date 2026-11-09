@@ -29,9 +29,14 @@ from .record_projection import Projection, ProjectRecords, RecordChange
 FILE_ATTRIBUTE_ENCRYPTED = 0x4000
 INVALID_FILE_ATTRIBUTES = 0xFFFFFFFF
 SCHEMA_VERSION = 1
+MAX_SCHEMA_VERSION = 2
 COMMAND_CACHE_MAX_ROWS = 512
 COMMAND_CACHE_MAX_AGE_SECONDS = 8 * 24 * 60 * 60
 MAX_PROJECTIONS = 4
+
+
+class RecordConflict(ValidationError):
+    """A conditional mutation observed a different current record."""
 REDACTED_COMMAND_RESPONSE = {
     "ok": False,
     "error": {
@@ -367,7 +372,7 @@ class VaultStore:
                     "INSERT INTO meta(name, value) VALUES('schema_version', ?)",
                     (str(SCHEMA_VERSION),),
                 )
-            elif int(current[0]) != SCHEMA_VERSION:
+            elif not SCHEMA_VERSION <= int(current[0]) <= MAX_SCHEMA_VERSION:
                 raise StorageUnavailable("Unsupported vault schema")
             # Read-only polling used to cache a large encrypted snapshot every
             # few seconds.  Bound existing profiles during startup as well as
@@ -500,8 +505,20 @@ class VaultStore:
                 raise ValidationError("Record projection binding is invalid")
             self._projections.setdefault(kind, []).append(project)
 
+    def register_batch_projection(self, project):
+        """Bind one pure projector that can inspect a complete source batch."""
+        with self._lock:
+            bound = getattr(self, "_batch_projections", ())
+            if not callable(project) or project in bound or len(bound) >= MAX_PROJECTIONS:
+                raise ValidationError("Batch projection binding is invalid")
+            self._batch_projections = (*bound, project)
+
     def _write_records_locked(self, records, deletions=()) -> None:
         values, removed = self._project_records(records, deletions)
+        for kind, identifier, _ in values:
+            if kind != "record_write_fence" and self.get(
+                    "record_write_fence", self.opaque_id("record-write-fence", kind, identifier)) is not None:
+                raise RecordConflict("Record is write-fenced")
         now = time.time()
         prepared = [(kind, identifier, self._seal(kind, identifier, value), now, now)
                     for kind, identifier, value in values]
@@ -534,7 +551,42 @@ class VaultStore:
                 reserved.update(keys)
                 values.extend(projection.records)
                 removed.extend(projection.deletions)
+        for project in getattr(self, "_batch_projections", ()):
+            projection = project(dict(final))
+            if not isinstance(projection, Projection):
+                raise ValidationError("Invalid batch projection result")
+            keys = [(kind, identifier) for kind, identifier, _ in projection.records]
+            keys.extend(projection.deletions)
+            if (len(keys) > 8192 or len(set(keys)) != len(keys)
+                    or any(kind in self._projections or (kind, identifier) in reserved for kind, identifier in keys)):
+                raise ValidationError("Batch projection overlaps another mutation")
+            reserved.update(keys)
+            values.extend(projection.records)
+            removed.extend(projection.deletions)
         return values, removed
+
+    def conditional_put_and_delete(self, expected, records, deletions=(), *, write_fences=(), schema_floor=None):
+        """Compare source records and publish one sealed batch under BEGIN.
+
+        Write fences persist independently of in-memory domain projections.
+        Their source may be erased, but an old writer cannot recreate it.
+        """
+        if schema_floor is not None and (type(schema_floor) is not int
+                or not SCHEMA_VERSION <= schema_floor <= MAX_SCHEMA_VERSION):
+            raise ValidationError("Unsupported vault schema floor")
+        values = list(records)
+        for kind, identifier in write_fences:
+            values.append(("record_write_fence", self.opaque_id("record-write-fence", kind, identifier),
+                           {"kind": kind, "identifier": identifier}))
+        with self._transaction():
+            for (kind, identifier), value in expected.items():
+                if self.get(kind, identifier) != value:
+                    raise RecordConflict("Conditional record changed")
+            if schema_floor is not None:
+                current = int(self._db.execute("SELECT value FROM meta WHERE name='schema_version'").fetchone()[0])
+                if current < schema_floor:
+                    self._db.execute("UPDATE meta SET value=? WHERE name='schema_version'", (str(schema_floor),))
+            self._write_records_locked(values, deletions)
 
     def put_and_delete(
         self,

@@ -3,7 +3,7 @@
   "status": "experimental_unfrozen",
   "public_api": {
     "major": 1,
-    "minor": 0,
+    "minor": 1,
     "accepts_additive_minors": true
   },
   "internal_ipc": {
@@ -34,10 +34,10 @@
   "kotlin_client": {
     "exists": true,
     "status": "experimental_component",
-    "version": "0.2.0-experimental",
+    "version": "0.3.0-experimental",
     "packaged": true,
     "published": false,
-    "artifact": "com.meshchat:core-client:0.2.0-experimental"
+    "artifact": "com.meshchat:core-client:0.3.0-experimental"
   },
   "incompatible_combination": "reject_before_side_effects",
   "upgrade_window": "none until independent consumers pass M5"

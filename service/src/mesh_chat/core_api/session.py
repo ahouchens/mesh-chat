@@ -41,6 +41,9 @@ from .views import (call_ice_view, call_media_view, call_settings_view, device_r
 )
 from .errors import ApiFailure, failure_code
 from .limits import MAX_FRAME_BYTES, MAX_REQUEST_JSON_DEPTH, MAX_REQUEST_JSON_TOKENS
+from .composer import Composer, COMPOSER_LIMITS
+from .views import composer_view
+from .requests import COMPOSER_OPERATIONS
 from .diagnostics import Diagnostics, MAX_DIAGNOSTICS, MAX_DIAGNOSTIC_BYTES
 from .diagnostic_views import diagnostics_view
 from .requests import (
@@ -93,6 +96,9 @@ MAX_CONNECTIONS = 256
 
 
 PERMISSION_BY_OPERATION = {
+    "peer.composer_query": "read",
+    "peer.composer_update": "send",
+    "message.enqueue_draft": "send",
     "connection.snapshot": "observe",
     "connection.start": "connect",
     "connection.stop": "connect",
@@ -257,6 +263,7 @@ class Ports:
     """Optional capability ports bound by the trusted composition."""
 
     messages: Messages | None = None
+    composer: Composer | None = None
     recovery: Recovery | None = None
     diagnostics: Diagnostics | None = None
     received: ReceivedLog | None = None
@@ -288,6 +295,7 @@ class CoreSession:
         self._authorize = authorize
         self._observations = observations
         self._messages = ports.messages
+        self._composer = ports.composer
         self._recovery = ports.recovery
         self._diagnostics = ports.diagnostics
         self._received = ports.received
@@ -312,6 +320,7 @@ class CoreSession:
         bound = set(OPERATIONS)
         for operations, port in (
             (MESSAGE_OPERATIONS, self._messages),
+            (COMPOSER_OPERATIONS, self._composer),
             (RECOVERY_OPERATIONS, self._recovery),
             (RECOVERY_TRANSFER_OPERATIONS, self._recovery),
             (RECEIVED_OPERATIONS, self._received),
@@ -586,6 +595,8 @@ class CoreSession:
                 raise ApiFailure("unavailable")
             return self._native_commands.command(params["command"], params["payload"])
         profile = self._profile_target(profiles, params)
+        if operation in COMPOSER_OPERATIONS:
+            return self._composer_operation(grant, profile, operation, params, key)
         if operation == "diagnostics.query":
             return diagnostics_view(params["profile"], self._diagnostics.query(profile), params["limit"],
                                     lambda internal: self._handle(grant, "connection", profile, internal))
@@ -696,9 +707,9 @@ class CoreSession:
             if contact is None:
                 raise ApiFailure("forbidden")
             if operation == "peer.draft_set":
-                observation = self._drafts.set(profile, contact, params["text"])
+                observation = self._drafts.set(MessageScope(grant.caller, profile), contact, params["text"])
             else:
-                observation = self._drafts.get(profile, contact)
+                observation = self._drafts.get(MessageScope(grant.caller, profile), contact)
             return draft_view(params["profile"], params["peer"], observation)
         if operation in RELATIONSHIP_OPERATIONS:
             return self._relationship_operation(grant, profile, operation, params)
@@ -1379,7 +1390,9 @@ class CoreSession:
             limits.update(received_scan_count=MAX_BATCH, received_batch_bytes=MAX_BATCH_BYTES)
         if self._diagnostics is not None:
             limits.update(diagnostic_count=MAX_DIAGNOSTICS, diagnostic_bytes=MAX_DIAGNOSTIC_BYTES)
-        return {"api_major": 1, "api_minor": 0, "stability": "experimental",
+        if self._composer is not None:
+            limits.update(COMPOSER_LIMITS)
+        return {"api_major": 1, "api_minor": 1, "stability": "experimental",
                 "operations": list(self._operations), "profiles": list(profiles), "limits": limits}
 
     def _observe(self, grant, profile, operation, params):
@@ -1403,6 +1416,24 @@ class CoreSession:
             raise ApiFailure("forbidden")
         return {"profile": params["profile"], "connection": params["connection"],
                 "observation": connection_view(status)}
+
+    def _composer_operation(self, grant, profile, operation, params, key):
+        peer_handle = params["recipient"] if operation == "message.enqueue_draft" else params["peer"]
+        peer = self._peers(grant, profile).get(peer_handle)
+        if peer is None:
+            raise ApiFailure("forbidden")
+        scope = MessageScope(grant.caller, profile)
+        if operation == "peer.composer_query":
+            return composer_view(params["profile"], peer_handle,
+                self._composer.query(scope, peer, params.get("send_revision")))
+        if operation == "peer.composer_update":
+            result = self._composer.update(scope, peer, key, params["expected_revision"], params["text"])
+            return {"applied_revision": result.applied_revision, "changed": result.changed,
+                    "composer": composer_view(params["profile"], peer_handle, result.composer)}
+        result = self._composer.enqueue(scope, peer, key, params["draft_revision"])
+        return {**acceptance_view(params["profile"], result.acceptance), "peer": peer_handle,
+                "draft_revision": result.revision, "draft_disposition": result.disposition,
+                "composer": composer_view(params["profile"], peer_handle, result.composer)}
 
     def _peers(self, grant, profile):
         peers = self._messages.peers(profile)

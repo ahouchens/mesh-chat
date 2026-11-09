@@ -879,15 +879,42 @@
               "$ref": "#/$defs/handle"
             }
           },
-                      "connection_mode": {
-              "enum": ["manual", "participant", "nearby", "remote", "webrtc", "email", "i2p"]
-            },
-            "manual_setup_id": {"type": "string", "minLength": 8, "maxLength": 128},
-            "external_host": {"type": "string", "minLength": 1, "maxLength": 255},
-            "external_port": {"type": "integer", "minimum": 1, "maximum": 65535},
-            "i2p_access_point": {"type": "string", "minLength": 1, "maxLength": 128},
-            "i2p_label": {"type": "string", "maxLength": 64},
-"required": [
+          "connection_mode": {
+            "enum": [
+              "manual",
+              "participant",
+              "nearby",
+              "remote",
+              "webrtc",
+              "email",
+              "i2p"
+            ]
+          },
+          "manual_setup_id": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 128
+          },
+          "external_host": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          },
+          "external_port": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "i2p_access_point": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "i2p_label": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "required": [
             "profile"
           ],
           "additionalProperties": false
@@ -1432,271 +1459,563 @@
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "group.create"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "group.create"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "title": {"type": "string", "minLength": 1, "maxLength": 128},
-            "posting_policy": {"enum": ["members", "owner_admins"]},
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "posting_policy": {
+              "enum": [
+                "members",
+                "owner_admins"
+              ]
+            },
             "members": {
-              "type": "array", "minItems": 1, "maxItems": 32,
-              "items": {"$ref": "#/$defs/handle"}
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 32,
+              "items": {
+                "$ref": "#/$defs/handle"
+              }
             }
           },
-          "required": ["profile", "title", "posting_policy", "members"],
+          "required": [
+            "profile",
+            "title",
+            "posting_policy",
+            "members"
+          ],
           "additionalProperties": false
         }
       },
-      "required": ["api_version", "request_id", "operation", "params"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "group.message_enqueue"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "group.message_enqueue"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "group": {"$ref": "#/$defs/handle"},
-            "text": {"type": "string", "minLength": 1, "maxLength": 16384}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "group": {
+              "$ref": "#/$defs/handle"
+            },
+            "text": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 16384
+            }
           },
-          "required": ["profile", "group", "text"],
+          "required": [
+            "profile",
+            "group",
+            "text"
+          ],
           "additionalProperties": false
         }
       },
-      "required": ["api_version", "request_id", "operation", "params"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "group.leave"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "group.leave"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "group": {"$ref": "#/$defs/handle"}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "group": {
+              "$ref": "#/$defs/handle"
+            }
           },
-          "required": ["profile", "group"],
+          "required": [
+            "profile",
+            "group"
+          ],
           "additionalProperties": false
         }
       },
-      "required": ["api_version", "request_id", "operation", "params"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "group.close"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "group.close"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "group": {"$ref": "#/$defs/handle"}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "group": {
+              "$ref": "#/$defs/handle"
+            }
           },
-          "required": ["profile", "group"],
+          "required": [
+            "profile",
+            "group"
+          ],
           "additionalProperties": false
         }
       },
-      "required": ["api_version", "request_id", "operation", "params"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "group.member_remove"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "group.member_remove"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "group": {"$ref": "#/$defs/handle"},
-            "member": {"$ref": "#/$defs/handle"}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "group": {
+              "$ref": "#/$defs/handle"
+            },
+            "member": {
+              "$ref": "#/$defs/handle"
+            }
           },
-          "required": ["profile", "group",
-            "member"],
+          "required": [
+            "profile",
+            "group",
+            "member"
+          ],
           "additionalProperties": false
         }
       },
-      "required": ["api_version", "request_id", "operation", "params"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "group.invitation_accept"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "group.invitation_accept"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "invitation": {"$ref": "#/$defs/handle"}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "invitation": {
+              "$ref": "#/$defs/handle"
+            }
           },
-          "required": ["profile", "invitation"],
+          "required": [
+            "profile",
+            "invitation"
+          ],
           "additionalProperties": false
         }
       },
-      "required": ["api_version", "request_id", "operation", "params"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "group.invitation_decline"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "group.invitation_decline"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "invitation": {"$ref": "#/$defs/handle"}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "invitation": {
+              "$ref": "#/$defs/handle"
+            }
           },
-          "required": ["profile", "invitation"],
+          "required": [
+            "profile",
+            "invitation"
+          ],
           "additionalProperties": false
         }
       },
-      "required": ["api_version", "request_id", "operation", "params"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "group.invitation_retry"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "group.invitation_retry"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "group": {"$ref": "#/$defs/handle"},
-            "member": {"$ref": "#/$defs/handle"}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "group": {
+              "$ref": "#/$defs/handle"
+            },
+            "member": {
+              "$ref": "#/$defs/handle"
+            }
           },
-          "required": ["profile", "group", "member"],
+          "required": [
+            "profile",
+            "group",
+            "member"
+          ],
           "additionalProperties": false
         }
       },
-      "required": ["api_version", "request_id", "operation", "params"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "workspace.device_removal_request"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "workspace.device_removal_request"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "workspace": {"$ref": "#/$defs/handle"},
-            "device": {"$ref": "#/$defs/handle"}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "workspace": {
+              "$ref": "#/$defs/handle"
+            },
+            "device": {
+              "$ref": "#/$defs/handle"
+            }
           },
-          "required": ["profile", "workspace",
-            "device"],
+          "required": [
+            "profile",
+            "workspace",
+            "device"
+          ],
           "additionalProperties": false
         }
       },
-      "required": ["api_version", "request_id", "operation", "params"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "workspace.device_removal_approve"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "workspace.device_removal_approve"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "workspace": {"$ref": "#/$defs/handle"},
-            "request": {"$ref": "#/$defs/handle"}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "workspace": {
+              "$ref": "#/$defs/handle"
+            },
+            "request": {
+              "$ref": "#/$defs/handle"
+            }
           },
-          "required": ["profile", "workspace",
-            "request"],
+          "required": [
+            "profile",
+            "workspace",
+            "request"
+          ],
           "additionalProperties": false
         }
       },
-      "required": ["api_version", "request_id", "operation", "params"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "workspace.device_removal_decline"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "workspace.device_removal_decline"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "workspace": {"$ref": "#/$defs/handle"},
-            "request": {"$ref": "#/$defs/handle"}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "workspace": {
+              "$ref": "#/$defs/handle"
+            },
+            "request": {
+              "$ref": "#/$defs/handle"
+            }
           },
-          "required": ["profile", "workspace",
-            "request"],
+          "required": [
+            "profile",
+            "workspace",
+            "request"
+          ],
           "additionalProperties": false
         }
       },
-      "required": ["api_version", "request_id", "operation", "params"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "call.ice_servers"},
-        "params": {
-          "type": "object",
-          "properties": {"profile": {"$ref": "#/$defs/handle"}},
-          "required": ["profile"],
-          "additionalProperties": false
-        }
-      },
-      "required": ["api_version", "request_id", "operation", "params"],
-      "additionalProperties": false
-    },
-    {
-      "type": "object",
-      "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "workspace.metadata_update"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "call.ice_servers"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "workspace": {"$ref": "#/$defs/handle"},
-            "name": {"type": "string", "minLength": 1, "maxLength": 128},
-            "description": {"type": "string", "maxLength": 1000}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            }
           },
-          "required": ["profile", "workspace", "name", "description"],
+          "required": [
+            "profile"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "workspace.metadata_update"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "workspace": {
+              "$ref": "#/$defs/handle"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "description": {
+              "type": "string",
+              "maxLength": 1000
+            }
+          },
+          "required": [
+            "profile",
+            "workspace",
+            "name",
+            "description"
+          ],
           "additionalProperties": false
         },
         "idempotency_key": {
@@ -1706,24 +2025,53 @@
           "pattern": "^[A-Za-z0-9._:-]+$"
         }
       },
-      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "workspace.retention_update"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "workspace.retention_update"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "workspace": {"$ref": "#/$defs/handle"},
-            "retention_days": {"enum": [null, 30, 90, 365]}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "workspace": {
+              "$ref": "#/$defs/handle"
+            },
+            "retention_days": {
+              "enum": [
+                null,
+                30,
+                90,
+                365
+              ]
+            }
           },
-          "required": ["profile", "workspace", "retention_days"],
+          "required": [
+            "profile",
+            "workspace",
+            "retention_days"
+          ],
           "additionalProperties": false
         },
         "idempotency_key": {
@@ -1733,1236 +2081,3152 @@
           "pattern": "^[A-Za-z0-9._:-]+$"
         }
       },
-      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "workspace.admin_request_approve"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "workspace.admin_request_approve"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "workspace": {"$ref": "#/$defs/handle"},
-            "request": {"$ref": "#/$defs/handle"}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "workspace": {
+              "$ref": "#/$defs/handle"
+            },
+            "request": {
+              "$ref": "#/$defs/handle"
+            }
           },
-          "required": ["profile", "workspace", "request"],
+          "required": [
+            "profile",
+            "workspace",
+            "request"
+          ],
           "additionalProperties": false
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
       },
-      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "workspace.admin_request_decline"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "workspace.admin_request_decline"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "workspace": {"$ref": "#/$defs/handle"},
-            "request": {"$ref": "#/$defs/handle"}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "workspace": {
+              "$ref": "#/$defs/handle"
+            },
+            "request": {
+              "$ref": "#/$defs/handle"
+            }
           },
-          "required": ["profile", "workspace", "request"],
+          "required": [
+            "profile",
+            "workspace",
+            "request"
+          ],
           "additionalProperties": false
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
       },
-      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "workspace.admin_request_cancel"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "workspace.admin_request_cancel"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "workspace": {"$ref": "#/$defs/handle"},
-            "request": {"$ref": "#/$defs/handle"}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "workspace": {
+              "$ref": "#/$defs/handle"
+            },
+            "request": {
+              "$ref": "#/$defs/handle"
+            }
           },
-          "required": ["profile", "workspace", "request"],
+          "required": [
+            "profile",
+            "workspace",
+            "request"
+          ],
           "additionalProperties": false
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
       },
-      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "workspace.admin_request_dismiss"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "workspace.admin_request_dismiss"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "workspace": {"$ref": "#/$defs/handle"},
-            "request": {"$ref": "#/$defs/handle"}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "workspace": {
+              "$ref": "#/$defs/handle"
+            },
+            "request": {
+              "$ref": "#/$defs/handle"
+            }
           },
-          "required": ["profile", "workspace", "request"],
+          "required": [
+            "profile",
+            "workspace",
+            "request"
+          ],
           "additionalProperties": false
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
       },
-      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "workspace.close"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "workspace.close"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "workspace": {"$ref": "#/$defs/handle"}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "workspace": {
+              "$ref": "#/$defs/handle"
+            }
           },
-          "required": ["profile", "workspace"],
+          "required": [
+            "profile",
+            "workspace"
+          ],
           "additionalProperties": false
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
       },
-      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "workspace.leave"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "workspace.leave"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "workspace": {"$ref": "#/$defs/handle"}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "workspace": {
+              "$ref": "#/$defs/handle"
+            }
           },
-          "required": ["profile", "workspace"],
+          "required": [
+            "profile",
+            "workspace"
+          ],
           "additionalProperties": false
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
       },
-      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "workspace.remove_data"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "workspace.remove_data"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "workspace": {"$ref": "#/$defs/handle"},
-            "confirmation": {"type": "string", "minLength": 1, "maxLength": 128}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "workspace": {
+              "$ref": "#/$defs/handle"
+            },
+            "confirmation": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
           },
-          "required": ["profile", "workspace",
-            "confirmation"],
+          "required": [
+            "profile",
+            "workspace",
+            "confirmation"
+          ],
           "additionalProperties": false
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
       },
-      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "workspace.authority_loss_report"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "workspace.authority_loss_report"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "workspace": {"$ref": "#/$defs/handle"}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "workspace": {
+              "$ref": "#/$defs/handle"
+            }
           },
-          "required": ["profile", "workspace"],
+          "required": [
+            "profile",
+            "workspace"
+          ],
           "additionalProperties": false
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
       },
-      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "workspace.authority_accept"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "workspace.authority_accept"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "workspace": {"$ref": "#/$defs/handle"},
-            "transition": {"$ref": "#/$defs/handle"}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "workspace": {
+              "$ref": "#/$defs/handle"
+            },
+            "transition": {
+              "$ref": "#/$defs/handle"
+            }
           },
-          "required": ["profile", "workspace", "transition"],
+          "required": [
+            "profile",
+            "workspace",
+            "transition"
+          ],
           "additionalProperties": false
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
       },
-      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "workspace.authority_finalize"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "workspace.authority_finalize"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "workspace": {"$ref": "#/$defs/handle"},
-            "transition": {"$ref": "#/$defs/handle"}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "workspace": {
+              "$ref": "#/$defs/handle"
+            },
+            "transition": {
+              "$ref": "#/$defs/handle"
+            }
           },
-          "required": ["profile", "workspace", "transition"],
+          "required": [
+            "profile",
+            "workspace",
+            "transition"
+          ],
           "additionalProperties": false
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
       },
-      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "workspace.authority_offer"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "workspace.authority_offer"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "workspace": {"$ref": "#/$defs/handle"},
-            "transition_kind": {"enum": ["ownership_transfer", "same_owner_rotation"]},
-            "successor_member": {"$ref": "#/$defs/handle"},
-            "successor_device": {"$ref": "#/$defs/handle"},
-            "outgoing_owner_role": {"enum": [null, "admin", "member"]}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "workspace": {
+              "$ref": "#/$defs/handle"
+            },
+            "transition_kind": {
+              "enum": [
+                "ownership_transfer",
+                "same_owner_rotation"
+              ]
+            },
+            "successor_member": {
+              "$ref": "#/$defs/handle"
+            },
+            "successor_device": {
+              "$ref": "#/$defs/handle"
+            },
+            "outgoing_owner_role": {
+              "enum": [
+                null,
+                "admin",
+                "member"
+              ]
+            }
           },
-          "required": ["profile", "workspace", "transition_kind",
-                        "successor_member", "successor_device", "outgoing_owner_role"],
+          "required": [
+            "profile",
+            "workspace",
+            "transition_kind",
+            "successor_member",
+            "successor_device",
+            "outgoing_owner_role"
+          ],
           "additionalProperties": false
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
       },
-      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "call.media_query"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "call.media_query"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "call": {"$ref": "#/$defs/handle"}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "call": {
+              "$ref": "#/$defs/handle"
+            }
           },
-          "required": ["profile", "call"],
+          "required": [
+            "profile",
+            "call"
+          ],
           "additionalProperties": false
         }
       },
-      "required": ["api_version", "request_id", "operation", "params"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "workspace.admin_request_submit"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "workspace.admin_request_submit"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "workspace": {"$ref": "#/$defs/handle"},
-            "request_kind": {"enum": ["invitation", "member_removal", "role_change"]},
-            "target_member": {"$ref": "#/$defs/handle"},
-            "requested_role": {"enum": [null, "admin", "member"]},
-            "note": {"type": "string", "maxLength": 500}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "workspace": {
+              "$ref": "#/$defs/handle"
+            },
+            "request_kind": {
+              "enum": [
+                "invitation",
+                "member_removal",
+                "role_change"
+              ]
+            },
+            "target_member": {
+              "$ref": "#/$defs/handle"
+            },
+            "requested_role": {
+              "enum": [
+                null,
+                "admin",
+                "member"
+              ]
+            },
+            "note": {
+              "type": "string",
+              "maxLength": 500
+            }
           },
-          "required": ["profile", "workspace", "request_kind"],
+          "required": [
+            "profile",
+            "workspace",
+            "request_kind"
+          ],
           "additionalProperties": false
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
       },
-      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "workspace.display_name_request"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "workspace.display_name_request"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "workspace": {"$ref": "#/$defs/handle"},
-            "display_name": {"type": "string", "minLength": 1, "maxLength": 64}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "workspace": {
+              "$ref": "#/$defs/handle"
+            },
+            "display_name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
           },
-          "required": ["profile", "workspace", "display_name"],
+          "required": [
+            "profile",
+            "workspace",
+            "display_name"
+          ],
           "additionalProperties": false
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
       },
-      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "workspace.read_hint_sync"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "workspace.read_hint_sync"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "workspace": {"$ref": "#/$defs/handle"},
-            "enabled": {"type": "boolean"}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "workspace": {
+              "$ref": "#/$defs/handle"
+            },
+            "enabled": {
+              "type": "boolean"
+            }
           },
-          "required": ["profile", "workspace", "enabled"],
+          "required": [
+            "profile",
+            "workspace",
+            "enabled"
+          ],
           "additionalProperties": false
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
       },
-      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "workspace.invitation_revoke"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "workspace.invitation_revoke"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "workspace": {"$ref": "#/$defs/handle"},
-            "invitation": {"$ref": "#/$defs/handle"}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "workspace": {
+              "$ref": "#/$defs/handle"
+            },
+            "invitation": {
+              "$ref": "#/$defs/handle"
+            }
           },
-          "required": ["profile", "workspace", "invitation"],
+          "required": [
+            "profile",
+            "workspace",
+            "invitation"
+          ],
           "additionalProperties": false
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
       },
-      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "workspace.admission_grant_list"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "workspace.admission_grant_list"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "workspace": {"$ref": "#/$defs/handle"}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "workspace": {
+              "$ref": "#/$defs/handle"
+            }
           },
-          "required": ["profile", "workspace"],
+          "required": [
+            "profile",
+            "workspace"
+          ],
           "additionalProperties": false
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
       },
-      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "workspace.admission_grant_create"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "workspace.admission_grant_create"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "workspace": {"$ref": "#/$defs/handle"},
-            "admin_member": {"$ref": "#/$defs/handle"},
-            "admin_device": {"$ref": "#/$defs/handle"},
-            "max_admissions": {"type": "integer", "minimum": 1, "maximum": 5},
-            "lifetime_days": {"type": "integer", "minimum": 1, "maximum": 7},
-            "v2_ready": {"type": "boolean"}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "workspace": {
+              "$ref": "#/$defs/handle"
+            },
+            "admin_member": {
+              "$ref": "#/$defs/handle"
+            },
+            "admin_device": {
+              "$ref": "#/$defs/handle"
+            },
+            "max_admissions": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5
+            },
+            "lifetime_days": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 7
+            },
+            "v2_ready": {
+              "type": "boolean"
+            }
           },
-          "required": ["profile", "workspace", "admin_member", "admin_device", "max_admissions", "lifetime_days", "v2_ready"],
+          "required": [
+            "profile",
+            "workspace",
+            "admin_member",
+            "admin_device",
+            "max_admissions",
+            "lifetime_days",
+            "v2_ready"
+          ],
           "additionalProperties": false
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
       },
-      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "workspace.admission_grant_accept"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "workspace.admission_grant_accept"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "workspace": {"$ref": "#/$defs/handle"},
-            "grant": {"$ref": "#/$defs/handle"}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "workspace": {
+              "$ref": "#/$defs/handle"
+            },
+            "grant": {
+              "$ref": "#/$defs/handle"
+            }
           },
-          "required": ["profile", "workspace", "grant"],
+          "required": [
+            "profile",
+            "workspace",
+            "grant"
+          ],
           "additionalProperties": false
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
       },
-      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "workspace.admission_grant_end"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "workspace.admission_grant_end"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "workspace": {"$ref": "#/$defs/handle"},
-            "grant": {"$ref": "#/$defs/handle"}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "workspace": {
+              "$ref": "#/$defs/handle"
+            },
+            "grant": {
+              "$ref": "#/$defs/handle"
+            }
           },
-          "required": ["profile", "workspace", "grant"],
+          "required": [
+            "profile",
+            "workspace",
+            "grant"
+          ],
           "additionalProperties": false
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
       },
-      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "workspace.timeline_query"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "workspace.timeline_query"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "workspace": {"$ref": "#/$defs/handle"},
-            "view": {"enum": ["threads", "thread_messages", "mentions", "search", "channel_messages", "direct_messages"]},
-            "cursor": {"type": ["string", "null"], "maxLength": 256},
-            "limit": {"type": "integer", "minimum": 1, "maximum": 100},
-            "thread_root": {"type": "string", "minLength": 1, "maxLength": 160},
-            "query": {"type": "string", "minLength": 2, "maxLength": 200},
-            "scope": {"type": "string", "minLength": 1, "maxLength": 32}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "workspace": {
+              "$ref": "#/$defs/handle"
+            },
+            "view": {
+              "enum": [
+                "threads",
+                "thread_messages",
+                "mentions",
+                "search",
+                "channel_messages",
+                "direct_messages"
+              ]
+            },
+            "cursor": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 256
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "thread_root": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "query": {
+              "type": "string",
+              "minLength": 2,
+              "maxLength": 200
+            },
+            "scope": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32
+            }
           },
-          "required": ["profile", "workspace", "view"],
+          "required": [
+            "profile",
+            "workspace",
+            "view"
+          ],
           "additionalProperties": false
         }
       },
-      "required": ["api_version", "request_id", "operation", "params"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "workspace.timeline_mutation"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "workspace.timeline_mutation"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "workspace": {"$ref": "#/$defs/handle"},
-            "action": {"enum": ["thread_reply", "thread_read", "mentions_read", "notification_preference", "workspace_read", "direct_read", "channel_message", "direct_message", "message_edit", "message_delete", "reaction_set"]},
-            "conversation": {"type": ["string", "null"], "minLength": 1, "maxLength": 160},
-            "channel": {"type": "string", "minLength": 1, "maxLength": 160},
-            "thread_root": {"type": "string", "minLength": 1, "maxLength": 160},
-            "text": {"type": "string", "minLength": 1, "maxLength": 16384},
-            "event_id": {"type": "string", "minLength": 1, "maxLength": 160},
-            "high_water": {"oneOf": [
-              {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
-              {"type": "string", "minLength": 1, "maxLength": 160}]},
-            "mutation_event_id": {"type": "string", "minLength": 1, "maxLength": 160},
-            "emoji": {"type": "string", "minLength": 1, "maxLength": 16},
-            "active": {"type": "boolean"},
-            "mention_member_ids": {"type": "array", "maxItems": 32,
-              "items": {"type": "string", "minLength": 1, "maxLength": 160}},
-            "mode": {"enum": ["all", "mentions", "none", "mentions_only", "muted"]}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "workspace": {
+              "$ref": "#/$defs/handle"
+            },
+            "action": {
+              "enum": [
+                "thread_reply",
+                "thread_read",
+                "mentions_read",
+                "notification_preference",
+                "workspace_read",
+                "direct_read",
+                "channel_message",
+                "direct_message",
+                "message_edit",
+                "message_delete",
+                "reaction_set"
+              ]
+            },
+            "conversation": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "channel": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "thread_root": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "text": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 16384
+            },
+            "event_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "high_water": {
+              "oneOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                }
+              ]
+            },
+            "mutation_event_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "emoji": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 16
+            },
+            "active": {
+              "type": "boolean"
+            },
+            "mention_member_ids": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              }
+            },
+            "mode": {
+              "enum": [
+                "all",
+                "mentions",
+                "none",
+                "mentions_only",
+                "muted"
+              ]
+            }
           },
-          "required": ["profile", "workspace", "action"],
+          "required": [
+            "profile",
+            "workspace",
+            "action"
+          ],
           "additionalProperties": false
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
       },
-      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "workspace.snapshot"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "workspace.snapshot"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            }
           },
-          "required": ["profile"],
+          "required": [
+            "profile"
+          ],
           "additionalProperties": false
         }
       },
-      "required": ["api_version", "request_id", "operation", "params"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "workspace.access_recommendation"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "workspace.access_recommendation"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "workspace": {"$ref": "#/$defs/handle"},
-            "action": {"enum": ["list", "create", "send", "preview",
-                                 "preview_by_id", "apply", "apply_by_id"]},
-            "remote_profile_id": {"type": ["string", "null"], "maxLength": 160},
-            "lifetime_days": {"type": "integer", "minimum": 1, "maximum": 90},
-            "recommendation": {"type": "string", "minLength": 1, "maxLength": 8192},
-            "recommendation_id": {"type": "string", "minLength": 1, "maxLength": 160},
-            "consent": {"type": "boolean"}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "workspace": {
+              "$ref": "#/$defs/handle"
+            },
+            "action": {
+              "enum": [
+                "list",
+                "create",
+                "send",
+                "preview",
+                "preview_by_id",
+                "apply",
+                "apply_by_id"
+              ]
+            },
+            "remote_profile_id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 160
+            },
+            "lifetime_days": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 90
+            },
+            "recommendation": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            },
+            "recommendation_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "consent": {
+              "type": "boolean"
+            }
           },
-          "required": ["profile", "workspace", "action"],
+          "required": [
+            "profile",
+            "workspace",
+            "action"
+          ],
           "additionalProperties": false
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
       },
-      "required": ["api_version", "request_id", "operation", "params"],
-      "allOf": [{"if":{"properties":{"params":{"properties":{"action":{"enum":["apply","apply_by_id","create","send"]}},"required":["action"]}},"required":["params"]},"then":{"required":["idempotency_key"]}}],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "params": {
+                "properties": {
+                  "action": {
+                    "enum": [
+                      "apply",
+                      "apply_by_id",
+                      "create",
+                      "send"
+                    ]
+                  }
+                },
+                "required": [
+                  "action"
+                ]
+              }
+            },
+            "required": [
+              "params"
+            ]
+          },
+          "then": {
+            "required": [
+              "idempotency_key"
+            ]
+          }
+        }
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "workspace.history"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "workspace.history"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "workspace": {"$ref": "#/$defs/handle"},
-            "action": {"enum": ["status", "prune", "revisions", "tombstones",
-                                 "hide_message", "hide_direct", "start", "cancel"]},
-            "conversation": {"type": "string", "minLength": 1, "maxLength": 160},
-            "event_id": {"type": "string", "minLength": 1, "maxLength": 160},
-            "cursor": {"type": ["string", "null"], "maxLength": 256},
-            "limit": {"type": "integer", "minimum": 1, "maximum": 100},
-            "max_events": {"type": "integer", "minimum": 1, "maximum": 5000}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "workspace": {
+              "$ref": "#/$defs/handle"
+            },
+            "action": {
+              "enum": [
+                "status",
+                "prune",
+                "revisions",
+                "tombstones",
+                "hide_message",
+                "hide_direct",
+                "start",
+                "cancel"
+              ]
+            },
+            "conversation": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "event_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "cursor": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 256
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "max_events": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5000
+            }
           },
-          "required": ["profile", "workspace", "action"],
+          "required": [
+            "profile",
+            "workspace",
+            "action"
+          ],
           "additionalProperties": false
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
       },
-      "required": ["api_version", "request_id", "operation", "params"],
-      "allOf": [{"if":{"properties":{"params":{"properties":{"action":{"enum":["cancel","hide_direct","hide_message","prune","start"]}},"required":["action"]}},"required":["params"]},"then":{"required":["idempotency_key"]}}],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "params": {
+                "properties": {
+                  "action": {
+                    "enum": [
+                      "cancel",
+                      "hide_direct",
+                      "hide_message",
+                      "prune",
+                      "start"
+                    ]
+                  }
+                },
+                "required": [
+                  "action"
+                ]
+              }
+            },
+            "required": [
+              "params"
+            ]
+          },
+          "then": {
+            "required": [
+              "idempotency_key"
+            ]
+          }
+        }
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "workspace.connection"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "workspace.connection"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "workspace": {"$ref": "#/$defs/handle"},
-            "action": {"enum": ["reconnect_status", "reconnect_consent", "invite_contact",
-                                 "prompt_preview", "prompt_submit", "prompt_dismiss",
-                                 "device_link_preview"]},
-            "auto_reconnect": {"type": "boolean"},
-            "allow_direct_ip_disclosure": {"type": "boolean"},
-            "relay_consent_scope": {"enum": ["workspace", "session"]},
-            "contact_id": {"type": "string", "minLength": 1, "maxLength": 160},
-            "prompt_id": {"type": "string", "minLength": 1, "maxLength": 160},
-            "device_link": {"type": "string", "minLength": 1, "maxLength": 16384}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "workspace": {
+              "$ref": "#/$defs/handle"
+            },
+            "action": {
+              "enum": [
+                "reconnect_status",
+                "reconnect_consent",
+                "invite_contact",
+                "prompt_preview",
+                "prompt_submit",
+                "prompt_dismiss",
+                "device_link_preview"
+              ]
+            },
+            "auto_reconnect": {
+              "type": "boolean"
+            },
+            "allow_direct_ip_disclosure": {
+              "type": "boolean"
+            },
+            "relay_consent_scope": {
+              "enum": [
+                "workspace",
+                "session"
+              ]
+            },
+            "contact_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "prompt_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "device_link": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 16384
+            }
           },
-          "required": ["profile", "action"],
+          "required": [
+            "profile",
+            "action"
+          ],
           "additionalProperties": false
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
       },
-      "required": ["api_version", "request_id", "operation", "params"],
-      "allOf": [{"if":{"properties":{"params":{"properties":{"action":{"enum":["invite_contact","prompt_dismiss","prompt_submit","reconnect_consent"]}},"required":["action"]}},"required":["params"]},"then":{"required":["idempotency_key"]}}],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "params": {
+                "properties": {
+                  "action": {
+                    "enum": [
+                      "invite_contact",
+                      "prompt_dismiss",
+                      "prompt_submit",
+                      "reconnect_consent"
+                    ]
+                  }
+                },
+                "required": [
+                  "action"
+                ]
+              }
+            },
+            "required": [
+              "params"
+            ]
+          },
+          "then": {
+            "required": [
+              "idempotency_key"
+            ]
+          }
+        }
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "runtime.query"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "runtime.query"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "action": {"enum": ["background", "notifications"]}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "action": {
+              "enum": [
+                "background",
+                "notifications"
+              ]
+            }
           },
-          "required": ["profile", "action"],
+          "required": [
+            "profile",
+            "action"
+          ],
           "additionalProperties": false
         }
       },
-      "required": ["api_version", "request_id", "operation", "params"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "runtime.mutate"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "runtime.mutate"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "action": {"enum": ["background_set", "notification_previews", "notification_open"]},
-            "enabled": {"type": "boolean"},
-            "hidden": {"type": "boolean"},
-            "notification_id": {"type": "string", "minLength": 1, "maxLength": 160}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "action": {
+              "enum": [
+                "background_set",
+                "notification_previews",
+                "notification_open"
+              ]
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "hidden": {
+              "type": "boolean"
+            },
+            "notification_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            }
           },
-          "required": ["profile", "action"],
+          "required": [
+            "profile",
+            "action"
+          ],
           "additionalProperties": false
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
       },
-      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "call.control"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "call.control"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "action": {"enum": ["start", "answer", "restart", "answer_restart",
-                                    "end", "candidate", "signal_publish", "signal_fetch"]},
-            "contact_id": {"type": "string", "minLength": 1, "maxLength": 160},
-            "call_id": {"type": "string", "minLength": 1, "maxLength": 160},
-            "media": {"enum": ["audio", "video"]},
-            "sdp": {"type": "string", "minLength": 1, "maxLength": 65536},
-            "dtls_fingerprint": {"type": "string", "minLength": 1, "maxLength": 256},
-            "reason": {"type": "string", "minLength": 1, "maxLength": 64},
-            "candidate": {"type": "string", "minLength": 1, "maxLength": 4096},
-            "document": {"type": "string", "minLength": 1, "maxLength": 65536},
-            "role": {"enum": ["caller", "callee", "offer", "answer"]},
-            "session": {"type": "string", "minLength": 1, "maxLength": 2048},
-            "session_id": {"type": "string", "minLength": 1, "maxLength": 256},
-            "mailbox_token": {"type": "string", "minLength": 1, "maxLength": 4096}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "action": {
+              "enum": [
+                "start",
+                "answer",
+                "restart",
+                "answer_restart",
+                "end",
+                "candidate",
+                "signal_publish",
+                "signal_fetch"
+              ]
+            },
+            "contact_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "call_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "media": {
+              "enum": [
+                "audio",
+                "video"
+              ]
+            },
+            "sdp": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 65536
+            },
+            "dtls_fingerprint": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "candidate": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "document": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 65536
+            },
+            "role": {
+              "enum": [
+                "caller",
+                "callee",
+                "offer",
+                "answer"
+              ]
+            },
+            "session": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2048
+            },
+            "session_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "mailbox_token": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            }
           },
-          "required": ["profile", "action"],
+          "required": [
+            "profile",
+            "action"
+          ],
           "additionalProperties": false
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
       },
-      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "workspace.channel_recover"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "workspace.channel_recover"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "workspace": {"$ref": "#/$defs/handle"},
-            "channel": {"$ref": "#/$defs/handle"}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "workspace": {
+              "$ref": "#/$defs/handle"
+            },
+            "channel": {
+              "$ref": "#/$defs/handle"
+            }
           },
-          "required": ["profile", "workspace", "channel"],
+          "required": [
+            "profile",
+            "workspace",
+            "channel"
+          ],
           "additionalProperties": false
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
       },
-      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "workspace.channel_state"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "workspace.channel_state"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "workspace": {"$ref": "#/$defs/handle"},
-            "channel": {"$ref": "#/$defs/handle"},
-            "action": {"enum": ["subscribe", "mute", "leave", "sync"]},
-            "subscribed": {"type": "boolean"},
-            "muted": {"type": "boolean"}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "workspace": {
+              "$ref": "#/$defs/handle"
+            },
+            "channel": {
+              "$ref": "#/$defs/handle"
+            },
+            "action": {
+              "enum": [
+                "subscribe",
+                "mute",
+                "leave",
+                "sync"
+              ]
+            },
+            "subscribed": {
+              "type": "boolean"
+            },
+            "muted": {
+              "type": "boolean"
+            }
           },
-          "required": ["profile", "workspace", "action"],
+          "required": [
+            "profile",
+            "workspace",
+            "action"
+          ],
           "additionalProperties": false
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
       },
-      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "workspace.member_remove"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "workspace.member_remove"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "workspace": {"$ref": "#/$defs/handle"},
-            "member": {"$ref": "#/$defs/handle"}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "workspace": {
+              "$ref": "#/$defs/handle"
+            },
+            "member": {
+              "$ref": "#/$defs/handle"
+            }
           },
-          "required": ["profile", "workspace", "member"],
+          "required": [
+            "profile",
+            "workspace",
+            "member"
+          ],
           "additionalProperties": false
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
       },
-      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "group.draft_set"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "group.draft_set"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "group": {"$ref": "#/$defs/handle"},
-            "text": {"type": "string", "maxLength": 16384}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "group": {
+              "$ref": "#/$defs/handle"
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 16384
+            }
           },
-          "required": ["profile", "group", "text"],
+          "required": [
+            "profile",
+            "group",
+            "text"
+          ],
           "additionalProperties": false
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
       },
-      "required": ["api_version", "request_id", "operation", "params"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "workspace.draft_set"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "workspace.draft_set"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "workspace": {"$ref": "#/$defs/handle"},
-            "conversation": {"type": "string", "minLength": 1, "maxLength": 160},
-            "text": {"type": "string", "maxLength": 16384},
-            "thread_root": {"type": "string", "minLength": 1, "maxLength": 160},
-            "mention_member_ids": {"type": "array", "maxItems": 32,
-              "items": {"type": "string", "minLength": 1, "maxLength": 160}}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "workspace": {
+              "$ref": "#/$defs/handle"
+            },
+            "conversation": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 16384
+            },
+            "thread_root": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "mention_member_ids": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              }
+            }
           },
-          "required": ["profile", "workspace", "conversation", "text"],
+          "required": [
+            "profile",
+            "workspace",
+            "conversation",
+            "text"
+          ],
           "additionalProperties": false
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
       },
-      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "remote_profile.mutate"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "remote_profile.mutate"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "action": {"enum": ["create", "test", "retry", "remove", "remove_propagation", "approve_propagation"]},
-            "label": {"type": "string", "minLength": 1, "maxLength": 64},
-            "endpoints": {"type": "array", "maxItems": 8, "items": {
-              "type": "object", "properties": {
-                "host": {"type": "string", "minLength": 1, "maxLength": 255},
-                "port": {"type": "integer", "minimum": 1, "maximum": 65535}
-              }, "required": ["host", "port"], "additionalProperties": false}},
-            "propagation_node": {"type": ["string", "null"], "maxLength": 32},
-            "allow_private": {"type": "boolean"},
-            "remote_profile_id": {"type": "string", "minLength": 1, "maxLength": 160}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "action": {
+              "enum": [
+                "create",
+                "test",
+                "retry",
+                "remove",
+                "remove_propagation",
+                "approve_propagation"
+              ]
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "endpoints": {
+              "type": "array",
+              "maxItems": 8,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "host": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 255
+                  },
+                  "port": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 65535
+                  }
+                },
+                "required": [
+                  "host",
+                  "port"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "propagation_node": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 32
+            },
+            "allow_private": {
+              "type": "boolean"
+            },
+            "remote_profile_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            }
           },
-          "required": ["profile", "action"],
+          "required": [
+            "profile",
+            "action"
+          ],
           "additionalProperties": false
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
       },
-      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "workspace.display_name_decide"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "workspace.display_name_decide"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "workspace": {"$ref": "#/$defs/handle"},
-            "request": {"type": "string", "minLength": 1, "maxLength": 160},
-            "approve": {"type": "boolean"}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "workspace": {
+              "$ref": "#/$defs/handle"
+            },
+            "request": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "approve": {
+              "type": "boolean"
+            }
           },
-          "required": ["profile", "workspace", "request", "approve"],
+          "required": [
+            "profile",
+            "workspace",
+            "request",
+            "approve"
+          ],
           "additionalProperties": false
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
       },
-      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "workspace.direct_open"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "workspace.direct_open"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "workspace": {"$ref": "#/$defs/handle"},
-            "member": {"$ref": "#/$defs/handle"}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "workspace": {
+              "$ref": "#/$defs/handle"
+            },
+            "member": {
+              "$ref": "#/$defs/handle"
+            }
           },
-          "required": ["profile", "workspace", "member"],
+          "required": [
+            "profile",
+            "workspace",
+            "member"
+          ],
           "additionalProperties": false
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
       },
-      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "route.update"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "route.update"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "action": {"enum": ["preview", "apply", "create"]},
-            "update": {"type": "string", "minLength": 1, "maxLength": 1048576},
-            "scope_kind": {"enum": ["contact", "workspace_device"]},
-            "scope_id": {"type": "string", "minLength": 1, "maxLength": 160},
-            "peer_destination": {"type": "string", "minLength": 1, "maxLength": 160}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "action": {
+              "enum": [
+                "preview",
+                "apply",
+                "create"
+              ]
+            },
+            "update": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1048576
+            },
+            "scope_kind": {
+              "enum": [
+                "contact",
+                "workspace_device"
+              ]
+            },
+            "scope_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "peer_destination": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            }
           },
-          "required": ["profile", "action"],
+          "required": [
+            "profile",
+            "action"
+          ],
           "additionalProperties": false
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
       },
-      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "peer.update"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "peer.update"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "peer": {"$ref": "#/$defs/handle"},
-            "action": {"enum": ["rename", "verify", "unverify"]},
-            "display_name": {"type": "string", "minLength": 1, "maxLength": 80}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "peer": {
+              "$ref": "#/$defs/handle"
+            },
+            "action": {
+              "enum": [
+                "rename",
+                "verify",
+                "unverify"
+              ]
+            },
+            "display_name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            }
           },
-          "required": ["profile", "peer", "action"],
+          "required": [
+            "profile",
+            "peer",
+            "action"
+          ],
           "additionalProperties": false
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
       },
-      "required": ["api_version", "request_id", "operation", "params"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "conversation.mutate"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "conversation.mutate"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "action": {"enum": ["delete", "restore", "reaction_set"]},
-            "kind": {"enum": ["direct", "group"]},
-            "target_id": {"type": "string", "minLength": 1, "maxLength": 160},
-            "message_id": {"type": "string", "minLength": 1, "maxLength": 160},
-            "emoji": {"type": "string", "minLength": 1, "maxLength": 16},
-            "active": {"type": "boolean"}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "action": {
+              "enum": [
+                "delete",
+                "restore",
+                "reaction_set"
+              ]
+            },
+            "kind": {
+              "enum": [
+                "direct",
+                "group"
+              ]
+            },
+            "target_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "message_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "emoji": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 16
+            },
+            "active": {
+              "type": "boolean"
+            }
           },
-          "required": ["profile", "action", "kind", "target_id"],
+          "required": [
+            "profile",
+            "action",
+            "kind",
+            "target_id"
+          ],
           "additionalProperties": false
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
       },
-      "required": ["api_version", "request_id", "operation", "params"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "peer.decide"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "peer.decide"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "peer": {"$ref": "#/$defs/handle"},
-            "accept": {"type": "boolean"}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "peer": {
+              "$ref": "#/$defs/handle"
+            },
+            "accept": {
+              "type": "boolean"
+            }
           },
-          "required": ["profile", "peer", "accept"],
+          "required": [
+            "profile",
+            "peer",
+            "accept"
+          ],
           "additionalProperties": false
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
       },
-      "required": ["api_version", "request_id", "operation", "params"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "link.preview"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "link.preview"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "provider": {"enum": ["youtube", "x"]},
-            "identifier": {"type": "string", "minLength": 1, "maxLength": 64}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "provider": {
+              "enum": [
+                "youtube",
+                "x"
+              ]
+            },
+            "identifier": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
           },
-          "required": ["profile", "provider", "identifier"],
+          "required": [
+            "profile",
+            "provider",
+            "identifier"
+          ],
           "additionalProperties": false
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
       },
-      "required": ["api_version", "request_id", "operation", "params"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "contact.invitation"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "contact.invitation"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "action": {"enum": ["receive", "decide"]},
-            "document": {"type": "string", "minLength": 1, "maxLength": 1048576},
-            "peer": {"type": "string", "minLength": 1, "maxLength": 160},
-            "workspace_document": {"type": "string", "minLength": 1, "maxLength": 1048576},
-            "invitation": {"type": "string", "minLength": 1, "maxLength": 160},
-            "accept": {"type": "boolean"}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "action": {
+              "enum": [
+                "receive",
+                "decide"
+              ]
+            },
+            "document": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1048576
+            },
+            "peer": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "workspace_document": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1048576
+            },
+            "invitation": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "accept": {
+              "type": "boolean"
+            }
           },
-          "required": ["profile", "action"],
+          "required": [
+            "profile",
+            "action"
+          ],
           "additionalProperties": false
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
       },
-      "required": ["api_version", "request_id", "operation", "params"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "recovery.transfer"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "recovery.transfer"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "action": {"enum": ["export", "import"]},
-            "identifier": {"type": "string", "minLength": 1, "maxLength": 160},
-            "document": {"type": "string", "minLength": 1, "maxLength": 1048576},
-            "workspace_id": {"type": "string", "minLength": 1, "maxLength": 160}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "action": {
+              "enum": [
+                "export",
+                "import"
+              ]
+            },
+            "identifier": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "document": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1048576
+            },
+            "workspace_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            }
           },
-          "required": ["profile", "action"],
+          "required": [
+            "profile",
+            "action"
+          ],
           "additionalProperties": false
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
       },
-      "required": ["api_version", "request_id", "operation", "params"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "connection.support"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "connection.support"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "action": {"enum": ["help", "diagnostics", "clear"]},
-            "contact_id": {"type": "string", "minLength": 1, "maxLength": 160}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "action": {
+              "enum": [
+                "help",
+                "diagnostics",
+                "clear"
+              ]
+            },
+            "contact_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            }
           },
-          "required": ["profile", "action"],
+          "required": [
+            "profile",
+            "action"
+          ],
           "additionalProperties": false
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
       },
-      "required": ["api_version", "request_id", "operation", "params"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "remote_profile.query"},
-        "params": {
-          "type": "object",
-          "properties": {"profile": {"$ref": "#/$defs/handle"}},
-          "required": ["profile"],
-          "additionalProperties": false
+        "api_version": {
+          "const": 1
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
-      },
-      "required": ["api_version", "request_id", "operation", "params"],
-      "additionalProperties": false
-    },
-    {
-      "type": "object",
-      "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "connection.document"},
-        "params": {
-          "type": "object",
-          "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "action": {"enum": ["preview_direct", "create_reply", "preview_reply"]},
-            "document": {"type": "string", "minLength": 1, "maxLength": 1048576},
-            "invitation": {"type": "string", "minLength": 1, "maxLength": 1048576},
-            "purpose": {"enum": ["personal", "workspace"]},
-            "response": {"type": "string", "minLength": 1, "maxLength": 1048576}
-          },
-          "required": ["profile", "action"],
-          "additionalProperties": false
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
-      },
-      "required": ["api_version", "request_id", "operation", "params"],
-      "additionalProperties": false
-    },
-    {
-      "type": "object",
-      "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "peer.pairing_preview"},
+        "operation": {
+          "const": "remote_profile.query"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "document": {"type": "string", "minLength": 1, "maxLength": 1048576}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            }
           },
-          "required": ["profile", "document"],
+          "required": [
+            "profile"
+          ],
           "additionalProperties": false
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
       },
-      "required": ["api_version", "request_id", "operation", "params"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "workspace.join_prompt"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "connection.document"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "prompt": {"type": "string", "minLength": 1, "maxLength": 160}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "action": {
+              "enum": [
+                "preview_direct",
+                "create_reply",
+                "preview_reply"
+              ]
+            },
+            "document": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1048576
+            },
+            "invitation": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1048576
+            },
+            "purpose": {
+              "enum": [
+                "personal",
+                "workspace"
+              ]
+            },
+            "response": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1048576
+            }
           },
-          "required": ["profile", "prompt"],
+          "required": [
+            "profile",
+            "action"
+          ],
           "additionalProperties": false
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
       },
-      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
       "additionalProperties": false
     },
     {
       "type": "object",
       "properties": {
-        "api_version": {"const": 1},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
-          "pattern": "^[A-Za-z0-9._:-]+$"},
-        "operation": {"const": "workspace.create"},
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "peer.pairing_preview"
+        },
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"$ref": "#/$defs/handle"},
-            "name": {"type": "string", "minLength": 1, "maxLength": 64},
-            "description": {"type": "string", "maxLength": 250}
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "document": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1048576
+            }
           },
-          "required": ["profile", "name", "description"],
+          "required": [
+            "profile",
+            "document"
+          ],
           "additionalProperties": false
         },
-        "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"}
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
       },
-      "required": ["api_version", "request_id", "operation", "params", "idempotency_key"],
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "workspace.join_prompt"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "prompt": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            }
+          },
+          "required": [
+            "profile",
+            "prompt"
+          ],
+          "additionalProperties": false
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "workspace.create"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "description": {
+              "type": "string",
+              "maxLength": 250
+            }
+          },
+          "required": [
+            "profile",
+            "name",
+            "description"
+          ],
+          "additionalProperties": false
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
       "additionalProperties": false
     },
     {
@@ -3699,7 +5963,11 @@
               "maxLength": 1024
             },
             "posting": {
-              "enum": ["inherit", "all_members", "owner_and_admins"]
+              "enum": [
+                "inherit",
+                "all_members",
+                "owner_and_admins"
+              ]
             }
           },
           "required": [
@@ -4323,6 +6591,156 @@
         "idempotency_key"
       ],
       "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
+      "properties": {
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]{1,80}$"
+        },
+        "operation": {
+          "const": "peer.composer_query"
+        },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "peer": {
+              "$ref": "#/$defs/handle"
+            },
+            "send_revision": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "required": [
+            "profile",
+            "peer"
+          ]
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
+      "properties": {
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]{1,80}$"
+        },
+        "operation": {
+          "const": "peer.composer_update"
+        },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "peer": {
+              "$ref": "#/$defs/handle"
+            },
+            "expected_revision": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 16384
+            }
+          },
+          "required": [
+            "profile",
+            "peer",
+            "expected_revision",
+            "text"
+          ]
+        },
+        "idempotency_key": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
+      "properties": {
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]{1,80}$"
+        },
+        "operation": {
+          "const": "message.enqueue_draft"
+        },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "recipient": {
+              "$ref": "#/$defs/handle"
+            },
+            "draft_revision": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "required": [
+            "profile",
+            "recipient",
+            "draft_revision"
+          ]
+        },
+        "idempotency_key": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
     }
   ]
 }

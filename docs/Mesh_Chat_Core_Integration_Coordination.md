@@ -11,6 +11,12 @@ reports. Exact evidence and limits are in the ledger. Wave 2 is activated below.
 Existing human authorization covers continued implementation, integration and
 worker follow-ups without another permission request.
 
+Wave 2 local checkpoint: `3039204` integrates the concrete composer storage and
+migration fences. The lead's 43 composer checks (including 11 independent framed
+cases) and 15 platform-applicable vault cases pass. Rendered restart recovery and
+combined packaged qualification remain pending. C's lifecycle batch remains in
+review until deferred constructor cleanup retains its exact retiring runtime.
+
 ## Active Wave 2 handoff
 
 All workers merge the current lead branch before edits. Source `174728e` is the

@@ -2,6 +2,59 @@
 
 ## Integration revalidation (2026-11-09)
 
+### Wave 2 composer storage checkpoint
+
+Source `30392040a79eb9048ce4ed4ab3164c16451d34d3` integrates A's
+`edc0e78` production composer and D's `75d6185` independent requirements.
+The lead ran 43 composer contract, storage, migration and real framed boundary
+cases: all passed, zero skips, 2.90 seconds. This includes the 11 independent
+cases previously failing at capability admission on `1344a1a`. Fifteen
+Windows-applicable vault tests also passed in 0.51 seconds; the Linux `/sys`
+device-node case was explicitly deselected, not counted as qualified.
+
+Composer updates and draft-bound enqueue now persist atomically with their
+receipts; replay preserves newer text and rechecks authority. First use raises
+the vault format floor to 2 and persistently fences migrated legacy writes.
+These are local durability checks. The eight required rendered-App cases,
+packaged upgrade fixtures and combined Wave 2 CI remain pending. The accepted
+Wave 1 source and its evidence below remain unchanged.
+
+### Wave 2 lifecycle and private inspector checkpoint
+
+The lifecycle batch `9559312` and deferred-constructor correction `d86b47a`
+were integrated at `644c6b6`. A failed unpublished service retains ownership
+while cleanup is deferred, and the bridge rejects replacement initialization
+until that exact runtime releases its vault. The lead ran 138 combined mobile,
+profile-lifecycle, pending-carrier, runtime and composer cases: all passed,
+zero skips, 3.90 seconds.
+
+Private inspector `409a4e8` was then integrated at
+`1c360bd3d64f09ee95f888f430813d28becf9783`. Thirty-seven inspector, native Windows
+and lifecycle cases passed, zero skips, 3.38 seconds. All 669 Core and contract
+tests passed on that combined source, zero skips, 30.22 seconds. The inspector
+reports current resource/incarnation-bound path observations and marks unavailable
+measurements explicitly. These checks do not prove a relay path, cross-platform
+traffic or fault budgets; those require the active topology qualification.
+At that checkpoint, submission-failure cleanup and Android sampling remained open.
+
+The full required policy inventory subsequently passed at `6e97db5`: 2,630
+executed, zero failures/skips, 244.28 seconds, with the upstream LXMF deprecation
+warning. JUnit, collected inventory and validated policy report are retained.
+This source precedes the composer UI merge.
+
+At `b2df9ae`, the combined composer UI boundary executed all required cases:
+359 Python cases passed, while five of eight rendered cases failed (zero skips).
+Both newly added remount cases were among the failures. Three actual Windows
+pipe boundary cases passed in 1.65 seconds. Rendered failures are assigned to D
+and B for diagnosis; neither frontend unit success nor policy success closes
+this boundary gate. A local pytest-cache ACL warning did not skip cases.
+
+Inspector cleanup `9df4b1a` and Android sampler `aec8946` were integrated at
+`0bf8d04`. All 34 Python inspector/Windows cases passed, zero skips, 3.08 seconds.
+Android observes libwebrtc's selected-pair and relay-protocol statistics and
+explicitly reports the outer TURN socket unavailable. Its packaged qualification
+remains pending; advertised TURN URLs never establish the selected protocol.
+
 ### Wave 1 accepted at the fully qualified combined source
 
 The combined implementation is `174728edad62aae6ef16e95b075183d06c5cdda3`,

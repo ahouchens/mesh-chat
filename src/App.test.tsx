@@ -1,5 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ComposerHostFixture } from "./test/composer-host";
 
 import packageInfo from "../package.json";
 import type { ChatMessage, Contact, Group, GroupInvitation, GroupMessage, Snapshot, Workspace, WorkspaceAdminRequest, WorkspaceChannel, WorkspaceDirect, WorkspaceJoinRequest, WorkspaceMentionPage, WorkspaceMessage, WorkspaceMessagePage, WorkspaceSearchPage, WorkspaceThreadActivityPage, WorkspaceThreadPage } from "./types";
@@ -19,8 +20,8 @@ const api = vi.hoisted(() => {
     serviceCommand(kind === "personal" ? "preview_invitation" : kind === "workspace" ? "preview_workspace_invitation" : "preview_workspace_device_link",
       kind === "device_link" ? { device_link: document } : { invitation: document })),
   coreApiAcceptInvitation: vi.fn(async (invitation: string, i2pConsent = false): Promise<unknown> => serviceCommand("accept_invitation", { invitation, ...(i2pConsent ? { i2p_consent: true } : {}) })),
-  coreApiDraftGet: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
-  coreApiDraftSet: vi.fn(async (_destination: string, text: string): Promise<unknown> => serviceCommand("save_draft", { contact_id: approved.id, text })),
+  coreApiDraftGet: vi.fn(),
+  coreApiDraftSet: vi.fn(),
   coreApiCreateGroup: vi.fn(async (name: string, policy: string, destinations: string[]): Promise<{ group: string; name: string; posting_policy: string }> => {
     const memberIds = destinations.map((destination) => destination === approved.destination_hash ? approved.id : destination);
     const created = await serviceCommand("create_group", { title: name, member_ids: memberIds, posting_policy: policy }) as { id?: string; title?: string; posting_policy?: string };
@@ -195,7 +196,7 @@ const api = vi.hoisted(() => {
   coreApiCloseGroup: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiRemoveGroupMember: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiSendGroupMessage: vi.fn(async (_handle: string, text: string): Promise<unknown> => serviceCommand("send_group_message", { group_id: group.id, text })),
-  coreApiSendMessage: vi.fn(async (_destination: string, text: string): Promise<unknown> => serviceCommand("send_message", { contact_id: approved.id, text })),
+  coreApiSendMessage: vi.fn(),
   endCallAudio: vi.fn(async () => ({ active: false })),
   initializeService: vi.fn(),
   lockService: vi.fn(),
@@ -221,6 +222,33 @@ const api = vi.hoisted(() => {
 });
 
 vi.mock("./api", () => api);
+
+// Presentation fixtures use the new composer protocol directly. App.core.test
+// and D's independent boundary suite retain the actual native/API serializer.
+const composerUi = vi.hoisted(() => ({
+  fixture: null as unknown as import("./test/composer-host").ComposerHostFixture,
+  query: vi.fn(), update: vi.fn(), enqueue: vi.fn(),
+}));
+vi.mock("./core-composer", () => ({
+  openCoreComposer: vi.fn(async () => {
+    const fixture = composerUi.fixture;
+    const scope = { profile: "profile-handle", peer: "peer-handle" };
+    return { textUtf8Bytes: 16384, port: {
+      query: (revision?: string) => {
+        composerUi.query(revision);
+        return fixture.request("peer.composer_query", { ...scope, ...(revision ? { send_revision: revision } : {}) });
+      },
+      update: (revision: string | null, text: string, key: string) => {
+        composerUi.update(revision, text, key);
+        return fixture.request("peer.composer_update", { ...scope, expected_revision: revision, text }, key);
+      },
+      enqueue: (revision: string) => {
+        composerUi.enqueue(revision);
+        return fixture.request("message.enqueue_draft", { profile: scope.profile, recipient: scope.peer, draft_revision: revision }, revision);
+      },
+    } };
+  }),
+}));
 
 import App from "./App";
 import { ReconnectCoordinator } from "./reconnect-coordinator";
@@ -464,13 +492,18 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-afterEach(() => {
+beforeEach(() => { composerUi.fixture = new ComposerHostFixture(); });
+
+async function directComposerInput(): Promise<HTMLTextAreaElement> {
+  await waitFor(() => expect(screen.getByRole("textbox", { name: "Message Taylor" })).toHaveProperty("readOnly", false));
+  return screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Taylor" });
+}
+
+afterEach(async () => {
   cleanup();
+  await Promise.resolve();
   vi.clearAllMocks();
-  api.coreApiSendMessage.mockImplementation(async (_destination: string, text: string) => api.serviceCommand("send_message", { contact_id: approved.id, text }));
   api.coreApiAcceptInvitation.mockImplementation(async (invitation: string, i2pConsent = false) => api.serviceCommand("accept_invitation", { invitation, ...(i2pConsent ? { i2p_consent: true } : {}) }));
-  api.coreApiDraftGet.mockImplementation(async () => { throw new Error("core_api_unavailable"); });
-  api.coreApiDraftSet.mockImplementation(async (_destination: string, text: string) => api.serviceCommand("save_draft", { contact_id: approved.id, text }));
   api.coreApiCreateInvitation.mockImplementation(async (payload: Record<string, unknown>) => api.serviceCommand("create_invitation", payload));
   api.coreApiPeerForDestination.mockImplementation(async () => { throw new Error("core_api_unavailable"); });
   api.coreApiRequest.mockImplementation(async () => { throw new Error("core_api_unavailable"); });
@@ -2417,7 +2450,7 @@ describe("Settings page navigation and saved state", () => {
       return {};
     });
     render(<App />);
-    const composer = await screen.findByRole("textbox", { name: "Message Taylor" });
+    const composer = await directComposerInput();
     fireEvent.change(composer, { target: { value: "Draft stays in this conversation" } });
     const settingsButton = screen.getByRole("button", { name: "Settings" });
     settingsButton.focus();
@@ -3913,16 +3946,16 @@ describe("connected conversation", () => {
     api.initializeService.mockResolvedValue(current);
     api.onInvitation.mockResolvedValue(() => undefined);
     api.onServiceEvent.mockResolvedValue(() => undefined);
-    api.coreApiDraftGet.mockResolvedValue({ text: "Saved facade draft" });
-    api.coreApiDraftSet.mockResolvedValue({ text: "typed draft" });
+    composerUi.fixture.replace("Saved facade draft");
     api.serviceCommand.mockImplementation(async (command: string) => command === "snapshot" ? current : {});
 
     render(<App />);
-    const composer = await screen.findByRole("textbox", { name: "Message Taylor" });
-    await waitFor(() => expect((composer as HTMLTextAreaElement).value).toBe("Saved facade draft"));
+    const composer = await directComposerInput();
+    expect(composer.value).toBe("Saved facade draft");
     fireEvent.change(composer, { target: { value: "typed draft" } });
-    await waitFor(() => expect(api.coreApiDraftSet).toHaveBeenCalledWith(
-      approved.destination_hash, "typed draft"), { timeout: 2000 });
+    await waitFor(() => expect(composerUi.update).toHaveBeenCalledWith(
+      expect.any(String), "typed draft", expect.any(String)), { timeout: 2000 });
+    expect(api.coreApiDraftSet).not.toHaveBeenCalled();
     expect(api.serviceCommand).not.toHaveBeenCalledWith("save_draft", expect.anything());
   });
 
@@ -4075,7 +4108,7 @@ describe("connected conversation", () => {
 
     render(<App />);
     const conversation = await screen.findByLabelText("Conversation with Taylor");
-    fireEvent.change(screen.getByRole("textbox", { name: "Message Taylor" }), { target: { value: "Keep this draft" } });
+    fireEvent.change(await directComposerInput(), { target: { value: "Keep this draft" } });
     fireEvent.click(within(conversation).getByRole("button", { name: "Connection settings" }));
     const dialog = await screen.findByRole("dialog", { name: "Contacts" });
     expect(within(dialog).getByRole("option", { name: /Taylor/ }).getAttribute("aria-selected")).toBe("true");
@@ -4190,261 +4223,125 @@ describe("connected conversation", () => {
     expect((await screen.findAllByText("Unknown time")).length).toBeGreaterThan(0);
   });
 
-  it("restores the draft and shows an error if sending fails", async () => {
-    const current = snapshot([approved]);
-    api.runtimePlatform.mockResolvedValue("desktop");
+  async function renderDirect(current: Snapshot, platform: "desktop" | "android" = "desktop") {
+    api.runtimePlatform.mockResolvedValue(platform);
     api.initializeService.mockResolvedValue(current);
     api.onInvitation.mockResolvedValue(() => undefined);
     api.onServiceEvent.mockResolvedValue(() => undefined);
-    api.serviceCommand.mockImplementation(async (command: string) => {
-      if (command === "snapshot") return current;
-      if (command === "send_message") throw new Error("test send failure");
-      return {};
-    });
-
+    api.serviceCommand.mockImplementation(async (command: string) => command === "snapshot" ? { ...current } : {});
     render(<App />);
-    const composer = await screen.findByRole("textbox", { name: "Message Taylor" });
+    return directComposerInput();
+  }
+
+  it("keeps recoverable text and the same send identity when a committed reply is lost", async () => {
+    const composer = await renderDirect(snapshot([approved]));
+    composerUi.fixture.loseNextSendReply = true;
     fireEvent.change(composer, { target: { value: "Please keep this draft" } });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-
-    const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toContain("Your text is still in the composer.");
-    expect(alert.textContent).toContain("Retrying unchanged text will check the same send without creating another message.");
-    expect((composer as HTMLTextAreaElement).value).toBe("Please keep this draft");
+    await screen.findByRole("button", { name: "Retry previous send" });
+    expect(composer.value).toBe("Please keep this draft");
+    expect(composerUi.fixture.messageCount).toBe(1);
+    fireEvent.click(screen.getByRole("button", { name: "Retry previous send" }));
+    await waitFor(() => expect(composer.value).toBe(""));
+    expect(composerUi.enqueue.mock.calls[1]).toEqual(composerUi.enqueue.mock.calls[0]);
+    expect(composerUi.fixture.messageCount).toBe(1);
   });
 
-  it.each([
-    ["service_timeout", "did not respond in time"],
-    ["service_busy", "finishing earlier delivery work"],
-    ["service_stopped", "messaging service stopped"],
-  ])("keeps a direct draft and explains %s", async (code, guidance) => {
-    const current = snapshot([approved]);
-    api.runtimePlatform.mockResolvedValue("desktop");
-    api.initializeService.mockResolvedValue(current);
-    api.onInvitation.mockResolvedValue(() => undefined);
-    api.onServiceEvent.mockResolvedValue(() => undefined);
-    api.serviceCommand.mockImplementation(async (command: string) => {
-      if (command === "snapshot") return current;
-      if (command === "send_message") throw new Error(code);
-      return {};
-    });
-
-    render(<App />);
-    const composer = await screen.findByRole("textbox", { name: "Message Taylor" });
+  it.each(["unavailable", "rate_limited", "internal"])("keeps the direct draft recoverable after %s without legacy resend", async (code) => {
+    const original = composerUi.fixture.request.bind(composerUi.fixture);
+    composerUi.fixture.request = async (operation, ...args) => {
+      if (operation === "message.enqueue_draft") throw Object.assign(new Error(code), { code });
+      return original(operation, ...args);
+    };
+    const composer = await renderDirect(snapshot([approved]));
     fireEvent.change(composer, { target: { value: "Keep this exact reply" } });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-
-    const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toContain(guidance);
-    expect(alert.textContent).toContain("Your text is still in the composer.");
-    expect(alert.textContent).toContain("Retrying unchanged text will check the same send without creating another message.");
-    expect((composer as HTMLTextAreaElement).value).toBe("Keep this exact reply");
+    expect((await screen.findByRole("alert")).textContent).toContain("send outcome is uncertain");
+    expect(composer.value).toBe("Keep this exact reply");
+    expect(composerUi.enqueue).toHaveBeenCalledTimes(1);
+    expect(api.coreApiSendMessage).not.toHaveBeenCalled();
+    expect(api.serviceCommand).not.toHaveBeenCalledWith("send_message", expect.anything());
   });
 
-  it("shows a sent direct message after a stale refresh was already in flight on mobile", async () => {
+  it("shows a sent message after a stale mobile snapshot already in flight", async () => {
     const stale = snapshot([approved]);
     let current = stale;
     let serviceEvent: ((event: { type: "event"; event: "state_changed" }) => void) | undefined;
-    let snapshotCalls = 0;
     const staleRefresh = deferred<Snapshot>();
-    const outbound: ChatMessage = {
-      ...firstMessage,
-      id: "outbound-after-stale-refresh",
-      contact_id: approved.id,
-      direction: "outbound",
-      text: "The message remains visible",
-      state: "queued",
-    };
+    const outbound: ChatMessage = { ...firstMessage, id: "after-stale-refresh", contact_id: approved.id,
+      direction: "outbound", text: "The message remains visible", state: "queued" };
+    let snapshots = 0;
     api.runtimePlatform.mockResolvedValue("android");
     api.initializeService.mockResolvedValue(stale);
     api.onInvitation.mockResolvedValue(() => undefined);
-    api.onServiceEvent.mockImplementation(async (callback: typeof serviceEvent) => {
-      serviceEvent = callback;
-      return () => undefined;
-    });
+    api.onServiceEvent.mockImplementation(async (callback) => { serviceEvent = callback; return () => undefined; });
     api.serviceCommand.mockImplementation(async (command: string) => {
-      if (command === "snapshot") {
-        snapshotCalls += 1;
-        return snapshotCalls === 1 ? staleRefresh.promise : current;
-      }
-      if (command === "send_message") {
-        current = { ...current, messages: [outbound] };
-        return outbound;
-      }
+      if (command === "snapshot") return ++snapshots === 1 ? staleRefresh.promise : current;
       return {};
     });
-
+    composerUi.fixture.onEnqueue = async () => { current = { ...current, messages: [outbound] }; };
     render(<App />);
-    const composer = await screen.findByRole("textbox", { name: "Message Taylor" });
-    expect(serviceEvent).toBeTypeOf("function");
+    const composer = await directComposerInput();
     act(() => serviceEvent?.({ type: "event", event: "state_changed" }));
-    await waitFor(() => expect(snapshotCalls).toBe(1));
-
+    await waitFor(() => expect(snapshots).toBe(1));
     fireEvent.change(composer, { target: { value: outbound.text } });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("send_message", {
-      contact_id: approved.id,
-      text: outbound.text,
-    }));
+    await waitFor(() => expect(composerUi.enqueue).toHaveBeenCalledTimes(1));
     await act(async () => staleRefresh.resolve(stale));
-
-    const conversation = screen.getByLabelText("Conversation with Taylor");
-    expect(await within(conversation).findByText(outbound.text)).toBeTruthy();
-    expect(screen.getByText("Saved on this device")).toBeTruthy();
-    expect(snapshotCalls).toBe(2);
+    expect(await within(screen.getByLabelText("Conversation with Taylor")).findByText(outbound.text, { selector: ".message-content__text" })).toBeTruthy();
+    expect(snapshots).toBe(2);
   });
 
-  it("uses the facade send path and refreshes the authoritative message", async () => {
-    const before = snapshot([approved]);
-    const outbound: ChatMessage = {
-      ...firstMessage,
-      id: "outbound-via-facade",
-      contact_id: approved.id,
-      direction: "outbound",
-      text: "Facade send",
-      state: "queued",
-    };
-    let snapshots = 0;
-    api.runtimePlatform.mockResolvedValue("desktop");
-    api.initializeService.mockResolvedValue(before);
-    api.onInvitation.mockResolvedValue(() => undefined);
-    api.onServiceEvent.mockResolvedValue(() => undefined);
-    api.coreApiSendMessage.mockResolvedValue({ message: "facade-handle" });
-    api.serviceCommand.mockImplementation(async (command: string) => {
-      if (command === "snapshot") {
-        snapshots += 1;
-        return { ...before, messages: [outbound] };
-      }
-      return {};
-    });
-
-    render(<App />);
-    const composer = await screen.findByRole("textbox", { name: "Message Taylor" });
+  it("uses atomic draft enqueue and refreshes the authoritative message", async () => {
+    const current = snapshot([approved]);
+    const outbound: ChatMessage = { ...firstMessage, id: "atomic-draft-send", contact_id: approved.id,
+      direction: "outbound", text: "Facade send", state: "queued" };
+    composerUi.fixture.onEnqueue = async () => { current.messages = [outbound]; };
+    const composer = await renderDirect(current);
     fireEvent.change(composer, { target: { value: outbound.text } });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-
-    await waitFor(() => expect(api.coreApiSendMessage).toHaveBeenCalledWith(
-      approved.destination_hash, outbound.text, expect.any(String)));
-    expect(api.serviceCommand).not.toHaveBeenCalledWith("send_message", expect.anything());
-    const conversation = screen.getByLabelText("Conversation with Taylor");
-    expect(await within(conversation).findByText(outbound.text)).toBeTruthy();
+    expect(await within(screen.getByLabelText("Conversation with Taylor")).findByText(outbound.text, { selector: ".message-content__text" })).toBeTruthy();
+    expect(composerUi.enqueue).toHaveBeenCalledWith(expect.stringMatching(/^[0-9a-f]{64}$/));
+    expect(api.coreApiSendMessage).not.toHaveBeenCalled();
+    expect(api.coreApiDraftSet).not.toHaveBeenCalled();
   });
 
-  it("shows the durable mobile send result before draft cleanup or snapshot refresh finishes", async () => {
+  it("shows accepted mobile text before snapshot refresh finishes without another draft clear", async () => {
     const current = snapshot([approved]);
-    const draftCleanup = deferred<unknown>();
-    const outbound: ChatMessage = {
-      ...firstMessage,
-      id: "outbound-before-mobile-cleanup",
-      contact_id: approved.id,
-      direction: "outbound",
-      text: "Visible as soon as it is saved",
-      state: "sending",
-    };
-    let snapshotCalls = 0;
-    api.runtimePlatform.mockResolvedValue("android");
-    api.initializeService.mockResolvedValue(current);
-    api.onInvitation.mockResolvedValue(() => undefined);
-    api.onServiceEvent.mockResolvedValue(() => undefined);
-    api.serviceCommand.mockImplementation(async (command: string, payload: Record<string, unknown>) => {
-      if (command === "send_message") return outbound;
-      if (command === "save_draft" && payload.text === "") return draftCleanup.promise;
-      if (command === "snapshot") {
-        snapshotCalls += 1;
-        return current;
-      }
-      return {};
-    });
-
-    render(<App />);
-    const composer = await screen.findByRole("textbox", { name: "Message Taylor" });
-    fireEvent.change(composer, { target: { value: outbound.text } });
+    const refresh = deferred<Snapshot>();
+    const composer = await renderDirect(current, "android");
+    api.serviceCommand.mockImplementation(async (command: string) => command === "snapshot" ? refresh.promise : {});
+    fireEvent.change(composer, { target: { value: "Visible as soon as saved" } });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-
-    const conversation = screen.getByLabelText("Conversation with Taylor");
-    expect(await within(conversation).findByText(outbound.text)).toBeTruthy();
-    expect(within(conversation).getByText("Sending…")).toBeTruthy();
-    expect(snapshotCalls).toBe(0);
-
-    await act(async () => draftCleanup.resolve({}));
+    await waitFor(() => expect(composer.value).toBe(""));
+    expect(screen.getByDisplayValue("Visible as soon as saved")).toHaveProperty("readOnly", true);
+    expect(composerUi.update).toHaveBeenCalledTimes(1);
+    expect(api.coreApiDraftSet).not.toHaveBeenCalled();
+    await act(async () => refresh.resolve(current));
   });
 
-  it("coalesces a rapid Android draft burst and sends the latest text exactly once", async () => {
-    const current = snapshot([approved]);
-    const outbound: ChatMessage = {
-      ...firstMessage,
-      id: "outbound-after-rapid-input",
-      contact_id: approved.id,
-      direction: "outbound",
-      text: "Latest mobile text",
-      state: "queued",
-    };
-    api.runtimePlatform.mockResolvedValue("android");
-    api.initializeService.mockResolvedValue(current);
-    api.onInvitation.mockResolvedValue(() => undefined);
-    api.onServiceEvent.mockResolvedValue(() => undefined);
-    api.serviceCommand.mockImplementation(async (command: string) => {
-      if (command === "send_message") return outbound;
-      if (command === "snapshot") return { ...current, messages: [outbound] };
-      return {};
-    });
-
-    render(<App />);
-    const composer = await screen.findByRole("textbox", { name: "Message Taylor" });
-    fireEvent.input(composer, { target: { value: "Latest" } });
-    fireEvent.input(composer, { target: { value: "Latest mobile" } });
-    fireEvent.input(composer, { target: { value: outbound.text } });
+  it("coalesces rapid Android typing and synchronous submit into one durable send", async () => {
+    const composer = await renderDirect(snapshot([approved]), "android");
+    for (const text of ["Latest", "Latest mobile", "Latest mobile text"]) fireEvent.input(composer, { target: { value: text } });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-    // A second submit can arrive before React paints the disabled button. The
-    // synchronous in-flight guard must still prevent a duplicate native send.
-    fireEvent.submit(composer.closest("form") as HTMLFormElement);
-
-    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("send_message", {
-      contact_id: approved.id,
-      text: outbound.text,
-    }));
+    fireEvent.submit(composer.closest("form")!);
+    await waitFor(() => expect(composerUi.enqueue).toHaveBeenCalledTimes(1));
     await new Promise((resolve) => window.setTimeout(resolve, 275));
-
-    expect(api.serviceCommand.mock.calls.filter(([command]) => command === "send_message")).toHaveLength(1);
-    const draftWrites = api.serviceCommand.mock.calls
-      .filter(([command]) => command === "save_draft")
-      .map(([, payload]) => payload);
-    expect(draftWrites).toEqual([{ contact_id: approved.id, text: "" }]);
+    expect(composerUi.fixture.messageCount).toBe(1);
+    expect(composerUi.update).toHaveBeenCalledTimes(1);
+    expect(composerUi.update.mock.calls[0][1]).toBe("Latest mobile text");
   });
 
-  it("does not submit an Android IME composition as a premature Enter send", async () => {
-    const current = snapshot([approved]);
-    const outbound: ChatMessage = {
-      ...firstMessage,
-      id: "outbound-after-ime-composition",
-      contact_id: approved.id,
-      direction: "outbound",
-      text: "Composed mobile text",
-      state: "queued",
-    };
-    api.runtimePlatform.mockResolvedValue("android");
-    api.initializeService.mockResolvedValue(current);
-    api.onInvitation.mockResolvedValue(() => undefined);
-    api.onServiceEvent.mockResolvedValue(() => undefined);
-    api.serviceCommand.mockImplementation(async (command: string) => {
-      if (command === "send_message") return outbound;
-      if (command === "snapshot") return { ...current, messages: [outbound] };
-      return {};
-    });
-
-    render(<App />);
-    const composer = await screen.findByRole("textbox", { name: "Message Taylor" });
+  it("does not send an Android IME composition on a premature Enter", async () => {
+    const composer = await renderDirect(snapshot([approved]), "android");
     fireEvent.compositionStart(composer);
-    fireEvent.input(composer, { target: { value: outbound.text }, isComposing: true });
+    fireEvent.input(composer, { target: { value: "Composed mobile text" }, isComposing: true });
     fireEvent.keyDown(composer, { key: "Enter", isComposing: true });
-    expect(api.serviceCommand.mock.calls.filter(([command]) => command === "send_message")).toHaveLength(0);
-
+    expect(composerUi.enqueue).not.toHaveBeenCalled();
     fireEvent.compositionEnd(composer);
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("send_message", {
-      contact_id: approved.id,
-      text: outbound.text,
-    }));
+    await waitFor(() => expect(composerUi.enqueue).toHaveBeenCalledTimes(1));
+    expect(composerUi.fixture.messageCount).toBe(1);
   });
 
   it("queues a trailing mobile snapshot when a service event arrives during refresh", async () => {
@@ -4519,42 +4416,21 @@ describe("connected conversation", () => {
     expect(snapshotCalls).toBe(1);
   });
 
-  it("does not call an already-saved message unsent when draft cleanup fails", async () => {
-    let current = snapshot([approved]);
-    const outbound: ChatMessage = {
-      ...firstMessage,
-      id: "outbound-with-draft-cleanup-failure",
-      contact_id: approved.id,
-      direction: "outbound",
-      text: "Send this only once",
-      state: "queued",
-    };
-    api.runtimePlatform.mockResolvedValue("android");
-    api.initializeService.mockResolvedValue(current);
-    api.onInvitation.mockResolvedValue(() => undefined);
-    api.onServiceEvent.mockResolvedValue(() => undefined);
-    api.serviceCommand.mockImplementation(async (command: string, payload: Record<string, unknown>) => {
-      if (command === "snapshot") return current;
-      if (command === "send_message") {
-        current = { ...current, messages: [outbound] };
-        return outbound;
-      }
-      if (command === "save_draft" && payload.text === "") throw new Error("draft cleanup failed");
+  it("keeps accepted text cleared after refresh failure with no separate draft cleanup", async () => {
+    const composer = await renderDirect(snapshot([approved]), "android");
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") throw new Error("snapshot unavailable");
       return {};
     });
-
-    render(<App />);
-    const composer = await screen.findByRole("textbox", { name: "Message Taylor" });
-    fireEvent.change(composer, { target: { value: outbound.text } });
+    fireEvent.change(composer, { target: { value: "Send this only once" } });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-
-    const conversation = screen.getByLabelText("Conversation with Taylor");
-    expect(await within(conversation).findByText(outbound.text)).toBeTruthy();
-    const warning = await screen.findByRole("alert");
-    expect(warning.textContent).toContain("Your message was saved");
-    expect(warning.textContent).not.toContain("unsent text");
-    expect((composer as HTMLTextAreaElement).value).toBe("");
-    expect(api.serviceCommand.mock.calls.filter(([command]) => command === "send_message")).toHaveLength(1);
+    expect((await screen.findByRole("alert")).textContent).toContain("Your message was saved");
+    expect(composer.value).toBe("");
+    expect(screen.getByDisplayValue("Send this only once")).toHaveProperty("readOnly", true);
+    expect(composerUi.fixture.messageCount).toBe(1);
+    expect(composerUi.update).toHaveBeenCalledTimes(1);
+    expect(api.coreApiDraftSet).not.toHaveBeenCalled();
+    expect(api.serviceCommand).not.toHaveBeenCalledWith("save_draft", expect.anything());
   });
 });
 
