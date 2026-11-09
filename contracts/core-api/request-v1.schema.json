@@ -2310,6 +2310,7 @@
           "pattern": "^[A-Za-z0-9._:-]+$"}
       },
       "required": ["api_version", "request_id", "operation", "params"],
+      "allOf": [{"if":{"properties":{"params":{"properties":{"action":{"enum":["apply","apply_by_id","create","send"]}},"required":["action"]}},"required":["params"]},"then":{"required":["idempotency_key"]}}],
       "additionalProperties": false
     },
     {
@@ -2339,6 +2340,7 @@
           "pattern": "^[A-Za-z0-9._:-]+$"}
       },
       "required": ["api_version", "request_id", "operation", "params"],
+      "allOf": [{"if":{"properties":{"params":{"properties":{"action":{"enum":["cancel","hide_direct","hide_message","prune","start"]}},"required":["action"]}},"required":["params"]},"then":{"required":["idempotency_key"]}}],
       "additionalProperties": false
     },
     {
@@ -2370,6 +2372,7 @@
           "pattern": "^[A-Za-z0-9._:-]+$"}
       },
       "required": ["api_version", "request_id", "operation", "params"],
+      "allOf": [{"if":{"properties":{"params":{"properties":{"action":{"enum":["invite_contact","prompt_dismiss","prompt_submit","reconnect_consent"]}},"required":["action"]}},"required":["params"]},"then":{"required":["idempotency_key"]}}],
       "additionalProperties": false
     },
     {

@@ -1025,7 +1025,7 @@ class ServiceWorkspaceAdmin:
                 if action == "create":
                     return dict(self._service.create_workspace_access_recommendation(
                         workspace_id, params.get("remote_profile_id"),
-                        params.get("lifetime_days", 7)))
+                        params.get("lifetime_days", 7), operation_id=operation_id))
                 if action == "send":
                     return dict(self._service.send_workspace_access_recommendation(
                         workspace_id, params["recommendation"], operation_id))
@@ -1103,7 +1103,7 @@ class ServiceWorkspaceAdmin:
                         params["prompt_id"], operation_id))
                 if action == "prompt_dismiss":
                     return dict(self._service.dismiss_workspace_invitation_prompt(
-                        params["prompt_id"]))
+                        params["prompt_id"], operation_id=operation_id))
                 if action == "device_link_preview":
                     return dict(self._service.preview_workspace_device_link(
                         params["device_link"]))

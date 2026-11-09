@@ -68,6 +68,7 @@ from .requests import (
     WORKSPACE_INVITATION_CREATE_OPERATIONS,
     WORKSPACE_PREVIEW_OPERATIONS,
     WORKSPACE_REQUESTS_OPERATIONS, WORKSPACE_ROLE_OPERATIONS, REQUEST_ID, parse_request,
+    requires_idempotency_key,
 )
 from .messages import (
     IDEMPOTENCY_SECONDS, MAX_CALLER_ENQUEUES, MAX_PEERS, MAX_VAULT_ENQUEUES,
@@ -535,6 +536,11 @@ class CoreSession:
             raise ApiFailure("invalid_request")
         return self._operation_id(grant, target, key)
 
+    def _composite_operation_id(self, grant, target, operation, params, key):
+        if requires_idempotency_key(operation, params):
+            return self._required_operation_id(grant, target, key)
+        return None
+
     def _execute(self, grant, operation, params, key=None):
         profiles = {self._handle(grant, "profile", profile, profile): profile for profile in grant.profiles}
         if operation == "runtime.capabilities":
@@ -738,8 +744,7 @@ class CoreSession:
             target = self._profile_target(profiles, params)
             inside = (self._workspace_target(grant, target, params["workspace"])
                       if "workspace" in params else None)
-            operation_id = (self._required_operation_id(grant, target, key)
-                            if params["action"] in {"prompt_submit"} else None)
+            operation_id = self._composite_operation_id(grant, target, operation, params, key)
             result = self._workspace_admin.connection(
                 target, inside, params["action"], params, operation_id)
             view = {"profile": params["profile"], "result": result}
@@ -748,17 +753,14 @@ class CoreSession:
             return view
         if operation in WORKSPACE_HISTORY_OPERATIONS:
             target, inside = self._workspace_scope(grant, profiles, params)
-            operation_id = (self._required_operation_id(grant, target, key)
-                            if params["action"] in {"prune", "hide_message", "hide_direct",
-                                                    "start", "cancel"} else None)
+            operation_id = self._composite_operation_id(grant, target, operation, params, key)
             result = self._workspace_admin.history(
                 target, inside, params["action"], params, operation_id)
             return {"profile": params["profile"], "workspace": params["workspace"],
                     "result": result}
         if operation in WORKSPACE_ACCESS_OPERATIONS:
             target, inside = self._workspace_scope(grant, profiles, params)
-            operation_id = (self._required_operation_id(grant, target, key)
-                            if params["action"] == "send" else None)
+            operation_id = self._composite_operation_id(grant, target, operation, params, key)
             result = self._workspace_admin.access_recommendation(
                 target, inside, params["action"], params, operation_id)
             return {"profile": params["profile"], "workspace": params["workspace"],

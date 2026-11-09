@@ -9,7 +9,7 @@ import pytest
 from mesh_chat.connection.projection import snapshot
 from mesh_chat.core_api.errors import ApiFailure
 from mesh_chat.core_api.requests import (COMPONENT_OPERATIONS, KEYED_OPERATIONS,
-                                         OPTIONAL_KEY_OPERATIONS, parse_request)
+                                         KEYED_ACTIONS, OPTIONAL_KEY_OPERATIONS, parse_request)
 from tools.connection_harness.simulation import Simulation
 
 
@@ -258,14 +258,25 @@ def test_keyed_operation_inventory_matches_the_public_manifest_and_schema():
         else:
             changed["idempotency_key"] = "unexpected-key-0001"
         if operation in OPTIONAL_KEY_OPERATIONS:
-            contract.validate(changed)
-            if operation in COMPONENT_OPERATIONS:
-                assert parse_request(changed, COMPONENT_OPERATIONS) == (operation, changed["params"])
-            continue
+            if contract.is_valid(changed):
+                if operation in COMPONENT_OPERATIONS:
+                    assert parse_request(changed, COMPONENT_OPERATIONS) == (operation, changed["params"])
+                continue
         assert not contract.is_valid(changed), operation
         if operation in COMPONENT_OPERATIONS:
             with pytest.raises(ApiFailure, match="invalid_request"):
                 parse_request(changed, COMPONENT_OPERATIONS)
+
+
+def test_composite_action_key_requirements_are_shared_with_the_contract():
+    manifest = json.loads((CONTRACTS / "core-api/operations-v1.json").read_text())
+    assert {operation: sorted(actions) for operation, actions in KEYED_ACTIONS.items()} == manifest["keyed_actions"]
+    schema = validator("core-api/request-v1.schema.json").schema
+    for operation, actions in KEYED_ACTIONS.items():
+        branch = next(item for item in schema["oneOf"] if item["properties"]["operation"]["const"] == operation)
+        condition = branch["allOf"][0]
+        assert condition["if"]["properties"]["params"]["properties"]["action"]["enum"] == sorted(actions)
+        assert condition["then"] == {"required": ["idempotency_key"]}
 
 
 @pytest.mark.parametrize("key", [None, [], {}, True, 123, "short", "x" * 129, "/" * 20])
