@@ -160,7 +160,7 @@ def test_gate_revalidates_policy_inventory_and_both_platform_component_reports(t
     assert result["windows_packaged_lifecycle_checks"] == list(PACKAGED_CHECKS)
     assert result["core_ui_boundary_python_tests"] == len(PYTHON_SELECTION)
     assert result["core_ui_boundary_rendered_tests"] == len(RENDERED_CASES)
-    assert result["core_windows_boundary_tests"] == 3
+    assert result["core_windows_boundary_tests"] == 9
 
 
 @pytest.mark.parametrize("fault", ["missing", "source", "sidecar", "build", "manifest", "package", "version",
@@ -489,7 +489,7 @@ def test_suite_manifest_is_uniform_across_every_required_component(tmp_path):
     windows = next(record for record in records if record["suite"] == "windows_transport")
     assert windows["checks"] == len(CHECKS) and windows["artifacts"]
     boundary = [record for record in records if record["suite"].startswith("core_")]
-    assert [record["tests"]["executed"] for record in boundary] == [len(PYTHON_SELECTION), len(RENDERED_CASES), 3]
+    assert [record["tests"]["executed"] for record in boundary] == [len(PYTHON_SELECTION), len(RENDERED_CASES), len(WINDOWS_CASES)]
     assert all(record["artifacts"]["junit"] for record in boundary)
     assert all("inventory" in record["artifacts"] for record in (boundary[0], boundary[2]))
 

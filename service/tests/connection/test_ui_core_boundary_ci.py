@@ -45,6 +45,23 @@ def test_missing_boundary_runtime_or_skipped_required_verification_cannot_pass()
         ci.validate(plan, jobs)
 
 
+@pytest.mark.parametrize("service_root", [False, True])
+def test_required_inventory_binds_test_paths_to_the_actual_pytest_root(tmp_path, service_root):
+    from connection_test_inventory import TestInventory
+    selection = ("service/tests/test_app_owned_windows.py",)
+    root = ROOT / "service" if service_root else ROOT
+    prefix = "tests/" if service_root else "service/tests/"
+    item = SimpleNamespace(nodeid=prefix + "test_app_owned_windows.py::test_case", user_properties=[])
+    session = SimpleNamespace(items=[item], testsfailed=0,
+                              config=SimpleNamespace(option=SimpleNamespace(), rootpath=root))
+    inventory = TestInventory(tmp_path / "inventory.json", "source", selection)
+    inventory.pytest_collection_finish(session)
+    assert item.user_properties
+    item.nodeid = "other/" + item.nodeid
+    with pytest.raises(ValueError, match="was not collected"):
+        inventory.pytest_collection_finish(session)
+
+
 def test_android_typed_app_cases_are_required_by_the_artifact_bound_inventory():
     spec = importlib.util.spec_from_file_location("boundary_android", ROOT / "scripts/android_qualification.py")
     android = importlib.util.module_from_spec(spec)

@@ -87,7 +87,8 @@ export async function launchRuntime(executable, dataDirectory) {
     throw new Error("explicit_windows_runtime_and_data_required");
   }
   const pipe = `\\\\.\\pipe\\mesh-chat-independent-${randomUUID()}`;
-  const environment = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("MESH_CHAT_")));
+  const environment = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
+    !["MESH_CHAT_", "GITHUB_", "ACTIONS_", "INPUT_"].some(prefix => key.toUpperCase().startsWith(prefix))));
   Object.assign(environment, {
     MESH_CHAT_APP_DATA_DIRECTORY: resolve(dataDirectory),
     MESH_CHAT_CORE_API_PIPE: pipe,
