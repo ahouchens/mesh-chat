@@ -4300,6 +4300,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
   const refreshRef = useRef(refresh);
   useEffect(() => { refreshRef.current = refresh; }, [refresh]);
   const [reconnectCoordinator] = useState(() => createReconnectCoordinator({
+    admit: admitProfileRequest,
     refresh: async () => { await refreshRef.current(true); },
     onSession: (path) => {
       setWebRtcSessionActive(true);
