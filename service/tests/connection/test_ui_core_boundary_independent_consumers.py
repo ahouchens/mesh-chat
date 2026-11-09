@@ -8,7 +8,10 @@ from pathlib import Path
 import sys
 import tempfile
 import subprocess
+import tarfile
 import zipfile
+from threading import Event, RLock
+from types import SimpleNamespace
 
 import pytest
 
@@ -23,6 +26,69 @@ import check_independent_core_consumers as bootstrap
 import check_independent_core_pairing as pairing
 import verify_android_independent_consumer as android_distribution
 import stage_android_independent_consumer as android_staging
+
+
+def test_installed_node_sdk_readiness_reaches_actual_framed_connection_projection(tmp_path):
+    from mesh_chat.connection.projection import snapshot
+    from tools.connection_harness.simulation import Simulation
+    simulation = Simulation()
+    simulation.recover()
+    service = SimpleNamespace(_shutdown=Event(), _dispatch_lock=RLock(), _identity=object(),
+        store=SimpleNamespace(opaque_id=lambda *_: "ab" * 32, items=lambda *_, **__: [],
+            get=lambda *_: {"display_name": "Alex", "destination_hash": "cd" * 16}),
+        _require_profile=lambda: {"display_name": "Alex", "destination_hash": "cd" * 16},
+        _connection_runtime=SimpleNamespace(snapshots=lambda: {
+            simulation.key.profile_id: snapshot(simulation.owner.snapshot(simulation.key), simulation.now)}))
+    stream = bind_service_stream(service, lambda: Grant("readiness-consumer", frozenset({"observe"}), ("local",)))
+    # Install the actual public package bytes, not a fake connectionSnapshot method.
+    artifact = Path(os.environ.get("MESH_CORE_SDK_ARTIFACTS", staging.ROOT / "dist/sdk")) / "typescript" / staging.ARTIFACTS["typescript"]
+    assert artifact.is_file(), "Stage the real public TypeScript SDK first"
+    with tarfile.open(artifact) as archive: archive.extractall(tmp_path / "installed", filter="data")
+    sdk = tmp_path / "installed/package/dist/index.js"
+    helper = staging.APPLICATION / "connection-readiness.mjs"
+    script = f"import {{CoreClient}} from {json.dumps(sdk.as_uri())};\n" + \
+             f"import {{connectionMessagingReady}} from {json.dumps(helper.as_uri())};\n" + """
+import {createInterface} from 'node:readline';
+const input = createInterface({input:process.stdin});
+const lines = input[Symbol.asyncIterator]();
+const client = await CoreClient.open({
+  async writeLine(line) { process.stdout.write(line); },
+  async readLine() { const value = await lines.next(); return value.done ? null : value.value + '\\n'; },
+  close() { input.close(); },
+}, {requestTimeoutMs:3000});
+const profile = client.capabilities.profiles[0];
+const connection = (await client.request('profile.query', {profile})).connections[0];
+const before = await connectionMessagingReady(client, profile, connection);
+const after = await connectionMessagingReady(client, profile, connection);
+let obsolete;
+try { await client.request('connection.query', {profile,connection}); } catch (error) { obsolete = error.code; }
+client.close();
+console.log(JSON.stringify({before,after,obsolete}));
+"""
+    node, _ = staging.tools()
+    process = subprocess.Popen([node, "--input-type=module", "-e", script], cwd=tmp_path,
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        for index, expected in enumerate(("runtime.capabilities", "profile.query", "connection.snapshot", "connection.snapshot", "connection.query")):
+            line = process.stdout.readline()
+            assert line, process.stderr.read()
+            assert json.loads(line)["operation"] == expected
+            response = stream.exchange(line.encode())
+            decoded = json.loads(response)
+            if expected == "connection.snapshot":
+                assert decoded["ok"], decoded
+                assert decoded["result"]["observation"]["messaging_ready"] is (index == 2)
+            elif expected == "connection.query":
+                assert decoded["error"]["code"] == "unsupported_operation"
+            process.stdin.write(response.decode())
+            process.stdin.flush()
+            if index == 2: simulation.close()
+        assert json.loads(process.stdout.readline()) == {"before": True, "after": False, "obsolete": "unsupported_operation"}
+        assert process.wait(timeout=5) == 0, process.stderr.read()
+    finally:
+        if process.poll() is None: process.kill()
+        process.wait(timeout=5)
+        stream.close()
 
 
 @pytest.mark.parametrize("fault", ["invitation_wait", "invitation_accept", "pending_request_wait",

@@ -56,7 +56,7 @@ globalThis.__diagnosticFixture = {
           if (fault === "unsafe_error") throw new CoreError("private_token");
           accepted = true; return {};
         }
-        if (operation === "connection.query") {
+        if (operation === "connection.snapshot") {
           const unavailable = fault === role + "_ready_wait";
           if (unavailable) halt(fault);
           return { observation: { messaging_ready: !unavailable }, token: "PRIVATE_TOKEN" };
@@ -69,6 +69,9 @@ globalThis.__diagnosticFixture = {
       },
       async pairingQuery() { return { state: "offer_ready", pairing_code: "PRIVATE_PAIRING_CODE" }; },
       async approve() { approved = true; },
+      async connectionSnapshot(profile, connection) {
+        return this.request("connection.snapshot", { profile, connection });
+      },
     };
   } },
 };
