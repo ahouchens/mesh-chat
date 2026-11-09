@@ -56,10 +56,27 @@ def test_call_start_candidate_and_end_replay_without_duplicate_signals(host):
     assert control(client, "end", "end-call-operation00", call_id=identifier, reason="completed") == ended
     assert service.store.get("call", identifier)["state"] == "ended"
     assert len(service.store.list("message")) == 3
+    superseded = start(client)
+    assert superseded["result"]["result"]["state"] == "ended"
+    assert superseded["result"]["result"]["candidate_count"] == 1
+    assert len(service.store.list("message")) == 3
     contact = service.store.get("contact", "internal-peer")
     contact["trust"] = "blocked"
     service.store.put("contact", "internal-peer", contact)
     assert start(client)["error"]["code"] == "forbidden"
+
+
+def test_call_replay_checks_ring_deadline_without_a_background_query(host, monkeypatch):
+    service = host()
+    client = open_client(service)
+    created = start(client)
+    call = created["result"]["result"]
+    monkeypatch.setattr(service.calls, "now", lambda: call["ring_expires_at"] + 1)
+    expired = start(client)
+    assert expired["ok"], expired
+    assert expired["result"]["result"]["state"] == "no_answer"
+    assert service.store.get("call", call["id"])["state"] == "no_answer"
+    assert len(service.store.list("message")) == 1
 
 
 def test_call_write_failure_rolls_back_state_outbox_and_receipt(host, monkeypatch):

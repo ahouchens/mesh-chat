@@ -55,7 +55,9 @@ Keyed `call.control` mutations (`start`, `answer`, `restart`, `answer_restart`,
 `candidate`, `end`) prepare domain changes without I/O, then commit the call
 write set, redacted operation receipt and signed durable outbox together. Only
 afterward do they publish memory and schedule transport. Duplicate keys converge
-within that service incarnation; changed payloads conflict. After service restart
+on the same call and return its current public projection within that service
+incarnation, including current candidate counts and ring expiry; they never
+resurrect an earlier dialing state. Changed payloads conflict. After service restart
 the key remains consumed and returns `resync_required`, so an old dialing result
 cannot be mistaken for current media evidence or enqueue another call. The
 `store_call_signaling` preference still controls sealed call records; receipts
