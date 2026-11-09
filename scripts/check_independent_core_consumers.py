@@ -101,7 +101,7 @@ def main():
         if completed.returncode != 0:
             import re
             if (isinstance(observed, dict) and observed.get("passed") is False
-                    and observed.get("phase") in {"arguments", "runtime_start", "capabilities", "profile_create",
+                    and observed.get("phase") in {"arguments", "runtime_start", "capabilities", "fresh_state", "profile_create",
                         "key_replay", "changed_payload", "observations", "retirement"}
                     and isinstance(observed.get("error_code"), str)
                     and re.fullmatch(r"[a-z_]{1,64}", observed["error_code"])):
