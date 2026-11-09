@@ -25,6 +25,59 @@ CHECKS = {"fresh_profiles": 2, "alternate_paths_disabled": True, "direct_disclos
           "efs_profile_directories": 2, "efs_vault_files": 2}
 PHASES = {"arguments", "fresh_profiles", "public_pairing", "explicit_approval", "transferred_cancellation",
           "authenticated_receipts", "retirement"}
+SUBPHASES = {
+    "arguments": {"arguments"},
+    "fresh_profiles": {"offerer_create", "answerer_create", "identity_distinct"},
+    "public_pairing": {"offer_begin", "offer_code_wait", "answer_begin"},
+    "explicit_approval": {"invitation_wait", "invitation_guard", "invitation_accept", "pending_request_wait",
+        "request_approve", "offerer_relationship_wait", "answerer_relationship_wait", "offerer_ready_wait", "answerer_ready_wait"},
+    "transferred_cancellation": {"transfer_wait", "transferred_cancel"},
+    "authenticated_receipts": {"offerer_receipt", "answerer_receipt", "offerer_ready_recheck", "answerer_ready_recheck"},
+    "retirement": {"retirement"},
+}
+PAIRING_STATES = {"reserved", "offer_ready", "awaiting_approval", "transferred", "retiring", "retired", "unknown"}
+SNAPSHOT_COUNTS = {"contacts", "invitations", "pending_invitations", "pending_requests", "approved_contacts"}
+SNAPSHOT_FLAGS = {"matching_pending_request", "matching_approved_contact", "counts_capped"}
+CONNECTION_COUNTS = {"total", "checked", "ready"}
+ERROR_CODES = {"invalid_request", "incompatible_version", "negotiation_required", "unsupported_operation",
+    "unauthenticated", "forbidden", "not_found", "locked", "conflict", "idempotency_conflict",
+    "idempotency_expired", "resync_required", "resource_exhausted", "rate_limited", "unavailable", "internal"}
+
+
+def bounded_observation(value, counts, flags):
+    if (not isinstance(value, dict) or set(value) != counts | flags
+            or any(type(value[key]) is not int or not 0 <= value[key] <= 256 for key in counts)
+            or any(type(value[key]) is not bool for key in flags)):
+        raise ValueError("Pairing failure observations contain unsafe or unbounded fields")
+
+
+def failure_details(value):
+    if (not isinstance(value, dict) or set(value) != {"passed", "phase", "error_code", "diagnostics"}
+            or value["passed"] is not False or value["phase"] not in PHASES
+            or value["error_code"] not in ERROR_CODES):
+        raise ValueError("Pairing failure envelope is invalid")
+    diagnostics = value["diagnostics"]
+    if (not isinstance(diagnostics, dict) or set(diagnostics) != {"subphase", "deadline_exhausted", "peers"}
+            or diagnostics["subphase"] not in SUBPHASES[value["phase"]]
+            or type(diagnostics["deadline_exhausted"]) is not bool
+            or not isinstance(diagnostics["peers"], dict) or set(diagnostics["peers"]) - {"offerer", "answerer"}):
+        raise ValueError("Pairing failure subphase or roles are invalid")
+    for peer in diagnostics["peers"].values():
+        if not isinstance(peer, dict) or not peer or set(peer) - {"last_snapshot", "last_pairing", "last_connections"}:
+            raise ValueError("Pairing failure peer observations are invalid")
+        if "last_snapshot" in peer:
+            bounded_observation(peer["last_snapshot"], SNAPSHOT_COUNTS, SNAPSHOT_FLAGS)
+        if "last_connections" in peer:
+            bounded_observation(peer["last_connections"], CONNECTION_COUNTS, {"counts_capped"})
+            connections = peer["last_connections"]
+            if not connections["ready"] <= connections["checked"] <= connections["total"]:
+                raise ValueError("Pairing connection observations are inconsistent")
+        if "last_pairing" in peer:
+            pairing = peer["last_pairing"]
+            if (not isinstance(pairing, dict) or set(pairing) != {"state", "code_present"}
+                    or pairing["state"] not in PAIRING_STATES or type(pairing["code_present"]) is not bool):
+                raise ValueError("Pairing state observations are invalid")
+    return {"application_phase": value["phase"], "error_code": value["error_code"], "diagnostics": diagnostics}
 
 
 def verify_report(record, source, tree):
@@ -79,10 +132,7 @@ def main():
             raise ValueError("Independent pairing result exceeds its budget")
         observed = json.loads(completed.stdout)
         if completed.returncode != 0:
-            if (isinstance(observed, dict) and observed.get("passed") is False
-                    and observed.get("phase") in PHASES and isinstance(observed.get("error_code"), str)
-                    and re.fullmatch(r"[a-z_]{1,64}", observed["error_code"])):
-                result.update(application_phase=observed["phase"], error_code=observed["error_code"])
+            result.update(failure_details(observed))
             raise ValueError("Public application pairing or receipts failed")
         for role in ("offerer", "answerer"):
             bootstrap.protected_profile(data / role)

@@ -18,7 +18,7 @@ from stage_core_sdk import ARTIFACTS, tools
 
 ROOT = Path(__file__).resolve().parents[1]
 APPLICATION = ROOT / "examples/typescript-independent-consumer"
-FILES = ("package.json", "consumer.mjs", "runtime.mjs", "bootstrap-check.mjs", "pairing-check.mjs", "relay-settings.mjs", "README.md")
+FILES = ("package.json", "consumer.mjs", "runtime.mjs", "bootstrap-check.mjs", "pairing-check.mjs", "relay-settings.mjs", "pairing-diagnostics.mjs", "README.md")
 LEVEL = "independent_public_sdk_application_staging"
 
 
