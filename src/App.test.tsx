@@ -150,6 +150,7 @@ const api = vi.hoisted(() => {
     serviceCommand("accept_workspace_channel_transfer", { workspace_id: workspace.id, channel_id: channelHandle, transfer_id: "transfer-local", operation_id: key })),
   coreApiUpdateWorkspaceChannel: vi.fn(async (_handle: string, channelHandle: string, name: string, topic: string, archived: boolean, key: string): Promise<unknown> =>
     serviceCommand("update_workspace_channel", { workspace_id: workspace.id, channel_id: channelHandle === "channel-handle-field" ? "55555555-5555-4555-8555-555555555555" : workspaceChannel.id, name, topic, archived, operation_id: key })),
+  coreApiSnapshot: vi.fn(async (): Promise<unknown> => serviceCommand("snapshot")),
   coreApiPreviewInvitation: vi.fn(async (document: string): Promise<unknown> => serviceCommand("preview_invitation", { invitation: document })),
   coreApiPreviewWorkspaceInvitation: vi.fn(async (document: string): Promise<unknown> => serviceCommand("preview_workspace_invitation", { invitation: document })),
   coreApiRemoteProfiles: vi.fn(async (): Promise<unknown> => serviceCommand("list_remote_profiles")),

@@ -677,8 +677,7 @@ fn contains_forbidden_key(value: &Value) -> bool {
 fn allowed_renderer_command(command: &str) -> bool {
     matches!(
         command,
-        "snapshot"
-            | "workspace_snapshot"
+        "workspace_snapshot"
             | "i2p_status"
             | "create_profile"
             | "connect_using_reply"

@@ -202,6 +202,10 @@ export async function coreApiCreateInvitation(
   return coreApiRequest("peer.pairing_create", { ...options, profile: profile.profile });
 }
 
+export async function coreApiSnapshot(): Promise<Record<string, unknown>> {
+  return await coreApiRequest("application.snapshot") as Record<string, unknown>;
+}
+
 export async function coreApiPreviewInvitation(
   document: string,
 ): Promise<Record<string, unknown>> {
@@ -314,7 +318,7 @@ export async function loadNetworkSettings(): Promise<Record<string, unknown>> {
     return await coreApiNetworkSettings();
   } catch (reason) {
     if (!String(reason).includes("core_api_unavailable")) throw reason;
-    const snapshot = await serviceCommand<{ settings?: Record<string, unknown> }>("snapshot");
+    const snapshot = await coreApiSnapshot() as { settings?: Record<string, unknown> };
     return snapshot.settings ?? {};
   }
 }
@@ -438,7 +442,7 @@ export async function coreApiSubmitDeviceLink(
     { profile: profile.profile, document },
     idempotencyKey,
   );
-  const snapshot = await serviceCommand<Snapshot>("snapshot");
+  const snapshot = await coreApiSnapshot() as unknown as Snapshot;
   const workspace = (snapshot.workspaces ?? []).find((item) => item.name === submitted.name);
   if (!workspace) throw new Error("workspace_not_found");
   return workspace;

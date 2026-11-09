@@ -80,6 +80,7 @@ import {
   coreApiRemoteProfiles,
   coreApiPreviewWorkspaceInvitation,
   coreApiPreviewInvitation,
+  coreApiSnapshot,
   coreApiJoinWorkspace,
   coreApiSubmitWorkspacePrompt,
   coreApiWorkspaceMemberRole,
@@ -1592,7 +1593,7 @@ function Onboarding({
     setError("");
     try {
       await serviceCommand("create_profile", { display_name: name });
-      const ready = await serviceCommand<Snapshot>("snapshot");
+      const ready = await coreApiSnapshot() as unknown as Snapshot;
       if (mode === "join") {
         try {
           await coreApiAcceptInvitation(invitation,
@@ -1627,7 +1628,7 @@ function Onboarding({
           <p className="muted">They can open this on a device that already has Mesh Chat.</p>
           {reachabilityWarning && <p className="direct-host-warning" role="status"><WifiOff size={17} /> {reachabilityWarning}</p>}
           <InvitationShare formats={formats} />
-          <Button variant="ghost" onClick={async () => onReady(await serviceCommand("snapshot"))}>
+          <Button variant="ghost" onClick={async () => onReady(await coreApiSnapshot() as unknown as Snapshot)}>
             Open Mesh Chat <ChevronRight size={18} />
           </Button>
         </section>
@@ -7747,7 +7748,7 @@ export default function App() {
         () => requestSnapshot(false),
       );
     }
-    const request = serviceCommand<Snapshot>("snapshot").then((latest) => {
+    const request = (coreApiSnapshot() as unknown as Promise<Snapshot>).then((latest) => {
       setSnapshot(latest);
       return latest;
     });
