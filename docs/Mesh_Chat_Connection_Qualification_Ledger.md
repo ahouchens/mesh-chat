@@ -19,6 +19,20 @@ failed with a stale source build directory and awaits a temporary-source build
 fix. Neither that failure nor partial SDK execution counts as a passing installed
 consumer gate. Shared feature source `174728e` remains the accepted CI baseline.
 
+Follow-up at `f61d480b383ca9d3f6c0fca83664ea32a89a2445` corrects source build
+pollution and Windows consumer cleanup, adds private packaged inspector admission
+and releases vault crypto references after successful database close. The lead's
+combined installed-SDK, private-host, Android retirement, profile lifecycle and
+vault run passes 70 cases in 7.90 seconds, including all 12 installed consumer
+cases. One existing Linux `/sys` device-node test is skipped on Windows; this is
+not a zero-skip policy qualification. Reports are `.test-tmp/sdk-host-vault.*`.
+
+Source `d8d47ce6a94a26ef7c8fd9c097e654c0d2211c6b` adds CI staging prerequisites.
+Actual source-bound staging passes for tree `dd2aac53bc3f393f590ae50f0ddb1b7a8bca774c`;
+118 staging/selector cases and 47 TypeScript SDK tests pass without skips. These
+packages remain experimental and unpublished; packaged transport, old/new upgrade
+and cross-platform receipt qualification are still required.
+
 ### Wave 2 composer storage checkpoint
 
 Source `30392040a79eb9048ce4ed4ab3164c16451d34d3` integrates A's

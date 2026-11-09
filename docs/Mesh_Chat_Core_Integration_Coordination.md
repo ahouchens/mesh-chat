@@ -27,6 +27,14 @@ call-operation ticket is under review, including the incoming-call cleanup guard
 Private host bindings, key release after worker drain, pairing policy, upgrade
 checks and actual cross-platform topology qualification remain active work.
 
+Follow-up `7e7249a` is integrated at `f61d480`: temporary-source SDK builds,
+private packaged inspector bindings and release of vault crypto references after
+successful close. All 12 installed SDK cases pass on the combined source; the
+broader run passes 70 cases with one existing Linux-only test skipped on Windows.
+CI staging prerequisites are integrated at `d8d47ce` and exact-source staging
+passes. Pairing handoff review and incoming-call profile/cleanup guards remain
+pending before the next combined policy and packaged qualification run.
+
 ## Active Wave 2 handoff
 
 All workers merge the current lead branch before edits. Source `174728e` is the
@@ -83,6 +91,12 @@ A retains Core host lifecycle/inspector bindings and vault semantics. Strict
 model/reducer typechecking and qualification before default promotion remain
 required. A separately audits mutations outside the prior 92 keyed-action
 inventory and records domain-hook ownership needs before edits.
+
+C additionally owns `connection/supervisor.py` for atomic pairing handoff and
+stale-completion retirement fences. A additionally owns `group_service.py` and
+new `test_group_operation_idempotency.py` for additive explicit-key mutation
+support, preserving declared legacy request behavior. D independently verifies
+the new capability and replay/authority contract after A supplies it.
 
 ## Historical Wave 1 ownership and gate
 
