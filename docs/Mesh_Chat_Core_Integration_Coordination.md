@@ -117,3 +117,8 @@ writes without storage or network effects. A retains `workspace_service.py`
 and `service.py`, composes parent records and operation receipts into the atomic
 commit, then reconciles current consent. D independently audits supported keyed
 mutations and required host inventories. General Wave 2 remains inactive.
+
+A additionally owns `service/src/mesh_chat/background_availability.py` for
+keyed runtime preference changes and post-commit reconciliation. D's independent
+signed-membership-removal replay regressions remain in its reserved
+`test_ui_core_boundary*.py` files; A repairs the production authority ordering.
