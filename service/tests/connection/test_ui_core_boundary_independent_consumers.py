@@ -113,6 +113,8 @@ def test_actual_node_pairing_producer_reports_safe_specific_failure_observations
     assert "private" not in (completed.stdout + completed.stderr).lower()
     peers = details["diagnostics"]["peers"]
     assert peers["answerer"]["last_pairing"] == {"state": "awaiting_approval", "code_present": False}
+    assert details["diagnostics"]["failure_probe"] == {
+        role: {"query_outcome": "ok", "state": "transferred", "expired": True} for role in ("offerer", "answerer")}
     if fault == "invitation_wait":
         assert peers["answerer"]["last_snapshot"]["pending_invitations"] == 0
     elif fault == "pending_request_wait":
@@ -124,6 +126,71 @@ def test_actual_node_pairing_producer_reports_safe_specific_failure_observations
     elif fault.endswith("ready_wait"):
         role = fault.removesuffix("_ready_wait")
         assert peers[role]["last_connections"] == {"total": 1, "checked": 1, "ready": 0, "counts_capped": False}
+
+
+@pytest.mark.parametrize("mode", ["reject", "invalid", "advance_clock", "retirement_failure", "uninitialized"])
+def test_failure_probe_preserves_original_failure_and_retirement_with_bounded_requests(tmp_path, mode):
+    node, _ = staging.tools()
+    log = tmp_path / "probe.jsonl"
+    completed = subprocess.run([node, "--import", (staging.ROOT /
+        "tests/core-ui-boundary/pairing_diagnostic_fixture.mjs").as_uri(),
+        str(staging.APPLICATION / "pairing-check.mjs"), "--runtime", "unused", "--data-directory", "unused"],
+        cwd=staging.ROOT, env={**os.environ, "PAIRING_DIAGNOSTIC_FAULT": "create_failure" if mode == "uninitialized" else "invitation_accept",
+            "PAIRING_DIAGNOSTIC_PROBE": mode, "PAIRING_DIAGNOSTIC_LOG": str(log)},
+        capture_output=True, text=True, timeout=15)
+    assert completed.returncode == 1
+    assert "private" not in (completed.stdout + completed.stderr).lower()
+    observed = json.loads(completed.stdout)
+    details = pairing.failure_details(observed)
+    events = [json.loads(line) for line in log.read_text().splitlines()]
+    probes = [item for item in events if item["event"] == "probe"]
+    stops = [item for item in events if item["event"] == "stop"]
+    assert details["diagnostics"]["deadline_exhausted"] is False
+    if mode == "uninitialized":
+        assert probes == [] and stops == [{"event": "stop", "role": "offerer"}]
+        assert details["application_phase"] == "fresh_profiles" and details["error_code"] == "forbidden"
+        assert details["diagnostics"]["subphase"] == "offerer_create"
+        assert details["diagnostics"]["failure_probe"] == {}
+    else:
+        assert probes == [{"event": "probe", "role": role, "timeout": 2000} for role in ("offerer", "answerer")]
+        assert stops == [{"event": "stop", "role": role} for role in ("offerer", "answerer")]
+        assert events.index(stops[0]) > events.index(probes[1])
+        if mode == "retirement_failure":
+            assert details["application_phase"] == "retirement" and details["error_code"] == "unavailable"
+            assert details["diagnostics"]["subphase"] == "retirement"
+        else:
+            assert details["application_phase"] == "explicit_approval" and details["error_code"] == "forbidden"
+            assert details["diagnostics"]["subphase"] == "invitation_accept"
+            expected = ({"query_outcome": "ok", "state": "transferred", "expired": True} if mode == "advance_clock"
+                        else {"query_outcome": "failed" if mode == "reject" else "invalid_result"})
+            assert details["diagnostics"]["failure_probe"] == {role: expected for role in ("offerer", "answerer")}
+
+
+def test_failure_probe_queries_two_distinct_initialized_peers_concurrently_once():
+    node, _ = staging.tools()
+    script = """
+import {pairingDiagnostics,probePairingFailure} from './examples/typescript-independent-consumer/pairing-diagnostics.mjs';
+const diagnostics = pairingDiagnostics();
+const calls = [];
+let release;
+const first = new Promise(resolve => { release = resolve; });
+function peer(role) { return {role,profile:'PRIVATE_PROFILE',pairing:'PRIVATE_PAIRING',client:{
+  async request(operation,params,options) {
+    calls.push({role,operation,timeout:options.timeoutMs});
+    if (calls.length === 1) await first;
+    else release();
+    return {state:'awaiting_approval',expires_at:Date.now()/1000+30,token:'PRIVATE_TOKEN'};
+  }
+}}; }
+await probePairingFailure([{role:'offerer'},peer('offerer'),peer('offerer'),peer('answerer'),peer('answerer')],diagnostics);
+console.log(JSON.stringify({calls,probe:diagnostics.failure().failure_probe}));
+"""
+    completed = subprocess.run([node, "--input-type=module", "-e", script], cwd=staging.ROOT,
+        capture_output=True, text=True, check=True, timeout=5)
+    assert "PRIVATE" not in completed.stdout
+    value = json.loads(completed.stdout)
+    assert value["calls"] == [{"role": role, "operation": "peer.pairing_query", "timeout": 2000} for role in ("offerer", "answerer")]
+    assert value["probe"] == {role: {"query_outcome": "ok", "state": "awaiting_approval", "expired": False} for role in ("offerer", "answerer")}
 
 
 def test_node_diagnostic_projection_caps_counts_and_selects_no_private_payloads():
@@ -177,6 +244,24 @@ def test_pairing_failure_report_rejects_unselected_private_or_unbounded_fields(f
     elif fault == "boolean_count": peer["last_connections"]["total"] = True
     elif fault == "string_flag": peer["last_connections"]["counts_capped"] = "PRIVATE_TOKEN"
     else: peer["last_connections"]["ready"] = 2
+    with pytest.raises(ValueError): pairing.failure_details(observed)
+
+
+@pytest.mark.parametrize("fault", ["role", "state", "code", "timestamp", "error", "expired_type", "unknown_outcome"])
+def test_failure_probe_report_cannot_retain_private_or_unselected_result_fields(fault):
+    observed = {"passed": False, "phase": "explicit_approval", "error_code": "forbidden",
+        "diagnostics": {"subphase": "invitation_accept", "deadline_exhausted": False, "peers": {},
+            "failure_probe": {"offerer": {"query_outcome": "ok", "state": "transferred", "expired": False}}}}
+    pairing.failure_details(copy.deepcopy(observed))
+    probe = observed["diagnostics"]["failure_probe"]
+    value = probe["offerer"]
+    if fault == "role": probe["PRIVATE_IDENTITY"] = probe.pop("offerer")
+    elif fault == "state": value["state"] = "PRIVATE_STATE"
+    elif fault == "code": value["pairing_code"] = "PRIVATE_CODE"
+    elif fault == "timestamp": value["expires_at"] = 123456
+    elif fault == "error": probe["offerer"] = {"query_outcome": "failed", "error": "PRIVATE_ERROR"}
+    elif fault == "expired_type": value["expired"] = "PRIVATE_TIMESTAMP"
+    else: probe["offerer"] = {"query_outcome": "PRIVATE_ERROR"}
     with pytest.raises(ValueError): pairing.failure_details(observed)
 
 
