@@ -26,7 +26,17 @@ def main():
             print(json.dumps(report), file=sys.stderr)
             return 0
         profile = client.capabilities["profiles"][0]
-        if "--exercise-profile-lock" in sys.argv:
+        if "--exercise-keyed-group-create" in sys.argv:
+            peer = client.profile(profile)["peers"][0]
+            result = client.create_group(profile, "SDK qualification group", "members", [peer], "sdk-group-create-key-0001")
+            repeated = client.create_group(profile, "SDK qualification group", "members", [peer], "sdk-group-create-key-0001")
+            report["same_group"] = result["group"] == repeated["group"]
+        elif "--exercise-keyed-group-send" in sys.argv:
+            group = client.groups(profile)["groups"][0]["group"]
+            result = client.send_group(profile, group, "SDK qualification group message", "sdk-group-send-key-0001")
+            repeated = client.send_group(profile, group, "SDK qualification group message", "sdk-group-send-key-0001")
+            report.update(accepted=result["accepted"], same_message=result["message"] == repeated["message"])
+        elif "--exercise-profile-lock" in sys.argv:
             profile = client.profile_catalog()["selected_profile"]
             result = client.lock_profile(profile, "sdk-profile-lock-key-0001")
             report["locked"] = next(row for row in result["profiles"] if row["profile"] == profile)["state"] == "locked"

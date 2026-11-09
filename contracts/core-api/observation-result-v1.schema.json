@@ -346,8 +346,32 @@
             "profile_unlock_credentials": {
               "type": "integer",
               "const": 128
+            },
+            "optional_key_idempotency_seconds": {
+              "type": "integer",
+              "const": 604800
+            },
+            "optional_keys_per_caller_profile": {
+              "type": "integer",
+              "const": 4096
+            },
+            "optional_keys_per_vault": {
+              "type": "integer",
+              "const": 65536
             }
           }
+        },
+        "optional_keyed_operations": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 256,
+          "items": {
+            "enum": [
+              "group.create",
+              "group.message_enqueue"
+            ]
+          },
+          "minItems": 1
         }
       },
       "allOf": [
@@ -641,6 +665,76 @@
                   "profile_lifecycle_keys_per_caller_profile",
                   "profile_unlock_credentials"
                 ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "optional_keyed_operations"
+            ]
+          },
+          "then": {
+            "properties": {
+              "limits": {
+                "required": [
+                  "optional_key_idempotency_seconds",
+                  "optional_keys_per_caller_profile",
+                  "optional_keys_per_vault"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "optional_keyed_operations"
+            ],
+            "properties": {
+              "optional_keyed_operations": {
+                "contains": {
+                  "const": "group.create"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "api_minor": {
+                "minimum": 1
+              },
+              "operations": {
+                "contains": {
+                  "const": "group.create"
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "optional_keyed_operations"
+            ],
+            "properties": {
+              "optional_keyed_operations": {
+                "contains": {
+                  "const": "group.message_enqueue"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "api_minor": {
+                "minimum": 1
+              },
+              "operations": {
+                "contains": {
+                  "const": "group.message_enqueue"
+                }
               }
             }
           }

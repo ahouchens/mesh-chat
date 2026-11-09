@@ -40,6 +40,10 @@ def test_missing_feature_and_missing_caller_keys_never_write_a_mutation():
         client.profile_catalog()
     with pytest.raises(CoreClientError, match="unsupported_operation"):
         client.lock_profile("p" * 64, "caller-profile-key-0001")
+    with pytest.raises(CoreClientError, match="unsupported_operation"):
+        client.create_group("p" * 64, "Title", "members", ["q" * 64], "caller-group-key-0001")
+    with pytest.raises(CoreClientError, match="unsupported_operation"):
+        client.send_group("p" * 64, "g" * 64, "Text", "caller-group-key-0001")
     for call in [lambda: client.create_profile("Example"),
                  lambda: client.workspace_join("p" * 64, "signed"),
                  lambda: client.workspace_admission_grant_list("p" * 64, "w" * 64)]:
@@ -56,6 +60,19 @@ def test_repaired_helpers_preserve_supplied_keys_without_inventing_any():
     client.workspace_join("p" * 64, "signed", key)
     client.workspace_admission_grant_list("p" * 64, "w" * 64, key)
     assert all(json.loads(value)["idempotency_key"] == key for value in stream.written[1:])
+
+
+def test_optional_group_key_requires_complete_capability_and_valid_key():
+    caps = {**CAP, "api_minor": 1, "operations": ["runtime.capabilities", "group.create"],
+            "optional_keyed_operations": ["group.create"], "limits": {"optional_key_idempotency_seconds": 604800,
+            "optional_keys_per_caller_profile": 4096, "optional_keys_per_vault": 65536}}
+    stream = Scripted(response("client:1", caps), response("client:2", {}))
+    client = CoreClient.open(stream.read, stream.write)
+    with pytest.raises(ValueError, match="caller-provided"):
+        client.create_group("p" * 64, "Title", "members", ["q" * 64], "bad")
+    assert len(stream.written) == 1
+    client.create_group("p" * 64, "Title", "members", ["q" * 64], "explicit-group-key-0001")
+    assert json.loads(stream.written[1])["idempotency_key"] == "explicit-group-key-0001"
 
 
 def test_short_writes_complete_the_same_frame_before_read():

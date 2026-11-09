@@ -66,7 +66,7 @@ class CoreClient:
             raise CoreClientError("transport_closed")
         if not isinstance(operation, str) or not operation:
             raise ValueError("Operation name is required")
-        if needs_key(operation, params) and (not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9._:-]{16,128}", key)):
+        if (key is not None or needs_key(operation, params)) and (not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9._:-]{16,128}", key)):
             raise ValueError("Operation requires a caller-provided idempotency_key")
         self._sequence += 1
         request_id = f"client:{self._sequence}"
@@ -219,10 +219,21 @@ class CoreClient:
     def unblock(self, handle, peer):
         return self.request("peer.unblock", {"profile": handle, "peer": peer})
 
-    def create_group(self, handle, title, posting_policy, members):
+    def _require_optional_keyed(self, operation):
+        caps = self.capabilities
+        supported = caps.get('optional_keyed_operations')
+        names = ('optional_key_idempotency_seconds', 'optional_keys_per_caller_profile', 'optional_keys_per_vault')
+        if (caps.get('api_minor', 0) < 1 or not isinstance(supported, list) or operation not in supported
+                or not isinstance(caps.get('operations'), list) or operation not in caps['operations'] or not isinstance(caps.get('limits'), dict)
+                or any(type(caps['limits'].get(name)) is not int or not 0 < caps['limits'][name] <= 9007199254740991 for name in names)):
+            raise CoreClientError('unsupported_operation')
+
+    def create_group(self, handle, title, posting_policy, members, key=None):
+        if key is not None:
+            self._require_optional_keyed("group.create")
         return self.request("group.create", {
             "profile": handle, "title": title, "posting_policy": posting_policy,
-            "members": members})
+            "members": members}, idempotency_key=key)
 
     def retry_group_invitation(self, handle, group, member):
         return self.request("group.invitation_retry", {
@@ -243,9 +254,11 @@ class CoreClient:
         return self.request("group.member_remove", {
             "profile": handle, "group": group, "member": member})
 
-    def send_group(self, handle, group, text):
+    def send_group(self, handle, group, text, key=None):
+        if key is not None:
+            self._require_optional_keyed("group.message_enqueue")
         return self.request("group.message_enqueue", {
-            "profile": handle, "group": group, "text": text})
+            "profile": handle, "group": group, "text": text}, idempotency_key=key)
 
     def groups(self, handle):
         return self.request("group.query", {"profile": handle})
