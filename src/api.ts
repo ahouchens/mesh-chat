@@ -9,7 +9,10 @@ import { newOperationId } from "./operationId";
 
 export interface ServiceEvent {
   type: "event";
-  event: "state_changed" | "service_error" | "message_status" | "workspace_changed" | "webrtc_packet" | "webrtc_control" | "webrtc_control_open" | "webrtc_native_open" | "webrtc_native_state";
+  event: "state_changed" | "service_error" | "message_status" | "workspace_changed" | "webrtc_packet" | "webrtc_control" | "webrtc_control_open" | "webrtc_native_open" | "webrtc_native_state" | "profile_lifecycle";
+  profile?: string;
+  revision?: number;
+  host_generation?: string;
   message_id?: string;
   state?: string;
   workspace_id?: string;
@@ -135,8 +138,18 @@ export function setNativeTheme(theme: "dark" | "light"): Promise<void> {
 }
 
 export async function initializeService(displayName?: string): Promise<Snapshot> {
-  await invoke("initialize_service", { displayName: displayName ?? null });
+  await invokeCoreCommand("initialize_service", { displayName: displayName ?? null });
   return await coreApiSnapshot() as unknown as Snapshot;
+}
+
+/** Starts the native host/event pump without querying a locked profile vault. */
+export function initializeNativeService(): Promise<unknown> {
+  return invokeCoreCommand("initialize_service", { displayName: null });
+}
+
+/** The platform performs authentication; JavaScript supplies only the opaque target. */
+export function coreApiUnlockCredential(profile: string): Promise<unknown> {
+  return invokeCoreCommand("core_api_unlock_credential", { profile });
 }
 
 export async function serviceCommand<T>(
