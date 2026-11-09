@@ -93,6 +93,32 @@ def encoded(value):
     return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
 
 
+def validate_upload(context, role, phase, value):
+    """Fail before writing any file if plaintext crosses the upload boundary."""
+    artifact_name(context, role, phase)
+    common = {"v", "context", "producer_job", "created_at", "expires_at"}
+    fields = common | ({"role", "public_key"} if phase == "key"
+                       else {"phase", "sender", "recipient", "nonce", "ciphertext"})
+    if (not isinstance(value, dict) or set(value) != fields or len(canonical(value)) > MAX_BLOB
+            or type(value.get("v")) is not int or value["v"] != 1 or value.get("context") != context
+            or value.get("producer_job") != PRODUCER_JOBS[role]
+            or type(value.get("created_at")) is not int or type(value.get("expires_at")) is not int
+            or value["expires_at"] != value["created_at"] + (KEY_TTL if phase == "key" else MESSAGE_TTL)):
+        raise ValueError("Only exact public-key manifests and sealed setup envelopes may be uploaded")
+    if phase == "key":
+        if value["role"] != role:
+            raise ValueError("Public-key publishing role is inconsistent")
+        decode_bytes(value["public_key"], 32)
+    else:
+        if value["phase"] != phase or value["sender"] != role or value["recipient"] != next(iter(ROLES - {role})):
+            raise ValueError("Sealed publishing phase or role is inconsistent")
+        decode_bytes(value["nonce"], 12)
+        ciphertext = decode_bytes(value["ciphertext"])
+        if not 16 <= len(ciphertext) <= MAX_SHAREABLE + 1024:
+            raise ValueError("Sealed bootstrap ciphertext exceeds its budget")
+    return value
+
+
 def verify_artifact(metadata, archive, context, role, phase):
     """Metadata comes from authenticated REST scoped to the SAME repository/run."""
     expected = artifact_name(context, role, phase)

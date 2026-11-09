@@ -186,6 +186,14 @@ tested artifact pairs, OS/architecture, permissions, hashes and migration
 direction belong in the staged matrix. No historical compatibility window or
 published support promise is inferred from these experimental checks.
 
+The earlier audit of 92 keyed mutation actions is bounded. Some current
+operations still declare repeatable or convergent behavior, including group
+message enqueue, while section 6.6 requires mutation keys. A is auditing actual
+parser, session, action overrides and domain behavior before proposing compatible
+extensions; metadata alone does not establish the gap count. SDKs must preserve
+the current declared semantics and must not invent retry keys. This unresolved
+requirement prevents a full M5 or section 13 completion claim.
+
 The repository records its license in `LICENSE` and bundled attribution in
 `THIRD_PARTY_NOTICES.md` (Unicode, Twemoji, i2pd and Android WebRTC). This is an
 inventory of existing files, not a completed dependency audit. Qualification

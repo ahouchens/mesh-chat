@@ -16,7 +16,7 @@ COMPONENTS = {
     "verification": {"windows_transport", "windows_packaged_lifecycle",
                      "windows_packaged_transport", "windows_packaged_pairing",
                      "core_ui_boundary_python", "core_ui_boundary_rendered", "core_windows_boundary",
-                     "windows_native_control", "windows_native_lifecycle"},
+                     "windows_native_control", "windows_native_lifecycle", "windows_runtime_materials"},
     "android": {"android_webrtc", "android_signaling", "android_core_api", "android_core_consumer"},
     "direct": {"direct_Linux_recovery", "direct_Linux_setup", "direct_Linux_fabric",
                "direct_Windows_recovery", "direct_Windows_setup", "direct_Windows_fabric"},
@@ -39,7 +39,7 @@ CLI_PRODUCTION = frozenset({
     "service/src/mesh_chat/core_api/cli.py",
 })
 KOTLIN_CLIENT_PRODUCTION = frozenset(
-    "plugins/tauri-plugin-mesh-runtime/android/src/main/java/com/meshchat/runtime/core/" + name
+    "sdk/kotlin/src/main/java/com/meshchat/runtime/core/" + name
     for name in ("CoreClient.kt", "CoreTransport.kt", "CoreExchangeTransport.kt")
 )
 

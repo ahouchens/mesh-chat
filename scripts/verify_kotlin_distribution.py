@@ -29,7 +29,9 @@ def verify(path):
             if not {"com/meshchat/runtime/core/CoreClient.class", "com/meshchat/runtime/IMeshCoreApi.class"} <= classes:
                 raise ValueError("Distribution lacks the public client or Binder interface")
             for name in classes:
-                if not (name.startswith("com/meshchat/runtime/core/")
+                public_class = name.removesuffix(".class").split("$")[0]
+                if not (public_class in {"com/meshchat/runtime/core/" + kind for kind in
+                        ("CoreClient", "CoreTransport", "CoreExchangeTransport", "CoreException")}
                         or name == "com/meshchat/runtime/IMeshCoreApi.class"
                         or name.startswith("com/meshchat/runtime/IMeshCoreApi$")
                         or name == "com/meshchat/core/client/R.class"

@@ -16,6 +16,7 @@ import org.webrtc.NetworkMonitor
 import org.webrtc.PeerConnection
 import org.webrtc.PeerConnectionFactory
 import org.webrtc.RtpReceiver
+import org.webrtc.RTCStats
 import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
 import java.nio.ByteBuffer
@@ -24,6 +25,10 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicBoolean
+import java.security.MessageDigest
+import java.net.InetAddress
+import java.util.UUID
 
 /**
  * Native WebRTC data-channel ownership for the background availability mode.
@@ -60,11 +65,18 @@ object NativeWebRtcHost {
         val disposed = CountDownLatch(1)
         val receivedPackets = AtomicLong()
         val receivedControls = AtomicLong()
+        val receivedBytes = AtomicLong()
+        val enqueuedPackets = AtomicLong()
+        val enqueuedControls = AtomicLong()
+        val enqueuedBytes = AtomicLong()
+        val sampleSequence = AtomicLong()
+        val sampling = AtomicBoolean()
         val callbacks = NativeCallbackQueue({ notifyPython("overflow", id, "") })
     }
 
     private val sessions = ConcurrentHashMap<String, Session>()
     private val reservations = NativeSessionReservations(MAX_SESSIONS)
+    private val adapterEpoch = UUID.randomUUID().toString().replace("-", "")
     private val mainHandler = Handler(Looper.getMainLooper())
     @Volatile private var factory: PeerConnectionFactory? = null
     @Volatile private var initialized = false
@@ -226,7 +238,12 @@ object NativeWebRtcHost {
             synchronized(session) {
                 if (session.closed) return false
                 val channel = session.channels["mesh-reticulum"] ?: return false
-                channel.send(DataChannel.Buffer(ByteBuffer.wrap(packet), true))
+                channel.send(DataChannel.Buffer(ByteBuffer.wrap(packet), true)).also { accepted ->
+                    if (accepted) {
+                        session.enqueuedPackets.incrementAndGet()
+                        session.enqueuedBytes.addAndGet(packet.size.toLong())
+                    }
+                }
             }
         } catch (error: Throwable) {
             Log.e(TAG, "send failed (${error.javaClass.simpleName})")
@@ -243,7 +260,13 @@ object NativeWebRtcHost {
             synchronized(session) {
                 if (session.closed) return false
                 val channel = session.channels[label] ?: return false
-                channel.send(DataChannel.Buffer(ByteBuffer.wrap(text.toByteArray(Charsets.UTF_8)), false))
+                val bytes = text.toByteArray(Charsets.UTF_8)
+                channel.send(DataChannel.Buffer(ByteBuffer.wrap(bytes), false)).also { accepted ->
+                    if (accepted) {
+                        session.enqueuedControls.incrementAndGet()
+                        session.enqueuedBytes.addAndGet(bytes.size.toLong())
+                    }
+                }
             }
         } catch (error: Throwable) {
             Log.e(TAG, "sendControl failed (${error.javaClass.simpleName})")
@@ -304,6 +327,58 @@ object NativeWebRtcHost {
             .put("received_packets", session.receivedPackets.get())
             .put("received_controls", session.receivedControls.get())
         return JSONObject().put("ok", true).put("result", result).toString()
+        }
+    }
+
+    /** Trusted qualification only; absent stats never imply a selected path. */
+    @JvmStatic
+    fun pathEvidence(sessionId: String): String {
+        if (Looper.myLooper() == Looper.getMainLooper()) return error("native_webrtc_inspection_wrong_thread")
+        val session = sessions[sessionId] ?: return error("native_webrtc_session_missing")
+        if (!isCurrent(session)) return error("native_webrtc_session_missing")
+        if (!session.sampling.compareAndSet(false, true)) return error("native_webrtc_inspection_busy")
+        val done = CountDownLatch(1)
+        val result = AtomicReference<String>()
+        try {
+            synchronized(session) {
+                if (!isCurrent(session)) {
+                    session.sampling.set(false)
+                    return error("native_webrtc_session_missing")
+                }
+                session.pc.getStats { report ->
+                    try {
+                        synchronized(session) {
+                            if (isCurrent(session)) {
+                                val application = JSONObject()
+                                    .put("enqueued_packets", session.enqueuedPackets.get())
+                                    .put("enqueued_controls", session.enqueuedControls.get())
+                                    .put("enqueued_bytes", session.enqueuedBytes.get())
+                                    .put("received_packets", session.receivedPackets.get())
+                                    .put("received_controls", session.receivedControls.get())
+                                    .put("received_bytes", session.receivedBytes.get())
+                                val value = NativePathEvidence.sample(sessionId, adapterEpoch,
+                                    session.sampleSequence.incrementAndGet(), System.nanoTime() / 1_000_000,
+                                    session.pc.iceConnectionState().name.lowercase(),
+                                    session.channels["mesh-reticulum"]?.state()?.name?.lowercase() ?: "missing",
+                                    report.statsMap, application)
+                                result.set(JSONObject().put("ok", true).put("result", value).toString())
+                            }
+                        }
+                    } catch (_: Throwable) {
+                        result.set(error("native_webrtc_inspection_failed"))
+                    } finally {
+                        session.sampling.set(false)
+                        done.countDown()
+                    }
+                }
+            }
+            // A timed-out callback keeps its single sampling slot until it
+            // actually completes; callers cannot queue unbounded native jobs.
+            if (!done.await(2, TimeUnit.SECONDS)) return error("native_webrtc_inspection_timeout")
+            if (!isCurrent(session)) return error("native_webrtc_session_missing")
+            return result.get() ?: error("native_webrtc_session_missing")
+        } catch (_: Throwable) {
+            return error("native_webrtc_inspection_failed")
         }
     }
 
@@ -476,6 +551,7 @@ object NativeWebRtcHost {
                 if (!data.hasRemaining() || data.remaining() > limit) return
                 val bytes = ByteArray(data.remaining())
                 data.get(bytes)
+                session.receivedBytes.addAndGet(bytes.size.toLong())
                 val encoded = Base64.encodeToString(bytes, Base64.NO_WRAP)
                 if (label == "mesh-reticulum") {
                     session.receivedPackets.incrementAndGet()
@@ -713,4 +789,82 @@ object NativeWebRtcHost {
         failure.get()?.let { throw it }
         return result.get() as T
     }
+}
+
+/** Pure conversion of current libwebrtc statistics, also used by JVM tests. */
+internal object NativePathEvidence {
+    private const val MAX_INTEGER = 9007199254740991L
+
+    fun sample(resource: String, epoch: String, sequence: Long, sampledAt: Long,
+               ice: String, channel: String, stats: Map<String, RTCStats>, application: JSONObject): JSONObject {
+        val transports = stats.values.filter { it.type == "transport" }
+        val selected = transports.mapNotNull { it.members["selectedCandidatePairId"] as? String }.toSet()
+        val transport = transports.singleOrNull { it.members["selectedCandidatePairId"] == selected.singleOrNull() }
+        var status = if (ice in setOf("connected", "completed") && selected.size != 1) "unsupported" else "not_selected"
+        val pair = if (selected.size == 1 && ice in setOf("connected", "completed")) {
+            runCatching {
+                selectedPair(resource, epoch, stats.getValue(selected.single()), stats)
+            }.getOrNull().also { status = if (it != null) "selected" else "unavailable" }
+        } else null
+        val availability = JSONObject().put("selected_pair", pair != null)
+            .put("relay_protocol", pair != null && pair.optString("relay_protocol") != "unknown")
+            .put("relay_socket", false)
+            .put("pair_bytes", pair != null && !pair.isNull("bytes_sent") && !pair.isNull("bytes_received"))
+            .put("rtt", pair != null && !pair.isNull("rtt_ms"))
+        val dtls = (transport?.members?.get("dtlsState") as? String)?.lowercase()
+            ?.takeIf { it in setOf("new", "connecting", "connected", "closed", "failed") } ?: "unknown"
+        return JSONObject().put("v", 1).put("resource", resource).put("adapter_epoch", epoch)
+            .put("sample_sequence", sequence).put("sampled_at_ms", sampledAt)
+            .put("status", status).put("ice_state", ice).put("dtls_state", dtls).put("channel_state", channel)
+            .put("pair", pair ?: JSONObject.NULL).put("application", application).put("availability", availability)
+            .also { require(it.toString().toByteArray(Charsets.UTF_8).size <= 16 * 1024) }
+    }
+
+    private fun selectedPair(resource: String, epoch: String, pair: RTCStats, stats: Map<String, RTCStats>): JSONObject {
+        require(pair.type == "candidate-pair" && pair.members["state"] == "succeeded")
+        val localStats = stats.getValue(pair.members["localCandidateId"] as String)
+        val remoteStats = stats.getValue(pair.members["remoteCandidateId"] as String)
+        require(localStats.type == "local-candidate" && remoteStats.type == "remote-candidate")
+        val local = candidate(localStats)
+        val remote = candidate(remoteStats)
+        // relayProtocol is the actual selected candidate statistic. A URL,
+        // configured policy or candidate.protocol cannot substitute for it.
+        val relay = if (local.getString("type") != "relay") "not_applicable" else {
+            (localStats.members["relayProtocol"] as? String)?.lowercase()
+                ?.takeIf { it in setOf("udp", "tcp", "tls") } ?: "unknown"
+        }
+        val material = "[${JSONObject.quote(epoch)},${JSONObject.quote(resource)},${canonical(local)},${canonical(remote)}]"
+        val token = MessageDigest.getInstance("SHA-256").digest(material.toByteArray(Charsets.US_ASCII))
+            .take(16).joinToString("") { "%02x".format(it.toInt() and 255) }
+        val rtt = (pair.members["currentRoundTripTime"] as? Number)?.toDouble()?.times(1000)
+            ?.takeIf { it.isFinite() && it in 0.0..3600000.0 }
+        return JSONObject().put("token", token).put("local", local).put("remote", remote)
+            .put("nominated", pair.members["nominated"] as? Boolean ?: JSONObject.NULL)
+            .put("relay_protocol", relay)
+            // Native RTCStats does not expose the actual client-to-TURN socket
+            // endpoints. Relayed ICE candidate endpoints are NOT that socket.
+            .put("relay_socket", JSONObject.NULL)
+            .put("bytes_sent", counter(pair.members["bytesSent"]) ?: JSONObject.NULL)
+            .put("bytes_received", counter(pair.members["bytesReceived"]) ?: JSONObject.NULL)
+            .put("rtt_ms", rtt ?: JSONObject.NULL)
+    }
+
+    private fun counter(value: Any?): Long? =
+        (value as? Number)?.toString()?.toLongOrNull()?.takeIf { it in 0..MAX_INTEGER }
+
+    private fun candidate(stat: RTCStats): JSONObject {
+        val address = (stat.members["address"] ?: stat.members["ip"]) as String
+        // Permit only literal IPs; getByName must never trigger DNS here.
+        require(address.matches(Regex("[0-9.]+")) || (':' in address && address.matches(Regex("[0-9A-Fa-f:.%_-]+"))))
+        InetAddress.getByName(address)
+        val port = counter(stat.members["port"])?.takeIf { it in 1..65535 } ?: error("invalid_port")
+        val kind = stat.members["candidateType"] as String
+        val protocol = (stat.members["protocol"] as String).lowercase()
+        require(kind in setOf("host", "srflx", "prflx", "relay") && protocol in setOf("udp", "tcp"))
+        return JSONObject().put("address", address).put("port", port).put("type", kind).put("protocol", protocol)
+    }
+
+    private fun canonical(candidate: JSONObject): String =
+        "{\"address\":${JSONObject.quote(candidate.getString("address"))},\"port\":${candidate.getLong("port")}," +
+        "\"protocol\":${JSONObject.quote(candidate.getString("protocol"))},\"type\":${JSONObject.quote(candidate.getString("type"))}}"
 }

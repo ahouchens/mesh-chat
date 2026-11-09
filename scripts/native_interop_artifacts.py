@@ -11,7 +11,7 @@ import urllib.parse
 import urllib.request
 
 from native_interop_rendezvous import (MAX_ARCHIVE, MAX_BLOB, PRODUCER_JOBS, artifact_name,
-                                        canonical, checked_context, verify_artifact)
+                                        canonical, checked_context, validate_upload, verify_artifact)
 
 API = "https://api.github.com"
 API_VERSION = "2026-03-10"
@@ -92,8 +92,7 @@ class GithubArtifacts:
         name = artifact_name(self.context, self.role, phase)
         if phase in self._published or not isinstance(bundle, dict) or len(canonical(bundle)) > MAX_BLOB:
             raise ValueError("Duplicate or oversized bootstrap artifact")
-        if bundle.get("producer_job") != PRODUCER_JOBS[self.role] or bundle.get("context") != self.context:
-            raise ValueError("Unexpected bootstrap publisher context")
+        validate_upload(self.context, self.role, phase, bundle)
         with tempfile.TemporaryDirectory(prefix="upload-", dir=self.directory) as directory:
             path = Path(directory) / "bundle.json"
             path.write_bytes(canonical(bundle))

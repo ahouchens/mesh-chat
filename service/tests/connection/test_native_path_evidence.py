@@ -1,5 +1,4 @@
 """Private evidence validation and current-incarnation/resource trust boundaries."""
-from copy import deepcopy
 import json
 import time
 from types import SimpleNamespace
@@ -25,7 +24,8 @@ def evidence(resource="resource", sequence=1):
 
 
 @pytest.mark.parametrize("change", ["foreign_resource", "secret", "candidate_secret", "candidate_protocol",
-                                   "relay_inference", "boolean_counter", "nan_rtt", "false_availability"])
+                                   "relay_inference", "boolean_counter", "nan_rtt", "false_availability",
+                                   "availability_list", "socket_list"])
 def test_backend_evidence_cannot_export_foreign_unbounded_or_inferred_information(change):
     value = evidence()
     if change == "foreign_resource": value["resource"] = "replacement"
@@ -35,6 +35,8 @@ def test_backend_evidence_cannot_export_foreign_unbounded_or_inferred_informatio
     elif change == "relay_inference": value["pair"]["relay_protocol"] = "tls"
     elif change == "boolean_counter": value["application"]["enqueued_bytes"] = True
     elif change == "nan_rtt": value["pair"]["rtt_ms"] = float("nan")
+    elif change == "availability_list": value["availability"] = []
+    elif change == "socket_list": value["pair"]["relay_socket"] = ["local", "remote", "protocol"]
     else: value["availability"]["pair_bytes"] = True
     with pytest.raises(NativeUnavailable):
         validate_observation(value, "resource")

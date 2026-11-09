@@ -35,7 +35,46 @@ tests passed on that combined source, zero skips, 30.22 seconds. The inspector
 reports current resource/incarnation-bound path observations and marks unavailable
 measurements explicitly. These checks do not prove a relay path, cross-platform
 traffic or fault budgets; those require the active topology qualification.
-Submission-failure cleanup and Android stats sampling remain follow-up work.
+At that checkpoint, submission-failure cleanup and Android sampling remained open.
+
+The full required policy inventory subsequently passed at `6e97db5`: 2,630
+executed, zero failures/skips, 244.28 seconds, with the upstream LXMF deprecation
+warning. JUnit, collected inventory and validated policy report are retained.
+This source precedes the composer UI merge.
+
+At `b2df9ae`, the combined composer UI boundary executed all required cases:
+359 Python cases passed, while five of eight rendered cases failed (zero skips).
+Both newly added remount cases were among the failures. Three actual Windows
+pipe boundary cases passed in 1.65 seconds. Rendered failures are assigned to D
+and B for diagnosis; neither frontend unit success nor policy success closes
+this boundary gate. A local pytest-cache ACL warning did not skip cases.
+
+Inspector cleanup `9df4b1a` and Android sampler `aec8946` were integrated at
+`0bf8d04`. All 34 Python inspector/Windows cases passed, zero skips, 3.08 seconds.
+Android observes libwebrtc's selected-pair and relay-protocol statistics and
+explicitly reports the outer TURN socket unavailable. Its packaged qualification
+remains pending; advertised TURN URLs never establish the selected protocol.
+
+The corrected combined UI boundary passed at
+`8950053cd904458369d1eaf6245cd003fda0b745`, tree
+`d732fec4210721bb3050ee6c26aafd6f6db19096`: 420 Python and all eight rendered
+cases, zero failures/skips, 25.74 seconds. D's `8c496ad` repairs the substituted
+host's missing peer-destination lookup by using actual Core profile/peer queries,
+waits for editable live fields and injects reply loss after the actual atomic
+draft enqueue commits. It retains same-vault reopen, same-revision retry,
+one-message and no-legacy-fallback assertions. This supersedes the failed
+`b2df9ae` rendered checkpoint, without turning substituted Tauri invocation into
+packaged-host evidence. Only pytest's cache provider was disabled for the local
+ACL issue; collection and required case inventories were unchanged.
+
+This source also includes the standalone Kotlin source move `d308c83`, host
+dependency/settings wiring through `7f502fb`, and D's bounded encrypted CI
+rendezvous helpers through `8358ba4`. The lead's 27 Kotlin distribution-policy
+and compatibility cases passed at `ea0dc29` in 1.14 seconds. Kotlin compilation
+and actual cross-runner transport remain unqualified. The artifact helper
+rejects plaintext payload shapes at publication; REST metadata authenticates
+repository/run/source provenance, while producer-role enforcement relies on
+trusted workflow code and is not independent server attestation of the job.
 
 ### Wave 1 accepted at the fully qualified combined source
 

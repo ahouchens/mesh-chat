@@ -26,6 +26,21 @@ try {
     ? ["v", "context", "role", "producer_job", "public_key", "created_at", "expires_at"]
     : ["v", "context", "phase", "sender", "recipient", "producer_job", "created_at", "expires_at", "nonce", "ciphertext"];
   if (Object.keys(value).length !== fields.length || fields.some(key => !Object.hasOwn(value, key))) throw new Error();
+  const decode = (text, length) => {
+    if (typeof text !== "string" || !/^[A-Za-z0-9_-]+$/.test(text)) throw new Error();
+    const bytes = Buffer.from(text, "base64url");
+    if (bytes.toString("base64url") !== text || (length && bytes.length !== length)) throw new Error();
+    return bytes;
+  };
+  if (!Number.isSafeInteger(value.created_at) || !Number.isSafeInteger(value.expires_at)
+      || value.expires_at !== value.created_at + (phase === "key" ? 7200 : 600)) throw new Error();
+  if (phase === "key") decode(value.public_key, 32);
+  else {
+    if (value.phase !== phase || value.sender !== role || value.recipient !== (role === "windows" ? "android" : "windows")) throw new Error();
+    decode(value.nonce, 12);
+    const ciphertext = decode(value.ciphertext);
+    if (ciphertext.length < 16 || ciphertext.length > 48 * 1024 + 1024) throw new Error();
+  }
   const { DefaultArtifactClient } = await import("@actions/artifact");
   const result = await new DefaultArtifactClient().uploadArtifact(name, [file], path.dirname(file), {
     retentionDays: 1, compressionLevel: 0,

@@ -9,6 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 PLUGIN = ROOT / "plugins" / "tauri-plugin-mesh-runtime" / "android"
+SDK = ROOT / "sdk/kotlin"
 
 
 def test_the_endpoint_is_exported_only_behind_a_signature_permission():
@@ -21,7 +22,7 @@ def test_the_endpoint_is_exported_only_behind_a_signature_permission():
 
 
 def test_the_interface_and_caller_derivation_stay_bounded():
-    aidl = (PLUGIN / "src" / "main" / "aidl" / "com" / "meshchat" / "runtime" /
+    aidl = (SDK / "src" / "main" / "aidl" / "com" / "meshchat" / "runtime" /
             "IMeshCoreApi.aidl").read_text(encoding="utf-8")
     assert "byte[] exchange(in byte[] frame);" in aidl
     service = (PLUGIN / "src" / "main" / "java" / "com" / "meshchat" / "runtime" /
@@ -34,7 +35,7 @@ def test_the_interface_and_caller_derivation_stay_bounded():
     assert service.count("Binder.getCallingUid()") == 1
     assert "CoreCaller.fromUid(uid, hostUid, name)" in service
     assert '"core_exchange"' in service
-    build = (PLUGIN / "build.gradle.kts").read_text(encoding="utf-8")
+    build = (SDK / "build.gradle.kts").read_text(encoding="utf-8")
     assert "aidl = true" in build
 
 
@@ -43,7 +44,8 @@ def test_android_qualification_runs_the_instrumentation_suite():
     assert path.read_bytes().startswith(b"#!/usr/bin/env bash")  # no BOM before the shebang
     script = path.read_text(encoding="utf-8")
     assert ":tauri-plugin-mesh-runtime:assembleDebugAndroidTest" in script
-    assert "testDebugUnitTest" in script
+    assert ":mesh-core-client:testDebugUnitTest" in script
+    assert ":tauri-plugin-mesh-runtime:testDebugUnitTest" in script
     assert "prepare --suite core_api" in script
     assert "androidx.test.runner.AndroidJUnitRunner" in script
     qualification = (ROOT / "scripts" / "test_android_qualification.sh").read_text(encoding="utf-8")
@@ -53,13 +55,17 @@ def test_android_qualification_runs_the_instrumentation_suite():
 
 
 def test_the_kotlin_client_wraps_the_same_contract():
-    client = (PLUGIN / "src" / "main" / "java" / "com" / "meshchat" / "runtime" / "core" /
+    client = (SDK / "src" / "main" / "java" / "com" / "meshchat" / "runtime" / "core" /
               "CoreClient.kt").read_text(encoding="utf-8")
     for operation in ("peer.pairing_accept", "peer.pairing_create", "runtime.stop",
-                      "message.enqueue", "events.ack"):
+                      "message.enqueue", "events.ack", "peer.composer_query", "peer.composer_update", "message.enqueue_draft"):
         assert operation in client
-    assert (PLUGIN / "src" / "test" / "java" / "com" / "meshchat" / "runtime" / "core" /
+    assert (SDK / "src" / "test" / "java" / "com" / "meshchat" / "runtime" / "core" /
             "CoreClientTest.kt").is_file()
+    assert (SDK / "src/test/java/com/meshchat/runtime/core/CoreExchangeTransportTest.kt").is_file()
+    assert not (PLUGIN / "src/main/aidl/com/meshchat/runtime/IMeshCoreApi.aidl").exists()
+    for name in ("CoreClient.kt", "CoreTransport.kt", "CoreExchangeTransport.kt"):
+        assert not (PLUGIN / "src/main/java/com/meshchat/runtime/core" / name).exists()
 
 
 def test_binder_rebinding_cannot_create_a_new_dispatcher_for_a_wedged_host():
