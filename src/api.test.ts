@@ -15,7 +15,7 @@ vi.mock("@tauri-apps/plugin-deep-link", () => ({
 }));
 vi.mock("@tauri-apps/api/app", () => ({ onBackButtonPress: vi.fn() }));
 
-import { beginCallAudio, coreApiRequest, coreApiSendMessage, lockService, onInvitation, pickInvitationFile, requestMediaPermission, serviceCommand, type ServiceEvent } from "./api";
+import { beginCallAudio, coreApiCreateProfile, coreApiRequest, coreApiSendMessage, lockService, onInvitation, pickInvitationFile, requestMediaPermission, serviceCommand, type ServiceEvent } from "./api";
 import { loadPairingResume, savePairingResume } from "./pairing-resume";
 
 it("forgets encrypted pairing secrets when locking the service", async () => {
@@ -46,6 +46,15 @@ it("preserves unavailable as a Core outcome without treating it as a missing hos
   tauri.invoke.mockRejectedValue(JSON.stringify({ code: "unavailable", retry_after_ms: null }));
   await expect(serviceCommand("native_status")).rejects.toMatchObject({ code: "unavailable", retry_after_ms: null });
   expect(tauri.invoke).toHaveBeenCalledTimes(1);
+});
+
+it("serializes the caller's retained profile-create key without inventing profile authority", async () => {
+  tauri.invoke.mockResolvedValue({ display_name: "Alex" });
+  await coreApiCreateProfile("Alex", "profile-creation-operation");
+  expect(tauri.invoke).toHaveBeenCalledTimes(1);
+  expect(tauri.invoke).toHaveBeenCalledWith("core_api_request", {
+    operation: "profile.create", params: { display_name: "Alex" }, idempotencyKey: "profile-creation-operation",
+  });
 });
 
 describe("workspace composite operation envelopes", () => {

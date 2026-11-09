@@ -261,6 +261,7 @@ class Ports:
     runtime: object | None = None
     application: object | None = None
     native_commands: object | None = None
+    profile_bootstrap: object | None = None
     drafts: object | None = None
     calls: object | None = None
     settings: object | None = None
@@ -291,6 +292,7 @@ class CoreSession:
         self._runtime = ports.runtime
         self._application = ports.application
         self._native_commands = ports.native_commands
+        self._profile_bootstrap = ports.profile_bootstrap
         self._drafts = ports.drafts
         self._calls = ports.calls
         self._settings = ports.settings
@@ -320,7 +322,7 @@ class CoreSession:
             (STOP_OPERATIONS, self._lifecycle),
             (APPLICATION_OPERATIONS, self._application),
             (NATIVE_COMMAND_OPERATIONS, self._native_commands),
-            (PROFILE_CREATE_OPERATIONS, self._application),
+            (PROFILE_CREATE_OPERATIONS, self._profile_bootstrap),
             (WORKSPACE_PREVIEW_OPERATIONS, self._workspace),
             (WORKSPACE_JOIN_OPERATIONS, self._workspace),
             (WORKSPACE_CREATE_OPERATIONS, self._workspace_admin),
@@ -545,9 +547,12 @@ class CoreSession:
             self._stopped = True
             return result
         if operation in PROFILE_CREATE_OPERATIONS:
-            if self._application is None:
+            if self._profile_bootstrap is None:
                 raise ApiFailure("unavailable")
-            result = self._application.create_profile(params["display_name"].strip())
+            if "local" not in grant.profiles:
+                raise ApiFailure("forbidden")
+            operation_id = self._required_operation_id(grant, "local", key)
+            result = self._profile_bootstrap.create(params["display_name"].strip(), operation_id)
             return {"display_name": result.get("display_name", params["display_name"].strip())}
         if operation == "application.snapshot":
             if self._application is None:

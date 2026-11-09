@@ -31,7 +31,36 @@ full exact-source CI remain open. B's pending-send identity and accepted-draft
 suppression are limited to the mounted renderer; restart-safe pending UI work
 remains a separate implementation requirement. Wave 1 is not accepted yet.
 
-### Baseline findings
+### Follow-up checkpoint and first full CI dispatch
+
+At `29a56069f085c5a234f9b3a13547b614f9e6d30e` (tree
+`92068fce54bd4a4e4f5d7d06859626cec5cdb2dc`), A's private native port and
+Windows pipe buffer fixes, C's Android enqueue kind correction, and D's settings
+and signed call-control mutation checks are integrated. The lead executed:
+
+- `check_core_ui_boundary.py`: 271 Python cases and five rendered-App cases,
+  zero failures/skips, 14.12 seconds. Tauri invocation remains substituted.
+- `check_core_windows_boundary.py`: two cases, zero failures/skips, 1.36 seconds
+  of test execution. This uses the production named-pipe endpoint and client,
+  authenticates the actual client executable, persists settings, and verifies
+  signed call invite/hangup records. It does not exercise media or peer delivery.
+- 211 contract/host/pipe tests at earlier checkpoint `8a902a0`, zero skips;
+  strict model/reducer typechecking passed. The unchanged frontend source also
+  passed all 614 tests (37 files, 53.26 seconds).
+
+The full required policy inventory at `d4945d0` failed: 2,239 passed, one failed,
+zero skipped, 229.88 seconds. The isolated contact-worker invitation test reached
+recipient readiness but observed no inbound event; a focused rerun at `8a902a0`
+reproduced it. C owns that repair. Fresh-profile private bootstrap and keyed
+mutation durability are also open, with A/B ownership recorded in coordination.
+
+The feature branch was fast-forward pushed to `29a5606`. Full workflow dispatch
+[42630080557](https://github.com/ahouchens/mesh-chat/actions/runs/42630080557)
+is running for that exact head with all five suite families selected. The
+redundant PR-triggered run was canceled to avoid duplicate runner consumption.
+Neither dispatch nor the local boundary results establish Wave 1 acceptance.
+
+### Baseline findings (historical audit)
 
 The current integration baseline is
 `435b497150e5f0d12cb1c5dc7b4602da7a66ec4c`. All runs below retain their

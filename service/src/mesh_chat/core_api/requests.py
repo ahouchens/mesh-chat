@@ -437,14 +437,17 @@ def _parse_request(value, operations):
         params = value["params"]
         action = params.get("action") if isinstance(params, dict) else None
         required = {"profile", "workspace", "action"}
+        optional = set()
         if action in {"status", "start", "cancel"}:
             required |= {"conversation"}
         elif action == "prune":
-            required |= {"max_events"}
+            optional |= {"max_events"}
         elif action == "revisions":
-            required |= {"event_id", "cursor", "limit"}
+            required |= {"event_id"}
+            optional |= {"cursor", "limit"}
         elif action == "tombstones":
-            required |= {"conversation", "cursor", "limit"}
+            required |= {"conversation"}
+            optional |= {"cursor", "limit"}
         elif action == "hide_message":
             required |= {"event_id"}
         elif action == "hide_direct":
@@ -452,40 +455,42 @@ def _parse_request(value, operations):
         if (not isinstance(params, dict) or action not in {"status", "prune", "revisions",
                                                           "tombstones", "hide_message", "hide_direct",
                                                           "start", "cancel"}
-                or set(params) != required):
+                or not required <= set(params) or set(params) - required - optional):
             raise ApiFailure("invalid_request")
         if any(not isinstance(params[key], str) or HANDLE.fullmatch(params[key]) is None
                for key in ("profile", "workspace")):
             raise ApiFailure("invalid_request")
-        if action == "prune" and (type(params["max_events"]) is not int
+        if "max_events" in params and (type(params["max_events"]) is not int
                                   or not 1 <= params["max_events"] <= 5000):
+            raise ApiFailure("invalid_request")
+        if "limit" in params and (type(params["limit"]) is not int
+                                  or not 1 <= params["limit"] <= 100):
             raise ApiFailure("invalid_request")
         return operation, params
     if operation in WORKSPACE_ACCESS_OPERATIONS:
         params = value["params"]
         action = params.get("action") if isinstance(params, dict) else None
         required = {"profile", "workspace", "action"}
+        optional = set()
         if action in {"create"}:
-            required |= {"remote_profile_id"}
+            optional |= {"remote_profile_id", "lifetime_days"}
         elif action in {"send", "preview"}:
             required |= {"recommendation"}
         elif action in {"preview_by_id", "apply_by_id"}:
             required |= {"recommendation_id"}
         elif action in {"apply"}:
             required |= {"recommendation", "consent"}
-        if action == "create":
-            required |= {"lifetime_days"}
         if action == "apply_by_id":
             required |= {"consent"}
         if (not isinstance(params, dict) or action not in {"list", "create", "send", "preview",
                                                           "preview_by_id", "apply", "apply_by_id"}
-                or set(params) != required):
+                or not required <= set(params) or set(params) - required - optional):
             raise ApiFailure("invalid_request")
         if any(not isinstance(params[key], str) or HANDLE.fullmatch(params[key]) is None
                for key in ("profile", "workspace")):
             raise ApiFailure("invalid_request")
-        if action == "create" and (not isinstance(params["remote_profile_id"], str)
-                                   or type(params["lifetime_days"]) is not int):
+        if action == "create" and (type(params.get("lifetime_days", 7)) is not int
+                                   or not 1 <= params.get("lifetime_days", 7) <= 90):
             raise ApiFailure("invalid_request")
         if action in {"apply", "apply_by_id"} and type(params["consent"]) is not bool:
             raise ApiFailure("invalid_request")
@@ -888,7 +893,8 @@ def _parse_request(value, operations):
         required = {"profile", "action"}
         required |= ({"update"} if action in {"preview", "apply"}
                      else {"scope_kind", "scope_id"})
-        if (not isinstance(params, dict) or set(params) != required
+        optional = {"peer_destination"} if action == "create" else set()
+        if (not isinstance(params, dict) or not required <= set(params) or set(params) - required - optional
                 or not isinstance(params["profile"], str)
                 or HANDLE.fullmatch(params["profile"]) is None):
             raise ApiFailure("invalid_request")
@@ -931,11 +937,13 @@ def _parse_request(value, operations):
                           "approve_propagation"}:
             raise ApiFailure("invalid_request")
         allowed = {"profile", "action"}
+        optional = set()
         if action == "create":
-            allowed |= {"label", "endpoints", "propagation_node", "allow_private"}
+            allowed |= {"label", "endpoints"}
+            optional |= {"propagation_node", "allow_private"}
         else:
             allowed |= {"remote_profile_id"}
-        if not isinstance(params, dict) or set(params) != allowed:
+        if not isinstance(params, dict) or not allowed <= set(params) or set(params) - allowed - optional:
             raise ApiFailure("invalid_request")
         if not isinstance(params["profile"], str) or HANDLE.fullmatch(params["profile"]) is None:
             raise ApiFailure("invalid_request")
@@ -946,7 +954,7 @@ def _parse_request(value, operations):
                     or any(not isinstance(item, dict)
                            or set(item) != {"host", "port"}
                            or not isinstance(item["host"], str)
-                           or not item["host"]
+                           or not 1 <= len(item["host"]) <= 255
                            or type(item["port"]) is not int
                            or not 1 <= item["port"] <= 65535
                            for item in endpoints)
@@ -1563,6 +1571,8 @@ def _component_field_bounds(operation, params):
         if field not in params:
             continue
         value = params[field]
+        if field == "high_water" and type(value) is int and 0 <= value <= 2**53 - 1:
+            continue
         if (value is None and operation == "workspace.timeline_mutation"
                 and params.get("action") == "notification_preference"
                 and field == "conversation"):
@@ -1576,5 +1586,10 @@ def _component_field_bounds(operation, params):
     if operation == "call.control":
         if "media" in params and params["media"] not in {"audio", "video"}:
             raise ApiFailure("invalid_request")
-        if "role" in params and params["role"] not in {"caller", "callee"}:
+        if "role" in params and params["role"] not in {"caller", "callee", "offer", "answer"}:
+            raise ApiFailure("invalid_request")
+    if operation in {"workspace.timeline_mutation", "workspace.draft_set"} and "mention_member_ids" in params:
+        mentions = params["mention_member_ids"]
+        if (not isinstance(mentions, list) or len(mentions) > 32
+                or any(not isinstance(item, str) or not 1 <= len(item) <= 160 for item in mentions)):
             raise ApiFailure("invalid_request")

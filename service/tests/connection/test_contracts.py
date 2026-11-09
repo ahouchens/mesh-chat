@@ -314,11 +314,31 @@ def test_private_native_commands_are_not_public_contract_requests():
                                      "mode": "mentions"}),
     ("workspace.history", {"action": "start", "conversation": "channel1"}),
     ("workspace.history", {"action": "cancel", "conversation": "channel1"}),
+    ("workspace.history", {"action": "prune"}),
+    ("workspace.history", {"action": "revisions", "event_id": "event1"}),
+    ("workspace.history", {"action": "tombstones", "conversation": "channel1"}),
+    ("workspace.access_recommendation", {"action": "create", "remote_profile_id": None}),
+    ("workspace.timeline_mutation", {"action": "workspace_read", "channel": "channel1", "high_water": 0}),
 ])
 def test_workspace_wide_notifications_and_history_targets_match_runtime(operation, extra):
     value = {"api_version": 1, "request_id": "action:1", "operation": operation,
              "idempotency_key": "composite-action-key", "params": {
                  "profile": "p" * 32, "workspace": "w" * 32, **extra}}
+    validator("core-api/request-v1.schema.json").validate(value)
+    assert parse_request(value, COMPONENT_OPERATIONS) == (operation, value["params"])
+
+
+@pytest.mark.parametrize("operation,extra", [
+    ("remote_profile.mutate", {"action": "create", "label": "Relay",
+                               "endpoints": [{"host": "relay.example", "port": 4242}]}),
+    ("route.update", {"action": "create", "scope_kind": "contact", "scope_id": "c1",
+                      "peer_destination": "ab" * 16}),
+    ("call.control", {"action": "signal_publish", "document": "signed", "role": "offer"}),
+    ("call.control", {"action": "signal_fetch", "session": "pairing", "role": "answer"}),
+])
+def test_optional_component_fields_and_domain_signaling_roles(operation, extra):
+    value = {"api_version": 1, "request_id": "action:1", "operation": operation,
+             "idempotency_key": "composite-action-key", "params": {"profile": "p" * 32, **extra}}
     validator("core-api/request-v1.schema.json").validate(value)
     assert parse_request(value, COMPONENT_OPERATIONS) == (operation, value["params"])
 

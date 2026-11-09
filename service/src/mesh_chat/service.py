@@ -639,12 +639,37 @@ class MeshChatService(
         if self.settings.lan_listener_port != previous:
             self.store.put("settings", "network", self.settings.to_dict())
 
-    def create_profile(self, display_name: str) -> dict[str, Any]:
+    def create_profile(
+        self, display_name: str, *, operation_id: str | None = None
+    ) -> dict[str, Any]:
+        with self._dispatch_lock:
+            return self._create_profile(display_name, operation_id)
+
+    def _create_profile(self, display_name: str, operation_id: str | None) -> dict[str, Any]:
         name = _display_name(display_name)
         existing = self.store.get("profile", "local")
+        if existing is not None and self._identity is None:
+            raise ValidationError("Local identity is unavailable")
+        digest = None
+        if operation_id is not None:
+            try:
+                if not isinstance(operation_id, str) or str(uuid.UUID(operation_id)) != operation_id:
+                    raise ValueError
+            except (ValueError, AttributeError) as error:
+                raise ValidationError("Operation ID is invalid") from error
+            material = json.dumps({"command": "create_profile", "display_name": name},
+                                  ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+            digest = hashlib.sha256(material.encode("ascii")).hexdigest()
+            replay = self.store.operation_result(operation_id, digest)
+            if replay is not None:
+                if existing is None or replay.get("identity_hash") != existing.get("identity_hash"):
+                    raise ValidationError("Profile creation receipt has no matching identity")
+                return replay
         if existing is not None:
-            if existing["display_name"] != name or self._identity is None:
+            if existing["display_name"] != name:
                 raise ValidationError("A different local profile already exists")
+            if operation_id is not None:
+                return self.store.commit_operation(operation_id, digest, existing, ())
             return existing
         identity = RNS.Identity()
         destination = RNS.Destination.hash(identity, "lxmf", "delivery")
@@ -657,15 +682,17 @@ class MeshChatService(
             fingerprint=readable_fingerprint(identity.get_public_key()),
             created_at=now,
         )
+        records = [
+            ("identity", "local", {"private_key": _b64(identity.get_private_key())}),
+            ("profile", "local", profile.to_dict()),
+            ("settings", "network", self.settings.to_dict()),
+        ]
+        if operation_id is None:
+            self.store.put_many(records)
+        else:
+            self.store.commit_operation(operation_id, digest, profile.to_dict(), records)
         self._identity = identity
         self._prepare_lan_fallback()
-        self.store.put_many(
-            [
-                ("identity", "local", {"private_key": _b64(identity.get_private_key())}),
-                ("profile", "local", profile.to_dict()),
-                ("settings", "network", self.settings.to_dict()),
-            ]
-        )
         self._start_network(name)
         self._changed()
         return profile.to_dict()

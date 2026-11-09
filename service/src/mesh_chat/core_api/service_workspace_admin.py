@@ -1022,7 +1022,7 @@ class ServiceWorkspaceAdmin:
                     return dict(self._service.list_workspace_access_recommendations(workspace_id))
                 if action == "create":
                     return dict(self._service.create_workspace_access_recommendation(
-                        workspace_id, params["remote_profile_id"],
+                        workspace_id, params.get("remote_profile_id"),
                         params.get("lifetime_days", 7)))
                 if action == "send":
                     return dict(self._service.send_workspace_access_recommendation(

@@ -214,7 +214,9 @@ def test_message_results_and_requests_match_contracts(host):
         assert "internal-peer" not in json.dumps(reply)
     cap = session.request(request("runtime.capabilities"))
     Draft202012Validator(json.loads((root / "observation-result-v1.schema.json").read_text())).validate(cap)
-    declared = json.loads((root / "operations-v1.json").read_text())["experimental_component_operations"]
+    manifest = json.loads((root / "operations-v1.json").read_text())
+    declared = [operation for operation in manifest["experimental_component_operations"]
+                if operation not in manifest["bootstrap_operations"]]
     # Order is not significant; membership is the contract.
     assert sorted(cap["result"]["operations"]) == sorted(declared)
     assert len(cap["result"]["operations"]) == len(set(cap["result"]["operations"]))
