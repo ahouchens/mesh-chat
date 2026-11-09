@@ -22,6 +22,12 @@ CONTRACT = Draft202012Validator(json.loads(
     (ROOT / "contracts/core-api/request-v1.schema.json").read_text(encoding="utf-8")))
 PRIVATE_CONTRACT = Draft202012Validator(json.loads(
     (ROOT / "contracts/core-api/private-host-request-v1.schema.json").read_text(encoding="utf-8")))
+BOOTSTRAP_CONTRACT = Draft202012Validator(json.loads(
+    (ROOT / "contracts/core-api/private-bootstrap-request-v1.schema.json").read_text(encoding="utf-8")))
+
+
+def contract_for(operation):
+    return {"native.command": PRIVATE_CONTRACT, "bootstrap.preview": BOOTSTRAP_CONTRACT}.get(operation, CONTRACT)
 
 
 def wire_round_trip(value):
@@ -42,16 +48,16 @@ def test_vectors_cover_every_advertised_component_operation():
 @pytest.mark.parametrize("vector", COMPONENT_VECTORS, ids=lambda value: value["operation"])
 def test_schema_valid_serialized_request_reaches_production_parser(vector):
     value = wire_round_trip(vector)
-    contract = PRIVATE_CONTRACT if value["operation"] == "native.command" else CONTRACT
-    contract.validate(value)
+    contract_for(value["operation"]).validate(value)
     operation, params = parse_request(value, COMPONENT_OPERATIONS)
     assert (operation, params) == (value["operation"], value["params"])
 
 
-def test_private_native_envelope_is_rejected_by_the_public_contract():
-    native = next(value for value in COMPONENT_VECTORS if value["operation"] == "native.command")
-    assert not CONTRACT.is_valid(wire_round_trip(native))
-    PRIVATE_CONTRACT.validate(wire_round_trip(native))
+@pytest.mark.parametrize("operation", ["native.command", "bootstrap.preview"])
+def test_private_host_envelope_is_rejected_by_the_public_contract(operation):
+    private = next(value for value in COMPONENT_VECTORS if value["operation"] == operation)
+    assert not CONTRACT.is_valid(wire_round_trip(private))
+    contract_for(operation).validate(wire_round_trip(private))
 
 
 @pytest.mark.parametrize("vector", COMPONENT_VECTORS, ids=lambda value: value["operation"])

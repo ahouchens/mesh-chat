@@ -155,6 +155,13 @@ class TypedCoreBridgeBoundaryTest {
     @Test(timeout = 120_000)
     fun typedFreshProfileBootstrapDoesNotSeedIdentity() = withRuntime(false) { fixture ->
         assertEquals("True", fixture.callAttr("assert_profile_absent").toString())
+        result(exchange("capabilities"))
+        fixture.callAttr("capture_preview_state")
+        val preview = result(request("bootstrap.preview", JSONObject().put("kind", "personal")
+            .put("document", fixture.callAttr("bootstrap_document").toString())))
+        assertEquals("personal", preview.getString("kind"))
+        assertEquals("Pre-profile sponsor", preview.getJSONObject("preview").getString("display_name"))
+        assertEquals("True", fixture.callAttr("assert_preview_unchanged").toString())
         val params = JSONObject().put("display_name", "Fresh Android owner")
         val key = "android-fresh-profile-key-0001"
         val created = result(request("profile.create", params, key))
@@ -187,12 +194,14 @@ class TypedCoreBridgeBoundaryTest {
             from mesh_chat.vault import VaultStore
             from mesh_chat.reticulum_config import NetworkSettings
             from mesh_chat.webrtc_signaling import verify_call_invite, verify_call_hangup
+            from mesh_chat.invitations import create_invitation
 
             def setup(path, seed_profile=True):
-                global fixture_path, fixture_key
+                global fixture_path, fixture_key, effect_calls
                 close()
                 directory = Path(path)
                 fixture_path, fixture_key = directory, os.urandom(32)
+                effect_calls = []
                 store = VaultStore(directory, fixture_key, allow_unprotected_for_tests=True)
                 store.put("settings", "network", NetworkSettings(nearby_discovery=False, lan_fallback=False).to_dict())
                 start = MeshChatService._start_network
@@ -200,9 +209,9 @@ class TypedCoreBridgeBoundaryTest {
                 try:
                     MeshChatService._start_network = lambda *_: None
                     MeshChatService._prepare_lan_fallback = lambda *_: None
-                    service = MeshChatService(store, directory, lambda _: None)
-                    service._start_network = lambda *_: None
-                    service._prepare_lan_fallback = lambda *_: None
+                    service = MeshChatService(store, directory, lambda _: effect_calls.append("event"))
+                    service._start_network = lambda *_: effect_calls.append("start_network")
+                    service._prepare_lan_fallback = lambda *_: effect_calls.append("prepare_lan")
                     mobile_bridge._service = service
                     if not seed_profile:
                         return
@@ -253,6 +262,23 @@ class TypedCoreBridgeBoundaryTest {
                 service = mobile_bridge._service
                 assert len(service.store.list("identity")) == len(service.store.list("profile")) == 1
                 return service.store.get("profile", "local")["identity_hash"]
+
+            def bootstrap_document():
+                return create_invitation(RNS.Identity(), "Pre-profile sponsor")["file"]
+
+            def capture_preview_state():
+                global preview_changes, preview_effects
+                assert_profile_absent()
+                preview_changes = mobile_bridge._service.store._db.total_changes
+                preview_effects = list(effect_calls)
+
+            def assert_preview_unchanged():
+                assert_profile_absent()
+                service = mobile_bridge._service
+                assert service.store._db.total_changes == preview_changes
+                assert effect_calls == preview_effects
+                assert not service.store.list("contact") and not service.store.list("message")
+                return True
 
             def assert_settings_mutated():
                 service = mobile_bridge._service
