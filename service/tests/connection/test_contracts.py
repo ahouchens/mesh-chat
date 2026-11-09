@@ -300,6 +300,20 @@ def test_malformed_component_fields_are_rejected_at_the_parser_boundary(bad):
                 parse_request(changed, COMPONENT_OPERATIONS)
 
 
+@pytest.mark.parametrize("operation,extra", [
+    ("workspace.timeline_mutation", {"action": "notification_preference", "conversation": None,
+                                     "mode": "mentions"}),
+    ("workspace.history", {"action": "start", "conversation": "channel1"}),
+    ("workspace.history", {"action": "cancel", "conversation": "channel1"}),
+])
+def test_workspace_wide_notifications_and_history_targets_match_runtime(operation, extra):
+    value = {"api_version": 1, "request_id": "action:1", "operation": operation,
+             "idempotency_key": "composite-action-key", "params": {
+                 "profile": "p" * 32, "workspace": "w" * 32, **extra}}
+    validator("core-api/request-v1.schema.json").validate(value)
+    assert parse_request(value, COMPONENT_OPERATIONS) == (operation, value["params"])
+
+
 
 @pytest.mark.parametrize("field,value", [("caller_id", "owner"), ("permissions", ["approve"]),
     ("runtime_epoch", "spoofed"), ("resource_id", "native-private"), ("authenticated_receipt", True),

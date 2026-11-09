@@ -2284,7 +2284,7 @@
             "profile": {"$ref": "#/$defs/handle"},
             "workspace": {"$ref": "#/$defs/handle"},
             "action": {"enum": ["thread_reply", "thread_read", "mentions_read", "notification_preference", "workspace_read", "direct_read", "channel_message", "direct_message", "message_edit", "message_delete", "reaction_set"]},
-            "conversation": {"type": "string", "minLength": 1, "maxLength": 160},
+            "conversation": {"type": ["string", "null"], "minLength": 1, "maxLength": 160},
             "channel": {"type": "string", "minLength": 1, "maxLength": 160},
             "thread_root": {"type": "string", "minLength": 1, "maxLength": 160},
             "text": {"type": "string", "minLength": 1, "maxLength": 16384},
@@ -2295,7 +2295,7 @@
             "active": {"type": "boolean"},
             "mention_member_ids": {"type": "array", "maxItems": 32,
               "items": {"type": "string", "minLength": 1, "maxLength": 160}},
-            "mode": {"enum": ["all", "mentions", "none"]}
+            "mode": {"enum": ["all", "mentions", "none", "mentions_only", "muted"]}
           },
           "required": ["profile", "workspace", "action"],
           "additionalProperties": false
@@ -2367,7 +2367,7 @@
             "profile": {"$ref": "#/$defs/handle"},
             "workspace": {"$ref": "#/$defs/handle"},
             "action": {"enum": ["status", "prune", "revisions", "tombstones",
-                                 "hide_message", "hide_direct"]},
+                                 "hide_message", "hide_direct", "start", "cancel"]},
             "conversation": {"type": "string", "minLength": 1, "maxLength": 160},
             "event_id": {"type": "string", "minLength": 1, "maxLength": 160},
             "cursor": {"type": ["string", "null"], "maxLength": 256},

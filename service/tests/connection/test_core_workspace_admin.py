@@ -754,6 +754,8 @@ def test_new_component_mutations_execute_and_replay_through_the_real_vault(host)
         ("runtime.mutate", {"action": "notification_previews", "hidden": True}),
         ("workspace.timeline_mutation", {"workspace": workspace, "action": "channel_message",
             "conversation": channel_id, "text": "Hello Core", "event_id": _op(73000)}),
+        ("workspace.timeline_mutation", {"workspace": workspace, "action": "notification_preference",
+            "conversation": None, "mode": "mentions"}),
     ]
     replies = []
     for index, (operation, params) in enumerate(mutations):

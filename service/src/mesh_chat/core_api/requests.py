@@ -600,6 +600,8 @@ def _parse_request(value, operations):
         for key in required - {"profile", "workspace", "action", "high_water",
                                 "text", "event_id", "mode", "mutation_event_id",
                                 "emoji", "active"}:
+            if key == "conversation" and action == "notification_preference" and params[key] is None:
+                continue
             if not isinstance(params[key], str):
                 raise ApiFailure("invalid_request")
         if action == "reaction_set" and type(params["active"]) is not bool:
@@ -622,7 +624,8 @@ def _parse_request(value, operations):
                                         or not params["text"].strip()
                                         or len(params["text"].encode("utf-8")) > 16384):
             raise ApiFailure("invalid_request")
-        if action == "notification_preference" and params["mode"] not in {"all", "mentions", "none"}:
+        if action == "notification_preference" and params["mode"] not in {
+                "all", "mentions", "none", "mentions_only", "muted"}:
             raise ApiFailure("invalid_request")
         return operation, params
     if operation in WORKSPACE_ADMISSION_OPERATIONS:
@@ -1560,6 +1563,10 @@ def _component_field_bounds(operation, params):
         if field not in params:
             continue
         value = params[field]
+        if (value is None and operation == "workspace.timeline_mutation"
+                and params.get("action") == "notification_preference"
+                and field == "conversation"):
+            continue
         if value is None and field in {"cursor", "remote_profile_id"}:
             continue
         if not isinstance(value, str) or not 1 <= len(value) <= maximum:
