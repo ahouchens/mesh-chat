@@ -343,12 +343,20 @@ def _close_service() -> None:
         _event_overflow = False
     service = _retiring_service
     if service is not None:
+        from .core_api.android_host import retire
         service._shutdown.set()
+        publication_error = None
+        try:
+            retire(service)
+        except Exception as error:
+            publication_error = error
         try:
             service.close()
         finally:
-            if service._store_closed:
+            if service._store_closed and publication_error is None:
                 _retiring_service = _retiring_channel = None
+        if publication_error is not None:
+            raise NativeUnavailable("Profile host session retirement is incomplete") from publication_error
 
 
 def shutdown() -> str:
