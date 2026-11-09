@@ -172,6 +172,30 @@ network/call settings, then start/end an approved audio call and verify the stor
 state and signed queued invite/hangup documents. These assertions qualify call
 signalling, not media execution or peer receipt delivery. The embedded Python
 fixture also executes through mobile Core framing in the fast Python suite.
+Three additional `NativeProfileResultRegistrationTest` cases require actual
+AndroidX result-registry routing for unrelated results, cancelled registrations,
+replacement challenges and cancelled credential UI. Their explicit component
+scope does not qualify successful OS credential confirmation. The required Core
+API inventory has 13 cases; all four Android suites together require 50 cases.
+The separate required Windows gate now collects nine cases: the original three
+app-pipe cases and six normal app-owned host checks. The latter execute actual
+DPAPI and image-authenticated pipes with explicitly unprotected test Vault
+storage. They do not qualify EFS or the independently installed frozen runtime.
+The distinct `windows-independent-bootstrap.json` producer runs the copied
+frozen runtime and installed SDK outside the checkout in normal app-owned mode.
+It requires real EFS protection, explicit fresh profile creation/key replay,
+changed-payload rejection, public identity continuity after reopen and two
+acknowledged clean host exits. The final matrix binds its executable/build
+digests to the other tested native Windows artifacts. Missing EFS, bootstrap or
+cleanup fails this gate. This is installed Windows bootstrap evidence only;
+Android, pairing and SC21 receipt traffic remain separate requirements.
+The three public pairing vectors use an advertised production Core actor with
+real framing, vault records and signatures. The fixture admits one offer to
+`offer_ready`, then revokes the caller's grants. Begin/query/cancel must return
+`forbidden` without disclosing the code, mutating sealed records, allocating or
+closing native resources, or publishing mailbox documents. Ordinary unbound
+hosts must omit and reject all three operations. Native/mailbox boundaries are
+explicit test doubles in these vector checks; they do not qualify native traffic.
 The fresh-profile case starts with no profile or identity, verifies a signed
 invitation through private preview without any vault write or network/event
 effect, then creates only through

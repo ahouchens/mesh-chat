@@ -5,11 +5,23 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import subprocess
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 import stage_independent_core_consumers as staging
+import check_independent_core_consumers as bootstrap
+
+
+def test_application_owned_runtime_framing_and_retirement_use_real_subprocesses():
+    node, _ = staging.tools()
+    result = subprocess.run([node, "--test", "--test-reporter=tap",
+                             str(staging.ROOT / "tests/core-ui-boundary/app_owned_runtime.test.mjs")],
+                            cwd=staging.ROOT, capture_output=True, text=True, timeout=45)
+    assert result.returncode == 0, result.stdout[-4000:] + result.stderr[-1000:]
+    assert "# tests 11" in result.stdout
+    assert "# pass 11" in result.stdout and "# fail 0" in result.stdout and "# skipped 0" in result.stdout
 
 
 def staged_input(tmp_path):
@@ -24,6 +36,60 @@ def staged_input(tmp_path):
     report = tmp_path / "sdk-staging.json"
     report.write_text(json.dumps(value))
     return directory, artifact, report, value
+
+
+def bootstrap_record(source="a" * 40, tree="b" * 40):
+    """Synthetic complete declaration for rejection checks; never execution proof."""
+    return {"v": 1, "passed": True, "source_commit": source, "source_tree": tree,
+            "evidence_level": bootstrap.LEVEL, "scope": bootstrap.SCOPE,
+            "checks": dict(bootstrap.CHECKS), "run_id": "6" * 32, "duration_seconds": 1,
+            "sidecar_sha256": "d" * 64, "build_input_sha256": "e" * 64, "build_manifest_sha256": "f" * 64,
+            "sdk_sha256": "a" * 64, "runtime_installed_outside_checkout": True, "cleanup": "passed",
+            "sdk_artifact": bootstrap.SDK_ARTIFACT,
+            "application": {"installed_outside_checkout": True, "imports_public_package": True,
+                "application_files": {name: "c" * 64 for name in staging.FILES}}}
+
+
+@pytest.mark.parametrize("fault", ["source", "tree", "scope", "component_scope", "failed", "efs",
+    "efs_integer", "sdk_hash", "runtime_hash", "inside_checkout", "runtime_inside", "file_missing",
+    "file_hash", "cleanup", "single_exit", "run", "duration"])
+def test_normal_bootstrap_evidence_cannot_substitute_components_or_unprotected_storage(fault):
+    record = bootstrap_record()
+    bootstrap.verify_report(record, "a" * 40, "b" * 40)
+    if fault == "source": record["source_commit"] = "c" * 40
+    elif fault == "tree": record["source_tree"] = "c" * 40
+    elif fault == "scope": record["scope"] = "SC21 public peer receipt qualification"
+    elif fault == "component_scope": record["evidence_level"] = "windows_named_pipe_and_inprocess_domain"
+    elif fault == "failed": record["passed"] = False
+    elif fault == "efs": record["checks"]["efs_vault_file"] = False
+    elif fault == "efs_integer": record["checks"]["efs_profile_directory"] = 1
+    elif fault == "sdk_hash": record["sdk_sha256"] = "missing"
+    elif fault == "runtime_hash": record.pop("sidecar_sha256")
+    elif fault == "inside_checkout": record["application"]["installed_outside_checkout"] = False
+    elif fault == "runtime_inside": record["runtime_installed_outside_checkout"] = False
+    elif fault == "file_missing": record["application"]["application_files"].pop("bootstrap-check.mjs")
+    elif fault == "file_hash": record["application"]["application_files"]["runtime.mjs"] = "bad"
+    elif fault == "cleanup": record["cleanup"] = "pending"
+    elif fault == "single_exit": record["checks"]["clean_host_exits"] = 1
+    elif fault == "run": record["run_id"] = ""
+    else: record["duration_seconds"] = float("nan")
+    with pytest.raises(ValueError): bootstrap.verify_report(record, "a" * 40, "b" * 40)
+
+
+def test_installed_application_does_not_inherit_checkout_import_paths_or_artifact_bearers():
+    assert bootstrap.application_environment({"Path": "tools", "SYSTEMROOT": "system",
+        "PythonPath": "checkout", "PYTHONHOME": "checkout", "NODE_PATH": "checkout", "NODE_OPTIONS": "checkout-preload",
+        "mesh_private_key": "secret", "GITHUB_TOKEN": "secret", "Actions_Runtime_Token": "secret",
+        "INPUT_ROLE": "secret"}) == {"Path": "tools", "SYSTEMROOT": "system"}
+
+
+def test_normal_profile_protection_requires_an_existing_protected_profile_and_vault(tmp_path):
+    directory = tmp_path / "mesh-core-runtime/profile-v1"
+    directory.mkdir(parents=True)
+    # The parent may itself be encrypted on a developer machine; missing Vault
+    # storage must fail in either case, without asserting local EFS support.
+    with pytest.raises((ValueError, FileNotFoundError)):
+        bootstrap.protected_profile(tmp_path)
 
 
 @pytest.mark.parametrize("fault", ["source", "tree", "bytes", "size", "path", "failed", "component_scope"])
@@ -65,6 +131,10 @@ def test_actual_independent_app_installs_from_sdk_archive_outside_checkout(recor
         assert report["imports_public_package"] and report["installed_outside_checkout"]
         assert report["installed_sdk_entry"].startswith("node_modules/@mesh-chat/core-client/")
         assert set(report["application_files"]) == set(staging.FILES)
+        rejected = subprocess.run([node, "bootstrap-check.mjs"], cwd=directory,
+                                  capture_output=True, text=True, timeout=15)
+        assert rejected.returncode == 1
+        assert json.loads(rejected.stdout) == {"passed": False, "phase": "arguments", "error_code": "unavailable"}
     finally:
         staging.cleanup(directory, parent)
     assert not directory.exists()

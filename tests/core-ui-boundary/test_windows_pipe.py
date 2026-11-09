@@ -7,7 +7,6 @@ from ctypes import wintypes
 import os
 from pathlib import Path
 import sys
-from uuid import uuid4
 
 import pytest
 
@@ -16,6 +15,9 @@ if os.name != "nt":
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "service/src"))
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from native_interop_peers import windows_pipe_name
 
 import RNS
 from mesh_chat.core_api.client import CoreClient, CoreClientError
@@ -48,7 +50,9 @@ def current_image():
 def trusted_application_client(service):
     endpoint = duplex = None
     try:
-        name = rf"\\.\pipe\mesh-chat-boundary-{uuid4().hex[:16]}"
+        # The exact native-interop generator must create a production-admitted
+        # endpoint, not merely pass an isolated string assertion.
+        name = windows_pipe_name()
         endpoint = start(service, pipe_name=name, client_image=current_image())
         duplex = connect(name)
         yield CoreClient.open(duplex.readline, duplex.write)
@@ -142,7 +146,16 @@ def test_windows_pipe_creates_a_fresh_profile_with_one_durable_key(tmp_path, mon
                 assert store.get("identity", "local") is None
             with trusted_application_client(service) as client:
                 assert "profile.create" in client.capabilities["operations"]
+                # A host grant advertises its scoped slot before an identity
+                # exists. Capabilities count is not an identity-presence test.
+                assert len(client.capabilities["profiles"]) == 1
+                before = client.request("application.snapshot")
+                assert (before["profile"] is None) == (incarnation == 0)
+                assert before["contacts"] == before["messages"] == []
                 if incarnation == 0:
+                    with pytest.raises(CoreClientError) as locked:
+                        client.request("profile.query", {"profile": client.capabilities["profiles"][0]})
+                    assert locked.value.code == "locked"
                     sponsor = RNS.Identity()
                     invitation = create_invitation(sponsor, "Pre-profile sponsor")["file"]
                     changes, previous_effects = store._db.total_changes, list(effects)

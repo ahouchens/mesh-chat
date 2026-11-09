@@ -14,11 +14,19 @@ from connection_evidence import execution_evidence
 from connection_test_inventory import TestInventory
 
 ROOT = Path(__file__).resolve().parents[1]
-SELECTION = ("tests/core-ui-boundary/test_windows_pipe.py",)
+SELECTION = ("tests/core-ui-boundary/test_windows_pipe.py", "service/tests/test_app_owned_windows.py")
 CASES = {SELECTION[0] + "::" + name for name in (
     "test_windows_pipe_settings_mutations_read_back_from_vault",
     "test_windows_pipe_call_control_signs_and_retires_a_real_call",
     "test_windows_pipe_creates_a_fresh_profile_with_one_durable_key",
+)}
+CASES |= {SELECTION[1] + "::" + name for name in (
+    "test_actual_dpapi_key_reopens_and_is_bound_to_its_own_app_directory",
+    "test_corrupted_key_is_never_silently_replaced[]",
+    "test_corrupted_key_is_never_silently_replaced[unknown-key-format]",
+    r"test_corrupted_key_is_never_silently_replaced[mesh-core-app-key-v1\x00broken]",
+    "test_missing_original_app_key_does_not_generate_a_replacement_for_an_existing_vault",
+    "test_ordinary_host_uses_real_dpapi_and_pipe_without_private_core_commands",
 )}
 
 
@@ -57,7 +65,7 @@ def main():
               "source_tree": subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], cwd=ROOT, text=True).strip(),
               **summary, "passed": summary["passed"] and status == pytest.ExitCode.OK,
               "inventory_sha256": hashlib.sha256(inventory.read_bytes()).hexdigest() if inventory.exists() else None,
-              "scope": "Production Windows app pipe, authenticated image, framed Core and service/vault; no media or physical qualification",
+              "scope": "Production Windows app pipe and DPAPI host components; explicit test-only Vault storage; no EFS, packaged, media or physical qualification",
               "evidence_level": "windows_named_pipe_and_inprocess_domain", "wall_seconds": time.monotonic() - started}
     output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(result, indent=2))

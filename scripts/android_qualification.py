@@ -62,6 +62,12 @@ TYPED_CORE_BRIDGE = (
     "typedCallControlSignsQueuesAndEndsAnApprovedCall",
     "typedFreshProfileBootstrapDoesNotSeedIdentity",
 )
+PROFILE_RESULT_REGISTRATION = (
+    "overlappingNonAuthSuccessCannotVerifyTheCurrentConfirmation",
+    "cancelledActivityResultCannotAuthorizeAReplacementChallenge",
+    "cancelledCredentialUiCannotSupplyProof",
+)
+PROFILE_RESULT_SCOPE = "Actual AndroidX result-registry routing component; no successful OS credential UI qualification"
 CORE_CONSUMER = ("consumerQueriesProductionFacadeAcrossUid", "externalCallerCannotAcquireOwnerScope",
                  "detachingConsumerCanReattachToItsProfile", "privateControlIsRejectedThroughThePublicPackage",
                  "consumerCanEnqueueAndReadAMessageThroughThePublicPackage",
@@ -87,6 +93,7 @@ def cases(suite):
     elif suite == "core_api":
         entries = [("MeshCoreApiServiceTest", method, "none") for method in CORE_API]
         entries += [("TypedCoreBridgeBoundaryTest", method, "none") for method in TYPED_CORE_BRIDGE]
+        entries += [("NativeProfileResultRegistrationTest", method, "none") for method in PROFILE_RESULT_REGISTRATION]
     elif suite == "core_consumer":
         entries = (("CorePackageConsumerTest", method, "none") for method in CORE_CONSUMER)
     elif suite != "webrtc":
@@ -96,6 +103,9 @@ def cases(suite):
             for name, method, phase in entries]
     if any(item["class"] in CONTROLLER_ONLY_CLASSES for item in result):
         raise ValueError("Controller-only instrumentation cannot enter ordinary qualification")
+    for item in result:
+        if item["class"] == "NativeProfileResultRegistrationTest":
+            item["scope"] = PROFILE_RESULT_SCOPE
     return result
 
 
@@ -156,7 +166,8 @@ def verify_suite(directory, suite, expected_source, expected_artifacts):
     for case in cases(suite):
         report = directory / case["report"]
         verify_case(report.read_text(encoding="utf-8"), inventory["run_id"], case["class"], case["method"])
-        results.append({"scenario_id": case["id"], "report_sha256": digest(report), "passed": True})
+        results.append({"scenario_id": case["id"], "report_sha256": digest(report), "passed": True,
+                        **({"scope": case["scope"]} if "scope" in case else {})})
     return {"suite": suite, "run_id": inventory["run_id"], "scenarios": results,
             "tests_collected": len(results), "tests_executed": len(results), "tests_passed": len(results),
             "tests_failed": 0, "tests_skipped": 0,

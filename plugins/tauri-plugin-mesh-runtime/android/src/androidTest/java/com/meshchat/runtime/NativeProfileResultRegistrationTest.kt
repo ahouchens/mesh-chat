@@ -1,3 +1,7 @@
+// The optimized smoke APK compiles these tests in a separate Kotlin module.
+// Exercise its actual production registration without exposing it as host API.
+@file:Suppress("INVISIBLE_REFERENCE", "INVISIBLE_MEMBER")
+
 package com.meshchat.runtime
 
 import android.app.Activity

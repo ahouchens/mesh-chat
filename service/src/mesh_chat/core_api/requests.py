@@ -30,6 +30,7 @@ GROUP_OPERATIONS = ("group.query", "group.create", "group.message_enqueue",
                     "group.invitation_accept", "group.invitation_decline",
                     "group.invitation_retry")
 PAIRING_OPERATIONS = ("peer.pairing_accept",)
+PAIRING_INTENT_OPERATIONS = ("peer.pairing_begin", "peer.pairing_query", "peer.pairing_cancel")
 PAIRING_PREVIEW_OPERATIONS = ("peer.pairing_preview",)
 CONTACT_INVITATION_OPERATIONS = ("contact.invitation",)
 REQUEST_OPERATIONS = ("peer.pairing_request",)
@@ -207,7 +208,7 @@ CURSOR = re.compile(r"[A-Za-z0-9_-]{16,1024}\Z")
 # tests bind this inventory to operations-v1.json, including composite operations.
 KEYED_OPERATIONS = frozenset({
     "peer.composer_update", "message.enqueue_draft",
-    "call.control", "call.operation_abandon",
+    "call.control", "call.operation_abandon", "peer.pairing_begin", "peer.pairing_cancel",
     "connection.retry",
     "events.ack",
     "message.enqueue",
@@ -1372,6 +1373,33 @@ def _parse_request(value, operations):
                     and not isinstance(params["settings"], dict))):
             raise ApiFailure("invalid_request")
         return operation, params
+    if operation in PAIRING_INTENT_OPERATIONS:
+        params = value["params"]
+        if not isinstance(params, dict):
+            raise ApiFailure("invalid_request")
+        if operation == "peer.pairing_begin":
+            if (not {"profile", "role"} <= set(params)
+                    or set(params) - {"profile", "role", "pairing_code", "allow_direct_ip_disclosure"}
+                    or not isinstance(params["role"], str) or params["role"] not in {"offer", "answer"}
+                    or type(params.get("allow_direct_ip_disclosure", False)) is not bool
+                    or (params["role"] == "offer" and "pairing_code" in params)
+                    or (params["role"] == "answer" and not isinstance(params.get("pairing_code"), str))):
+                raise ApiFailure("invalid_request")
+            if params["role"] == "answer":
+                try:
+                    length = len(params["pairing_code"].encode("utf-8"))
+                except UnicodeError:
+                    raise ApiFailure("invalid_request") from None
+                if not 1 <= length <= 2048:
+                    raise ApiFailure("invalid_request")
+            handles = ("profile",)
+        else:
+            if set(params) != {"profile", "pairing"}:
+                raise ApiFailure("invalid_request")
+            handles = ("profile", "pairing")
+        if any(not isinstance(params[field], str) or HANDLE.fullmatch(params[field]) is None for field in handles):
+            raise ApiFailure("invalid_request")
+        return operation, params
     if operation in CALL_RECOVERY_OPERATIONS:
         params = value["params"]
         expected = {"profile"} if operation == "call.operation_list" else {"profile", "operation"}
@@ -1537,6 +1565,7 @@ COMPONENT_OPERATIONS = (
     + GROUP_OPERATIONS
     + GROUP_DRAFT_OPERATIONS
     + PAIRING_OPERATIONS
+    + PAIRING_INTENT_OPERATIONS
     + PAIRING_PREVIEW_OPERATIONS
     + CONTACT_INVITATION_OPERATIONS
     + REQUEST_OPERATIONS

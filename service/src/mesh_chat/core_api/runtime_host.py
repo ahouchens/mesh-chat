@@ -286,8 +286,14 @@ class RuntimeSession:
         if self._service is not service:
             self.retire(self._service)
             def local_grant():
-                current = self._grant()
-                if profile_id not in current.profiles or service is not self.host.lifecycle.active:
+                # Also used by admitted asynchronous effects. Revocation must
+                # not call detach() or wait for this session's request lock
+                # while a service worker holds its dispatch lock.
+                if self._closed:
+                    return None
+                current = self.authorize()
+                if (not isinstance(current, Grant) or current.caller != self._caller
+                        or profile_id not in current.profiles or service is not self.host.lifecycle.active):
                     return None
                 return Grant(current.caller, current.permissions, ("local",))
             self._inner = bind_service_session(service, local_grant,

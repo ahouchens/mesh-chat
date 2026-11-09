@@ -45,6 +45,9 @@ from .composer import Composer, COMPOSER_LIMITS
 from .optional_mutations import OPTIONAL_KEY_LIMITS
 from .call_operations import CALL_OPERATION_LIMITS
 from .requests import CALL_RECOVERY_OPERATIONS
+from .requests import PAIRING_INTENT_OPERATIONS
+from .service_pairing_intents import PAIRING_INTENT_LIMITS
+from .views import pairing_intent_view
 from .views import composer_view
 from .requests import COMPOSER_OPERATIONS
 from .diagnostics import Diagnostics, MAX_DIAGNOSTICS, MAX_DIAGNOSTIC_BYTES
@@ -115,6 +118,9 @@ PERMISSION_BY_OPERATION = {
     "message.received": "read",
     "peer.approve": "approve",
     "peer.pairing_accept": "pair",
+    "peer.pairing_begin": "approve",
+    "peer.pairing_query": "approve",
+    "peer.pairing_cancel": "approve",
     "peer.pairing_preview": "pair",
     "peer.pairing_create": "pair",
     "peer.pairing_request": "pair",
@@ -292,6 +298,7 @@ class Ports:
     drafts: object | None = None
     calls: object | None = None
     call_recovery: object | None = None
+    pairing_intents: object | None = None
     settings: object | None = None
     reactions: object | None = None
     groups: object | None = None
@@ -324,6 +331,7 @@ class CoreSession:
         self._profile_bootstrap = ports.profile_bootstrap
         self._drafts = ports.drafts
         self._calls = ports.calls
+        self._pairing_intents = ports.pairing_intents
         self._call_recovery = ports.call_recovery
         self._settings = ports.settings
         self._reactions = ports.reactions
@@ -347,6 +355,7 @@ class CoreSession:
             (GROUP_OPERATIONS, self._groups),
             (GROUP_DRAFT_OPERATIONS, self._groups),
             (PAIRING_OPERATIONS, self._pairing),
+            (PAIRING_INTENT_OPERATIONS, self._pairing_intents),
             (PAIRING_PREVIEW_OPERATIONS, self._pairing),
             (CONTACT_INVITATION_OPERATIONS, self._pairing),
             (REQUEST_OPERATIONS, self._pairing),
@@ -707,6 +716,17 @@ class CoreSession:
             else:
                 observation = self._settings.get(profile)
             return network_settings_view(params["profile"], observation)
+        if operation in PAIRING_INTENT_OPERATIONS:
+            scope = MessageScope(grant.caller, profile)
+            if operation == "peer.pairing_begin":
+                operation_id = self._required_operation_id(grant, profile, key)
+                pairing = self._handle(grant, "pairing_intent", profile, operation_id)
+                observation = self._pairing_intents.begin(scope, pairing, params, operation_id)
+            elif operation == "peer.pairing_query":
+                observation = self._pairing_intents.query(scope, params["pairing"])
+            else:
+                observation = self._pairing_intents.cancel(scope, params["pairing"], self._required_operation_id(grant, profile, key))
+            return pairing_intent_view(params["profile"], observation)
         if operation in CALL_RECOVERY_OPERATIONS:
             scope = MessageScope(grant.caller, profile)
             rows = self._call_recovery.operation_rows(scope)
@@ -1444,6 +1464,8 @@ class CoreSession:
             limits.update(COMPOSER_LIMITS)
         if set(CALL_RECOVERY_OPERATIONS) <= set(self._operations):
             limits.update(CALL_OPERATION_LIMITS)
+        if set(PAIRING_INTENT_OPERATIONS) <= set(self._operations):
+            limits.update(PAIRING_INTENT_LIMITS)
         result = {"api_major": 1, "api_minor": 1, "stability": "experimental",
                   "operations": list(self._operations), "profiles": list(profiles), "limits": limits}
         optional = sorted(set(getattr(self._groups, "optional_keyed_operations", ())) & set(self._operations))

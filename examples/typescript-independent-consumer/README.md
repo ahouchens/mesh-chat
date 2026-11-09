@@ -8,11 +8,35 @@ staged SDK archive with offline npm and scripts disabled, then run:
 node consumer.mjs --pipe HOST_SUPPLIED_LOCAL_PIPE
 ```
 
+On Windows the application can own a separately installed frozen runtime:
+
+```sh
+node consumer.mjs --runtime C:\\installed\\mesh-service.exe --data-directory C:\\app-data\\independent
+```
+
+This starts the normal `--app-owned-native` mode with a unique authenticated
+pipe, the current executable image and parent PID, and an explicit app data
+directory. It waits for the framed startup acknowledgement before opening the
+SDK session. The host owns protected key storage and starts with no identity;
+`profile.create` still requires an explicit application request and caller key.
+Closing application input detaches the SDK and requests host shutdown by EOF.
+Retirement is accepted only after `runtime_stopped` and successful process exit.
+No private command is sent to the host's lifetime stream.
+
 The host must be a separately installed normal app-owned runtime. The pipe is
 explicitly supplied by that application's trusted bootstrap, which authenticates
 the executable image. The SDK does not open a vault or retrieve a vault key.
-The supported host launch/bootstrap integration is still being implemented;
-this source scaffold does not establish SC21 traffic qualification.
+The production host route and public pairing are being integrated. This source
+and its protocol checks do not establish packaged host or SC21 qualification.
+
+`bootstrap-check.mjs` is a separate installed application check. It uses only
+this normal launch route and the installed public SDK to verify a fresh empty
+host, explicit profile creation, same-key replay, changed-payload rejection and
+the same public identity after a clean host reopen. The Python qualification
+producer separately checks actual EFS attributes on the profile directory and
+vault file. Its retained report contains selected checks and artifact hashes;
+it excludes the identity, paths, caller key and raw host output. This bootstrap
+check does not exchange peer messages or qualify SC21.
 
 Input and output are bounded newline-delimited JSON on dedicated inherited
 streams. Each input contains `id`, `operation`, `params`, and, for a keyed
@@ -25,7 +49,7 @@ Core owns native negotiation, retries and transport custody. This application
 does not automatically approve a relationship or replace a failed request. Core
 errors return their typed code; a transport failure terminates the client, so
 the caller must resolve an uncertain mutation explicitly after reconnecting.
-Closing input detaches the client and leaves host lifetime with its owner.
+In `--pipe` mode closing input leaves host lifetime with its external owner.
 
 Pairing codes, message text and caller keys can appear in these private control
 streams. The test infrastructure must capture them in memory and keep them out

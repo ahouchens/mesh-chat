@@ -1,11 +1,13 @@
 """The fast boundary tests cannot hide affected native integration suites."""
 
 import importlib.util
+import re
 from pathlib import Path
 from types import SimpleNamespace
 import sys
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -44,6 +46,42 @@ def test_missing_boundary_runtime_or_skipped_required_verification_cannot_pass()
         ci.validate(plan, jobs)
 
 
+@pytest.mark.parametrize("service_root", [False, True])
+@pytest.mark.parametrize("external_repository", [False, True])
+def test_required_inventory_binds_test_paths_to_the_actual_pytest_root(tmp_path, monkeypatch, service_root, external_repository):
+    from connection_test_inventory import TestInventory
+    selection = ("service/tests/test_app_owned_windows.py",)
+    repository = tmp_path / "external-repository" if external_repository else ROOT
+    repository.mkdir(exist_ok=True)
+    monkeypatch.chdir(repository)
+    root = repository / "service" if service_root else repository
+    prefix = "tests/" if service_root else "service/tests/"
+    item = SimpleNamespace(nodeid=prefix + "test_app_owned_windows.py::test_case", user_properties=[])
+    session = SimpleNamespace(items=[item], testsfailed=0,
+                              config=SimpleNamespace(option=SimpleNamespace(), rootpath=root))
+    inventory = TestInventory(tmp_path / "inventory.json", "source", selection)
+    # Later cwd changes cannot silently rebind the original invocation.
+    monkeypatch.chdir(ROOT)
+    inventory.pytest_collection_finish(session)
+    assert item.user_properties
+    item.nodeid = "other/" + item.nodeid
+    with pytest.raises(ValueError, match="was not collected"):
+        inventory.pytest_collection_finish(session)
+
+
+def test_normal_installed_windows_runtime_is_a_required_distinct_artifact_bound_gate():
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+    steps = workflow["jobs"]["desktop-host"]["steps"]
+    build = next(index for index, step in enumerate(steps) if step.get("run") == "python scripts/build_sidecar.py")
+    qualification = next(index for index, step in enumerate(steps)
+                         if "scripts/check_independent_core_consumers.py" in step.get("run", ""))
+    assert qualification > build
+    assert "continue-on-error" not in steps[qualification] and "if" not in steps[qualification]
+    uploads = [step for step in steps if step.get("uses", "").startswith("actions/upload-artifact@")]
+    assert any("dist/reports/windows-independent-bootstrap.json" in step["with"]["path"] for step in uploads)
+    assert "windows_independent_bootstrap" in ci.COMPONENTS["verification"]
+
+
 def test_android_typed_app_cases_are_required_by_the_artifact_bound_inventory():
     spec = importlib.util.spec_from_file_location("boundary_android", ROOT / "scripts/android_qualification.py")
     android = importlib.util.module_from_spec(spec)
@@ -58,7 +96,18 @@ def test_android_typed_app_cases_are_required_by_the_artifact_bound_inventory():
         "typedCallControlSignsQueuesAndEndsAnApprovedCall",
         "typedFreshProfileBootstrapDoesNotSeedIdentity",
     }
-    assert len(cases) == len({case["id"] for case in cases}) == 10
+    registry = [case for case in cases if case["class"] == "NativeProfileResultRegistrationTest"]
+    assert {case["method"] for case in registry} == {
+        "overlappingNonAuthSuccessCannotVerifyTheCurrentConfirmation",
+        "cancelledActivityResultCannotAuthorizeAReplacementChallenge",
+        "cancelledCredentialUiCannotSupplyProof",
+    }
+    assert all(case["scope"] == android.PROFILE_RESULT_SCOPE for case in registry)
+    source = ROOT / "plugins/tauri-plugin-mesh-runtime/android/src/androidTest/java/com/meshchat/runtime/NativeProfileResultRegistrationTest.kt"
+    declared = re.findall(r"@Test\s+fun\s+(\w+)\s*\(", source.read_text(encoding="utf-8"))
+    assert len(declared) == len(set(declared)) == 3
+    assert set(declared) == {case["method"] for case in registry}
+    assert len(cases) == len({case["id"] for case in cases}) == 13
 
 
 @pytest.mark.parametrize("body", [

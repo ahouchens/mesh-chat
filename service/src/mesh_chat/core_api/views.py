@@ -152,6 +152,19 @@ def pairing_view(profile, peer, value):
     return {"profile": profile, "peer": peer, "trust": value.trust}
 
 
+def pairing_intent_view(profile, value):
+    if (any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
+            for item in (profile, value.pairing))
+            or value.state not in {"reserved", "offer_ready", "awaiting_approval", "transferred", "retiring", "retired"}
+            or type(value.expires_at) not in {int, float} or not math.isfinite(value.expires_at) or value.expires_at < 0
+            or (value.pairing_code is not None and (not isinstance(value.pairing_code, str)
+                or not 1 <= len(value.pairing_code.encode("utf-8")) <= 2048))
+            or (value.state != "offer_ready" and value.pairing_code is not None)):
+        raise ValueError("Invalid pairing intent observation")
+    return {"profile": profile, "pairing": value.pairing, "state": value.state,
+            "expires_at": value.expires_at, "pairing_code": value.pairing_code}
+
+
 def invitation_view(profile, value):
     if not isinstance(profile, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", profile) is None:
         raise ValueError("Invalid invitation profile handle")

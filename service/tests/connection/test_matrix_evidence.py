@@ -1,4 +1,5 @@
 import json
+import hashlib
 from pathlib import Path
 import sys
 import xml.etree.ElementTree as ET
@@ -64,7 +65,8 @@ def fixture(directory):
         android["suites"].append({"suite": suite, "run_id": run * 32, "tests_collected": len(cases),
             "tests_executed": len(cases), "tests_passed": len(cases), "tests_failed": 0, "tests_skipped": 0,
             "duration_seconds": 1, "scenarios": [{"scenario_id": case["id"], "passed": True,
-                "report_sha256": "b" * 64} for case in cases]})
+                "report_sha256": "b" * 64,
+                **({"scope": case["scope"]} if "scope" in case else {})} for case in cases]})
     transport = {**packaged, "evidence_level": TRANSPORT_LEVEL, "checks": list(TRANSPORT_CHECKS),
                  "counts": dict(TRANSPORT_COUNTS), "run_id": "b" * 32,
                  "native_binary_sha256": desktop["native_binary_sha256"]}
@@ -88,6 +90,13 @@ def fixture(directory):
             native["timings_ms"] = {"open_max": 100, "control_max": 200, "control_p95": 150}
         (directory / f"desktop/native-windows-{kind}.json").write_text(json.dumps(native))
     (directory / "desktop/native-runtime-materials.json").write_text(json.dumps(materials_report(source, tree)))
+    from test_ui_core_boundary_independent_consumers import bootstrap_record
+    bootstrap = bootstrap_record(source, tree)
+    sdk = directory / "desktop" / bootstrap["sdk_artifact"]
+    sdk.parent.mkdir()
+    sdk.write_bytes(b"Synthetic SDK bytes for report rejection checks only")
+    bootstrap["sdk_sha256"] = hashlib.sha256(sdk.read_bytes()).hexdigest()
+    (directory / "desktop/windows-independent-bootstrap.json").write_text(json.dumps(bootstrap))
     return source, tree, android
 
 
@@ -150,16 +159,17 @@ def test_gate_revalidates_policy_inventory_and_both_platform_component_reports(t
     source, tree, _ = fixture(tmp_path)
     result = matrix.collect(tmp_path, source, tree, ["policy", "verification", "android"])
     assert result["policy_tests_executed"] == 1
-    assert result["android_tests_executed"] == 47
+    assert result["android_tests_executed"] == 50
     assert set(result["windows_transport_checks"]) == CHECKS
     assert set(result["report_sha256"]) == {"policy", "windows_transport", "windows_packaged_lifecycle",
                                           "windows_packaged_transport", "windows_packaged_pairing", "android",
                                           "core_ui_boundary", "core_windows_boundary",
-                                          "windows_native_control", "windows_native_lifecycle", "windows_runtime_materials"}
+                                          "windows_native_control", "windows_native_lifecycle", "windows_runtime_materials",
+                                          "windows_independent_bootstrap"}
     assert result["windows_packaged_lifecycle_checks"] == list(PACKAGED_CHECKS)
     assert result["core_ui_boundary_python_tests"] == len(PYTHON_SELECTION)
     assert result["core_ui_boundary_rendered_tests"] == len(RENDERED_CASES)
-    assert result["core_windows_boundary_tests"] == 3
+    assert result["core_windows_boundary_tests"] == 9
 
 
 @pytest.mark.parametrize("fault", ["missing", "source", "sidecar", "build", "manifest", "package", "version",
@@ -187,6 +197,26 @@ def test_required_runtime_materials_cannot_qualify_a_different_or_partial_archiv
         elif fault == "scope": record["scope"] = "all licensing complete"
         elif fault == "module": inventory["required_modules_verified"].pop()
         else: inventory["notice_files_verified"] += 1
+        path.write_text(json.dumps(record))
+    with pytest.raises((ValueError, FileNotFoundError)):
+        matrix.collect(tmp_path, source, tree, ["verification"])
+
+
+@pytest.mark.parametrize("fault", ["missing", "source", "scope", "efs", "other_runtime", "reused_run", "cleanup", "sdk_missing", "sdk_changed"])
+def test_required_installed_windows_host_cannot_use_components_or_another_runtime(tmp_path, fault):
+    source, tree, _ = fixture(tmp_path)
+    path = tmp_path / "desktop/windows-independent-bootstrap.json"
+    record = json.loads(path.read_text())
+    if fault == "missing": path.unlink()
+    else:
+        if fault == "source": record["source_commit"] = "c" * 40
+        elif fault == "scope": record["scope"] = "DPAPI component only"
+        elif fault == "efs": record["checks"]["efs_vault_file"] = False
+        elif fault == "other_runtime": record["sidecar_sha256"] = "a" * 64
+        elif fault == "reused_run": record["run_id"] = "c" * 32
+        elif fault == "sdk_missing": (path.parent / record["sdk_artifact"]).unlink()
+        elif fault == "sdk_changed": (path.parent / record["sdk_artifact"]).write_bytes(b"Other SDK bytes")
+        else: record["cleanup"] = "pending"
         path.write_text(json.dumps(record))
     with pytest.raises((ValueError, FileNotFoundError)):
         matrix.collect(tmp_path, source, tree, ["verification"])
@@ -269,6 +299,26 @@ def test_android_report_without_typed_app_bridge_execution_cannot_qualify(tmp_pa
         suite[key] = len(suite["scenarios"])
     (tmp_path / "android/android-qualification.json").write_text(json.dumps(android))
     with pytest.raises(ValueError, match="scenario execution"):
+        matrix.collect(tmp_path, source, tree, ["policy", "verification", "android"])
+
+
+@pytest.mark.parametrize("fault", ["missing", "not_passed", "scope_missing", "scope_overstated"])
+def test_android_result_registry_execution_and_component_scope_are_required(tmp_path, fault):
+    source, tree, android = fixture(tmp_path)
+    suite = next(item for item in android["suites"] if item["suite"] == "core_api")
+    case = next(item for item in suite["scenarios"] if "NativeProfileResultRegistrationTest" in item["scenario_id"])
+    if fault == "missing":
+        suite["scenarios"].remove(case)
+        for key in ("tests_collected", "tests_executed", "tests_passed"):
+            suite[key] = len(suite["scenarios"])
+    elif fault == "not_passed":
+        case["passed"] = False
+    elif fault == "scope_missing":
+        case.pop("scope")
+    else:
+        case["scope"] = "Successful OS credential confirmation"
+    (tmp_path / "android/android-qualification.json").write_text(json.dumps(android))
+    with pytest.raises(ValueError, match="scenario"):
         matrix.collect(tmp_path, source, tree, ["policy", "verification", "android"])
 
 
@@ -449,7 +499,7 @@ def test_suite_manifest_is_uniform_across_every_required_component(tmp_path):
         "policy", "windows_transport", "windows_packaged_lifecycle",
         "windows_packaged_transport", "windows_packaged_pairing",
         "core_ui_boundary_python", "core_ui_boundary_rendered", "core_windows_boundary",
-        "windows_native_control", "windows_native_lifecycle", "windows_runtime_materials",
+        "windows_native_control", "windows_native_lifecycle", "windows_runtime_materials", "windows_independent_bootstrap",
         "android_webrtc", "android_signaling", "android_core_api", "android_core_consumer",
         *("direct_Linux_" + name for name in DIRECT_SUITES),
         *("direct_Windows_" + name for name in DIRECT_SUITES)]
@@ -468,7 +518,7 @@ def test_suite_manifest_is_uniform_across_every_required_component(tmp_path):
     windows = next(record for record in records if record["suite"] == "windows_transport")
     assert windows["checks"] == len(CHECKS) and windows["artifacts"]
     boundary = [record for record in records if record["suite"].startswith("core_")]
-    assert [record["tests"]["executed"] for record in boundary] == [len(PYTHON_SELECTION), len(RENDERED_CASES), 3]
+    assert [record["tests"]["executed"] for record in boundary] == [len(PYTHON_SELECTION), len(RENDERED_CASES), len(WINDOWS_CASES)]
     assert all(record["artifacts"]["junit"] for record in boundary)
     assert all("inventory" in record["artifacts"] for record in (boundary[0], boundary[2]))
 

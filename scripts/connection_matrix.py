@@ -13,6 +13,7 @@ from connection_evidence import evidence as policy_evidence
 from core_boundary_evidence import UI_LEVEL, WINDOWS_LEVEL, ui_evidence, windows_evidence
 from native_windows_evidence import verify_report as native_evidence
 from native_runtime_materials import verify_report as runtime_materials_evidence
+from check_independent_core_consumers import verify_report as independent_bootstrap_evidence
 from native_interop_evidence import verify_pair as native_interop_pair
 from native_interop_workload import workload as required_native_workload
 from direct_qualification import SUITES as DIRECT_SUITES, read_suite as direct_suite
@@ -110,13 +111,16 @@ def android_evidence(record, source, tree):
         if not isinstance(run_id, str) or not re.fullmatch(r"[a-f0-9]{32}", run_id) or run_id in run_ids:
             raise ValueError("Android suite run identity is missing or duplicated")
         run_ids.add(run_id)
-        required = [case["id"] for case in cases(expected)]
+        required_cases = cases(expected)
+        required = [case["id"] for case in required_cases]
         scenarios = suite.get("scenarios", [])
         if (suite.get("suite") != expected or not isinstance(scenarios, list)
                 or [case.get("scenario_id") for case in scenarios] != required
                 or any(case.get("passed") is not True for case in scenarios)):
             raise ValueError("Android scenario execution is incomplete")
         hashes({case["scenario_id"]: case.get("report_sha256") for case in scenarios})
+        if any(case.get("scope") != item["scope"] for case, item in zip(scenarios, required_cases) if "scope" in item):
+            raise ValueError("Android component scenario scope is missing or overstated")
         for name, count in {"tests_collected": len(required), "tests_executed": len(required),
                             "tests_passed": len(required), "tests_failed": 0, "tests_skipped": 0}.items():
             if type(suite.get(name)) is not int or suite[name] != count:
@@ -253,6 +257,20 @@ def collect(directory: Path, source: str, tree: str, required, *, native_workloa
         suites.append(suite_record("windows_runtime_materials", record["evidence_level"], source, tree,
                                    report="windows_runtime_materials", checks=record["inventory"]["notice_files_verified"],
                                    artifacts={field: record[field] for field in bindings}))
+        path = directory / "desktop/windows-independent-bootstrap.json"
+        record = independent_bootstrap_evidence(read(path), source, tree)
+        installed_sdk = path.parent / record["sdk_artifact"]
+        if (not 0 < installed_sdk.stat().st_size <= 2 * 1024 * 1024
+                or hashlib.sha256(installed_sdk.read_bytes()).hexdigest() != record["sdk_sha256"]):
+            raise ValueError("Retained independent SDK differs from the installed artifact")
+        if (any(record[field] != native_records[0][field] for field in bindings)
+                or record["run_id"] in {item["run_id"] for item in (*native_records, packaged, transport, pairing)}):
+            raise ValueError("Independent application did not execute a distinct run of the same frozen runtime")
+        reports["windows_independent_bootstrap"] = path
+        suites.append(suite_record("windows_independent_bootstrap", record["evidence_level"], source, tree,
+                                   report="windows_independent_bootstrap", checks=len(record["checks"]),
+                                   cleanup=record["cleanup"],
+                                   artifacts={field: record[field] for field in (*bindings, "sdk_sha256")}))
     if "android" in required:
         for record in android["suites"]:
             suites.append(suite_record("android_" + record["suite"], android["evidence_level"], source, tree,

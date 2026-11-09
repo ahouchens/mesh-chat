@@ -61,13 +61,13 @@ def test_scenario_inventory_names_are_unique_and_both_offer_roles_are_mandatory(
     }
 
 
-def inventory_fixture(directory):
+def inventory_fixture(directory, suite="webrtc"):
     identity = {"source_commit": "a" * 40, "source_tree": "b" * 40}
     artifacts = {"host.apk": "c" * 64, "tests.apk": "d" * 64}
     inventory = {"v": 1, **identity, "artifacts": artifacts, "run_id": "e" * 32,
-                 "scenarios": gate.cases("webrtc"), "started_at": 1}
+                 "scenarios": gate.cases(suite), "started_at": 1}
     (directory / "inventory.json").write_text(json.dumps(inventory))
-    for case in gate.cases("webrtc"):
+    for case in gate.cases(suite):
         (directory / case["report"]).write_text(successful_output("e" * 32, case["method"], case["class"]))
     return identity, artifacts, inventory
 
@@ -78,6 +78,26 @@ def test_evidence_counts_actual_execution_and_hashes_each_report(tmp_path):
     assert result["tests_collected"] == result["tests_executed"] == result["tests_passed"] == 21
     assert result["tests_skipped"] == result["tests_failed"] == 0
     assert all(len(case["report_sha256"]) == 64 for case in result["scenarios"])
+
+
+@pytest.mark.parametrize("method", gate.PROFILE_RESULT_REGISTRATION)
+@pytest.mark.parametrize("fault", ["missing", "not_run", "skipped"])
+def test_each_native_result_registration_case_must_execute(tmp_path, method, fault):
+    identity, artifacts, _ = inventory_fixture(tmp_path, "core_api")
+    result = gate.verify_suite(tmp_path, "core_api", identity, artifacts)
+    assert result["tests_executed"] == 13
+    registry = [case for case in result["scenarios"] if "NativeProfileResultRegistrationTest" in case["scenario_id"]]
+    assert len(registry) == 3 and all(case["scope"] == gate.PROFILE_RESULT_SCOPE for case in registry)
+    case = next(case for case in gate.cases("core_api") if case["method"] == method)
+    report = tmp_path / case["report"]
+    if fault == "missing":
+        report.unlink()
+    elif fault == "not_run":
+        report.write_text("OK (0 tests)\nINSTRUMENTATION_CODE: -1\n")
+    else:
+        report.write_text(report.read_text().replace("STATUS_CODE: 0", "STATUS_CODE: -3"))
+    with pytest.raises((ValueError, FileNotFoundError)):
+        gate.verify_suite(tmp_path, "core_api", identity, artifacts)
 
 
 @pytest.mark.parametrize("fault", ["source", "binary", "selection", "stale", "missing", "version"])

@@ -75,6 +75,11 @@ def child_environment(environment=os.environ):
             if not key.startswith(("GITHUB_", "ACTIONS_", "INPUT_"))}
 
 
+def windows_pipe_name():
+    from mesh_chat.core_api.pipe_policy import pipe_name
+    return pipe_name(r"\\.\pipe\mesh-chat-native-qualification-" + uuid4().hex)
+
+
 class WindowsPeer:
     EXCHANGE_TIMEOUT = 60
 
@@ -95,7 +100,7 @@ class WindowsPeer:
         from mesh_chat.core_api.pipe_client import connect
         from mesh_chat.core_api.client import CoreClient
         self._responses = queue.Queue(maxsize=32)
-        pipe = r"\\.\pipe\mesh-native-qualification-" + uuid4().hex
+        pipe = windows_pipe_name()
         environment = {**child_environment(), "MESH_CHAT_CORE_API_PIPE": pipe,
                        "MESH_CHAT_CORE_API_CLIENT_IMAGE": str(Path(sys.executable).resolve())}
         self.process = subprocess.Popen([str(self.binary), "--qualification-native-webrtc"],
@@ -122,7 +127,10 @@ class WindowsPeer:
             self.private("initialize", {"profile_dir": str(self.directory),
                 "vault_key": base64.b64encode(self.key).decode(), "parent_pid": os.getpid(),
                 "display_name": "Mesh qualification"})
-            connection = connect(pipe, timeout=15)
+            try:
+                connection = connect(pipe, timeout=15)
+            except OSError:
+                raise PeerFailure("windows_core_pipe_unavailable") from None
             self.client = CoreClient.open(connection.readline, connection.write, connection.close)
             return self.inventory()
         except Exception:

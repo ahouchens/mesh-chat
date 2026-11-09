@@ -26,9 +26,11 @@ ANDROID_ACTIVITY = (
 
 
 def _rule(css: str, selector: str) -> str:
-    match = re.search(rf"{re.escape(selector)}\s*\{{([^}}]*)\}}", css)
-    assert match is not None, f"Missing {selector} rule"
-    return match.group(1)
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.DOTALL)
+    for match in re.finditer(r"([^{}]+)\{([^{}]*)\}", css):
+        if selector in (value.strip() for value in match.group(1).split(",")):
+            return match.group(2)
+    raise AssertionError(f"Missing {selector} rule")
 
 
 def test_conversation_layout_keeps_messages_flexible_without_optional_banner() -> None:
@@ -55,6 +57,29 @@ def test_shell_bounds_independent_conversation_and_message_scrollers() -> None:
     assert "overflow-y: auto" in _rule(css, ".message-list")
     assert "height: 100dvh" in css
     assert "max-height: 100dvh" in css
+
+
+def test_profile_catalog_shell_preserves_the_available_scroll_height() -> None:
+    css = STYLES.read_text(encoding="utf-8")
+    wrapper = _rule(css, ".runtime-profile-shell")
+    child = _rule(css, ".runtime-profile-shell > .app-shell")
+    assert "display: flex" in wrapper
+    assert "flex-direction: column" in wrapper
+    assert "height: 100%" in wrapper
+    assert "max-height: 100%" in wrapper
+    for rule in (wrapper, child):
+        assert "min-height: 0" in rule
+        assert "overflow: hidden" in rule
+    assert "flex: 1" in child
+    assert "height: auto" in child
+    assert "min-height: 0" in _rule(css, ".main-pane")
+    assert "overflow: hidden" in _rule(css, ".main-pane")
+
+
+def test_rule_lookup_does_not_confuse_a_descendant_with_the_base_shell() -> None:
+    css = ".runtime-profile-shell > .app-shell { height: auto; } .app-shell { min-height: 0; overflow: hidden; }"
+    assert "min-height: 0" in _rule(css, ".app-shell")
+    assert "height: auto" not in _rule(css, ".app-shell")
 
 
 def test_dark_theme_defines_an_explicit_dark_surface_palette() -> None:

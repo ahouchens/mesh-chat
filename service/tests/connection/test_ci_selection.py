@@ -252,6 +252,10 @@ def test_pipe_production_narrowing_is_limited_to_branch_events(event):
 
 def test_pipe_production_modules_are_not_consumed_by_other_suites():
     root = Path(__file__).resolve().parents[3]
+    from check_core_windows_boundary import SELECTION
+    assert "service/tests/test_app_owned_windows.py" in SELECTION
+    windows_tests = {root / "service/tests/test_core_pipe_windows.py",
+                     root / "service/tests/test_app_owned_windows.py"}
     roots = [root / "src",
              root / "plugins" / "tauri-plugin-mesh-runtime" / "android" / "src"]
     offenders = []
@@ -263,7 +267,7 @@ def test_pipe_production_modules_are_not_consumed_by_other_suites():
             if any(name in text for name in ("pipe_endpoint", "pipe_policy", "pipe_client")):
                 offenders.append(str(path.relative_to(root)))
     for path in (root / "service" / "tests").rglob("*.py"):
-        if ("connection" in path.parts or path.name == "test_core_pipe_windows.py"
+        if ("connection" in path.parts or path in windows_tests
                 or not path.name.startswith("test_")):
             continue
         text = path.read_text(encoding="utf-8")
@@ -300,9 +304,10 @@ def test_native_windows_narrowing_is_limited_to_branch_events(event):
 def test_native_windows_production_modules_have_only_trusted_consumers():
     root = Path(__file__).resolve().parents[3]
     names = ("native_windows_webrtc", "desktop_transport_host")
+    trusted_hosts = {root / "service/src/mesh_chat/__main__.py", root / "service/src/mesh_chat/app_owned_host.py"}
     offenders = []
     for path in (root / "service" / "src").rglob("*.py"):
-        if path.name == "__main__.py":
+        if path in trusted_hosts:
             continue
         text = path.read_text(encoding="utf-8")
         if any(f"import {name}" in text or f"from .{name}" in text
