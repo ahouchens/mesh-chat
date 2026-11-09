@@ -284,6 +284,14 @@ class CoreClient:
     def remote_profiles(self, handle):
         return self.request("remote_profile.query", {"profile": handle})
 
+    def create_workspace(self, handle, name, description, key):
+        return self.request("workspace.create",
+                            {"profile": handle, "name": name, "description": description},
+                            idempotency_key=key)
+
+    def create_profile(self, display_name):
+        return self.request("profile.create", {"display_name": display_name})
+
     def workspace_join_prompt(self, handle, prompt, key):
         return self.request("workspace.join_prompt",
                             {"profile": handle, "prompt": prompt},

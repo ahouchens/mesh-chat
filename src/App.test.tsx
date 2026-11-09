@@ -16,6 +16,8 @@ const api = vi.hoisted(() => {
     const created = await serviceCommand("create_group", { title: name, member_ids: memberIds, posting_policy: policy }) as { id?: string; title?: string; posting_policy?: string };
     return { group: created.id ?? "group", name: created.title ?? name, posting_policy: created.posting_policy ?? policy };
   }),
+  coreApiCreateProfile: vi.fn(async (name: string): Promise<unknown> => serviceCommand("create_profile", { display_name: name })),
+  coreApiCreateWorkspace: vi.fn(async (name: string, description: string, key: string): Promise<unknown> => serviceCommand("create_workspace", { operation_id: key, name, description })),
   coreApiCreateInvitation: vi.fn(async (payload: Record<string, unknown>): Promise<unknown> => serviceCommand("create_invitation", payload)),
   coreApiPeerForDestination: vi.fn(async (_destination: string): Promise<{ profile: string; peer: string; destination: string }> => { throw new Error("core_api_unavailable"); }),
   coreApiRequest: vi.fn(async (_operation: string, _params?: Record<string, unknown>): Promise<unknown> => { throw new Error("core_api_unavailable"); }),

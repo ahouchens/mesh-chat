@@ -566,6 +566,16 @@ export class CoreClient {
     return this.request("remote_profile.query", { profile });
   }
 
+  async createWorkspace(profile: string, name: string, description: string,
+                         idempotencyKey: string): Promise<unknown> {
+    return this.request("workspace.create", { profile, name, description },
+      { idempotencyKey });
+  }
+
+  async createProfile(displayName: string): Promise<unknown> {
+    return this.request("profile.create", { display_name: displayName });
+  }
+
   async workspaceJoinPrompt(profile: string, prompt: string,
                             idempotencyKey: string): Promise<unknown> {
     return this.request("workspace.join_prompt", { profile, prompt },

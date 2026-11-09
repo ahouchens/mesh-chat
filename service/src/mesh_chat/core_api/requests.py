@@ -34,9 +34,11 @@ REQUEST_OPERATIONS = ("peer.pairing_request",)
 INVITATION_OPERATIONS = ("peer.pairing_create",)
 STOP_OPERATIONS = ("runtime.stop",)
 APPLICATION_OPERATIONS = ("application.snapshot", "application.command")
+PROFILE_CREATE_OPERATIONS = ("profile.create",)
 WORKSPACE_PREVIEW_OPERATIONS = ("workspace.invitation_preview",)
 WORKSPACE_JOIN_OPERATIONS = ("workspace.join",)
 WORKSPACE_PROMPT_JOIN_OPERATIONS = ("workspace.join_prompt",)
+WORKSPACE_CREATE_OPERATIONS = ("workspace.create",)
 WORKSPACE_LIST_OPERATIONS = ("workspace.query",)
 WORKSPACE_REQUESTS_OPERATIONS = ("workspace.join_requests",)
 WORKSPACE_APPROVE_OPERATIONS = ("workspace.join_approve",)
@@ -130,6 +132,7 @@ WORKSPACE_ACCESS_MUTATION_OPERATIONS = frozenset().union(
 WORKSPACE_OPERATIONS = frozenset().union(
     WORKSPACE_PREVIEW_OPERATIONS,
     WORKSPACE_JOIN_OPERATIONS,
+    WORKSPACE_CREATE_OPERATIONS,
     WORKSPACE_LIST_OPERATIONS,
     WORKSPACE_REQUESTS_OPERATIONS,
     WORKSPACE_APPROVE_OPERATIONS,
@@ -185,7 +188,8 @@ def parse_request(value, operations):
                       "workspace.device_link_submit", "workspace.device_link_approve",
                       "workspace.device_link_decline", "workspace.channel_transfer_offer",
                       "workspace.channel_transfer_accept", "workspace.policy_update",
-                      "workspace.device_remove", "workspace.invitation_create"):
+                      "workspace.device_remove", "workspace.invitation_create",
+                      "workspace.create"):
         fields.add("idempotency_key")
     if set(value) != fields:
         raise ApiFailure("invalid_request")
@@ -195,6 +199,13 @@ def parse_request(value, operations):
         return operation, _acknowledgment_params(value)
     if operation == "diagnostics.query":
         return operation, _diagnostic_params(value["params"])
+    if operation in PROFILE_CREATE_OPERATIONS:
+        params = value["params"]
+        if (not isinstance(params, dict) or set(params) != {"display_name"}
+                or not isinstance(params["display_name"], str)
+                or not 1 <= len(params["display_name"].strip()) <= 80):
+            raise ApiFailure("invalid_request")
+        return operation, params
     if operation in APPLICATION_OPERATIONS:
         params = value["params"]
         if operation == "application.snapshot":
@@ -996,6 +1007,17 @@ def parse_request(value, operations):
                 or ("i2p_consent" in params and type(params["i2p_consent"]) is not bool)):
             raise ApiFailure("invalid_request")
         return operation, params
+    if operation in WORKSPACE_CREATE_OPERATIONS:
+        params = value["params"]
+        if (not isinstance(params, dict)
+                or set(params) != {"profile", "name", "description"}
+                or not isinstance(params["profile"], str)
+                or HANDLE.fullmatch(params["profile"]) is None
+                or not isinstance(params["name"], str) or not 1 <= len(params["name"].strip()) <= 64
+                or not isinstance(params["description"], str)
+                or len(params["description"].strip()) > 250):
+            raise ApiFailure("invalid_request")
+        return operation, params
     if operation in WORKSPACE_PROMPT_JOIN_OPERATIONS:
         params = value["params"]
         if (not isinstance(params, dict) or set(params) != {"profile", "prompt"}
@@ -1313,9 +1335,11 @@ COMPONENT_OPERATIONS = (
     + INVITATION_OPERATIONS
     + STOP_OPERATIONS
     + APPLICATION_OPERATIONS
+    + PROFILE_CREATE_OPERATIONS
     + WORKSPACE_PREVIEW_OPERATIONS
     + WORKSPACE_JOIN_OPERATIONS
     + WORKSPACE_PROMPT_JOIN_OPERATIONS
+    + WORKSPACE_CREATE_OPERATIONS
     + WORKSPACE_LIST_OPERATIONS
     + WORKSPACE_REQUESTS_OPERATIONS
     + WORKSPACE_APPROVE_OPERATIONS

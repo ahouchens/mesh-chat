@@ -350,6 +350,14 @@ class CoreClient private constructor(private val transport: CoreTransport) {
     fun remoteProfiles(profile: String): JSONObject =
         dispatch("remote_profile.query", JSONObject().put("profile", profile), null)
 
+    fun createWorkspace(profile: String, name: String, description: String,
+                        idempotencyKey: String): JSONObject =
+        dispatch("workspace.create", JSONObject().put("profile", profile)
+            .put("name", name).put("description", description), idempotencyKey)
+
+    fun createProfile(displayName: String): JSONObject =
+        dispatch("profile.create", JSONObject().put("display_name", displayName), null)
+
     fun workspaceJoinPrompt(profile: String, prompt: String,
                             idempotencyKey: String): JSONObject =
         dispatch("workspace.join_prompt", JSONObject().put("profile", profile)

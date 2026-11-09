@@ -7,7 +7,6 @@ owner; this list only prevents the facade from becoming an arbitrary RPC.
 APPLICATION_COMMANDS = frozenset({
     "workspace_snapshot",
     "i2p_status",
-    "create_profile",
     "connect_using_reply",
     "check_direct_connection",
     "prepare_manual_participant_host",
@@ -44,7 +43,6 @@ APPLICATION_COMMANDS = frozenset({
     "webrtc_onboarding_answer",
     "verify_webrtc_onboarding_offer",
     "verify_webrtc_onboarding_answer",
-    "create_workspace",
     "prepare_direct_offer",
     "prepare_direct_answer",
     "prepare_direct_ready",

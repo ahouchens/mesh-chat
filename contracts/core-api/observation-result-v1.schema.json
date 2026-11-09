@@ -76,7 +76,7 @@
           "type": "array",
           "uniqueItems": true,
           "minItems": 3,
-          "maxItems": 120,
+          "maxItems": 122,
           "items": {
             "enum": [
               "application.snapshot",
@@ -168,6 +168,8 @@
               "connection.document",
               "peer.pairing_preview",
               "workspace.join_prompt",
+              "profile.create",
+              "workspace.create",
               "workspace.device_link_create",
               "workspace.device_link_preview",
               "workspace.device_link_submit",

@@ -679,7 +679,6 @@ fn allowed_renderer_command(command: &str) -> bool {
         command,
         "workspace_snapshot"
             | "i2p_status"
-            | "create_profile"
             | "connect_using_reply"
             | "check_direct_connection"
             | "prepare_manual_participant_host"
@@ -716,7 +715,6 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "webrtc_onboarding_answer"
             | "verify_webrtc_onboarding_offer"
             | "verify_webrtc_onboarding_answer"
-            | "create_workspace"
             | "prepare_direct_offer"
             | "prepare_direct_answer"
             | "prepare_direct_ready"
@@ -2192,7 +2190,6 @@ mod tests {
             "check_direct_setup",
             "retry_direct_setup",
             "cancel_direct_setup",
-            "create_workspace",
             "workspace_connectivity",
             "workspace_helper_status",
             "workspace_helper_consent_set",

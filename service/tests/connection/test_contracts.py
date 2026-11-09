@@ -68,7 +68,8 @@ def test_each_designed_operation_has_an_executable_request_vector_and_permission
     examples = {
         "runtime.capabilities": {}, "runtime.stop": {}, "application.snapshot": {},
         "application.command": {"command": "snapshot", "payload": {}},
-        "profile.create": {"display_name": "Alex"}, "profile.select": {},
+        "profile.create": {"display_name": "Alex"},
+        "workspace.create": {"name": "Lake", "description": ""}, "profile.select": {},
         "profile.unlock": {"credential_handle": handle}, "profile.lock": {}, "profile.query": {},
         "peer.pairing_create": {},
         "workspace.invitation_preview": {"document": "workspace-invitation"},

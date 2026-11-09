@@ -255,6 +255,23 @@ def test_facade_application_snapshot_returns_ui_state(host):
         owner.close()
 
 
+def test_facade_workspace_create_returns_workspace_summary(host):
+    service = host()
+    owner = HostedClient(service, frozenset({"observe", "read", "approve"}))
+    try:
+        client = CoreClient.open(owner.reader.readline, owner.writer.write)
+        profile = client.capabilities["profiles"][0]
+        workspace = client.request(
+            "workspace.create",
+            {"profile": profile, "name": "Lakewatcher", "description": "Field"},
+            idempotency_key="create-workspace-1",
+        )
+        assert workspace["name"] == "Lakewatcher"
+        assert workspace["id"]
+    finally:
+        owner.close()
+
+
 def test_facade_invitation_create_returns_complete_ui_material(host):
     service = host()
     owner = HostedClient(service, frozenset({"observe", "read", "approve", "pair"}))

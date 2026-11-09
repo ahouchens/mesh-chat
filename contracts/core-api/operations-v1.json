@@ -121,7 +121,9 @@
     "remote_profile.query",
     "connection.document",
     "peer.pairing_preview",
-    "workspace.join_prompt"
+    "workspace.join_prompt",
+    "workspace.create",
+    "profile.create"
   ],
   "operations": [
     {
@@ -1009,6 +1011,13 @@
     {
       "operation": "workspace.join_prompt",
       "permission": "pair",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.create",
+      "permission": "approve",
       "scope": "profile",
       "mutation": true,
       "idempotency": "caller_profile_operation_key"

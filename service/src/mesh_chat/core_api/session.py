@@ -45,9 +45,9 @@ from .diagnostic_views import diagnostics_view
 from .requests import (
     CURSOR, DIAGNOSTIC_OPERATIONS, INTENT_OPERATIONS, MESSAGE_OPERATIONS, OPERATIONS,
     INVITATION_OPERATIONS, PAIRING_OPERATIONS, PAIRING_PREVIEW_OPERATIONS, CONTACT_INVITATION_OPERATIONS, RECEIVED_OPERATIONS, RECOVERY_OPERATIONS, RECOVERY_TRANSFER_OPERATIONS,
-    APPLICATION_OPERATIONS, CALL_OPERATIONS, CALL_CONTROL_OPERATIONS, COMPONENT_OPERATIONS, DRAFT_OPERATIONS,
+    APPLICATION_OPERATIONS, PROFILE_CREATE_OPERATIONS, CALL_OPERATIONS, CALL_CONTROL_OPERATIONS, COMPONENT_OPERATIONS, DRAFT_OPERATIONS,
     GROUP_OPERATIONS, GROUP_DRAFT_OPERATIONS, REACTION_OPERATIONS, RELATIONSHIP_OPERATIONS, SETTINGS_OPERATIONS, REQUEST_OPERATIONS, STOP_OPERATIONS,
-    WORKSPACE_APPROVE_OPERATIONS, WORKSPACE_DECLINE_OPERATIONS, WORKSPACE_JOIN_OPERATIONS, WORKSPACE_PROMPT_JOIN_OPERATIONS,
+    WORKSPACE_APPROVE_OPERATIONS, WORKSPACE_DECLINE_OPERATIONS, WORKSPACE_JOIN_OPERATIONS, WORKSPACE_PROMPT_JOIN_OPERATIONS, WORKSPACE_CREATE_OPERATIONS,
     WORKSPACE_CHANNEL_ARCHIVE_OPERATIONS, WORKSPACE_CHANNEL_CREATE_OPERATIONS,
     WORKSPACE_CHANNEL_MEMBERS_OPERATIONS,
     WORKSPACE_CHANNEL_MEMBERS_UPDATE_OPERATIONS, WORKSPACE_CHANNEL_UPDATE_OPERATIONS,
@@ -136,6 +136,7 @@ PERMISSION_BY_OPERATION = {
     "group.invitation_retry": "send",
     "profile.query": "observe",
     "application.snapshot": "approve",
+    "profile.create": "profile_owner",
     "application.command": "approve",
     "runtime.capabilities": "observe",
     "runtime.stop": "runtime_owner",
@@ -174,6 +175,7 @@ PERMISSION_BY_OPERATION = {
     "workspace.invitation_preview": "read",
     "workspace.join": "pair",
     "workspace.join_prompt": "pair",
+    "workspace.create": "approve",
     "workspace.join_approve": "approve",
     "workspace.join_decline": "approve",
     "workspace.join_requests": "approve",
@@ -314,8 +316,10 @@ class CoreSession:
             (INVITATION_OPERATIONS, self._invitations),
             (STOP_OPERATIONS, self._lifecycle),
             (APPLICATION_OPERATIONS, self._application),
+            (PROFILE_CREATE_OPERATIONS, self._application),
             (WORKSPACE_PREVIEW_OPERATIONS, self._workspace),
             (WORKSPACE_JOIN_OPERATIONS, self._workspace),
+            (WORKSPACE_CREATE_OPERATIONS, self._workspace_admin),
             (WORKSPACE_PROMPT_JOIN_OPERATIONS, self._workspace),
             (WORKSPACE_LIST_OPERATIONS, self._workspace_admin),
             (WORKSPACE_REQUESTS_OPERATIONS, self._workspace_admin),
@@ -410,7 +414,8 @@ class CoreSession:
                                                         "workspace.channel_transfer_offer",
                                                         "workspace.channel_transfer_accept",
                                                         "workspace.policy_update",
-                                                        "workspace.device_remove"}:
+                                                        "workspace.device_remove",
+                                                        "workspace.create"}:
                     raise ApiFailure("invalid_request")
                 permission = PERMISSION_BY_OPERATION.get(operation)
                 if permission is None:
@@ -547,6 +552,11 @@ class CoreSession:
             result = stop_view(self._lifecycle.stop())
             self._stopped = True
             return result
+        if operation in PROFILE_CREATE_OPERATIONS:
+            if self._application is None:
+                raise ApiFailure("unavailable")
+            result = self._application.create_profile(params["display_name"].strip())
+            return {"display_name": result.get("display_name", params["display_name"].strip())}
         if operation in APPLICATION_OPERATIONS:
             if self._application is None:
                 raise ApiFailure("unavailable")
@@ -697,6 +707,14 @@ class CoreSession:
         return self._observe(grant, profile, operation, params)
 
     def _workspace_operation(self, grant, profiles, operation, params, key):
+        if operation in WORKSPACE_CREATE_OPERATIONS:
+            target = profiles.get(params["profile"])
+            if target is None:
+                raise ApiFailure("forbidden")
+            operation_id = self._required_operation_id(grant, target, key)
+            return self._workspace_admin.create_workspace(
+                target, params["name"].strip(), params["description"].strip(),
+                operation_id)
         if operation == "workspace.invitation_revoke":
             target, inside = self._workspace_scope(grant, profiles, params)
             operation_id = self._required_operation_id(grant, target, key)

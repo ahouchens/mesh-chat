@@ -60,6 +60,8 @@ import {
   coreApiAcceptInvitation,
   coreApiCreateGroup,
   coreApiCreateInvitation,
+  coreApiCreateProfile,
+  coreApiCreateWorkspace,
   coreApiDraftGet,
   coreApiDraftSet,
   loadCallIceServers,
@@ -1592,7 +1594,7 @@ function Onboarding({
     setBusy(true);
     setError("");
     try {
-      await serviceCommand("create_profile", { display_name: name });
+      await coreApiCreateProfile(name);
       const ready = await coreApiSnapshot() as unknown as Snapshot;
       if (mode === "join") {
         try {
@@ -3614,7 +3616,7 @@ function CreateWorkspaceDialog({ onClose, onCreated }: { onClose: () => void; on
     if (!name.trim() || busy) return;
     setBusy(true); setError("");
     try {
-      const workspace = await serviceCommand<Workspace>("create_workspace", { operation_id: newOperationId(), name: name.trim(), description: description.trim() });
+      const workspace = await coreApiCreateWorkspace(name.trim(), description.trim(), newOperationId()) as unknown as Workspace;
       await onCreated(workspace);
     } catch (reason) { setError(errorMessage(reason)); }
     finally { setBusy(false); }

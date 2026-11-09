@@ -1292,3 +1292,13 @@ class ServiceWorkspaceAdmin:
             except ValidationError as error:
                 raise ApiFailure("invalid_request") from error
             raise ApiFailure("invalid_request")
+
+
+    def create_workspace(self, profile, name, description, operation_id):
+        self._require_local(profile)
+        with storage_errors():
+            try:
+                return dict(self._service.create_workspace(
+                    operation_id, name, description))
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
