@@ -33,6 +33,26 @@ JUnit hashes, runtime version and wall time under `dist/reports/`. CI executes i
 immediately after dependency installation, before distribution package checks.
 The full qualification matrix remains a separate required integration gate.
 
+The final qualification workflow downloads this verification artifact and the
+Windows host artifact. It rechecks the boundary reports against the required
+source commit/tree, retained JUnit and collection digests, run identities and
+zero-failure/zero-skip execution. The uniform manifest includes separate
+`core_ui_boundary_python`, `core_ui_boundary_rendered` and
+`core_windows_boundary` records. Rendered execution must contain all six named
+cases; Windows must contain all three named cases. Python counts come from the
+complete collection of the required boundary files, rather than a historical
+case count. The final gate requires only the standard library.
+
+Independent authority tests pass JSON frames through the actual Core session.
+Signed workspace removal must deny replay of an earlier accepted message or
+read-hint change. Explicit consent administration requires both `send` and
+`approve`: remote profile create/remove and propagation approve/remove,
+workspace access recommendation apply/apply-by-ID, and reconnect consent.
+These tests validate ordinary consumer grants, successful owner effects, and
+denial of the same key after the host removes only `approve`. Workspace access
+fixtures deliver a real owner-signed recommendation to a joined member;
+transport is then unavailable while real consent/storage logic executes.
+
 For development, run `python tests/core-ui-boundary/run_python.py --source <HEAD SHA> --junit .test-tmp/boundary.xml`
 or `vitest run --config tests/core-ui-boundary/vitest.config.ts` directly.
 `MESH_BOUNDARY_PYTHON` selects the Python interpreter; the default is the local
