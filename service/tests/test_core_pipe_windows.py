@@ -386,3 +386,35 @@ def test_production_pipe_client_negotiates_with_memoryview_and_real_partial_writ
         if client is not None:
             client.close()
         server.close()
+
+
+def test_trusted_sidecar_can_create_profile_on_an_existing_empty_service(tmp_path, monkeypatch):
+    from mesh_chat.core_api import pipe_client
+    from mesh_chat.core_api.client import CoreClient, CoreClientError
+    from mesh_chat.core_api.sidecar_host import start
+    monkeypatch.setattr(MeshChatService, "_start_network", lambda *_: None)
+    monkeypatch.setattr(MeshChatService, "_prepare_lan_fallback", lambda *_: None)
+    store = VaultStore(tmp_path, os.urandom(32), allow_unprotected_for_tests=True)
+    service = MeshChatService(store, tmp_path, lambda _: None)
+    name = pipe_name()
+    server = start(service, pipe_name=name, client_image=current_image())
+    client = None
+    try:
+        assert service._identity is None
+        client = pipe_client.connect(name)
+        core = CoreClient.open(client.readline, client.write)
+        assert "profile.create" in core.capabilities["operations"]
+        params = {"display_name": "First Profile"}
+        created = core.request("profile.create", params, idempotency_key="fresh-profile-pipe-key")
+        assert core.request("profile.create", params, idempotency_key="fresh-profile-pipe-key") == created
+        assert core.profile(core.capabilities["profiles"][0])["display_name"] == "First Profile"
+        with pytest.raises(CoreClientError) as conflict:
+            core.request("profile.create", {"display_name": "Changed"},
+                         idempotency_key="fresh-profile-pipe-key")
+        assert conflict.value.code == "idempotency_conflict"
+        assert len(store.list("identity")) == len(store.list("workspace_operation")) == 1
+    finally:
+        if client is not None:
+            client.close()
+        server.close()
+        service.close()

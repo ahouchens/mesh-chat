@@ -29,6 +29,18 @@ sidecar after exact executable allowlisting, or Android's actual own-UID binding
 Frame JSON cannot attach that port or widen its authority. Media plumbing keeps
 the existing native command allowlist through this private port.
 
+`profile.create` keeps its runtime-scoped public envelope (`display_name` only,
+plus the required envelope `idempotency_key`). Its bootstrap port is attached
+separately with the host-only `private_profile_bootstrap` flag and requires
+`profile_owner` and the local profile scope on every request, including replay.
+Default public owner grants cannot attach that port or gain `profile_owner`.
+Trusted desktop startup and Android's own-UID binding opt in explicitly, so an
+already running empty service can create its first profile without replacement.
+Identity, profile, initial settings and replay result commit atomically in the
+encrypted vault before networking starts. Same-key retries survive service
+restart; changed display names conflict. Networking after the commit is a
+separate effect, and a failed response does not undo committed profile creation.
+
 The trusted application host authenticates callers before constructing a facade
 session. The session holds its caller ID, operation permissions and allowed
 profile scopes; none of those facts come from request JSON. Windows bootstrap

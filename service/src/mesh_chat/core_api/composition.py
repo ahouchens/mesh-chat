@@ -18,6 +18,7 @@ from .service_diagnostics import ServiceDiagnostics
 from .service_intent import ServiceIntent
 from .application import ServiceApplication
 from .native_commands import ServiceNativeCommands
+from .profile_bootstrap import ServiceProfileBootstrap
 from .service_calls import ServiceCallSettings
 from .service_groups import ServiceGroups
 from .service_reactions import ServiceReactions
@@ -43,10 +44,13 @@ class ServiceObservations:
         return ProfileObservation(profile["display_name"], profile["destination_hash"], connections)
 
 
-def bind_service_session(service, authenticated_grant, *, private_native=False):
+def bind_service_session(service, authenticated_grant, *, private_native=False,
+                         private_profile_bootstrap=False):
     """Trusted host entry point, never a client-supplied identity or grant."""
     if type(private_native) is not bool:
         raise ValueError("Private native binding must be a host boolean")
+    if type(private_profile_bootstrap) is not bool:
+        raise ValueError("Private profile bootstrap must be a host boolean")
     def current_grant():
         return None if service._shutdown.is_set() else authenticated_grant()
 
@@ -78,6 +82,7 @@ def bind_service_session(service, authenticated_grant, *, private_native=False):
                       runtime=runtime,
                       application=ServiceApplication(service),
                       native_commands=ServiceNativeCommands(service) if private_native else None,
+                      profile_bootstrap=ServiceProfileBootstrap(service) if private_profile_bootstrap else None,
                       drafts=ServiceDrafts(service),
                       calls=ServiceCallSettings(service),
                       settings=ServiceNetworkSettings(service),
@@ -87,7 +92,9 @@ def bind_service_session(service, authenticated_grant, *, private_native=False):
                            transaction=service._dispatch_lock, ports=ports)
 
 
-def bind_service_stream(service, authenticated_grant, *, private_native=False):
+def bind_service_stream(service, authenticated_grant, *, private_native=False,
+                        private_profile_bootstrap=False):
     """Private host binding; raw frames can never select the grant callback."""
     return FramedSession(bind_service_session(service, authenticated_grant,
-                                              private_native=private_native))
+                                              private_native=private_native,
+                                              private_profile_bootstrap=private_profile_bootstrap))
