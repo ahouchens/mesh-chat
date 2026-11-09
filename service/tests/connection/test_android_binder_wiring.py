@@ -39,6 +39,18 @@ def test_the_interface_and_caller_derivation_stay_bounded():
     assert "aidl = true" in build
 
 
+def test_smoke_instrumentation_declares_its_own_extracted_aidl_compile_dependency():
+    # The host's implementation dependency compiles its own Binder service but
+    # does not export SDK types to a consuming APK's androidTest classpath.
+    host = (PLUGIN / "build.gradle.kts").read_text(encoding="utf-8")
+    smoke = (PLUGIN / "webrtc-smoke/build.gradle.kts").read_text(encoding="utf-8")
+    test = (PLUGIN / "src/androidTest/java/com/meshchat/runtime/MeshCoreApiServiceTest.kt").read_text(encoding="utf-8")
+    assert 'implementation(project(":mesh-core-client"))' in host
+    assert 'api(project(":mesh-core-client"))' not in host
+    assert "IMeshCoreApi.Stub.asInterface" in test
+    assert 'androidTestImplementation(project(":mesh-core-client"))' in smoke
+
+
 def test_android_qualification_runs_the_instrumentation_suite():
     path = ROOT / "scripts" / "test_android_core_api.sh"
     assert path.read_bytes().startswith(b"#!/usr/bin/env bash")  # no BOM before the shebang
