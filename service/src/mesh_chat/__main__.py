@@ -293,6 +293,15 @@ def _start_core_api_endpoint(service):
     return start(service, pipe_name=name, client_image=image)
 
 
+def _discard_initialization(request):
+    """Drop host bootstrap key references before the long-lived control loop."""
+    if isinstance(request, dict):
+        payload = request.get("payload")
+        if isinstance(payload, dict):
+            payload.pop("vault_key", None)
+        request.clear()
+
+
 def main() -> int:
     if sys.argv[1:] == ["--direct-bootstrap"]:
         from .direct_bootstrap_worker import main as bootstrap_main
@@ -352,6 +361,9 @@ def main() -> int:
             report_failure(stage, exc, command)
             writer.write(_error_response(initial.get("id"), exc))
             return 2
+        finally:
+            _discard_initialization(initial)
+            initial = None
 
         private_reader = {"desktop_transport": desktop_transport} if desktop_transport is not None else {}
         requests = NativeFrameReader(reader, service._direct_native, **private_reader)
@@ -362,7 +374,7 @@ def main() -> int:
             command = request.get("command")
             try:
                 stage = "dispatch"
-                if qualification_control is not None and command in {"qualification.inventory", "qualification.path_evidence"}:
+                if qualification_control is not None and command in qualification_control.commands:
                     result = {"ok": True, "result": qualification_control.dispatch(command, request.get("payload"))}
                     should_stop = False
                 else:

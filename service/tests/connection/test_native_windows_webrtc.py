@@ -295,6 +295,30 @@ def test_prestart_submit_failure_and_duplicate_cannot_release_another_lease(monk
         instance.shutdown()
 
 
+def test_lost_create_return_after_publish_fences_routing_and_keeps_exact_disposal_custody(monkeypatch):
+    instance, events = host()
+    original = instance._submit
+    try:
+        def lost_reply(coroutine):
+            assert json.loads(original(coroutine))["ok"]
+            raise _HostFailure("native_webrtc_timeout")
+        monkeypatch.setattr(instance, "_submit", lost_reply)
+        assert not json.loads(instance.createOffer("peer", json.dumps(ICE), json.dumps(CHANNELS)))["ok"]
+        assert "peer" not in instance._sessions
+        assert json.loads(instance.stats("peer"))["error"] == "native_webrtc_session_missing"
+        assert not instance.send("peer", b"after-unknown-create")
+        assert not instance.sendControl("peer", "mesh-onboarding", "after-unknown-create")
+        value = counts(instance)
+        assert value["reserved_count"] == value["retiring_count"] == value["allocated_count"] == 1
+        assert value["active_count"] == 0 and not any(event[0] == "closed" for event in list(events.queue))
+        instance.close("peer")
+        assert counts(instance)["reserved_count"] == 0
+        assert [event for event in list(events.queue) if event[0] == "closed"] == [("closed", "peer", "")]
+    finally:
+        monkeypatch.setattr(instance, "_submit", original)
+        instance.shutdown()
+
+
 def test_failed_shutdown_keeps_native_loop_and_exact_retirement_available_for_retry(monkeypatch):
     instance, _ = host()
     original = instance._close_session

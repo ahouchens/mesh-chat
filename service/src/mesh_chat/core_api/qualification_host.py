@@ -11,10 +11,12 @@ import json
 import os
 import weakref
 from pathlib import Path
+from uuid import UUID
 
-from ..errors import ValidationError
+from ..errors import ContactNotApproved, ValidationError
 
-COMMANDS = frozenset({"qualification.inventory", "qualification.path_evidence"})
+PAIRING_COMMANDS = frozenset({"qualification.pairing_begin", "qualification.pairing_status", "qualification.pairing_cancel"})
+COMMANDS = frozenset({"qualification.inventory", "qualification.path_evidence"}) | PAIRING_COMMANDS
 MARKER = ".mesh-qualification-v1"
 _android_service = None
 
@@ -84,8 +86,14 @@ def mark_initialized_profile(request):
 
 
 class QualificationControl:
-    def __init__(self, current_service):
+    commands = COMMANDS
+
+    def __init__(self, current_service, *, authorize=lambda: True, caller="inherited-controller"):
+        if (not callable(current_service) or not callable(authorize) or not isinstance(caller, str)
+                or not 1 <= len(caller) <= 200 or any(not 0x20 <= ord(char) <= 0x7E for char in caller)):
+            raise ValueError("Trusted qualification caller is invalid")
         self._current_service = current_service
+        self._authorize, self._caller = authorize, caller
 
     def dispatch(self, command, payload):
         if command not in COMMANDS or not isinstance(payload, dict):
@@ -93,6 +101,8 @@ class QualificationControl:
         service = self._current_service()
         if service is None or service._shutdown.is_set():
             raise ValidationError("Qualification service is unavailable")
+        if command in PAIRING_COMMANDS:
+            return self._pairing(service, command, payload)
         if command == "qualification.inventory":
             if payload:
                 raise ValidationError("Qualification request is invalid")
@@ -104,6 +114,64 @@ class QualificationControl:
         ):
             raise ValidationError("Qualification request is invalid")
         return service.native_webrtc_path_evidence(payload["logical_session"], payload["expected_physical"])
+
+    def _pairing_service(self):
+        service = self._current_service()
+        if (service is None or service._shutdown.is_set() or service._identity is None
+                or getattr(service, "_connection_policy", None) != "shared-native"):
+            raise ContactNotApproved("Qualification pairing service is unavailable")
+        try:
+            if self._authorize() is not True:
+                raise ValueError
+            path = service.store.profile_dir.resolve()
+            if not path.name.startswith("mesh-qualification-"):
+                raise ValueError
+            _check_marker(path, service.store._key)
+        except Exception:
+            raise ContactNotApproved("Qualification pairing authority is unavailable") from None
+        return service
+
+    def _pairing(self, service, command, payload):
+        required = {"operation_id", "role"} if command == "qualification.pairing_begin" else {"operation_id"}
+        allowed = required | {"pairing_code", "allow_direct_ip_disclosure"} if command.endswith("_begin") else required
+        if (not required <= set(payload) or set(payload) - allowed
+                or not isinstance(payload["operation_id"], str)):
+            raise ValidationError("Qualification pairing request is invalid")
+        try:
+            if str(UUID(payload["operation_id"])) != payload["operation_id"]:
+                raise ValueError
+        except (ValueError, TypeError):
+            raise ValidationError("Qualification pairing operation is invalid") from None
+        if command.endswith("_begin"):
+            role, code = payload["role"], payload.get("pairing_code")
+            if (not isinstance(role, str) or role not in {"offer", "answer"}
+                    or type(payload.get("allow_direct_ip_disclosure", False)) is not bool
+                    or (role == "offer" and "pairing_code" in payload)
+                    or (role == "answer" and (not isinstance(code, str) or not 1 <= len(code.encode("utf-8")) <= 2048))):
+                raise ValidationError("Qualification pairing request is invalid")
+        if self._pairing_service() is not service:
+            raise ContactNotApproved("Qualification service changed")
+        # Profile-key/caller derivation is stable across a cold reopen. Domain
+        # global receipts remain the only canonical mutation journal.
+        digest = service.store.opaque_id("qualification-pairing-operation", self._caller, payload["operation_id"])
+        operation_id = str(UUID(bytes=bytes.fromhex(digest)[:16]))
+        if command == "qualification.pairing_begin":
+            bound_service, epoch = weakref.ref(service), service._runtime_incarnation
+            def authorized():
+                try:
+                    current = self._pairing_service()
+                    return current is bound_service() and current._runtime_incarnation == epoch
+                except Exception:
+                    return False
+            result = service.native_pairing_begin(operation_id, role=payload["role"], authorized=authorized,
+                pairing_code=payload.get("pairing_code"),
+                allow_direct_ip_disclosure=payload.get("allow_direct_ip_disclosure", False))
+        elif command == "qualification.pairing_status":
+            result = service.native_pairing_status(operation_id)
+        else:
+            result = service.native_pairing_cancel(operation_id)
+        return {"operation_id": payload["operation_id"], **{key: result[key] for key in
+                ("state", "expires_at", "pairing_code") if key in result}}
 
 
 def _android_own_uid():
@@ -167,5 +235,12 @@ def android_control(raw):
             service = _android_service() if _android_service is not None else None
             if service is None or service is not mobile_bridge._service:
                 raise ValidationError("Qualification service is unavailable")
-            return QualificationControl(lambda: service).dispatch(value["command"], value["payload"])
+            def current_service():
+                current = _android_service() if _android_service is not None else None
+                return current if current is mobile_bridge._service else None
+            def authorized():
+                _android_own_uid()
+                return True
+            return QualificationControl(current_service, authorize=authorized,
+                caller="android-own-uid").dispatch(value["command"], value["payload"])
     return _android_result(control)
