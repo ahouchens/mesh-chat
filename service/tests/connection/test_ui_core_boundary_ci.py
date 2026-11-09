@@ -1,6 +1,7 @@
 """The fast boundary tests cannot hide affected native integration suites."""
 
 import importlib.util
+import re
 from pathlib import Path
 from types import SimpleNamespace
 import sys
@@ -58,7 +59,18 @@ def test_android_typed_app_cases_are_required_by_the_artifact_bound_inventory():
         "typedCallControlSignsQueuesAndEndsAnApprovedCall",
         "typedFreshProfileBootstrapDoesNotSeedIdentity",
     }
-    assert len(cases) == len({case["id"] for case in cases}) == 10
+    registry = [case for case in cases if case["class"] == "NativeProfileResultRegistrationTest"]
+    assert {case["method"] for case in registry} == {
+        "overlappingNonAuthSuccessCannotVerifyTheCurrentConfirmation",
+        "cancelledActivityResultCannotAuthorizeAReplacementChallenge",
+        "cancelledCredentialUiCannotSupplyProof",
+    }
+    assert all(case["scope"] == android.PROFILE_RESULT_SCOPE for case in registry)
+    source = ROOT / "plugins/tauri-plugin-mesh-runtime/android/src/androidTest/java/com/meshchat/runtime/NativeProfileResultRegistrationTest.kt"
+    declared = re.findall(r"@Test\s+fun\s+(\w+)\s*\(", source.read_text(encoding="utf-8"))
+    assert len(declared) == len(set(declared)) == 3
+    assert set(declared) == {case["method"] for case in registry}
+    assert len(cases) == len({case["id"] for case in cases}) == 13
 
 
 @pytest.mark.parametrize("body", [
