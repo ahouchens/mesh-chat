@@ -157,6 +157,9 @@ import {
 import { contactConnectionLabel, deliveryLabel, workspaceJoinStatus } from "./status";
 import { EmojiGlyph } from "./EmojiGlyph";
 import { MessageContent } from "./MessageContent";
+import { Dialog } from "./Dialog";
+import { Button } from "./Button";
+import { CreateWorkspaceDialog } from "./CreateWorkspaceDialog";
 import { WorkspaceMessageMenu } from "./WorkspaceMessageMenu";
 import { ConnectionDiagnostics } from "./ConnectionDiagnostics";
 import { ContactRequests } from "./ContactRequests";
@@ -499,21 +502,6 @@ function importedDocumentErrorMessage(error: unknown): string {
   return error instanceof InvitationTransferError ? error.message : errorMessage(error);
 }
 
-function Button({
-  children,
-  variant = "primary",
-  className = "",
-  ...props
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & {
-  variant?: "primary" | "secondary" | "ghost" | "danger";
-}) {
-  return (
-    <button className={`button button--${variant} ${className}`} {...props}>
-      {children}
-    </button>
-  );
-}
-
 function ReturnConnectionUnavailable({ report, busy, onRetry }: {
   report: DirectDoctorReport;
   busy: boolean;
@@ -771,78 +759,6 @@ function ConnectionDocumentShare({ formats, kind, onShared }: { formats: Connect
     <p className="invite-feedback" aria-live="polite">{feedback}</p>
     <InvitationQrCode document={formats.file} destination={kind === "reply" ? "connection reply" : "reconnect update"} />
   </section>;
-}
-
-function Dialog({
-  title,
-  onClose,
-  children,
-  wide = false,
-}: {
-  title: string;
-  onClose: () => void;
-  children: React.ReactNode;
-  wide?: boolean;
-}) {
-  const closeRef = useRef<HTMLButtonElement>(null);
-  const dialogRef = useRef<HTMLElement>(null);
-  const onCloseRef = useRef(onClose);
-  const titleId = useId();
-  useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
-  useEffect(() => {
-    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    closeRef.current?.focus();
-    const onKeyDown = (event: KeyboardEvent) => {
-      const currentDialog = dialogRef.current;
-      if (!currentDialog || currentDialog.closest('[aria-hidden="true"]')) return;
-      const visibleDialogs = [...document.querySelectorAll<HTMLElement>('[role="dialog"][aria-modal="true"]')]
-        .filter((dialog) => !dialog.closest('[aria-hidden="true"]'));
-      if (visibleDialogs.at(-1) !== currentDialog) return;
-      if (event.key === "Escape" && !event.defaultPrevented) {
-        event.preventDefault();
-        onCloseRef.current();
-        return;
-      }
-      if (event.key !== "Tab" || event.defaultPrevented) return;
-      const focusable = [...currentDialog.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), summary, [href], [tabindex]:not([tabindex="-1"])')]
-        .filter((element) => element.getAttribute("aria-hidden") !== "true");
-      if (focusable.length === 0) return;
-      const first = focusable[0];
-      const last = focusable.at(-1)!;
-      if (event.shiftKey && (document.activeElement === first || !currentDialog.contains(document.activeElement))) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && (document.activeElement === last || !currentDialog.contains(document.activeElement))) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("keydown", onKeyDown);
-      if (previousFocus?.isConnected) previousFocus.focus();
-    };
-  }, []);
-  return (
-    <div className="dialog-backdrop" role="presentation" onMouseDown={onClose}>
-      <section
-        ref={dialogRef}
-        className={`dialog ${wide ? "dialog--wide" : ""}`}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        onMouseDown={(event) => event.stopPropagation()}
-      >
-        <div className="dialog__header">
-          <h2 id={titleId}>{title}</h2>
-          <button ref={closeRef} className="icon-button" onClick={onClose} aria-label="Close">
-            <X size={20} />
-          </button>
-        </div>
-        {children}
-      </section>
-    </div>
-  );
 }
 
 function callFingerprint(sdp: string): string {
@@ -3605,23 +3521,6 @@ function WorkspaceSwitcher({ workspaces, activeId, onSelect, onCreate, onJoin }:
       <button className="workspace-switcher__item workspace-switcher__item--join" onClick={onJoin} aria-label="Join or connect" title="Join or connect"><LogIn size={16} /></button>
     </nav>
   );
-}
-
-function CreateWorkspaceDialog({ onClose, onCreated }: { onClose: () => void; onCreated: (workspace: Workspace) => Promise<void> }) {
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const create = async () => {
-    if (!name.trim() || busy) return;
-    setBusy(true); setError("");
-    try {
-      const workspace = await coreApiCreateWorkspace(name.trim(), description.trim(), newOperationId()) as unknown as Workspace;
-      await onCreated(workspace);
-    } catch (reason) { setError(errorMessage(reason)); }
-    finally { setBusy(false); }
-  };
-  return <Dialog title="Create a workspace" onClose={onClose}><div className="form-stack workspace-create"><p className="dialog-lead">A private collaboration space for a trusted team.</p><label>Name<input autoFocus value={name} maxLength={64} onChange={(event) => setName(event.target.value)} aria-label="Workspace name" /></label><label>Description <small>Optional</small><textarea value={description} maxLength={250} onChange={(event) => setDescription(event.target.value)} aria-label="Workspace description" /></label><div className="workspace-facts"><p><ShieldCheck size={17} /><span><strong>This device becomes the owner authority.</strong> Link another device and rotate authority before retiring this one.</span></p><p><Users size={17} /><span>Every public message is encrypted separately for each member device.</span></p><p><WifiOff size={17} /><span>Delivery and history depend on reachable peers; there is no hosted workspace server.</span></p></div>{error && <p className="form-error" role="alert">{error}</p>}<div className="dialog-actions"><Button variant="ghost" onClick={onClose}>Cancel</Button><Button disabled={busy || !name.trim()} onClick={() => void create()}>{busy ? "Creating…" : "Create workspace"}</Button></div></div></Dialog>;
 }
 
 function JoinWorkspaceDialog({ initialValue = "", promptId, promptWorkspaceName, resumeWorkspaceId, workspaces, onClose, onJoined }: { initialValue?: string; promptId?: string | null; promptWorkspaceName?: string; resumeWorkspaceId?: string; workspaces: Workspace[]; onClose: () => void; onJoined: (workspace: Workspace) => Promise<void> }) {
