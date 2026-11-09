@@ -10,6 +10,14 @@ composer state, independent SDK distributions and upgrades, supervisor-owned
 native lifecycle/pairing, and the remaining packaged transport/fault matrix.
 The ledger records exact scope; this is not full M2–M5 completion.
 
+Wave 2 local source `538ba226` passes 2,815 required policy cases and strict
+model/reducer typing. Composer recovery, retained call-operation tickets,
+private inspector bindings, profile retirement and standalone SDK staging are
+integrated. Source `7b4dc3f` adds pinned component upgrades and bounded packaged
+peer drivers. Remaining work includes concrete initial-pairing composition,
+private profile-host admission, the finite mutation-key audit and actual
+cross-platform/fault execution before default promotion or legacy-loop removal.
+
 Integration begins at `435b497150e5f0d12cb1c5dc7b4602da7a66ec4c` on a
 separate lead branch. The [coordination inventory](Mesh_Chat_Core_Integration_Coordination.md)
 assigns exclusive ownership and defines the two-wave implementation gates.
