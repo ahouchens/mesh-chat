@@ -55,6 +55,27 @@ Android observes libwebrtc's selected-pair and relay-protocol statistics and
 explicitly reports the outer TURN socket unavailable. Its packaged qualification
 remains pending; advertised TURN URLs never establish the selected protocol.
 
+The corrected combined UI boundary passed at
+`8950053cd904458369d1eaf6245cd003fda0b745`, tree
+`d732fec4210721bb3050ee6c26aafd6f6db19096`: 420 Python and all eight rendered
+cases, zero failures/skips, 25.74 seconds. D's `8c496ad` repairs the substituted
+host's missing peer-destination lookup by using actual Core profile/peer queries,
+waits for editable live fields and injects reply loss after the actual atomic
+draft enqueue commits. It retains same-vault reopen, same-revision retry,
+one-message and no-legacy-fallback assertions. This supersedes the failed
+`b2df9ae` rendered checkpoint, without turning substituted Tauri invocation into
+packaged-host evidence. Only pytest's cache provider was disabled for the local
+ACL issue; collection and required case inventories were unchanged.
+
+This source also includes the standalone Kotlin source move `d308c83`, host
+dependency/settings wiring through `7f502fb`, and D's bounded encrypted CI
+rendezvous helpers through `8358ba4`. The lead's 27 Kotlin distribution-policy
+and compatibility cases passed at `ea0dc29` in 1.14 seconds. Kotlin compilation
+and actual cross-runner transport remain unqualified. The artifact helper
+rejects plaintext payload shapes at publication; REST metadata authenticates
+repository/run/source provenance, while producer-role enforcement relies on
+trusted workflow code and is not independent server attestation of the job.
+
 ### Wave 1 accepted at the fully qualified combined source
 
 The combined implementation is `174728edad62aae6ef16e95b075183d06c5cdda3`,
