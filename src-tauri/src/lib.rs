@@ -2170,7 +2170,7 @@ mod tests {
         assert!(!allowed_renderer_command("delete_conversation"));
         assert!(allowed_renderer_command("i2p_status"));
         assert!(!allowed_renderer_command("restore_conversation"));
-        assert!(allowed_renderer_command("set_message_reaction"));
+        assert!(!allowed_renderer_command("set_message_reaction"));
         assert!(!allowed_renderer_command("delete_contact_identity"));
         for command in [
             "stop_participant_host",
