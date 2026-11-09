@@ -357,3 +357,32 @@ def test_an_owner_endpoint_can_administrate_over_the_pipe(service):
         client.close()
     finally:
         server.close()
+
+
+def test_production_pipe_client_negotiates_with_memoryview_and_real_partial_writes(service, monkeypatch):
+    from mesh_chat.core_api import pipe_client
+    from mesh_chat.core_api.client import CoreClient
+    original_write = pipe_client._kernel32.WriteFile
+    lengths = []
+
+    def partial_write(handle, payload, length, written, overlapped):
+        assert isinstance(payload, bytes)
+        lengths.append(length)
+        return original_write(handle, payload, min(length, 13), written, overlapped)
+
+    monkeypatch.setattr(pipe_client._kernel32, "WriteFile", partial_write)
+    monkeypatch.setattr(pipe_client, "BUFFER_BYTES", 31)
+    name = pipe_name()
+    server = endpoint(name)
+    server.start(service)
+    client = None
+    try:
+        client = pipe_client.connect(name)
+        core = CoreClient.open(client.readline, client.write)
+        profile = core.capabilities["profiles"][0]
+        assert core.profile(profile)["display_name"] == "Alex"
+        assert len(lengths) > 2 and max(lengths) <= 31
+    finally:
+        if client is not None:
+            client.close()
+        server.close()

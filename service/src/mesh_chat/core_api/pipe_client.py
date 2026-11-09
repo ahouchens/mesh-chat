@@ -39,15 +39,15 @@ class PipeClient:
         self._buffer = bytearray()
 
     def write(self, payload):
-        view = memoryview(payload)
+        view = bytes(payload)
         total = 0
         while total < len(view):
             chunk = view[total:total + BUFFER_BYTES]
             written = wintypes.DWORD()
             if not _kernel32.WriteFile(self._handle, chunk, len(chunk), ctypes.byref(written), None):
                 raise OSError(ctypes.get_last_error(), "core API pipe write failed")
-            if written.value == 0:
-                raise OSError("core API pipe write stalled")
+            if not 0 < written.value <= len(chunk):
+                raise OSError("core API pipe write returned an invalid length")
             total += written.value
         return total
 
