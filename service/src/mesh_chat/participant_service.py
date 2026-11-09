@@ -99,9 +99,10 @@ class ParticipantAccessServiceMixin:
     def _participant_intent_holds_capacity(self, intent: dict[str, Any], now: float) -> bool:
         if float(intent.get("uncertain_lease_until", 0)) > now:
             return True
-        if (intent.get("state") == "allocating"
+        if (intent.get("state") in {"allocating", "allocated", "committed"}
                 and self.store.get("participant_host", intent["host_session_id"]) is None):
-            # A crash can interrupt retirement after deleting the host record.
+            # Retirement can lose its cleanup handle after deleting the host,
+            # even when the last durable state says allocation completed.
             return float(intent["maximum_expires_at"]) + DEFAULT_MAPPING_LIFETIME > now
         if float(intent.get("maximum_expires_at", 0)) <= now:
             return False
@@ -224,11 +225,18 @@ class ParticipantAccessServiceMixin:
             return (item is not None and item.get("reservation_operation_id") == intent["id"]
                     and item.get("reservation_epoch") == intent["runtime_epoch"])
         retired = {**intent, "state": "retired", "retirement_pending": True}
-        if intent.get("state") == "allocating" and (resource is None or not resource.get("access")):
+        unknown_allocation = (intent.get("state") == "allocating"
+                              and (resource is None or not resource.get("access")))
+        lost_cleanup_handle = (intent.get("state") in {"allocated", "committed"}
+                               and resource is None and local is None)
+        if unknown_allocation or lost_cleanup_handle:
             # The router lease can outlive the signed access document. An
             # unknown allocation reply must hold capacity for the whole lease.
+            lease_bound = float(intent["maximum_expires_at"]) + DEFAULT_MAPPING_LIFETIME
+            if unknown_allocation:
+                lease_bound = max(lease_bound, time.time() + DEFAULT_MAPPING_LIFETIME)
             retired["uncertain_lease_until"] = max(
-                float(intent.get("uncertain_lease_until", 0)), time.time() + DEFAULT_MAPPING_LIFETIME)
+                float(intent.get("uncertain_lease_until", 0)), lease_bound)
         if matches(resource):
             retired["cleanup"] = deepcopy(resource)
         else:
