@@ -106,6 +106,15 @@ class Operation:
 
 
 @dataclass(frozen=True)
+class HandoffLease:
+    operation: Operation
+    source: Resource
+    resource: Resource
+    deadline: float
+    target: ConnectionKey | None = None
+
+
+@dataclass(frozen=True)
 class Carrier:
     resource: Resource
     policy_revision: int

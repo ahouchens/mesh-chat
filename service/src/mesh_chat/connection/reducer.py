@@ -192,7 +192,7 @@ def _result(state: ConnectionState, event: Result | Failed | Adopted) -> Transit
             return Transition(replace(state, negotiation=None, reason=reason,
                               retry_at=event.now + state.policy.poll_interval), reason=reason)
         if state.key.scope == "pairing":
-            phase = Phase.GATHER_OFFER if state.authority.preferred else Phase.GATHER_ANSWER
+            phase = Phase.GATHER_OFFER if state.authority.preferred else Phase.WAIT_OFFER
         else:
             phase = Phase.REQUEST if state.authority.preferred else Phase.WAIT_REQUEST
         return _work(state, phase, step.resource, event.now)

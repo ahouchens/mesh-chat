@@ -6,13 +6,14 @@ from time import monotonic
 import pytest
 
 from mesh_chat.connection.model import (
-    Authority, ConnectionKey, ConnectionState, ContextChanged, Desired, Failed,
-    Failure, Phase, Result, Retire, Tick, Work,
+    Adopted, Authority, ConnectionKey, ConnectionState, ContextChanged, Desired, Failed,
+    Failure, Phase, Resource, Result, Retire, Tick, Work,
 )
 from mesh_chat.connection.projection import snapshot
 from mesh_chat.connection.reducer import transition
 from mesh_chat.connection.runtime import ConnectionRuntime
 from mesh_chat.connection.model import Execution
+from mesh_chat.connection.supervisor import ConnectionSupervisor
 
 
 def pairing(preferred=True):
@@ -25,7 +26,7 @@ def test_initial_pairing_uses_owner_phases_then_releases_without_claiming_messag
     state = pairing(preferred)
     expected = ([Phase.DISCOVER, Phase.GATHER_OFFER, Phase.PUBLISH_OFFER, Phase.WAIT_ANSWER,
                  Phase.APPLY_ANSWER, Phase.CHECKING] if preferred else
-                [Phase.DISCOVER, Phase.GATHER_ANSWER, Phase.PUBLISH_ANSWER, Phase.CHECKING])
+                [Phase.DISCOVER, Phase.WAIT_OFFER, Phase.GATHER_ANSWER, Phase.PUBLISH_ANSWER, Phase.CHECKING])
     result = transition(state, Tick(0))
     for index, phase in enumerate(expected):
         work, = result.effects
@@ -97,10 +98,10 @@ def test_actual_runtime_handoff_is_once_and_exception_keeps_exact_cleanup(handof
             results.append(result)
             return result
         def retire(self, resource): retired.append(resource)
-    def handoff(operation, resource):
+    def handoff(operation, resource, commit):
         attempts.append((operation, resource))
         if handoff_fails: raise OSError("handoff failed after owner release")
-        return True
+        assert commit(resource, ConnectionKey("contact", "peer", "local", "remote"))
     runtime = ConnectionRuntime("epoch", lambda *_: Executor(), profiles=lambda: {"profiles": [profile]},
         execution=lambda: Execution.AVAILABLE, activate=lambda _: pytest.fail("Pairing activated reconnect"), handoff=handoff)
     try:
@@ -123,6 +124,92 @@ def test_actual_runtime_handoff_is_once_and_exception_keeps_exact_cleanup(handof
         else:
             assert retired == []
         assert not runtime.snapshots()["intent"]["messaging_ready"]
+    finally:
+        runtime.stop()
+        runtime.wait()
+
+
+def ready_handoff():
+    owner = ConnectionSupervisor("epoch")
+    owner.register(pairing())
+    owner.tick(0)
+    while True:
+        work, = owner.drain()
+        owner.dispatch(work.operation.key, Result(work.operation, 0.1,
+            allocated=work.resource if work.phase is Phase.CHECKING else None,
+            verified=work.phase is Phase.CHECKING, handoff=work.phase is Phase.CHECKING))
+        if work.phase is Phase.CHECKING:
+            return owner, work
+
+
+def test_committed_handoff_lease_survives_lost_return_and_target_adoption_then_old_results():
+    owner, source = ready_handoff()
+    physical = Resource("native", "physical-peer")
+    target = ConnectionKey("contact", "peer", "local", "remote")
+    assert owner.commit_handoff(source.operation, physical, target)
+    owner.register(ConnectionState(target, "epoch", Authority(1, True, True, True), Desired.ENABLED))
+    owner.tick(0.2)
+    work, = owner.drain()
+    owner.dispatch(target, Adopted(work.operation, 0.3, physical))
+    assert owner.handoff_committed(source.operation)
+    owner.reject_handoff(source.operation)  # callback exception after adoption
+    for resource in (physical, source.resource):
+        owner.dispatch(source.operation.key, Result(source.operation, 0.4, allocated=resource))
+    assert not any(isinstance(effect, Retire) for effect in owner.drain())
+    assert owner.snapshot(target).carrier.resource == physical
+    owner.retire(target, 0.5)
+    assert Retire(physical) in owner.drain()
+
+
+@pytest.mark.parametrize("committed", [False, True])
+def test_unadopted_handoff_has_bounded_owner_cleanup_and_late_adoption_is_denied(committed):
+    owner, source = ready_handoff()
+    target = ConnectionKey("contact", "peer", "local", "remote")
+    physical = Resource("native", "physical-peer") if committed else source.resource
+    if committed:
+        assert owner.commit_handoff(source.operation, physical, target)
+    owner.tick(100)
+    assert Retire(physical) in owner.drain()
+    assert physical in owner._retiring
+    owner.register(ConnectionState(target, "epoch", Authority(1, True, True, True), Desired.ENABLED))
+    owner.tick(100)
+    work, = owner.drain()
+    owner.dispatch(target, Adopted(work.operation, 100.1, physical))
+    assert owner.snapshot(target).carrier is None
+
+
+@pytest.mark.parametrize("adopt_before_exception", [False, True])
+def test_runtime_commit_then_callback_exception_keeps_transfer_receipt(adopt_before_exception):
+    profile = {"id": "intent", "scope_kind": "pairing", "local_device_id": "local",
+               "active": True, "effective": {"ready": True, "preferred": True}}
+    physical = Resource("native", "physical-peer")
+    target = ConnectionKey("contact", "peer", "local", "remote")
+    attempts, retired = [], []
+    class Executor:
+        def execute(self, work, cancellation):
+            return Result(work.operation, monotonic(), allocated=work.resource if work.phase is Phase.CHECKING else None,
+                          verified=work.phase is Phase.CHECKING, handoff=work.phase is Phase.CHECKING)
+        def retire(self, resource): retired.append(resource)
+    def handoff(operation, resource, commit):
+        attempts.append(operation)
+        assert commit(physical, target)
+        if adopt_before_exception:
+            runtime.owner.register(ConnectionState(target, "epoch", Authority(1, True, True, True), Desired.ENABLED))
+            runtime.owner.tick(monotonic())
+            work, = runtime.owner.drain()
+            runtime.owner.dispatch(target, Adopted(work.operation, monotonic(), physical))
+        raise OSError("return lost after transfer commit")
+    runtime = ConnectionRuntime("epoch", lambda *_: Executor(), profiles=lambda: {"profiles": [profile]},
+        execution=lambda: Execution.AVAILABLE, activate=lambda _: None, handoff=handoff)
+    try:
+        deadline = monotonic() + 3
+        while not attempts and monotonic() < deadline:
+            runtime.step()
+            Event().wait(0.002)
+        assert len(attempts) == 1
+        assert runtime.owner.handoff_committed(attempts[0])
+        assert not any(isinstance(effect, Retire) for effect in runtime.owner.drain())
+        assert retired == []
     finally:
         runtime.stop()
         runtime.wait()
