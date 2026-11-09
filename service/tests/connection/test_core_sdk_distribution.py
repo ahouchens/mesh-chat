@@ -13,6 +13,8 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
+from contextlib import contextmanager
 
 import pytest
 
@@ -23,20 +25,44 @@ from test_core_profile_bootstrap import empty_host
 from test_core_workspace import workspaces
 
 ROOT = Path(__file__).resolve().parents[3]
-NODE = os.environ.get("MESH_NODE", r"C:/Users/webte/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node.exe")
-ARTIFACTS = Path(os.environ.get("MESH_CORE_SDK_ARTIFACTS", ROOT / ".test-tmp/sdk-artifacts"))
+NODE = os.environ.get("MESH_NODE") or shutil.which("node")
+ARTIFACTS = Path(os.environ.get("MESH_CORE_SDK_ARTIFACTS", ROOT / "dist/sdk"))
+
+
+@contextmanager
+def isolated_project():
+    parent = Path(os.environ.get("MESH_CORE_CONSUMER_TMP") or tempfile.gettempdir()).resolve()
+    work = Path(tempfile.mkdtemp(prefix="mesh-core-installed-consumer-", dir=parent)).resolve()
+    assert work.parent == parent and work.name.startswith("mesh-core-installed-consumer-")
+    assert not work.is_relative_to(ROOT)
+    try:
+        yield work
+    finally:
+        # npm's content hashes exceed MAX_PATH under long workspace temp roots.
+        # Use the Windows extended absolute form only after containment checks.
+        target = str(work)
+        if os.name == "nt":
+            target = "\\\\?\\UNC\\" + target[2:] if target.startswith("\\\\") else "\\\\?\\" + target
+        # Retry only our exact created root; persistent cleanup failure fails.
+        for attempt in range(5):
+            try:
+                shutil.rmtree(target)
+                break
+            except OSError:
+                if attempt == 4:
+                    raise
+                time.sleep(0.1 * (attempt + 1))
 
 
 @pytest.fixture(scope="module", params=["python", "typescript"])
 def installed_consumer(request):
     language = request.param
-    with tempfile.TemporaryDirectory(prefix="mesh-core-installed-consumer-") as temporary:
-        work = Path(temporary)
+    with isolated_project() as work:
         assert not work.resolve().is_relative_to(ROOT)
         env = {key: value for key, value in os.environ.items()
                if key not in {"PYTHONPATH", "NODE_PATH", "NODE_OPTIONS"}}
         env.update(PYTHONDONTWRITEBYTECODE="1", PIP_CACHE_DIR=str(work / "cache"),
-                   npm_config_cache=str(work / "npm-cache"))
+                   npm_config_cache=str(work / "npm-cache"), npm_config_update_notifier="false")
         if language == "python":
             artifact = ARTIFACTS / "python/mesh_chat_core_client-0.3.0.dev0-py3-none-any.whl"
             site = work / "site"
