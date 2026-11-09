@@ -10,10 +10,11 @@ export class FacadeHost {
   private sequence = 0;
   private stderr = "";
 
-  constructor() {
+  constructor(options: { freshProfile?: boolean } = {}) {
     const python = process.env.MESH_BOUNDARY_PYTHON ?? (process.platform === "win32"
       ? path.resolve(".venv/Scripts/python.exe") : "python");
-    this.process = spawn(python, ["-u", "tests/core-ui-boundary/facade_host.py"], {
+    const args = ["-u", "tests/core-ui-boundary/facade_host.py", ...(options.freshProfile ? ["--fresh-profile"] : [])];
+    this.process = spawn(python, args, {
       cwd: process.cwd(), env: { ...process.env, PYTHONUTF8: "1" }, stdio: "pipe",
     });
     this.process.stderr.on("data", (data) => { this.stderr += data.toString(); });

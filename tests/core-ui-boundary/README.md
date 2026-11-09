@@ -5,6 +5,10 @@ the production `App` and executes the production `api.ts` serializers against a
 separate Python process running `FramedSession`, `CoreSession`, domain services
 and a fresh encrypted test vault. Network startup is disabled. It neither maps
 typed operations into legacy command mocks nor claims native transport evidence.
+The mandatory rendered onboarding case uses the explicit empty-vault host mode:
+neither its profile nor its identity is seeded. The form submits through the real
+serializer and private bootstrap port; a lost committed response is resolved by
+the production snapshot path, with exactly one identity and one creation request.
 
 The retained request vectors separately exercise every advertised component
 operation through JSON serialization, schema validation, the production parser
