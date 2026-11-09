@@ -14,7 +14,6 @@ import { coreApiProfile, coreApiTimelineQuery } from "../../src/api";
 
 let host: FacadeHost;
 let hostStarted = false;
-let loseNextSendReply = false;
 let loseNextDraftSendReply = false;
 let loseNextProfileReply = false;
 let failRefreshAfterEnqueue = false;
@@ -23,7 +22,6 @@ let beforeThreadReply: (() => Promise<void>) | null = null;
 
 beforeEach(async () => {
   hostStarted = false;
-  loseNextSendReply = false;
   loseNextDraftSendReply = false;
   loseNextProfileReply = false;
   failRefreshAfterEnqueue = false;
@@ -51,14 +49,6 @@ beforeEach(async () => {
       loseNextProfileReply = false;
       throw new Error(JSON.stringify({ code: "unavailable", retry_after_ms: null, outcome: "unknown" }));
     }
-    if (command === "core_api_send_message") {
-      enqueueAccepted = true;
-      if (loseNextSendReply) {
-        loseNextSendReply = false;
-        // The real session committed. Only the caller's response is lost.
-        throw new Error(JSON.stringify({ code: "unavailable", retry_after_ms: null, outcome: "unknown" }));
-      }
-    }
     return result;
   });
 });
@@ -78,7 +68,7 @@ async function startHost(options: { freshProfile?: boolean } = {}) {
 async function compose(text: string) {
   await startHost();
   render(<App />);
-  const composer = await screen.findByRole("textbox", { name: "Message Boundary Blair" });
+  const composer = await liveComposer();
   fireEvent.change(composer, { target: { value: text } });
   return composer as HTMLTextAreaElement;
 }
@@ -199,15 +189,22 @@ describe("rendered UI through the production framed Core session", () => {
 
   it("retries an uncertain committed enqueue with the same key and one durable record", async () => {
     const composer = await compose("Lost committed reply");
-    loseNextSendReply = true;
+    loseNextDraftSendReply = true;
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
     await screen.findByRole("alert");
     expect(composer.value).toBe("Lost committed reply");
-    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-    await waitFor(() => expect(transport.invoke.mock.calls.filter(([command]) => command === "core_api_send_message")).toHaveLength(2));
+    fireEvent.click(screen.getByRole("button", { name: "Retry previous send" }));
+    const draftSends = () => transport.invoke.mock.calls.filter(([command, args]) =>
+      command === "core_api_request" && args.operation === "message.enqueue_draft");
+    await waitFor(() => expect(draftSends()).toHaveLength(2));
     await act(async () => { await host.invoke("fixture_inspect"); });
-    const sends = transport.invoke.mock.calls.filter(([command]) => command === "core_api_send_message");
+    const sends = draftSends();
     expect(sends[1][1]).toEqual(sends[0][1]);
+    expect(sends[0][1]).toMatchObject({ idempotencyKey: expect.stringMatching(/^[0-9a-f]{64}$/),
+      params: { draft_revision: sends[0][1].idempotencyKey } });
+    expect(transport.invoke.mock.calls.some(([command]) => command === "core_api_send_message" || command === "core_api_draft_set")).toBe(false);
+    expect(transport.invoke.mock.calls.some(([command, args]) => command === "core_api_request"
+      && args.operation === "peer.composer_update" && args.params.text === "")).toBe(false);
     const stored = await host.invoke("fixture_inspect") as { messages: unknown[] };
     expect(stored.messages).toHaveLength(1);
   });

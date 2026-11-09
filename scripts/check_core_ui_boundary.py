@@ -21,6 +21,9 @@ PYTHON_SELECTION = (
     "service/tests/connection/test_ui_core_boundary_noop_idempotency.py",
     "service/tests/connection/test_ui_core_boundary_native_evidence.py",
     "service/tests/connection/test_ui_core_boundary_composer.py",
+    "service/tests/connection/test_ui_core_boundary_rendezvous.py",
+    "service/tests/connection/test_ui_core_boundary_interop_artifacts.py",
+    "service/tests/connection/test_ui_core_boundary_interop_preflight.py",
 )
 RENDERED_CASES = {("tests/core-ui-boundary/app.test.tsx",
                    "rendered UI through the production framed Core session > " + name) for name in (
