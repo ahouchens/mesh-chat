@@ -692,7 +692,7 @@ def workspace_channel_recover_view(profile, workspace, channel, value):
     if any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
            for item in (profile, workspace, channel)):
         raise ValueError("Invalid channel recovery handle")
-    if value.state != "recovered":
+    if value != "recovered":
         raise ValueError("Invalid channel recovery state")
     return {"profile": profile, "workspace": workspace, "channel": channel,
             "state": "recovered"}

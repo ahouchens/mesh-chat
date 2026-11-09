@@ -1,4 +1,5 @@
 from copy import deepcopy
+from functools import lru_cache
 import json
 from pathlib import Path
 
@@ -6,12 +7,16 @@ from jsonschema import Draft202012Validator
 import pytest
 
 from mesh_chat.connection.projection import snapshot
+from mesh_chat.core_api.errors import ApiFailure
+from mesh_chat.core_api.requests import (COMPONENT_OPERATIONS, KEYED_OPERATIONS,
+                                         OPTIONAL_KEY_OPERATIONS, parse_request)
 from tools.connection_harness.simulation import Simulation
 
 
 CONTRACTS = Path(__file__).resolve().parents[3] / "contracts"
 
 
+@lru_cache
 def validator(relative):
     schema = json.loads((CONTRACTS / relative).read_text(encoding="utf-8"))
     Draft202012Validator.check_schema(schema)
@@ -62,8 +67,7 @@ def test_public_request_contract_has_explicit_mutation_identity():
     assert not contract.is_valid(request)
 
 
-def test_each_designed_operation_has_an_executable_request_vector_and_permission():
-    contract = validator("core-api/request-v1.schema.json")
+def request_vectors():
     handle = "callerScopedHandle1"
     examples = {
         "runtime.capabilities": {}, "runtime.stop": {}, "application.snapshot": {},
@@ -216,6 +220,7 @@ def test_each_designed_operation_has_an_executable_request_vector_and_permission
     manifest = json.loads((CONTRACTS / "core-api/operations-v1.json").read_text())
     assert manifest["implemented_operations"] == []  # Schema availability is not API implementation.
     assert set(examples) == {operation["operation"] for operation in manifest["operations"]}
+    vectors = {}
     for operation in manifest["operations"]:
         params = dict(examples[operation["operation"]])
         assert operation["scope"] in {"runtime", "profile"}
@@ -226,7 +231,74 @@ def test_each_designed_operation_has_an_executable_request_vector_and_permission
         request = {"api_version": 1, "request_id": "vector:1", "operation": operation["operation"], "params": params}
         if operation["idempotency"] == "caller_profile_operation_key":
             request["idempotency_key"] = "operation-key-0001"
-        contract.validate(request)
+        vectors[operation["operation"]] = request
+    return vectors
+
+
+@pytest.mark.parametrize("operation,value", request_vectors().items())
+def test_each_designed_operation_has_an_executable_request_vector_and_permission(operation, value):
+    validator("core-api/request-v1.schema.json").validate(value)
+    if operation in COMPONENT_OPERATIONS:
+        assert parse_request(value, COMPONENT_OPERATIONS) == (operation, value["params"])
+
+
+def test_keyed_operation_inventory_matches_the_public_manifest_and_schema():
+    vectors = request_vectors()
+    assert KEYED_OPERATIONS == {operation for operation, value in vectors.items()
+                                if "idempotency_key" in value}
+    contract = validator("core-api/request-v1.schema.json")
+    for operation, value in vectors.items():
+        changed = deepcopy(value)
+        if operation in KEYED_OPERATIONS:
+            del changed["idempotency_key"]
+        else:
+            changed["idempotency_key"] = "unexpected-key-0001"
+        if operation in OPTIONAL_KEY_OPERATIONS:
+            contract.validate(changed)
+            if operation in COMPONENT_OPERATIONS:
+                assert parse_request(changed, COMPONENT_OPERATIONS) == (operation, changed["params"])
+            continue
+        assert not contract.is_valid(changed), operation
+        if operation in COMPONENT_OPERATIONS:
+            with pytest.raises(ApiFailure, match="invalid_request"):
+                parse_request(changed, COMPONENT_OPERATIONS)
+
+
+@pytest.mark.parametrize("key", [None, [], {}, True, 123, "short", "x" * 129, "/" * 20])
+def test_every_keyed_component_rejects_malformed_envelope_keys(key):
+    for operation, value in request_vectors().items():
+        if operation not in COMPONENT_OPERATIONS or operation not in KEYED_OPERATIONS:
+            continue
+        changed = {**value, "idempotency_key": key}
+        with pytest.raises(ApiFailure, match="invalid_request"):
+            parse_request(changed, COMPONENT_OPERATIONS)
+
+
+@pytest.mark.parametrize("params", [None, [], "params", 1, True])
+def test_every_component_rejects_non_object_params(params):
+    for operation, value in request_vectors().items():
+        if operation in COMPONENT_OPERATIONS:
+            with pytest.raises(ApiFailure, match="invalid_request"):
+                parse_request({**value, "params": params}, COMPONENT_OPERATIONS)
+
+
+@pytest.mark.parametrize("bad", [None, [], {}, True, 3, "", "x" * 2000])
+def test_malformed_component_fields_are_rejected_at_the_parser_boundary(bad):
+    schema = validator("core-api/request-v1.schema.json").schema
+    branches = {item["properties"]["operation"]["const"]:
+                Draft202012Validator({**item, "$defs": schema["$defs"]})
+                for item in schema["oneOf"]}
+    for operation, value in request_vectors().items():
+        if operation not in COMPONENT_OPERATIONS:
+            continue
+        for field in value["params"]:
+            changed = deepcopy(value)
+            changed["params"][field] = bad
+            if branches[operation].is_valid(changed):
+                continue
+            with pytest.raises(ApiFailure, match="invalid_request"):
+                parse_request(changed, COMPONENT_OPERATIONS)
+
 
 
 @pytest.mark.parametrize("field,value", [("caller_id", "owner"), ("permissions", ["approve"]),

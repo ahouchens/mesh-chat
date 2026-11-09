@@ -1,4 +1,4 @@
-from dataclasses import replace
+from dataclasses import fields, replace
 import json
 from pathlib import Path
 from threading import Event, RLock
@@ -7,7 +7,8 @@ from types import SimpleNamespace
 from jsonschema import Draft202012Validator
 import pytest
 
-from mesh_chat.core_api.session import CoreSession, Grant, ProfileObservation
+from mesh_chat.core_api.session import (CoreSession, Grant, PERMISSION_BY_OPERATION,
+                                        Ports, ProfileObservation)
 from mesh_chat.connection.projection import snapshot
 from tools.connection_harness.simulation import Simulation
 
@@ -231,3 +232,21 @@ def test_service_binding_uses_current_policy_projection_and_serialized_authority
     assert client.request(request("profile.query", profile=profile))["error"]["code"] == "locked"
     service._shutdown.set()
     assert client.request(request("runtime.capabilities"))["error"]["code"] == "unauthenticated"
+
+
+def test_every_component_rechecks_its_manifest_permission_before_domain_access():
+    from test_contracts import request_vectors
+    manifest = json.loads((Path(__file__).resolve().parents[3]
+                          / "contracts/core-api/operations-v1.json").read_text())
+    permissions = {item["operation"]: item["permission"] for item in manifest["operations"]}
+    grants = [Grant("alex", frozenset({"observe"}), ("local",))]
+    ports = Ports(**{field.name: object() for field in fields(Ports)})
+    client = CoreSession(lambda: grants[0], Observations(), handle_key=b"k" * 32, ports=ports)
+    capabilities = client.request(request("runtime.capabilities"))
+    assert capabilities["ok"], capabilities
+    grants[0] = replace(grants[0], permissions=frozenset())
+    vectors = request_vectors()
+    for operation in capabilities["result"]["operations"]:
+        assert PERMISSION_BY_OPERATION[operation] == permissions[operation], operation
+        reply = client.request(json.loads(json.dumps(vectors[operation])))
+        assert reply["error"]["code"] == "forbidden", (operation, reply)
