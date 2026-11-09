@@ -62,3 +62,27 @@ counts, dependencies and limits. Historical manifests qualify only their named
 source/artifacts. Unit/local, native component, emulator, packaged and workflow
 evidence are distinct. No physical qualification is available. No release, tag,
 publication, force push or main merge is authorized.
+
+## Follow-up assignments and checkpoint
+
+At `8a902a05b580408a4f1853904f8e6ade01f41d95`, the private native host port
+separation and Android enqueue `kind: text` fix are integrated. Ordinary public
+owner grants cannot advertise or invoke the native command port. The lead ran
+211 contract, host and real Windows pipe cases with no failures or skips; strict
+model/reducer typechecking also passed.
+
+The complete required policy inventory at `d4945d0` executed 2,240 cases:
+2,239 passed and one failed, with zero skips. The isolated contact worker test
+reached recipient readiness but received no inbound invitation. A focused rerun
+at `8a902a0` reproduced that failure (one pass, one failure). This is not passing
+qualification evidence.
+
+C now exclusively owns `service/src/mesh_chat/contact_bootstrap.py`,
+`isolated_bootstrap.py`, `direct_bootstrap_process.py`,
+`direct_bootstrap_worker.py` in that same directory, and
+`service/tests/connection/test_contact_bootstrap.py` for this gate repair.
+A owns the production `core_api/pipe_client.py` buffer correction exposed by D's
+new real-transport tests. D owns
+`service/tests/connection/test_matrix_evidence.py` and the reserved
+`TypedCoreBridgeBoundaryTest.kt` instrumentation file. These assignments do not
+activate Wave 2 or transfer the public SDK files.
