@@ -17,6 +17,7 @@ PYTHON_SELECTION = (
     "service/tests/connection/test_ui_core_boundary_ci.py",
     "service/tests/connection/test_ui_core_boundary_calls.py",
     "service/tests/connection/test_ui_core_boundary_replay_authority.py",
+    "service/tests/connection/test_ui_core_boundary_consent.py",
 )
 RENDERED_CASES = {("tests/core-ui-boundary/app.test.tsx",
                    "rendered UI through the production framed Core session > " + name) for name in (
