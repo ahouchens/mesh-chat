@@ -97,7 +97,8 @@ def materials_report(source, tree):
     inventory = {"packages": packages, "native_archive_files": [{"path": "av.libs/avcodec-fixture.dll", "sha256": "c" * 64,
                 "wheel_distributions": ["av"]}], "notice_files_verified": sum(len(item["notice_files"]) for item in packages),
                 "required_modules_verified": declaration["required_modules"], "notice_limits": declaration["wheel_native_notice_limit"],
-                "native_files_without_wheel_owner": [], "release_approval": False}
+                "native_files_without_wheel_owner": [], "release_approval": False,
+                "project_license_sha256": digest(matrix.ROOT / "LICENSE")}
     return {"v": 1, "passed": True, "evidence_level": runtime_materials.LEVEL, "source_commit": source, "source_tree": tree,
             "sidecar_sha256": "d" * 64, "build_input_sha256": "e" * 64, "build_manifest_sha256": "f" * 64,
             "inventory": inventory, "scope": declaration["scope"], "declaration_sha256": digest(runtime_materials.DECLARATION)}
@@ -155,7 +156,7 @@ def test_gate_revalidates_policy_inventory_and_both_platform_component_reports(t
 
 
 @pytest.mark.parametrize("fault", ["missing", "source", "sidecar", "build", "manifest", "package", "version",
-    "notice", "dll", "owner", "license_claim", "scope", "module", "notice_count"])
+    "notice", "dll", "owner", "license_claim", "project_license", "scope", "module", "notice_count"])
 def test_required_runtime_materials_cannot_qualify_a_different_or_partial_archive(tmp_path, fault):
     source, tree, _ = fixture(tmp_path)
     path = tmp_path / "desktop/native-runtime-materials.json"
@@ -175,6 +176,7 @@ def test_required_runtime_materials_cannot_qualify_a_different_or_partial_archiv
         elif fault == "dll": inventory["native_archive_files"].clear()
         elif fault == "owner": inventory["native_archive_files"][0]["wheel_distributions"] = ["aiortc"]
         elif fault == "license_claim": inventory["release_approval"] = True
+        elif fault == "project_license": inventory["project_license_sha256"] = "9" * 64
         elif fault == "scope": record["scope"] = "all licensing complete"
         elif fault == "module": inventory["required_modules_verified"].pop()
         else: inventory["notice_files_verified"] += 1

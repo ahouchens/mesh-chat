@@ -87,9 +87,11 @@ def collection(*, root=ROOT, distribution=importlib.metadata.distribution):
                          "declared_license": installed.metadata.get("License-Expression") or installed.metadata.get("License") or "unspecified",
                          "notice_files": materials, "wheel_native_files": native})
     for source, target in ((root / "THIRD_PARTY_NOTICES.md", PREFIX + "/THIRD_PARTY_NOTICES.md"),
+                           (root / "LICENSE", PREFIX + "/LICENSE"),
                            (root / "scripts/native-runtime-materials-v1.json", PREFIX + "/declaration.json")):
         datas.append((str(source), str(PurePosixPath(target).parent)))
     return {"v": 1, "declaration_sha256": digest(canonical(declaration)), "packages": packages,
+            "project_license_sha256": digest((root / "LICENSE").read_bytes()),
             "repository_notices_sha256": digest((root / "THIRD_PARTY_NOTICES.md").read_bytes())}, datas
 
 
@@ -116,6 +118,8 @@ def inspect_archive(archive, expected, declaration):
         raise ValueError("Frozen materials declaration is stale")
     if digest(extract(PREFIX + "/THIRD_PARTY_NOTICES.md")) != expected["repository_notices_sha256"]:
         raise ValueError("Frozen repository notice differs")
+    if digest(extract(PREFIX + "/LICENSE")) != expected["project_license_sha256"]:
+        raise ValueError("Frozen project license differs")
     owners = {}
     notice_count = 0
     for package in expected["packages"]:
@@ -145,6 +149,7 @@ def inspect_archive(archive, expected, declaration):
     if not av_dlls or any(item["sha256"] not in by_hash for item in av_dlls):
         raise ValueError("Frozen archive omits native DLLs shipped in the locked PyAV wheel")
     return {"packages": expected["packages"], "native_archive_files": binaries,
+            "project_license_sha256": expected["project_license_sha256"],
             "notice_files_verified": notice_count, "required_modules_verified": declaration["required_modules"],
             "notice_limits": declaration["wheel_native_notice_limit"],
             "native_files_without_wheel_owner": [item["path"] for item in binaries if not item["wheel_distributions"]],
@@ -167,10 +172,11 @@ def verify_report(record, source, tree):
     for key in ("sidecar_sha256", "build_input_sha256", "build_manifest_sha256"):
         sha(record[key])
     value = record["inventory"]
-    if (not isinstance(value, dict) or set(value) != {"packages", "native_archive_files", "notice_files_verified",
+    if (not isinstance(value, dict) or set(value) != {"packages", "native_archive_files", "notice_files_verified", "project_license_sha256",
             "required_modules_verified", "notice_limits", "native_files_without_wheel_owner", "release_approval"}
             or value["required_modules_verified"] != declaration["required_modules"]
-            or value["notice_limits"] != declaration["wheel_native_notice_limit"] or value["release_approval"] is not False):
+            or value["notice_limits"] != declaration["wheel_native_notice_limit"] or value["release_approval"] is not False
+            or value["project_license_sha256"] != digest((ROOT / "LICENSE").read_bytes())):
         raise ValueError("Runtime material scope or inventory is incomplete")
     packages = value["packages"]
     locked = locked_distributions(ROOT / "service/requirements.lock")

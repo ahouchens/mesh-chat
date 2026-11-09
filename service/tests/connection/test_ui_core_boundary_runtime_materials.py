@@ -19,6 +19,7 @@ def installed(tmp_path):
     (tmp_path / "scripts/native-runtime-materials-v1.json").write_text(json.dumps(declaration))
     (tmp_path / "service/requirements.lock").write_text("aiortc==1.13.0\naioice==0.10.2\nav==14.2.0\n")
     (tmp_path / "THIRD_PARTY_NOTICES.md").write_text("repository notice")
+    (tmp_path / "LICENSE").write_text("project license fixture")
     distributions = {}
     for name, version in (("aiortc", "1.13.0"), ("aioice", "0.10.2"), ("av", "14.2.0")):
         files = [f"{name}-{version}.dist-info/METADATA", f"{name}-{version}.dist-info/licenses/LICENSE"]
@@ -96,6 +97,7 @@ def test_reads_real_pyinstaller_archive_and_embedded_pyz_without_extraction(inst
 
 
 @pytest.mark.parametrize("path", [materials.EMBEDDED, materials.PREFIX + "/declaration.json",
+    materials.PREFIX + "/LICENSE",
     materials.PREFIX + "/THIRD_PARTY_NOTICES.md",
     materials.PREFIX + "/distributions/aiortc/aiortc-1.13.0.dist-info/licenses/LICENSE",
     "av.libs/avcodec-test.dll", "av.libs/libx264-test.dll"])
