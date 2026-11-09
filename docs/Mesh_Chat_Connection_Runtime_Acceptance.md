@@ -12,6 +12,14 @@ is marked unavailable rather than inferred from emulation or CI.
 
 ## Revalidation at the 2026-11-09 integration baseline
 
+The repaired Wave 1 application/Core boundary is now accepted at `174728e`:
+full workflow `42644737670` passed, and the lead independently validated its
+retained source-bound reports and all seven tested Android package hashes.
+Wave 2 is active. This checkpoint does not promote the historical invariant
+and scenario rows below to complete; their named remaining obligations still
+apply, including packaged cross-platform transport and unavailable physical
+qualification.
+
 The rows below summarize historical evidence, not qualification of baseline
 `435b497150e5f0d12cb1c5dc7b4602da7a66ec4c` or subsequent integration commits.
 The baseline audit supplied to this integration found 25 passing schema tests

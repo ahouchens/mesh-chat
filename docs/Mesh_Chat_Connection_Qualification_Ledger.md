@@ -2,7 +2,7 @@
 
 ## Integration revalidation (2026-11-09)
 
-### Completed Wave 1 implementation, full qualification pending
+### Wave 1 accepted at the fully qualified combined source
 
 The combined implementation is `174728edad62aae6ef16e95b075183d06c5cdda3`,
 tree `239d041f87b26f50879008ac947481464dcf4551`. The feature branch was
@@ -33,8 +33,30 @@ lose the cleanup handle. A successful transport handoff is not a peer receipt.
 The full five-family workflow
 [42644737670](https://github.com/ahouchens/mesh-chat/actions/runs/42644737670)
 was explicitly dispatched for `174728e`. Its duplicate PR-triggered run
-`42644746899` was canceled. Platform artifacts and the final aggregate gate still
-need validation. Wave 1 is not accepted and general Wave 2 remains inactive.
+`42644746899` was canceled. CI policy (2,489 cases), application verification
+(including 297 Python and six rendered boundary cases), Windows host checks
+(including three pipe cases) and Android qualification have passed. The lead
+independently revalidated their retained reports against the exact source,
+tree, run identities, case inventories and report hashes. All 47 Android cases
+(21 WebRTC, ten signaling, ten Core API and six independent-consumer cases)
+passed, and all seven tested APK/AAR files were retained and independently
+rehashed. The Android platform is API 35 x86_64 emulation. Windows packaged
+lifecycle, transport and pairing reports reference the same tested sidecar and
+native host; those archives contain reports only, so their binary digests remain
+runner claims rather than independently rehashed binaries.
+
+Both direct-transport jobs passed: each platform executed 25 carrier, ten
+recovery and 12 setup cases, zero failures/skips. The lead independently
+validated their exact-source inventories and distinct execution IDs. Their
+binary digests remain runner claims because these archives also contain reports
+only. All five workflow families and the final aggregate gate passed. The lead
+rebuilt the complete aggregate from the downloaded reports and obtained an
+exact match with CI's retained manifest.
+
+Wave 1 is accepted at `174728e`. Wave 2 is now activated for the remaining
+implementation and qualification obligations in the coordination inventory.
+This closes the repaired application/Core boundary gate; it does not close the
+broader M2–M5 or section 13 requirements.
 No release, publication, physical-device or Windows–Android interoperability
 claim follows from these local checks.
 

@@ -4,16 +4,61 @@ Baseline: `435b497150e5f0d12cb1c5dc7b4602da7a66ec4c`.
 Lead branch: `codex/mesh-core-integration-lead`.
 This file records assignments and integration decisions, not passing evidence.
 
-Current checkpoint: all finite Wave 1 keyed-action implementation batches are
-merged at `174728e` and pushed to the shared feature branch. Local policy and
-independent UI/Windows boundary checks pass; exact results are in the ledger.
-Full qualification run `42644737670` is pending. A/B/C hold production changes;
-D has completed independent source and retained-evidence review and remains
-available for concrete CI failures. General Wave 2 is not activated until the
-full exact-source gate passes. Existing human authorization covers continued
-integration and worker follow-ups without another permission request.
+Current checkpoint: Wave 1 is accepted at `174728e`, pushed to the shared feature
+branch. Full qualification run `42644737670` passed all five suite families and
+the final gate; the lead independently rebuilt the aggregate from retained
+reports. Exact evidence and limits are in the ledger. Wave 2 is activated below.
+Existing human authorization covers continued implementation, integration and
+worker follow-ups without another permission request.
 
-## Wave 1 ownership and gate
+## Active Wave 2 handoff
+
+All workers merge the current lead branch before edits. Source `174728e` is the
+qualified baseline; subsequent lead-only documentation commits record that
+evidence without being relabeled as separately tested source.
+
+- A retains `contracts/core-api/**`, `service/src/mesh_chat/core_api/**`,
+  `vault.py`, Core tests and `test_vault.py`. A owns `sdk/**`, the new standalone
+  Python client and TypeScript/Python consumer examples, and SDK upgrade fixtures.
+  The public Kotlin `CoreClient`, `CoreTransport`, `CoreExchangeTransport`, their
+  two JVM tests and `IMeshCoreApi.aidl` transfer from the plugin tree to A for a
+  move into `sdk/kotlin`; package and AIDL identities stay compatible. The SDK
+  freeze is lifted for A only. A additionally owns `check_python_distribution.py`,
+  `check_typescript_distribution.mjs`, `verify_kotlin_distribution.py` and
+  `check_core_sdk_upgrade.py`. D retains other qualification orchestration.
+- B retains `src/**` and background preference files. Implement the agreed
+  Core-persisted composer contract and recovery flow, then cohesive UI/media
+  cleanup. Preserve WebView2 calls and do not add renderer retry policy.
+- C takes exclusive `service.py` ownership from A (both paths checked clean).
+  C owns `mobile_bridge.py`, connection composition/runtime, native onboarding
+  and WebRTC service/control, `native_windows_webrtc.py`, the new private path
+  evidence adapter, Android `MeshRuntimePlugin.kt`/`NativeWebRtcHost.kt`, and
+  the plugin's Gradle SDK dependency wiring. C owns their focused lifecycle,
+  runtime, pending-carrier and path-evidence tests. Initial commits cover trusted
+  bootstrap, profile-incarnation fences, approved carrier transfer and truthful
+  selected-path diagnostics. Native pairing policy and full profile lifecycle
+  follow within the existing authorization; exact additional paths are recorded
+  before editing. A retains Core host bindings and vault semantics.
+- D retains workflows, remaining qualification/build scripts, boundary tests,
+  Android instrumentation and independent consumer tests. D adds independent
+  composer restart/fault/caller tests, strict packaged source/artifact checks,
+  real Windows–Android topology, selected-path negative controls, impairment and
+  100-iteration authenticated-receipt/cold-start evidence. C supplies diagnostics;
+  A supplies public contracts and staged SDKs. Missing infrastructure is reported
+  concretely rather than replaced by simulation or Linux-only transport.
+
+The agreed composer uses public API 1.1 with unchanged existing response shapes,
+three additive operations, a stable send revision and a distinct rotating Core
+update key. State and matching-draft enqueue commit in the encrypted vault.
+Queries stay read-only; replay uses current authority and preserves newer text.
+First use atomically raises the vault format floor to prevent older hosts from
+bypassing migration fences. SDK 0.3 staging is experimental and unpublished;
+baseline Python 0.2 is the actual service-carried client, not an invented older
+standalone wheel. Full defaults/legacy-loop retirement remain gated on their
+replacement's packaged/emulator qualification. No publication or physical-device
+claim is authorized by this handoff.
+
+## Historical Wave 1 ownership and gate
 
 | Owner | Exclusive changes | Required outcome |
 | --- | --- | --- |
@@ -52,9 +97,9 @@ legacy command mocks cannot alone satisfy this gate.
 
 ## Remaining specification ownership inventory
 
-Wave 2 assignments below are reserved scope, activated after Wave 1 integration
-and qualification. Exact additional files and Kotlin ownership transfer will be
-recorded before edits; the public SDK freeze is still in effect.
+Wave 2 assignments below are active after Wave 1 integration and qualification.
+The handoff above records first-batch paths and the Kotlin ownership transfer.
+Additional paths are assigned before edits; each worker keeps its exclusive scope.
 
 | Owner | Remaining acceptance obligations |
 | --- | --- |
@@ -72,7 +117,7 @@ source/artifacts. Unit/local, native component, emulator, packaged and workflow
 evidence are distinct. No physical qualification is available. No release, tag,
 publication, force push or main merge is authorized.
 
-## Follow-up assignments and checkpoint
+## Historical Wave 1 follow-up assignments and checkpoint
 
 At `8a902a05b580408a4f1853904f8e6ade01f41d95`, the private native host port
 separation and Android enqueue `kind: text` fix are integrated. Ordinary public

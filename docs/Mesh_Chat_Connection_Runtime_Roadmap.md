@@ -4,6 +4,12 @@ Feature branch: `codex/mesh-chat-core-refactor`.
 
 ## Current integration checkpoint (2026-11-09)
 
+Wave 1 is accepted at `174728e` after full qualification run `42644737670`
+and independent retained-artifact validation. Wave 2 is active for durable
+composer state, independent SDK distributions and upgrades, supervisor-owned
+native lifecycle/pairing, and the remaining packaged transport/fault matrix.
+The ledger records exact scope; this is not full M2–M5 completion.
+
 Integration begins at `435b497150e5f0d12cb1c5dc7b4602da7a66ec4c` on a
 separate lead branch. The [coordination inventory](Mesh_Chat_Core_Integration_Coordination.md)
 assigns exclusive ownership and defines the two-wave implementation gates.
