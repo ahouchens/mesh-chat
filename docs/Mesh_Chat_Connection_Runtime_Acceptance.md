@@ -20,6 +20,13 @@ and scenario rows below to complete; their named remaining obligations still
 apply, including packaged cross-platform transport and unavailable physical
 qualification.
 
+Latest local source `72a5319` passes all 3,494 required policy cases with clean
+SDK import setup, exact 670-Python/12-rendered boundary and nine Windows cases,
+zero skips. CI at `32cc1d5` independently passes the same boundary and normal
+installed Windows DPAPI/EFS bootstrap, but public pairing times out before
+receipt qualification. The independent Android consumer is locally integrated
+and still needs actual built/installed evidence. No scenario/default promotion.
+
 Latest repaired source `32cc1d5` is under full manual qualification
 `42704405112`. Its required local policy passes 3,463 tests and exact Windows
 boundary passes nine tests with no skips. The App/Core boundary at `986815f`

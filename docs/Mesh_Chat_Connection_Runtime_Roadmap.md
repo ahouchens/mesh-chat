@@ -10,6 +10,15 @@ composer state, independent SDK distributions and upgrades, supervisor-owned
 native lifecycle/pairing, and the remaining packaged transport/fault matrix.
 The ledger records exact scope; this is not full M2–M5 completion.
 
+Latest local source `72a5319` passes exact SDK staging, 3,494 required policy
+tests, 670 Python plus 12 rendered boundary cases and nine Windows cases with
+no skips, without the extra SDK search path that masked the previous CI error.
+It includes the independent Android consumer and ADB stdin regression repair.
+Current CI `32cc1d5` independently qualifies normal installed Windows bootstrap
+with DPAPI/EFS and the 670/12 boundary, but public pairing times out. Safe
+diagnostics and a separate supported-readiness-operation correction are next;
+actual Android consumer execution and cross-platform receipts remain pending.
+
 The current repaired checkpoint is `32cc1d5`, pushed for full manual CI
 `42704405112`. All 3,463 required local policy cases and nine Windows boundary
 cases pass without skips; the App/Core boundary at `986815f` passes 670 Python

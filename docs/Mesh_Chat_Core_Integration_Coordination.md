@@ -11,6 +11,22 @@ reports. Exact evidence and limits are in the ledger. Wave 2 is activated below.
 Existing human authorization covers continued implementation, integration and
 worker follow-ups without another permission request.
 
+Latest lead source `72a5319` includes the independent Android consumer, its
+reproduced ADB stdin fix `b59f951`, and tracked standalone-SDK import setup
+`1866660`. Exact SDK staging and **3,494 required policy tests** pass with only
+the service path configured. The exact App/Core boundary passes **670 Python
+plus 12 rendered cases**, and Windows passes **nine cases**, all zero failures
+and skips. This source has not been pushed or platform-qualified yet.
+
+Current CI at `32cc1d5` independently passes the same 670/12 boundary and the
+normal installed Windows bootstrap with actual DPAPI/EFS. Public pairing fails
+after 242.10s in the coarse approval phase. D adds safe diagnostic substeps and
+repairs a separate definite `connection.query`/`connection.snapshot` mismatch;
+C audits production bootstrap/handoff, A audits public shapes. The timeout's
+cause remains unproven. Android and direct-platform jobs continue. Recovery
+design remains deferred: reviews require a common lifecycle dispatch fence and
+native document-attachment/issued-credential cancellation before implementation.
+
 The shared feature branch is now `32cc1d5765a1ae1a3ad91e752e341b95cbce2e40`
 (tree `cae703b3360004bdd0bf2d0b55793fed7efafe08`). Full manual CI
 `42704405112` is running; duplicate PR run `42704390818` was canceled.
@@ -32,8 +48,8 @@ No Wave 2 acceptance or release promotion follows from this dispatch.
 CI update: both policy and broad verification fail collection of
 `test_core_group_composer_sdk.py`: the clean runner cannot import the standalone
 Python SDK. The lead's local command added `sdk/python/src` to `PYTHONPATH`,
-masking this missing tracked setup. A owns the narrow test repair; the next full
-local run must omit that addition. Windows, Android and direct jobs continue.
+masking this missing tracked setup. A's narrow repair and the clean full local
+rerun now pass as recorded above. Windows, Android and direct jobs continued.
 D's independent Android checkpoint is now integrated separately at `75b7719`;
 401 consumer, matrix, selection, controller and Android report checks pass with
 zero skips in 22.73s. That integration is not tested by CI `42704405112`.

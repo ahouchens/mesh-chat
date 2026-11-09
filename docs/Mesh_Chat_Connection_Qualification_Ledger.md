@@ -2,6 +2,44 @@
 
 ## Integration revalidation (2026-11-09)
 
+### Clean Android consumer integration and Windows bootstrap evidence
+
+Lead `72a531937653de41a2368fc4356cc8e91d30aaed`, tree
+`03b31043171811d4c1f7ea42dbabb92de9cab41d`, integrates the tracked group SDK
+import repair `1866660` and reproduced Android runner stdin repair `b59f951`.
+Exact SDK staging and **3,494 required policy tests** pass, zero failures/skips,
+in 341.81s with only service source on `PYTHONPATH`; qualification
+`7b71e3df88b042259cdf8f4d927b00a9`. The exact boundary passes **670 Python plus
+12 rendered cases**, and **nine Windows cases**, zero failures/skips. This
+checkpoint is local evidence; it has not been platform-qualified.
+
+The original Android runner returned success after fake ADB consumed the second
+case from stdin. Its new real-Bash regression fails before repair and proves both
+ordered launches afterward, including force-stop/process absence checks and
+strict report parsing. That is runner control-flow evidence, not Android execution.
+
+At CI source `32cc1d5`, the lead independently validates the retained **670 Python
+plus 12 rendered boundary cases**, despite the later broad collection failure.
+The normal installed Windows bootstrap also passes: fresh empty host, keyed
+profile create/replay/conflict, reopen, clean exits, actual DPAPI/EFS. Bootstrap
+run `93ed168a6cdf4eadb59d7d120a963087` binds the retained SDK and all application
+file hashes to executable SHA-256
+`281ced48e2370832d667791143a5a576612c4ec071ff6f78e97db8320515f2c8`
+(54,571,611 bytes). Desktop artifact `13712738380` archive SHA-256:
+`9bee34e0b635a2e5f4bb444633bc5cdcdbda32c06870095bef28eb91e4d6da9d`;
+native artifact `13712838210`:
+`b6405cec1f199c0bd7ee5dd8277811840aead246970ab64714531910e41b9ed9`.
+All archive entries were independently hashed in memory; no binary extraction
+was needed. Nine Windows component cases and runtime materials also validate.
+
+Public pairing **fails**, with `explicit_approval`/`unavailable` after 242.10s.
+The broad phase does not identify whether invitation, approval, relationship or
+readiness stalled. D adds bounded diagnostics. A separately identified a latent
+consumer error: `connection.query` is unsupported; readiness must use typed
+`connectionSnapshot()`/`connection.snapshot`. That mismatch is not yet evidence
+for this timeout. Later packaged traffic gates did not run. No receipt or SC21
+qualification follows from the passing bootstrap subset.
+
 ### Repaired group checkpoint dispatched
 
 Full manual workflow [42704405112](https://github.com/ahouchens/mesh-chat/actions/runs/42704405112)
@@ -22,7 +60,10 @@ The failed policy archive `13712074019` has SHA-256
 `9c23a28ee7a0de7742ecebc0d103a066a4edd4e30ddfbccba766f1306afd429d`;
 verification `13713062285` has SHA-256
 `c827efcf494eb32d8ad7b3430786054d7aad30bc20bac2b98f2ad1481844b8fb`.
-Neither contains a passing suite execution. A owns the isolated setup repair.
+The policy archive contains no passing suite execution. The verification archive
+also retains the earlier passing exact boundary, independently validated above;
+its broad automated summary remains failed. A's isolated setup repair is now
+integrated and locally requalified at `72a5319`.
 
 Exact SDK staging passes. The full required local policy passes **3,463 tests,
 zero failures/skips**, in 365.09s; qualification ID
