@@ -300,3 +300,22 @@ def test_failed_database_close_retains_exact_key_until_retry_completes(tmp_path)
     store._db = original
     store.close()
     assert store._key is None and store._cipher is None
+
+
+def test_collection_cas_refuses_phantom_insert_without_partial_record_or_schema_changes(tmp_path):
+    with VaultStore(tmp_path, os.urandom(32), allow_unprotected_for_tests=True) as store:
+        store.put("contact_invitation", "first", {"state": "pending"})
+        expected = dict(store.items("contact_invitation"))
+        store.put("contact_invitation", "concurrent", {"state": "pending"})
+        with pytest.raises(vault.RecordConflict, match="collection"):
+            store.conditional_put_and_delete({}, [("test", "result", {"done": True})],
+                [("contact_invitation", "first")], schema_floor=2,
+                expected_collections={"contact_invitation": expected})
+        assert store.get("test", "result") is None
+        assert store.get("contact_invitation", "first") == {"state": "pending"}
+        assert store._db.execute("SELECT value FROM meta WHERE name='schema_version'").fetchone()[0] == "1"
+        expected = dict(store.items("contact_invitation"))
+        store.conditional_put_and_delete({}, [("test", "result", {"done": True})],
+            [("contact_invitation", "first")], expected_collections={"contact_invitation": expected})
+        assert store.get("test", "result") == {"done": True}
+        assert store.get("contact_invitation", "first") is None

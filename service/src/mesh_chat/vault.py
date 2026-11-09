@@ -579,7 +579,8 @@ class VaultStore:
             removed.extend(projection.deletions)
         return values, removed
 
-    def conditional_put_and_delete(self, expected, records, deletions=(), *, write_fences=(), schema_floor=None):
+    def conditional_put_and_delete(self, expected, records, deletions=(), *, write_fences=(), schema_floor=None,
+                                   expected_collections=None):
         """Compare source records and publish one sealed batch under BEGIN.
 
         Write fences persist independently of in-memory domain projections.
@@ -588,11 +589,20 @@ class VaultStore:
         if schema_floor is not None and (type(schema_floor) is not int
                 or not SCHEMA_VERSION <= schema_floor <= MAX_SCHEMA_VERSION):
             raise ValidationError("Unsupported vault schema floor")
+        collections = {} if expected_collections is None else expected_collections
+        if (not isinstance(collections, dict) or len(collections) > 16
+                or any(not isinstance(kind, str) or not 1 <= len(kind) <= 80
+                       or not isinstance(values, dict) or len(values) > 8192
+                       for kind, values in collections.items())):
+            raise ValidationError("Conditional collection set is invalid")
         values = list(records)
         for kind, identifier in write_fences:
             values.append(("record_write_fence", self.opaque_id("record-write-fence", kind, identifier),
                            {"kind": kind, "identifier": identifier}))
         with self._transaction():
+            for kind, snapshot in collections.items():
+                if dict(self.items(kind, limit=8193)) != snapshot:
+                    raise RecordConflict("Conditional collection changed")
             for (kind, identifier), value in expected.items():
                 if self.get(kind, identifier) != value:
                     raise RecordConflict("Conditional record changed")
