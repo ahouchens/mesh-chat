@@ -15,6 +15,7 @@ interface PendingSend {
 
 export interface DirectComposerView {
   text: string;
+  loaded: boolean;
   phase: "loading" | "ready" | "saving" | "sending";
   error: string;
   saved: ComposerSendOutcome | null;
@@ -80,15 +81,16 @@ export class DirectComposerController {
       this.emit();
       try {
         const current = await this.port.query(this.pendingSend?.revision);
-        if (this.dirty && this.composer && current.revision !== this.composer.revision
-          && current.send_lookup?.status !== "accepted") {
+        if (this.hasSupersedingDraft(current) || (this.dirty && this.composer && current.revision !== this.composer.revision
+          && current.send_lookup?.status !== "accepted")) {
+          if (current.send_lookup?.status === "accepted") this.pendingSend = null;
           this.conflict(current);
         } else {
           this.adoptQuery(current, version, this.dirty);
           this.error = "";
         }
-      } catch (error) {
-        this.error = `The saved draft could not be loaded (${errorCode(error)}). Your local text is kept here.`;
+      } catch {
+        this.error = "The saved draft could not be loaded. Your local text is kept here.";
       } finally {
         this.phase = "ready";
         this.emit();
@@ -103,13 +105,14 @@ export class DirectComposerController {
         try {
           const current = await this.port.query(this.pendingSend.revision);
           const ownAcceptance = current.send_lookup?.status === "accepted";
-          if (current.revision !== this.composer.revision && !ownAcceptance) {
+          if (this.hasSupersedingDraft(current) || (current.revision !== this.composer.revision && !ownAcceptance)) {
+            if (ownAcceptance) this.pendingSend = null;
             this.conflict(current);
             return;
           }
           this.adoptQuery(current, this.editVersion, true);
-        } catch (error) {
-          this.error = `The previous send still needs checking (${errorCode(error)}). Your newer text is kept here.`;
+        } catch {
+          this.error = "The previous send still needs checking. Your newer text is kept here.";
           this.emit();
           return;
         }
@@ -171,7 +174,7 @@ export class DirectComposerController {
       }
     } catch (error) {
       const code = errorCode(error);
-      this.error = `The draft save was not confirmed (${code}). Retry checks the same saved operation.`;
+      this.error = "The draft save was not confirmed. Retry checks the same draft save.";
       if (explicitRetry && TERMINAL_REPLAY_ERRORS.has(code)) await this.recoverRejectedReplay("save", code);
     } finally {
       this.phase = "ready";
@@ -187,12 +190,15 @@ export class DirectComposerController {
     try {
       const result = await this.port.enqueue(pending.revision);
       this.pendingSend = null;
-      this.adopt(result.composer, pending.editVersion);
+      const newerDraft = result.draft_disposition === "superseded" && this.dirty
+        && this.editVersion !== pending.editVersion && this.text !== result.composer.text;
+      if (newerDraft) this.conflict(result.composer);
+      else this.adopt(result.composer, pending.editVersion);
       this.saved = this.acceptedOutcome(result, pending);
-      this.error = "";
+      if (!newerDraft) this.error = "";
     } catch (error) {
       const code = errorCode(error);
-      this.error = `The send outcome is uncertain (${code}). Retry checks the same message; it does not create another send.`;
+      this.error = "The send outcome is uncertain. Retry checks the same message; it does not create another send.";
       if (TERMINAL_REPLAY_ERRORS.has(code)) await this.recoverRejectedReplay("send", code);
     } finally {
       this.phase = "ready";
@@ -206,7 +212,7 @@ export class DirectComposerController {
       if (kind === "save") this.pendingUpdate = null;
       else this.pendingSend = null;
       this.conflict(current);
-      this.error = `The previous ${kind} cannot be replayed (${code}). Review the saved draft and conversation before a new send.`;
+      this.error = `The previous ${kind} ${code === "idempotency_expired" ? "has expired" : "cannot be replayed"}. Review the saved draft and conversation before a new send.`;
     } catch {
       // Authority loss or a failed query cannot authorize replacement tokens.
     }
@@ -220,6 +226,11 @@ export class DirectComposerController {
       this.saved = current.last_send;
     }
     this.adopt(current, version, preserveLocal);
+  }
+
+  private hasSupersedingDraft(current: CoreComposer): boolean {
+    return this.dirty && current.send_lookup?.status === "accepted"
+      && current.send_lookup.draft_disposition === "superseded" && current.text !== this.text;
   }
 
   private adopt(current: CoreComposer, version: number, preserveLocal = false): void {
@@ -253,7 +264,7 @@ export class DirectComposerController {
   private project(): DirectComposerView {
     const ready = this.phase === "ready" && this.composer !== null && this.recoveryText === null;
     return {
-      text: this.text, phase: this.phase, error: this.error, saved: this.saved, recoveryText: this.recoveryText,
+      text: this.text, loaded: this.composer !== null, phase: this.phase, error: this.error, saved: this.saved, recoveryText: this.recoveryText,
       canSave: ready && this.dirty && !this.pendingUpdate,
       canSend: ready && !this.sendRequested && !this.pendingUpdate && !this.pendingSend && Boolean(this.text.trim()),
       retry: this.pendingUpdate ? "save" : this.pendingSend ? "send" : null,

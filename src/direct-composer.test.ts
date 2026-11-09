@@ -218,6 +218,23 @@ describe("direct composer presentation ordering", () => {
     expect(core.sends).toHaveLength(1);
   });
 
+  it.each(["save", "retry", "load"] as const)("keeps a superseding Core draft and local recovery separate during %s", async (action) => {
+    const core = fixture();
+    const controller = new DirectComposerController(core.port);
+    await controller.load();
+    controller.edit("Original send");
+    core.loseSend();
+    await controller.send();
+    core.replace("Newer persisted draft");
+    controller.edit("New local typing");
+    await controller[action]();
+    expect(controller.getSnapshot().text).toBe("Newer persisted draft");
+    expect(controller.getSnapshot().recoveryText).toBe("New local typing");
+    expect(controller.getSnapshot().canSave).toBe(false);
+    expect(core.snapshot().text).toBe("Newer persisted draft");
+    expect(core.sends).toHaveLength(action === "retry" ? 2 : 1);
+  });
+
   it("permits an intentional later same-text send only through a new Core revision", async () => {
     const core = fixture();
     const controller = new DirectComposerController(core.port);
