@@ -55,6 +55,12 @@ not cancel a remotely committed operation or retry a timed-out caller task.
 Use an application-owned bounded worker task and resolve unknown outcomes
 through Core before explicitly retrying the original identity.
 
+Group helpers `groupComposerQuery`, `groupComposerUpdate` and `groupEnqueueDraft`
+require the complete API 1.1 family and nine positive `group_composer_*` limits.
+They preserve Core-issued update keys/revisions and never invent a retry key.
+`last_send` recovers acceptance after restart; replay preserves a newer draft.
+See [the group composer contract](../../contracts/core-api/GROUP_COMPOSER.md).
+
 First composer mutation raises host vault format 1 to 2 atomically. Old format-1
 hosts must refuse migrated storage; binary downgrade is unsupported. API minor
 compatibility does not imply storage downgrade safety. The experimental pair is

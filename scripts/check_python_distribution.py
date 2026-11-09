@@ -73,7 +73,8 @@ assert pathlib.Path(package.__file__).resolve().is_relative_to(pathlib.Path(sys.
 assert not any(name == 'mesh_chat' or name.startswith('mesh_chat.') for name in sys.modules)
 assert callable(package.CoreClient.enqueue_draft)
 for name in ('call_operation_list','call_operation_query','call_operation_abandon',
-             'pairing_begin','pairing_query','pairing_cancel'):
+             'pairing_begin','pairing_query','pairing_cancel',
+             'group_composer_query','group_composer_update','group_enqueue_draft'):
     assert callable(getattr(package.CoreClient, name, None)), name
 print(json.dumps({'version':package.__version__,'installed_outside_checkout':True,'private_runtime_imported':False}))
 """

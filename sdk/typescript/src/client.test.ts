@@ -58,6 +58,38 @@ test("all repaired keyed helpers preserve an explicit caller key", async () => {
   assert.ok(transport.written.slice(1).every(line => JSON.parse(line).idempotency_key === key));
 });
 
+test("group composer gates the complete family and preserves Core-issued keys", async () => {
+  const limits = Object.fromEntries(["group_composer_text_utf8_bytes", "group_composers_per_caller_profile", "group_composers_per_vault",
+    "group_composer_update_idempotency_seconds", "group_composer_update_keys_per_caller_profile", "group_composer_update_keys_per_vault",
+    "group_composer_send_idempotency_seconds", "group_composer_send_keys_per_caller_profile", "group_composer_send_keys_per_vault"].map(name => [name, 16384]));
+  const caps = { ...CAPABILITIES, api_minor: 1, limits,
+    operations: ["group.composer_query", "group.composer_update", "group.message_enqueue_draft"] };
+  for (const broken of [{ ...caps, api_minor: 0 }, { ...caps, api_minor: 1.5 }, { ...caps, api_minor: true },
+      { ...caps, operations: caps.operations.slice(0, 2) }, { ...caps, limits: {} }]) {
+    const transport = new Scripted(success("client:1", broken));
+    const client = await CoreClient.open(transport);
+    for (const call of [() => client.groupComposerQuery(PROFILE, PEER),
+        () => client.groupComposerUpdate(PROFILE, PEER, null, "draft", "b".repeat(64)),
+        () => client.groupEnqueueDraft(PROFILE, PEER, "a".repeat(64))]) {
+      await assert.rejects(call, (error: unknown) => error instanceof CoreError && error.code === "unsupported_operation");
+    }
+    assert.equal(transport.written.length, 1);
+  }
+  const transport = new Scripted(success("client:1", caps), success("client:2", {}), success("client:3", {}), success("client:4", {}));
+  const client = await CoreClient.open(transport);
+  await assert.rejects(client.groupEnqueueDraft(PROFILE, PEER, "caller-random-key-0001"), ProtocolError);
+  await assert.rejects(client.groupComposerUpdate(PROFILE, PEER, null, "é".repeat(8193), "b".repeat(64)), ProtocolError);
+  await client.groupComposerQuery(PROFILE, PEER, "a".repeat(64));
+  await client.groupComposerUpdate(PROFILE, PEER, null, "draft", "b".repeat(64));
+  await client.groupEnqueueDraft(PROFILE, PEER, "a".repeat(64));
+  const frames = transport.written.map(line => JSON.parse(line));
+  assert.equal(frames.length, 4);
+  assert.equal(frames[2].idempotency_key, "b".repeat(64));
+  assert.equal(frames[2].params.expected_revision, null);
+  assert.equal(frames[3].idempotency_key, frames[3].params.draft_revision);
+  assert.equal("text" in frames[3].params, false);
+});
+
 test("call recovery gates every helper before I/O and preserves the abandon key", async () => {
   const caps = { ...CAPABILITIES, api_minor: 1,
     operations: ["call.operation_list", "call.operation_query", "call.operation_abandon"],

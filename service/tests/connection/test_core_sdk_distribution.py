@@ -88,7 +88,7 @@ def installed_consumer(request):
         yield language, work, command, env, hashlib.sha256(artifact.read_bytes()).hexdigest()
 
 
-def run_consumer(installed, service, mode, *, drop_commit_reply=False, extra_args=(), bootstrap=False, session=None):
+def run_consumer(installed, service, mode, *, drop_commit_reply=False, drop_operation="message.enqueue_draft", extra_args=(), bootstrap=False, session=None):
     _, work, command, env, _ = installed
     if session is None:
         session = bind_service_stream(service, lambda: Grant("sdk-distribution-qualification",
@@ -102,7 +102,7 @@ def run_consumer(installed, service, mode, *, drop_commit_reply=False, extra_arg
         try:
             while frame := child.stdout.readline(4194305):
                 response = session.exchange(frame)
-                if drop_commit_reply and json.loads(frame)["operation"] == "message.enqueue_draft":
+                if drop_commit_reply and json.loads(frame)["operation"] == drop_operation:
                     assert json.loads(response)["ok"] is True
                     dropped.append(True)
                     return  # Commit happened. No response byte reaches the client.

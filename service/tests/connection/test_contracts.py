@@ -192,6 +192,9 @@ def request_vectors():
         "peer.composer_query": {"peer": handle},
         "peer.composer_update": {"peer": handle, "expected_revision": None, "text": "draft"},
         "message.enqueue_draft": {"recipient": handle, "draft_revision": "a" * 64},
+        "group.composer_query": {"group": handle},
+        "group.composer_update": {"group": handle, "expected_revision": None, "text": "draft"},
+        "group.message_enqueue_draft": {"group": handle, "draft_revision": "a" * 64},
         "peer.draft_set": {"peer": handle, "text": "draft"},
         "call.settings_query": {},
         "call.ice_servers": {},
@@ -239,7 +242,7 @@ def request_vectors():
         request = {"api_version": 1, "request_id": "vector:1", "operation": operation["operation"], "params": params}
         if operation["idempotency"] == "caller_profile_operation_key":
             request["idempotency_key"] = ("a" * 64 if operation["operation"] in
-                {"peer.composer_update", "message.enqueue_draft"} else "operation-key-0001")
+                {"peer.composer_update", "message.enqueue_draft", "group.composer_update", "group.message_enqueue_draft"} else "operation-key-0001")
         vectors[operation["operation"]] = request
     return vectors
 

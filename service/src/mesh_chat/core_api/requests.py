@@ -18,6 +18,7 @@ INTENT_OPERATIONS = ("connection.start", "connection.stop")
 RELATIONSHIP_OPERATIONS = ("peer.approve", "peer.revoke", "peer.unblock", "peer.delete", "peer.update", "peer.decide")
 DRAFT_OPERATIONS = ("peer.draft_get", "peer.draft_set")
 COMPOSER_OPERATIONS = ("peer.composer_query", "peer.composer_update", "message.enqueue_draft")
+GROUP_COMPOSER_OPERATIONS = ("group.composer_query", "group.composer_update", "group.message_enqueue_draft")
 CALL_CONTROL_OPERATIONS = ("call.control",)
 CALL_RECOVERY_OPERATIONS = ("call.operation_list", "call.operation_query", "call.operation_abandon")
 CALL_OPERATIONS = ("call.settings_query", "call.settings_update", "call.ice_servers",
@@ -208,6 +209,7 @@ CURSOR = re.compile(r"[A-Za-z0-9_-]{16,1024}\Z")
 # tests bind this inventory to operations-v1.json, including composite operations.
 KEYED_OPERATIONS = frozenset({
     "peer.composer_update", "message.enqueue_draft",
+    "group.composer_update", "group.message_enqueue_draft",
     "call.control", "call.operation_abandon", "peer.pairing_begin", "peer.pairing_cancel",
     "connection.retry",
     "events.ack",
@@ -293,12 +295,13 @@ def requires_idempotency_key(operation, params):
 
 def _composer_params(operation, params):
     token = re.compile(r"[0-9a-f]{64}\Z")
-    peer = "recipient" if operation == "message.enqueue_draft" else "peer"
+    peer = "group" if operation in GROUP_COMPOSER_OPERATIONS else (
+        "recipient" if operation == "message.enqueue_draft" else "peer")
     required = {"profile", peer}
     optional = set()
-    if operation == "peer.composer_query":
+    if operation.endswith(".composer_query"):
         optional = {"send_revision"}
-    elif operation == "peer.composer_update":
+    elif operation.endswith(".composer_update"):
         required |= {"expected_revision", "text"}
     else:
         required.add("draft_revision")
@@ -311,7 +314,7 @@ def _composer_params(operation, params):
             continue
         if not isinstance(params[field], str) or token.fullmatch(params[field]) is None:
             raise ApiFailure("invalid_request")
-    if operation == "peer.composer_update" and (
+    if operation.endswith(".composer_update") and (
             not isinstance(params["text"], str) or len(params["text"].encode("utf-8")) > 16384):
         raise ApiFailure("invalid_request")
     return params
@@ -361,8 +364,8 @@ def _parse_request(value, operations):
             or HANDLE.fullmatch(params["group"]) is None):
         raise ApiFailure("invalid_request")
     _component_field_bounds(operation, params)
-    if operation in COMPOSER_OPERATIONS:
-        if operation != "peer.composer_query" and re.fullmatch(r"[0-9a-f]{64}", value["idempotency_key"]) is None:
+    if operation in COMPOSER_OPERATIONS + GROUP_COMPOSER_OPERATIONS:
+        if not operation.endswith(".composer_query") and re.fullmatch(r"[0-9a-f]{64}", value["idempotency_key"]) is None:
             raise ApiFailure("invalid_request")
         return operation, _composer_params(operation, params)
     if operation == "message.enqueue":
@@ -1557,6 +1560,7 @@ COMPONENT_OPERATIONS = (
     + RELATIONSHIP_OPERATIONS
     + DRAFT_OPERATIONS
     + COMPOSER_OPERATIONS
+    + GROUP_COMPOSER_OPERATIONS
     + CALL_OPERATIONS
     + CALL_CONTROL_OPERATIONS
     + CALL_RECOVERY_OPERATIONS

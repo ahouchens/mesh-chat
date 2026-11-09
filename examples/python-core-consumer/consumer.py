@@ -60,6 +60,25 @@ def main():
             result = client.send_group(profile, group, "SDK qualification group message", "sdk-group-send-key-0001")
             repeated = client.send_group(profile, group, "SDK qualification group message", "sdk-group-send-key-0001")
             report.update(accepted=result["accepted"], same_message=result["message"] == repeated["message"])
+        elif "--exercise-group-composer" in sys.argv:
+            group = client.groups(profile)["groups"][0]["group"]
+            current = client.group_composer_query(profile, group)
+            saved = client.group_composer_update(profile, group, current["revision"], "SDK qualification group composer", current["update_key"])
+            accepted = client.group_enqueue_draft(profile, group, saved["applied_revision"])
+            current = client.group_composer_query(profile, group)
+            newer = client.group_composer_update(profile, group, current["revision"], "SDK newer group draft", current["update_key"])
+            repeated = client.group_enqueue_draft(profile, group, saved["applied_revision"])
+            report.update(accepted=accepted["accepted"], draft_empty=accepted["composer"]["text"] == "",
+                same_message=repeated["message"] == accepted["message"],
+                newer_preserved=repeated["composer"] == newer["composer"], superseded=repeated["draft_disposition"] == "superseded")
+        elif "--recover-group-composer" in sys.argv:
+            group = client.groups(profile)["groups"][0]["group"]
+            current = client.group_composer_query(profile, group)
+            last = current["last_send"]
+            assert last["status"] == "accepted"
+            replay = client.group_enqueue_draft(profile, group, last["revision"])
+            report.update(recovered_acceptance=replay["message"] == last["acceptance"]["message"],
+                          draft_empty=replay["composer"]["text"] == "")
         elif "--exercise-profile-lock" in sys.argv:
             profile = client.profile_catalog()["selected_profile"]
             result = client.lock_profile(profile, "sdk-profile-lock-key-0001")

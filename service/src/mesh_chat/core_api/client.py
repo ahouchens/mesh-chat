@@ -371,6 +371,48 @@ class CoreClient:
     def draft_set(self, handle, peer, text):
         return self.request("peer.draft_set", {"profile": handle, "peer": peer, "text": text})
 
+    def _require_group_composer(self):
+        caps = self.capabilities
+        names = ("group_composer_text_utf8_bytes", "group_composers_per_caller_profile", "group_composers_per_vault",
+                 "group_composer_update_idempotency_seconds", "group_composer_update_keys_per_caller_profile",
+                 "group_composer_update_keys_per_vault", "group_composer_send_idempotency_seconds",
+                 "group_composer_send_keys_per_caller_profile", "group_composer_send_keys_per_vault")
+        operations, limits = caps.get("operations"), caps.get("limits")
+        if (type(caps.get("api_minor")) is not int or caps["api_minor"] < 1
+                or not isinstance(operations, list) or not all(isinstance(op, str) for op in operations)
+                or not {"group.composer_query", "group.composer_update", "group.message_enqueue_draft"} <= set(operations)
+                or not isinstance(limits, dict)
+                or any(type(limits.get(name)) is not int or not 0 < limits[name] <= 9007199254740991 for name in names)):
+            raise CoreClientError("unsupported_operation")
+
+    @staticmethod
+    def _group_composer_token(token):
+        if not isinstance(token, str) or re.fullmatch(r"[0-9a-f]{64}", token) is None:
+            raise ValueError("Invalid group composer token")
+
+    def group_composer_query(self, profile, group, send_revision=None):
+        self._require_group_composer()
+        if send_revision is not None:
+            self._group_composer_token(send_revision)
+        return self.request("group.composer_query", {"profile": profile, "group": group,
+            **({"send_revision": send_revision} if send_revision is not None else {})})
+
+    def group_composer_update(self, profile, group, expected_revision, text, update_key):
+        self._require_group_composer()
+        self._group_composer_token(update_key)
+        if expected_revision is not None:
+            self._group_composer_token(expected_revision)
+        if not isinstance(text, str) or len(text.encode("utf-8")) > self.capabilities["limits"]["group_composer_text_utf8_bytes"]:
+            raise ValueError("Group composer text exceeds negotiated byte limit")
+        return self.request("group.composer_update", {"profile": profile, "group": group,
+            "expected_revision": expected_revision, "text": text}, idempotency_key=update_key)
+
+    def group_enqueue_draft(self, profile, group, draft_revision):
+        self._require_group_composer()
+        self._group_composer_token(draft_revision)
+        return self.request("group.message_enqueue_draft", {"profile": profile, "group": group,
+            "draft_revision": draft_revision}, idempotency_key=draft_revision)
+
     def delete_peer(self, handle, peer):
         return self.request("peer.delete", {"profile": handle, "peer": peer})
 
