@@ -31,6 +31,27 @@ zero skips, 12.30 seconds. Invitation preparation does not itself establish atom
 personal adoption/workspace join; parent integration remains required. Runtime
 profile host binding and actual Windows–Android topology remain pending.
 
+### Runtime catalog and installed SDK checkpoint
+
+Source `8ef8dd5388e617ad4dae0a1425318cd05f08d8f7`, tree
+`609d4f4797eac4b90c3b62d8df87e3cf17ad738a`, stages the updated public SDK archives
+and passes 239 runtime-host, installed SDK, pinned upgrade and contract cases
+without skips in 35.28 seconds. The encrypted host catalog survives profile-vault
+closure, preserves derived opaque-handle authority and fences active services
+against the final persisted selection. A two-slot constructor race rejects the
+changed selection before publication. Trusted platform key-slot openers are still
+required; this is not installed Windows/Android lifecycle evidence.
+
+Source `d8869d06c92cc1f6dae3eb8ce1e8a5b97ac52d0e` keeps the selected profile first
+in capability results for existing clients. The lead ran the four pinned Python
+and TypeScript 0.2 consumer cases with both selected slots: four passed, zero
+skips, 4.68 seconds (27 unrelated cases explicitly deselected). The earlier
+frontend history repair at `5fa62a9` passes all seven layout checks in 0.39 seconds.
+
+Renderer-restart recovery of an unknown call start still needs a protected Core
+operation query and authoritative cleanup disposition. An in-memory UI ticket or
+a bare `resync_required` response does not close that obligation.
+
 ### Wave 2 combined policy and upgrade checkpoint
 
 Source `538ba22692657c8af557e0095dd27dc1d23541e9` passes the complete required

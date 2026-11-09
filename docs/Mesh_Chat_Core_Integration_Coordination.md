@@ -52,6 +52,15 @@ reaction/invitation hooks are integrated at `67ff95b` (225 focused passes, no
 skips). A's runtime profile host remains under review for persisted-selection
 versus active-vault authority. No new packaged acceptance is claimed.
 
+Runtime host `08e29df` plus persisted-selection fence `fc7e5d9` are integrated
+at `8ef8dd5`; source-bound SDK staging and 239 runtime/installed-consumer/upgrade
+cases pass without skips. Selected-first compatibility `540d959` is integrated
+at `d8869d0`, with four actual older-SDK two-slot cases passing. B now owns
+src-only profile lifecycle facade/UI work coordinated with C's platform credential
+bridge. A retains `call_manager.py` for protected unknown-call recovery after the
+group mutation batch; C owns any required `service.py` glue. Caller operation
+keys, consent and unresolved cleanup must survive these boundaries.
+
 ## Active Wave 2 handoff
 
 All workers merge the current lead branch before edits. Source `174728e` is the

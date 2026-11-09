@@ -18,6 +18,14 @@ peer drivers. Remaining work includes concrete initial-pairing composition,
 private profile-host admission, the finite mutation-key audit and actual
 cross-platform/fault execution before default promotion or legacy-loop removal.
 
+The interim `dcac85e` CI policy inventory passes 2,871 cases, but packaging,
+frontend-test and Android instrumentation dependency failures prevent workflow
+acceptance. Runtime catalog/lifecycle composition at `8ef8dd5` passes 239
+installed-client, upgrade and contract cases; `d8869d0` adds verified older-client
+selected-profile behavior. Actual OS-slot provider installation and renderer
+unknown-call recovery remain work, alongside concrete pairing and the topology
+matrix. The ledger separates these component checkpoints from packaged evidence.
+
 Integration begins at `435b497150e5f0d12cb1c5dc7b4602da7a66ec4c` on a
 separate lead branch. The [coordination inventory](Mesh_Chat_Core_Integration_Coordination.md)
 assigns exclusive ownership and defines the two-wave implementation gates.
