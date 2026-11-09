@@ -4,6 +4,25 @@
 
 ### AGP repair and timing diagnostics: full CI dispatched
 
+Full combined qualification
+[42723779984](https://github.com/ahouchens/mesh-chat/actions/runs/42723779984)
+is running at shared checkpoint `d0babe9a137bd49c79eb0bbbe8849b942b3632f7`
+(tree `66fe66421328f2c75e21b0729f9ab9878a5ae8ab`). Retained selection independently
+confirms all six families and native workload `full`; duplicate PR run
+`42723762938` was canceled. Exact SDK staging, strict policy types, **3,612
+required policy cases**, **670 Python plus 12 rendered boundary cases**, and
+**nine Windows components** pass locally with zero skips. The full policy rerun
+takes 397.23s. The original restricted run had two Bash filesystem-access failures;
+both isolated controls and the entire repeated suite pass with normal access.
+The rendered UI gate likewise passes after its sandbox configuration-read block.
+
+CI policy independently reconstructs all 3,612 exact required cases with no
+failures/skips. Windows runner steps now pass both strengthened normal bootstrap
+and public pairing/receipts (23:54:40–23:55:21 UTC). Retained Windows report/binary
+verification remains pending; later packaged UI/crash and native gates are not
+yet accepted. Android is executing its device suites; actual independent
+publication and its two new cases remain pending. No full platform acceptance.
+
 The lead has integrated C's startup repair `a62ad39` and Android generated-source
 repair `44e74a3`, plus D's bootstrap regression gate `62ceee0`. C and A independently
 reproduce the real source failure: fresh public profile creation runs on a worker
@@ -25,10 +44,10 @@ post-profile snapshots, with a strict count of two in retained evidence. It allo
 the expected `network_interface_unavailable` status, rejects missing/invalid
 networks and startup errors, and adds no RPC. D passes 187 focused consumer checks,
 including producer privacy/request/cleanup controls and strict evidence rejection.
-The lead will run exact-source required local gates, then full combined CI.
+Exact-source local gates and full CI status are recorded above.
 No release, default or scenario promotion follows from these component results.
 
-The shared feature branch now contains `d411eb5e8a2bd72e36254011f26c4cbc992ce4a9`
+The preceding diagnostic checkpoint is `d411eb5e8a2bd72e36254011f26c4cbc992ce4a9`
 (tree `830d3af24ffb5299a8d76dd48c34d069c338249f`). Its only implementation delta
 is D's selected network health diagnostics: `network_present` and a fixed
 `service_error` enum from existing snapshots, preserving observation subphase.
