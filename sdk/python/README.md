@@ -54,3 +54,10 @@ locally unavailable. Initial local target is Windows x64/Python 3.13; Linux and
 Android evidence is recorded separately by CI. Staging alone declares no
 supported upgrade window or redistribution release. Actual fixture hashes,
 OS/architecture, source and test results must accompany each qualified pair.
+
+Runtime-level profile helpers require all four `profile.catalog/lock/select/unlock`
+operations and the four positive `profile_*` lifecycle limits. A profile service
+alone does not advertise them. The runtime host stays available after profile
+lock; unlock takes an opaque, expiring, single-use credential reference issued
+by trusted platform authentication. The SDK never creates that authority or
+retrieves an OS key. Profile selection and reconciliation do not unlock implicitly.

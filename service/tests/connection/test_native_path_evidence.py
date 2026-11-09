@@ -108,14 +108,13 @@ def test_accounting_cannot_claim_unknown_zeros_or_export_unbounded_host_fields(i
         service.native_webrtc_inspection_resources()
 
 
-def test_windows_empty_routing_map_is_explicitly_incomplete_physical_accounting():
+def test_windows_empty_lease_inventory_reports_complete_physical_accounting():
     host = WindowsNativeWebRTCHost(lambda *_: None)
     try:
         value = json.loads(host.resourceAccounting())["result"]
-        assert value["routable_count"] == value["creation_reservations_count"] == 0
-        assert not value["complete"] and value["retiring_count"] is None
-        assert not value["availability"]["retiring_count"]
-        assert value["reserved_count"] is None
+        assert value["complete"] and value["retiring_count"] == 0
+        assert value["availability"]["retiring_count"]
+        assert value["reserved_count"] == value["creating_count"] == value["allocated_count"] == 0
     finally:
         host.shutdown()
 

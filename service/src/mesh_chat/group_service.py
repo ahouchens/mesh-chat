@@ -391,6 +391,7 @@ class GroupServiceMixin:
         reaction_emoji: str | None = None,
         reaction_active: bool | None = None,
         reaction_revision: int | None = None,
+        queue_retry: bool = True,
     ) -> dict[str, Any]:
         profile = self._require_profile()
         now = time.time()
@@ -427,7 +428,8 @@ class GroupServiceMixin:
             "created_at": now,
             "expires_at": now + DELIVERY_WINDOW_SECONDS,
         }
-        self._queue_group_retry(record["id"])
+        if queue_retry:
+            self._queue_group_retry(record["id"])
         return record
 
     def _attempt_group_delivery(self, delivery_id: str) -> None:

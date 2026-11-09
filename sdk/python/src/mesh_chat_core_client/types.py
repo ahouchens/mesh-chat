@@ -10,6 +10,19 @@ class Acceptance(TypedDict):
     idempotency_expires_at: float
 
 
+class ProfileEntry(TypedDict):
+    profile: str
+    display_name: str
+    selected: bool
+    state: Literal["locked", "unlocked", "retiring"]
+
+
+class ProfileCatalog(TypedDict):
+    profiles: list[ProfileEntry]
+    selected_profile: str | None
+    revision: int
+
+
 class Composer(TypedDict):
     profile: str
     peer: str

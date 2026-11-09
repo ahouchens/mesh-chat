@@ -38,6 +38,8 @@ test("composer refuses an older host before writing and never invents a key", as
   await assert.rejects(client.createProfile("New profile"), ProtocolError);
   await assert.rejects(client.workspaceJoin(PROFILE, "signed document"), ProtocolError);
   await assert.rejects(client.workspaceAdmissionGrantList(PROFILE, "w".repeat(64)), ProtocolError);
+  await assert.rejects(client.profileCatalog(), (error: unknown) => error instanceof CoreError && error.code === "unsupported_operation");
+  await assert.rejects(client.lockProfile(PROFILE, "caller-key-profile-0001"), (error: unknown) => error instanceof CoreError && error.code === "unsupported_operation");
   assert.equal(transport.written.length, 1);
 });
 

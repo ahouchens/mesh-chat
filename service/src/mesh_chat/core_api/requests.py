@@ -37,6 +37,7 @@ STOP_OPERATIONS = ("runtime.stop",)
 APPLICATION_OPERATIONS = ("application.snapshot",)
 NATIVE_COMMAND_OPERATIONS = ("native.command",)
 PROFILE_CREATE_OPERATIONS = ("profile.create",)
+PROFILE_RUNTIME_OPERATIONS = ("profile.catalog", "profile.select", "profile.unlock", "profile.lock")
 BOOTSTRAP_PREVIEW_OPERATIONS = ("bootstrap.preview",)
 WORKSPACE_PREVIEW_OPERATIONS = ("workspace.invitation_preview",)
 WORKSPACE_JOIN_OPERATIONS = ("workspace.join",)
@@ -372,6 +373,14 @@ def _parse_request(value, operations):
         if (not isinstance(params, dict) or set(params) != {"display_name"}
                 or not isinstance(params["display_name"], str)
                 or not 1 <= len(params["display_name"].strip()) <= 80):
+            raise ApiFailure("invalid_request")
+        return operation, params
+    if operation in PROFILE_RUNTIME_OPERATIONS:
+        required = set() if operation == "profile.catalog" else {"profile"}
+        if operation == "profile.unlock":
+            required.add("credential_handle")
+        if (set(params) != required or any(not isinstance(params[name], str)
+                or HANDLE.fullmatch(params[name]) is None for name in required)):
             raise ApiFailure("invalid_request")
         return operation, params
     if operation in BOOTSTRAP_PREVIEW_OPERATIONS:
@@ -1526,6 +1535,7 @@ COMPONENT_OPERATIONS = (
     + APPLICATION_OPERATIONS
     + NATIVE_COMMAND_OPERATIONS
     + PROFILE_CREATE_OPERATIONS
+    + PROFILE_RUNTIME_OPERATIONS
     + BOOTSTRAP_PREVIEW_OPERATIONS
     + WORKSPACE_PREVIEW_OPERATIONS
     + WORKSPACE_JOIN_OPERATIONS

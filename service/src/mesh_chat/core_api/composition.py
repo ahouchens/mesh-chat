@@ -46,7 +46,8 @@ class ServiceObservations:
 
 
 def bind_service_session(service, authenticated_grant, *, private_native=False,
-                         private_profile_bootstrap=False, private_composer_legacy=False):
+                         private_profile_bootstrap=False, private_composer_legacy=False,
+                         handle_key=None):
     """Trusted host entry point, never a client-supplied identity or grant."""
     if type(private_native) is not bool:
         raise ValueError("Private native binding must be a host boolean")
@@ -54,11 +55,13 @@ def bind_service_session(service, authenticated_grant, *, private_native=False,
         raise ValueError("Private profile bootstrap must be a host boolean")
     if type(private_composer_legacy) is not bool:
         raise ValueError("Private composer migration must be a host boolean")
+    if handle_key is not None and (not isinstance(handle_key, bytes) or len(handle_key) != 32):
+        raise ValueError("Private host handle key must be 32 bytes")
     def current_grant():
         return None if service._shutdown.is_set() else authenticated_grant()
 
     with service._dispatch_lock:
-        handle_key = bytes.fromhex(service.store.opaque_id("core-api-handle-key", "v1"))
+        handle_key = handle_key or bytes.fromhex(service.store.opaque_id("core-api-handle-key", "v1"))
         messages = ServiceMessages(service)
         composer = (ServiceComposer(service, messages, legacy=private_composer_legacy)
                     if hasattr(service.store, "conditional_put_and_delete") else None)

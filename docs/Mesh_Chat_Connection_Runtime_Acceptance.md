@@ -20,6 +20,18 @@ and scenario rows below to complete; their named remaining obligations still
 apply, including packaged cross-platform transport and unavailable physical
 qualification.
 
+Wave 2 now has a complete local policy pass at `538ba226` (2,815 cases, no skips),
+exact rendered-App/Core recovery evidence, installed SDK consumer checks and
+pinned component upgrade/downgrade fixtures. These strengthen the local boundary
+evidence for INV21–INV26 and SC23/SC25. They do not close packaged independent
+transport, full profile lifecycle, remaining mutation-key or physical obligations.
+Exact commits, counts and limitations remain in the ledger. Interim CI at
+`dcac85e` independently passes 2,871 policy cases but fails other required jobs.
+Runtime profile catalog/credential/selection component checks at `8ef8dd5` and
+older-client selected-slot checks at `d8869d0` strengthen INV21/22/25/26 and
+SC22/25/26. Actual platform key-provider installation and renderer unknown-call
+recovery remain required; these checks do not promote the historical rows.
+
 The rows below summarize historical evidence, not qualification of baseline
 `435b497150e5f0d12cb1c5dc7b4602da7a66ec4c` or subsequent integration commits.
 The historical baseline audit supplied to this integration found 25 passing schema tests
@@ -167,7 +179,9 @@ not a portable backup format or permission to copy a live database.
 Composer use raises the vault format floor from 1 to 2 in the same transaction
 as its first mutation. A format-1-only host must refuse that profile before
 starting workers. The current migration tests prove local atomicity and refusal;
-the staged old/new package upgrade matrix remains required. Ordinary client
+the pinned old/new component matrix now checks rollback, preserved records and
+precise old-host refusal. Installed native platform upgrade evidence remains
+required. Ordinary client
 detach does not authorize stopping the owner or removing its data.
 
 No whole-profile export/import or portable private-key backup is qualified.
@@ -189,8 +203,11 @@ published support promise is inferred from these experimental checks.
 The earlier audit of 92 keyed mutation actions is bounded. Some current
 operations still declare repeatable or convergent behavior, including group
 message enqueue, while section 6.6 requires mutation keys. A is auditing actual
-parser, session, action overrides and domain behavior before proposing compatible
-extensions; metadata alone does not establish the gap count. SDKs must preserve
+parser, session, action overrides and domain behavior. The reviewed audit records
+33 families, 45 action rows and 40 public mutation actions; those counts describe
+the audit scope, not completed keyed extensions. Compatible optional-key
+extensions are being implemented only for operations with atomic parent commits.
+SDKs must preserve
 the current declared semantics and must not invent retry keys. This unresolved
 requirement prevents a full M5 or section 13 completion claim.
 

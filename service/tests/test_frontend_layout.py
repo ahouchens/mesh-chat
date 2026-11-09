@@ -145,12 +145,29 @@ def test_desktop_close_exits_and_second_launch_restores_main_window() -> None:
 
 def test_workspace_history_settings_expose_honest_accessible_states() -> None:
     source = APP.read_text(encoding="utf-8")
-    for command in (
-        "get_workspace_history_status",
-        "start_workspace_history",
-        "cancel_workspace_history",
-    ):
-        assert command in source
+    history = source.split("export function WorkspaceHistorySettingsContent(", 1)[1].split(
+        "\nfunction CreateWorkspaceChannelDialog(", 1
+    )[0]
+    labels = source.split("function workspaceHistoryStateLabel(", 1)[1].split(
+        "export function WorkspaceHistorySettingsContent(", 1
+    )[0]
+    adapter = source.split("async function fetchWorkspaceHistory(", 1)[1].split(
+        "\nasync function fetchWorkspaceConnection(", 1
+    )[0]
+    api = APP.with_name("api.ts").read_text(encoding="utf-8").split(
+        "export async function coreApiWorkspaceHistory(", 1
+    )[1].split("\nexport async function coreApiWorkspaceAccessRecommendation(", 1)[0]
+
+    assert "fetchWorkspaceHistory(" in history
+    for action in ('"status"', '"start"', '"cancel"'):
+        assert action in history
+    assert "conversation: conversationId" in history
+    assert "coreApiWorkspaceHistory(" in adapter
+    assert "workspace.core_handle" in adapter
+    assert 'coreApiRequest("workspace.history",' in api
+    assert "profile: profile.profile, workspace, action, ...params" in api
+    assert "idempotencyKey: string = newOperationId()" in api
+    assert "serviceCommand(" not in history
     for state in (
         "Requesting history",
         "Waiting for an eligible peer or route",
@@ -162,7 +179,7 @@ def test_workspace_history_settings_expose_honest_accessible_states() -> None:
         "Fork-suspended",
         "Up to date with known history",
     ):
-        assert state in source
-    assert 'aria-live="polite"' in source
-    assert "{history.notice}" in source
-    assert "Cancel local job" in source
+        assert state in labels
+    assert 'role="status" aria-live="polite"' in history
+    assert "{history.notice}" in history
+    assert "Cancel local job" in history
