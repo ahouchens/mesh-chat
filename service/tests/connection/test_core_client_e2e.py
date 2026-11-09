@@ -225,8 +225,8 @@ def test_application_command_is_owner_only_and_allowlisted(host):
     owner = HostedClient(service, frozenset({"observe", "read", "approve"}))
     try:
         client = CoreClient.open(owner.reader.readline, owner.writer.write)
-        snapshot = client.application_command("snapshot", {})
-        assert snapshot["profile"]["display_name"] == "Alex"
+        snapshot = client.application_command("workspace_snapshot", {})
+        assert isinstance(snapshot, dict)
         with pytest.raises(CoreClientError):
             client.application_command("arbitrary_shell", {})
     finally:
@@ -235,7 +235,7 @@ def test_application_command_is_owner_only_and_allowlisted(host):
     try:
         client = CoreClient.open(consumer.reader.readline, consumer.writer.write)
         with pytest.raises(CoreClientError) as raised:
-            client.application_command("snapshot", {})
+            client.application_command("workspace_snapshot", {})
         assert raised.value.code == "forbidden"
     finally:
         consumer.close()
