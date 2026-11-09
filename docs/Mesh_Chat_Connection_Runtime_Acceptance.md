@@ -32,6 +32,14 @@ older-client selected-slot checks at `d8869d0` strengthen INV21/22/25/26 and
 SC22/25/26. Actual platform key-provider installation and renderer unknown-call
 recovery remain required; these checks do not promote the historical rows.
 
+The later combined policy pass at `a3a98ce` executes 3,178 cases without skips.
+Exact boundary `d4091fd` passes 640 Python and eight rendered-App cases; mobile
+host routing and optional keyed group acceptance add focused component evidence.
+Supervisor-owned Windows/Android topology qualification is ready to execute,
+but these local checks do not establish native interoperability. Platform OS
+authentication, independent app-owned consumers, remaining mutation families,
+and delayed settings/contact/admin UI admission remain active obligations.
+
 The rows below summarize historical evidence, not qualification of baseline
 `435b497150e5f0d12cb1c5dc7b4602da7a66ec4c` or subsequent integration commits.
 The historical baseline audit supplied to this integration found 25 passing schema tests
