@@ -57,8 +57,6 @@ class CoreRuntimeHost:
             raise ValueError("Trusted profile catalog is invalid")
         if active is not None and catalog_store is active.store:
             raise ValueError("Host catalog must outlive the profile vault")
-        if active is not None and bytes.fromhex(active.store.opaque_id("core-api-handle-key", "v1")) != next(p.handle_key for p in profiles if p.profile_id == selected):
-            raise ValueError("Active profile does not match its registered handle authority")
         self.store, self.profiles = catalog_store, {p.profile_id: p for p in profiles}
         self._publish_platform, self._credential_authorizer = publish, credential_authorizer
         self._clock, self._lock, self._credentials = clock, threading.RLock(), {}
@@ -77,13 +75,15 @@ class CoreRuntimeHost:
                 expected[("host_profile", profile.profile_id)] = prior
                 records.append(("host_profile", profile.profile_id, value))
             selection = self.store.get("host_profile_catalog", "selection")
+            expected[("host_profile_catalog", "selection")] = selection
             if selection is None:
-                expected[("host_profile_catalog", "selection")] = None
                 records.append(("host_profile_catalog", "selection", {"selected": selected}))
             else:
                 selected = selection.get("selected")
                 if selected not in self.profiles:
                     raise ValueError("Persisted selection requires a registered host slot")
+            if active is not None and bytes.fromhex(active.store.opaque_id("core-api-handle-key", "v1")) != self.profiles[selected].handle_key:
+                raise ValueError("Active profile does not match persisted handle authority")
             self.store.conditional_put_and_delete(expected, records)
         self.lifecycle = ProfileRuntimeLifecycle(tuple(ProfileSlot(p.profile_id,
             lambda profile=p: self._open(profile)) for p in profiles), selected,

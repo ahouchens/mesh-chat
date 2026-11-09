@@ -11,7 +11,7 @@ from mesh_chat.core_api.runtime_host import CoreRuntimeHost, RegisteredProfile
 from mesh_chat.core_api.session import Grant
 from mesh_chat.core_api.wire_codec import decode_frame, encode_frame
 from mesh_chat.service import MeshChatService
-from mesh_chat.vault import VaultStore
+from mesh_chat.vault import VaultStore, RecordConflict
 from test_core_sdk_distribution import run_consumer, installed_consumer
 from test_core_sdk_upgrade import pinned_install, old_consumer
 
@@ -371,3 +371,41 @@ def test_trusted_fresh_slot_bootstrap_and_lost_catalog_label_commit_do_not_dupli
             stream.close()
     finally:
         meta.close()
+
+
+def test_persisted_selection_cannot_rebind_other_active_vault_under_its_handles(runtime):
+    r = runtime
+    r["meta"].put("host_profile_catalog", "selection", {"selected": "beta"})
+    before = r["meta"].list("host_profile"), list(r["published"]), len(r["loads"])
+    with pytest.raises(ValueError, match="persisted handle authority"):
+        r["build"](r["first"], selected="alpha")
+    assert (r["meta"].list("host_profile"), r["published"], len(r["loads"])) == before
+    assert not r["first"]._store_closed
+    assert r["first"].store.get("profile", "local")["display_name"] == "alpha"
+
+
+def test_active_authority_matches_final_persisted_selection_not_startup_default(runtime):
+    r = runtime
+    assert r["invoke"]("profile.select", {"profile": r["profiles"]["beta"]}, "runtime-persisted-beta-key-0001")["ok"]
+    active_beta = r["host"].profiles["beta"].open()
+    replacement = r["build"](active_beta, selected="alpha")
+    stream = replacement.bind(lambda: r["grants"][0])
+    try:
+        assert r["invoke"]("runtime.capabilities", endpoint=stream)["ok"]
+        assert r["invoke"]("profile.query", {"profile": r["profiles"]["beta"]}, endpoint=stream)["result"]["display_name"] == "beta"
+        assert r["invoke"]("profile.query", {"profile": r["profiles"]["alpha"]}, endpoint=stream)["error"]["code"] == "forbidden"
+    finally:
+        stream.close()
+
+
+def test_constructor_selection_change_before_commit_refuses_stale_active_binding(runtime, monkeypatch):
+    r = runtime
+    original = r["meta"].conditional_put_and_delete
+    def race(expected, records, *args, **kwargs):
+        r["meta"].put("host_profile_catalog", "selection", {"selected": "beta"})
+        return original(expected, records, *args, **kwargs)
+    monkeypatch.setattr(r["meta"], "conditional_put_and_delete", race)
+    with pytest.raises(RecordConflict):
+        r["build"](r["first"], selected="alpha")
+    assert not r["published"]
+    assert not r["first"]._store_closed
