@@ -60,6 +60,48 @@ is running for that exact head with all five suite families selected. The
 redundant PR-triggered run was canceled to avoid duplicate runner consumption.
 Neither dispatch nor the local boundary results establish Wave 1 acceptance.
 
+### Onboarding, storage and durability follow-ups
+
+The full local required policy inventory passed at
+`575171609a67b0dfda6e53edd1a06380058168dc`: **2,259 tests, zero failures/skips**,
+210.57 seconds. C traced the earlier contact-bootstrap failure to Windows path
+limits in RNS resource/cache files. Shorter private paths and an initialization
+write probe fixed the original test without extending timeouts or weakening
+signature/scope checks.
+
+Atomic private profile creation, verification-only pre-profile preview and the
+corresponding onboarding UI are now integrated. Identity/profile/settings/replay
+records commit before network effects. Preview does not create an identity,
+write the vault, contact a network endpoint or accept an invitation. Ordinary
+public owner grants cannot attach either private bootstrap or native ports.
+
+| Executed by lead | Source | Result |
+| --- | --- | --- |
+| Bootstrap, message and host regressions | `8cc225a` | 94 passed, zero skips, 4.49 s. |
+| Bootstrap and contract tests | `1985be8` | 197 passed, zero skips, 13.21 s. |
+| Full frontend suite | Frontend source at `1985be8` | 637 passed across 37 files, 51.44 s; the subsequent concurrent merge changed only the boundary harness. |
+| Actual Windows pipe gate including empty-profile create/replay/reopen | `e0b2ee2` | Three passed, zero skips, 1.37 s. |
+| Admission-grant and legacy workspace regressions | `4c9bda7` | 82 passed, zero skips, 32.74 s. |
+| Serialized Core and rendered-App gate | `c49e65b` | 275 Python and six rendered-App cases passed, zero skips, 16.22 s. Includes actual empty-vault profile creation, a dropped committed reply, and explicit UI reconciliation without a second identity. |
+| Keyed call, existing call/signaling, mobile-fixture and real pipe tests | `22e0532` | 84 passed, zero skips, 3.22 s. |
+
+The first CI checkpoint `29a5606` passed its Windows host and policy jobs.
+The lead checked all 2,247 policy cases against their run-bound inventory. The
+Android API 35/x86_64 manifest contains **46 passed cases, zero failures/skips**;
+the lead checked every case's exact source/tree, run ID and report hash, including
+the five typed bridge cases. The retained consumer host APK, consumer APK, test
+APK and AAR hashes were independently recomputed. Three tested instrumentation
+APKs were not in that archive; D added explicit retention for future runs.
+Windows manifests and source hashes were checked with the checkout's CRLF
+encoding; package binary hashes remain runner-generated claims in those reports.
+
+The first CI Verify job failed because a test matched composer text before the
+thread mutation arrived. D's integrated correction holds the send deliberately,
+waits for a rendered message article, and queries its durable ID/content through
+Core. Later source still requires full CI. Call replay after an intervening state
+change, remaining keyed domain actions, and the restart-safe composer remain
+open; these passing slices do not close Wave 1 or M2–M5.
+
 ### Baseline findings (historical audit)
 
 The current integration baseline is

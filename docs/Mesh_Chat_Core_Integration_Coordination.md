@@ -95,6 +95,14 @@ network/resource effects need committed intent and recovery; a vault transaction
 cannot make those effects atomic. C's later lifecycle ownership excludes these
 files until explicitly transferred.
 
+Subsequent transfer: C exclusively owns `service/src/mesh_chat/remote_service.py`
+and the new `service/tests/connection/test_remote_profile_idempotency.py` for
+remote-profile keyed durability. A's worktree was verified clean before transfer.
+A retains the Core adapter in `service_workspace_admin.py`, and wires the optional
+domain `operation_id` argument supplied by C. Persisted runtime intent must use
+current consent/settings during reconciliation; replay cannot restore revoked
+approval or return cached connectivity as current state.
+
 B resumes bounded Wave 1 onboarding work: stable profile-create keys and retry
 handling. A supplies the trusted private bootstrap on an already-started empty
 service, without widening ordinary public-owner grants. B's Core-owned composer
