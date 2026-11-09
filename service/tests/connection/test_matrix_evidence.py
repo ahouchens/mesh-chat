@@ -8,6 +8,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 import connection_matrix as matrix
+import native_runtime_materials as runtime_materials
 from connection_evidence import execution_evidence
 from direct_qualification import LEVEL, SUITES as DIRECT_SUITES
 from connection_test_inventory import REQUIRED_SUITES
@@ -79,7 +80,28 @@ def fixture(directory):
         if kind == "lifecycle":
             native["timings_ms"] = {"open_max": 100, "control_max": 200, "control_p95": 150}
         (directory / f"desktop/native-windows-{kind}.json").write_text(json.dumps(native))
+    (directory / "desktop/native-runtime-materials.json").write_text(json.dumps(materials_report(source, tree)))
     return source, tree, android
+
+
+def materials_report(source, tree):
+    """Synthetic complete material declarations only, never actual archive evidence."""
+    declaration = json.loads(runtime_materials.DECLARATION.read_text())
+    packages = []
+    for name, version in sorted(runtime_materials.locked_distributions(matrix.ROOT / "service/requirements.lock").items()):
+        notices = [{"path": f"{runtime_materials.PREFIX}/distributions/{name}/METADATA", "kind": "metadata", "sha256": "a" * 64}]
+        if name in declaration["required_notice_distributions"]:
+            notices.append({"path": f"{runtime_materials.PREFIX}/distributions/{name}/LICENSE", "kind": "notice", "sha256": "b" * 64})
+        packages.append({"name": name, "version": version, "declared_license": "synthetic", "notice_files": notices,
+                         "wheel_native_files": [{"path": "av.libs/avcodec-fixture.dll", "sha256": "c" * 64}] if name == "av" else []})
+    inventory = {"packages": packages, "native_archive_files": [{"path": "av.libs/avcodec-fixture.dll", "sha256": "c" * 64,
+                "wheel_distributions": ["av"]}], "notice_files_verified": sum(len(item["notice_files"]) for item in packages),
+                "required_modules_verified": declaration["required_modules"], "notice_limits": declaration["wheel_native_notice_limit"],
+                "native_files_without_wheel_owner": [], "release_approval": False,
+                "project_license_sha256": digest(matrix.ROOT / "LICENSE")}
+    return {"v": 1, "passed": True, "evidence_level": runtime_materials.LEVEL, "source_commit": source, "source_tree": tree,
+            "sidecar_sha256": "d" * 64, "build_input_sha256": "e" * 64, "build_manifest_sha256": "f" * 64,
+            "inventory": inventory, "scope": declaration["scope"], "declaration_sha256": digest(runtime_materials.DECLARATION)}
 
 
 def boundary_reports(directory, source, tree):
@@ -126,11 +148,41 @@ def test_gate_revalidates_policy_inventory_and_both_platform_component_reports(t
     assert set(result["report_sha256"]) == {"policy", "windows_transport", "windows_packaged_lifecycle",
                                           "windows_packaged_transport", "windows_packaged_pairing", "android",
                                           "core_ui_boundary", "core_windows_boundary",
-                                          "windows_native_control", "windows_native_lifecycle"}
+                                          "windows_native_control", "windows_native_lifecycle", "windows_runtime_materials"}
     assert result["windows_packaged_lifecycle_checks"] == list(PACKAGED_CHECKS)
     assert result["core_ui_boundary_python_tests"] == len(PYTHON_SELECTION)
     assert result["core_ui_boundary_rendered_tests"] == len(RENDERED_CASES)
     assert result["core_windows_boundary_tests"] == 3
+
+
+@pytest.mark.parametrize("fault", ["missing", "source", "sidecar", "build", "manifest", "package", "version",
+    "notice", "dll", "owner", "license_claim", "project_license", "scope", "module", "notice_count"])
+def test_required_runtime_materials_cannot_qualify_a_different_or_partial_archive(tmp_path, fault):
+    source, tree, _ = fixture(tmp_path)
+    path = tmp_path / "desktop/native-runtime-materials.json"
+    record = json.loads(path.read_text())
+    inventory = record["inventory"]
+    if fault == "missing":
+        path.unlink()
+    else:
+        if fault == "source": record["source_commit"] = "f" * 40
+        elif fault == "sidecar": record["sidecar_sha256"] = "1" * 64
+        elif fault == "build": record["build_input_sha256"] = "1" * 64
+        elif fault == "manifest": record["build_manifest_sha256"] = "1" * 64
+        elif fault == "package": inventory["packages"].pop()
+        elif fault == "version": inventory["packages"][0]["version"] = "99"
+        elif fault == "notice":
+            next(item for item in inventory["packages"] if item["name"] == "av")["notice_files"].pop()
+        elif fault == "dll": inventory["native_archive_files"].clear()
+        elif fault == "owner": inventory["native_archive_files"][0]["wheel_distributions"] = ["aiortc"]
+        elif fault == "license_claim": inventory["release_approval"] = True
+        elif fault == "project_license": inventory["project_license_sha256"] = "9" * 64
+        elif fault == "scope": record["scope"] = "all licensing complete"
+        elif fault == "module": inventory["required_modules_verified"].pop()
+        else: inventory["notice_files_verified"] += 1
+        path.write_text(json.dumps(record))
+    with pytest.raises((ValueError, FileNotFoundError)):
+        matrix.collect(tmp_path, source, tree, ["verification"])
 
 
 def test_android_report_without_typed_app_bridge_execution_cannot_qualify(tmp_path):
@@ -322,7 +374,7 @@ def test_suite_manifest_is_uniform_across_every_required_component(tmp_path):
         "policy", "windows_transport", "windows_packaged_lifecycle",
         "windows_packaged_transport", "windows_packaged_pairing",
         "core_ui_boundary_python", "core_ui_boundary_rendered", "core_windows_boundary",
-        "windows_native_control", "windows_native_lifecycle",
+        "windows_native_control", "windows_native_lifecycle", "windows_runtime_materials",
         "android_webrtc", "android_signaling", "android_core_api", "android_core_consumer",
         *("direct_Linux_" + name for name in DIRECT_SUITES),
         *("direct_Windows_" + name for name in DIRECT_SUITES)]

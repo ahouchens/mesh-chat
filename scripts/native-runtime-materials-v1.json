@@ -1,0 +1,15 @@
+{
+  "v": 1,
+  "scope": "Frozen Windows runtime inventory and notice coverage; not a redistribution or legal approval",
+  "required_modules": ["aiortc", "aioice", "av"],
+  "required_notice_distributions": ["aiortc", "aioice", "av", "pylibsrtp", "cryptography"],
+  "native_suffixes": [".dll", ".pyd"],
+  "wheel_native_notice_limit": "Wheel metadata licenses describe their named Python distribution. They do not establish licenses or corresponding-source completeness for bundled FFmpeg and codec DLLs.",
+  "upstream_references": [
+    "https://github.com/aiortc/aiortc",
+    "https://github.com/aiortc/aioice",
+    "https://github.com/PyAV-Org/PyAV/tree/v14.2.0",
+    "https://github.com/PyAV-Org/pyav-ffmpeg",
+    "https://ffmpeg.org/legal.html"
+  ]
+}
