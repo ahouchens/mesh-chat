@@ -3,6 +3,7 @@
 import argparse
 from pathlib import Path
 import sys
+from tempfile import TemporaryDirectory
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -25,8 +26,12 @@ def main():
     args = parser.parse_args()
     inventory = args.junit.with_suffix(".inventory.json")
     inventory.unlink(missing_ok=True)
-    status = pytest.main([*SELECTION, "-q", f"--junitxml={args.junit}"],
-                         plugins=[TestInventory(inventory, args.source, SELECTION)])
+    scratch = ROOT / ".test-tmp/core-ui-boundary"
+    scratch.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(prefix="pytest-", dir=scratch) as temporary:
+        status = pytest.main([*SELECTION, "-q", f"--junitxml={args.junit}",
+                             f"--basetemp={temporary}", "-o", f"cache_dir={scratch / 'pytest-cache'}"],
+                            plugins=[TestInventory(inventory, args.source, SELECTION)])
     if status != pytest.ExitCode.OK:
         return int(status)
     execution_evidence(args.junit, args.source, args.source, inventory, SELECTION)

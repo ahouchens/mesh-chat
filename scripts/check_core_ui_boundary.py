@@ -50,7 +50,8 @@ def main():
     }
     results = {}
     started = time.monotonic()
-    environment = {**os.environ, "MESH_BOUNDARY_PYTHON": sys.executable, "PYTHONUTF8": "1"}
+    environment = {**os.environ, "MESH_BOUNDARY_PYTHON": sys.executable, "PYTHONUTF8": "1",
+                   "PYTHONDONTWRITEBYTECODE": "1"}
     for name, command in commands.items():
         junit = reports / f"core-ui-boundary-{name}.xml"
         junit.unlink(missing_ok=True)
