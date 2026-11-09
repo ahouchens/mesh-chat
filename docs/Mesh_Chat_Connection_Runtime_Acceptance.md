@@ -27,6 +27,13 @@ installed Windows DPAPI/EFS bootstrap, but public pairing times out before
 receipt qualification. The independent Android consumer is locally integrated
 and still needs actual built/installed evidence. No scenario/default promotion.
 
+The completed run independently passes both direct-platform suites. Android has
+47 successful and three failed case reports, with all 50 cases present, seven
+binary hashes and 62 JVM passes independently verified. Three native-offerer
+cleanup failures prevent overall Android acceptance. Bounded pairing diagnostics
+and supported readiness queries are integrated with 324 focused passes; neither
+component result resolves the timeout or qualifies cross-platform delivery.
+
 Latest repaired source `32cc1d5` is under full manual qualification
 `42704405112`. Its required local policy passes 3,463 tests and exact Windows
 boundary passes nine tests with no skips. The App/Core boundary at `986815f`

@@ -19,6 +19,12 @@ with DPAPI/EFS and the 670/12 boundary, but public pairing times out. Safe
 diagnostics and a separate supported-readiness-operation correction are next;
 actual Android consumer execution and cross-platform receipts remain pending.
 
+CI `42704405112` has completed failed. Both direct platforms independently pass;
+Android runs all 50 required cases but three native-offerer cleanup cases fail.
+C owns the narrow cancellation-helper correction. Source `ba2b12f` includes
+safe current pairing failure probes and the supported readiness operation, with
+324 focused passes; the timeout still needs actual platform evidence.
+
 The current repaired checkpoint is `32cc1d5`, pushed for full manual CI
 `42704405112`. All 3,463 required local policy cases and nine Windows boundary
 cases pass without skips; the App/Core boundary at `986815f` passes 670 Python

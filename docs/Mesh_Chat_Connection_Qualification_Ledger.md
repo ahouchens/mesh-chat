@@ -4,6 +4,42 @@
 
 ### Clean Android consumer integration and Windows bootstrap evidence
 
+CI `42704405112` completed failed at **22:05:03 UTC**. Each direct platform
+independently validates **25 fabric, ten recovery and 12 setup passes**, zero
+skips. Linux artifact `13713568714` archive SHA-256:
+`4eb7044f09e276f19d8be667a45ebd7470c036b9d3c85b4918817a06e8a88ff8`;
+Windows `13715525750`:
+`1918afbc35ca8a325e6ec338ec817fc8e7d40225bc4e8e94752138d192a78972`.
+These report archives do not retain their native binaries; binary hashes remain
+runner assertions. Native interoperability was skipped because prerequisite
+qualification failed.
+
+Android's retained evidence independently verifies **47 successful case reports
+and three failures**, all 50 required cases present, plus **seven APK/AAR hashes
+and 62 JVM passes**. Failures are native-offerer cleanup in
+`nativeOfferCanConnectToChromiumWithReconnectControl`,
+`repeatedChromiumMediaCallsPreserveNativeOfferedMessaging` and
+`productionDesktopTransportAnswersNative`: `native_webrtc_cleanup_pending`.
+The aggregate fails; no overall Android cleanup/platform acceptance is claimed.
+Debug artifact `13714895133` archive SHA-256:
+`817cef86bb251339a57cbe26035fc13420e488cec8a3e0531e1183d4f6047871`;
+qualification `13714326555`:
+`00989330164c5fa83daf0b517df3372471e54ac0821ccc35d2b4b744657fef1f`.
+The archive was hashed in memory; retained text/XML/JSON was losslessly NTFS
+compressed. C is correcting the shared cancellation test helper to consume the
+expected pending signal, then require the existing unwind wait and actual
+disposal acknowledgment, without weakening production custody.
+
+Subsequent source `ba2b12f` integrates D's bounded diagnostics `379d948`, typed
+readiness correction `3032436` and failure-only current-state probe `92cb643`.
+Lead focused consumer/matrix/selection checks pass **324 cases, zero skips**, in
+14.46s. Real archived SDK requests reach the production framed parser and current
+policy projection for readiness; native effects are simulated in that regression.
+Synthetic failure-path tests exercise actual Node producer control flow and
+privacy filtering, not actual peer delivery. The probe uses at most two concurrent
+existing public queries, two seconds each, retains the original failure and
+requires host shutdown. The Windows timeout's cause remains unproven.
+
 Lead `72a531937653de41a2368fc4356cc8e91d30aaed`, tree
 `03b31043171811d4c1f7ea42dbabb92de9cab41d`, integrates the tracked group SDK
 import repair `1866660` and reproduced Android runner stdin repair `b59f951`.

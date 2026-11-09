@@ -27,6 +27,22 @@ cause remains unproven. Android and direct-platform jobs continue. Recovery
 design remains deferred: reviews require a common lifecycle dispatch fence and
 native document-attachment/issued-credential cancellation before implementation.
 
+CI `42704405112` completed failed at 22:05:03 UTC. Both direct platforms
+independently pass 25 fabric, ten recovery and 12 setup cases. Android built and
+ran all 50 required cases: 47 successful reports and three native-offerer
+cleanup failures, with seven binary hashes and 62 JVM passes independently
+validated. C temporarily owns only `NativeWebRtcInteropTest.kt` from D for the
+cancellation-helper repair; the lead verified D's file clean before transfer.
+Pending cleanup must still reach actual disposal acknowledgment and zero resource
+accounting. No production disposal behavior or timeout relaxation is authorized
+as a substitute. D retains all other instrumentation and evidence ownership.
+
+D's diagnostics `379d948`, supported readiness `3032436` and bounded failure
+probe `92cb643` are integrated at `ba2b12f`. The probe makes at most one existing
+public query per initialized peer with a two-second timeout before shutdown,
+retains only safe projected state, and preserves the original failure. The lead
+passes 324 focused consumer/matrix/selection cases without skips in 14.46s.
+
 The shared feature branch is now `32cc1d5765a1ae1a3ad91e752e341b95cbce2e40`
 (tree `cae703b3360004bdd0bf2d0b55793fed7efafe08`). Full manual CI
 `42704405112` is running; duplicate PR run `42704390818` was canceled.
