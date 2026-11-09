@@ -57,11 +57,25 @@ def failure_details(value):
             or value["error_code"] not in ERROR_CODES):
         raise ValueError("Pairing failure envelope is invalid")
     diagnostics = value["diagnostics"]
-    if (not isinstance(diagnostics, dict) or set(diagnostics) != {"subphase", "deadline_exhausted", "peers"}
+    if (not isinstance(diagnostics, dict) or set(diagnostics) - {"subphase", "deadline_exhausted", "peers", "failure_probe"}
+            or not {"subphase", "deadline_exhausted", "peers"} <= set(diagnostics)
             or diagnostics["subphase"] not in SUBPHASES[value["phase"]]
             or type(diagnostics["deadline_exhausted"]) is not bool
             or not isinstance(diagnostics["peers"], dict) or set(diagnostics["peers"]) - {"offerer", "answerer"}):
         raise ValueError("Pairing failure subphase or roles are invalid")
+    if "failure_probe" in diagnostics:
+        probe = diagnostics["failure_probe"]
+        if not isinstance(probe, dict) or set(probe) - {"offerer", "answerer"}:
+            raise ValueError("Pairing failure probe roles are invalid")
+        for observation in probe.values():
+            if not isinstance(observation, dict):
+                raise ValueError("Pairing failure probe outcome is invalid")
+            if observation.get("query_outcome") == "ok":
+                if (set(observation) != {"query_outcome", "state", "expired"} or observation["state"] not in PAIRING_STATES - {"unknown"}
+                        or type(observation["expired"]) is not bool):
+                    raise ValueError("Pairing failure probe contains unsafe state fields")
+            elif set(observation) != {"query_outcome"} or observation["query_outcome"] not in {"failed", "invalid_result"}:
+                raise ValueError("Pairing failure probe contains unsafe failure fields")
     for peer in diagnostics["peers"].values():
         if not isinstance(peer, dict) or not peer or set(peer) - {"last_snapshot", "last_pairing", "last_connections"}:
             raise ValueError("Pairing failure peer observations are invalid")

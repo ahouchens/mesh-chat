@@ -1,12 +1,17 @@
 // Synthetic SDK/host boundaries exercise the actual producer's failure output.
 // This never starts Core, a native host, a pipe or a network connection.
 import { registerHooks } from "node:module";
+import { appendFileSync } from "node:fs";
 
 const originalNow = Date.now;
 const started = originalNow();
 let expired = false;
 Date.now = () => expired ? started + 300000 : started;
 const fault = process.env.PAIRING_DIAGNOSTIC_FAULT;
+const probeMode = process.env.PAIRING_DIAGNOSTIC_PROBE;
+function log(value) {
+  if (process.env.PAIRING_DIAGNOSTIC_LOG) appendFileSync(process.env.PAIRING_DIAGNOSTIC_LOG, JSON.stringify(value) + "\n");
+}
 let accepted = false;
 let approved = false;
 let answered = false;
@@ -18,14 +23,26 @@ const other = role => role === "offerer" ? "answerer" : "offerer";
 function halt(name) { if (fault === name) expired = true; }
 globalThis.__diagnosticFixture = {
   CoreError,
-  launchRuntime: async (_executable, directory) => ({ pipe: directory.endsWith("offerer") ? "offerer" : "answerer",
-    stop: async () => {} }),
+  launchRuntime: async (_executable, directory) => {
+    const role = directory.endsWith("offerer") ? "offerer" : "answerer";
+    return { pipe: role, stop: async () => {
+      log({event: "stop", role});
+      if (probeMode === "retirement_failure") throw new Error("PRIVATE_RETIREMENT_ERROR");
+    } };
+  },
   connectNamedPipe: async pipe => pipe,
   CoreClient: { open: async role => {
     let created = false;
     return {
       capabilities: { profiles: ["PRIVATE_PROFILE"], operations: [] }, close() {},
-      async request(operation) {
+      async request(operation, _params, options) {
+        if (operation === "peer.pairing_query") {
+          log({event: "probe", role, timeout: options?.timeoutMs});
+          if (probeMode === "reject") throw new CoreError("PRIVATE_PROBE_ERROR");
+          if (probeMode === "invalid") return {state: "PRIVATE_STATE", expires_at: "PRIVATE_TIMESTAMP"};
+          if (probeMode === "advance_clock") expired = true;
+          return {state: "transferred", expires_at: started / 1000 - 1, pairing_code: "PRIVATE_CODE", sdp: "PRIVATE_SDP"};
+        }
         if (operation === "runtime.capabilities") return { profiles: ["PRIVATE_PROFILE"] };
         if (operation === "profile.create") { created = true; return {}; }
         if (operation === "profile.query") return { destination: destination(role), connections: ["PRIVATE_CONNECTION"] };
@@ -36,6 +53,7 @@ globalThis.__diagnosticFixture = {
           turn_configured: false, turn_broker_url: null, signal_mailbox_url: null, store_call_signaling: true,
           turn_broker_consent: true, relay_only: true } };
         if (operation === "application.snapshot") {
+          if (fault === "create_failure") throw new CoreError("forbidden");
           let contacts = [], invitations = [];
           if (answered && role === "answerer" && !accepted) {
             if (fault === "invitation_wait") halt(fault);

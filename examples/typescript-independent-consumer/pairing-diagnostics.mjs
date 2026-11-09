@@ -16,6 +16,7 @@ const bound = value => Math.min(value, 256);
 
 export function pairingDiagnostics() {
   let subphase = "arguments";
+  let failureProbe;
   const peers = {};
   function peer(role) {
     if (!ROLES.has(role)) throw new Error("invalid_diagnostic_role");
@@ -53,8 +54,28 @@ export function pairingDiagnostics() {
         counts_capped: total > 256 || checked > 256 || ready > 256,
       };
     },
+    probe(value) { failureProbe = value; },
     failure(deadlineExhausted = false) {
-      return { subphase, deadline_exhausted: deadlineExhausted, peers: structuredClone(peers) };
+      return { subphase, deadline_exhausted: deadlineExhausted, peers: structuredClone(peers),
+        ...(failureProbe !== undefined ? { failure_probe: structuredClone(failureProbe) } : {}) };
     },
   };
+}
+
+export async function probePairingFailure(owned, diagnostics) {
+  const initialized = [];
+  const roles = new Set();
+  for (const peer of owned) {
+    if (!ROLES.has(peer.role) || roles.has(peer.role) || !peer.client || !peer.profile || !peer.pairing) continue;
+    initialized.push(peer);
+    roles.add(peer.role);
+    if (initialized.length === 2) break;
+  }
+  const results = await Promise.allSettled(initialized.map(async peer => {
+    const value = await peer.client.request("peer.pairing_query", {profile: peer.profile, pairing: peer.pairing}, {timeoutMs: 2000});
+    if (!STATES.has(value?.state) || !Number.isFinite(value?.expires_at)) return {query_outcome: "invalid_result"};
+    return {query_outcome: "ok", state: value.state, expired: value.expires_at <= Date.now() / 1000};
+  }));
+  diagnostics.probe(Object.fromEntries(initialized.map((peer, index) => [peer.role,
+    results[index].status === "fulfilled" ? results[index].value : {query_outcome: "failed"}])));
 }

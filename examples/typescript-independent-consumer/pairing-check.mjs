@@ -6,12 +6,13 @@ import { join } from "node:path";
 import { setTimeout as pause } from "node:timers/promises";
 import { launchRuntime } from "./runtime.mjs";
 import { freshRelaySettings } from "./relay-settings.mjs";
-import { ERROR_CODES, pairingDiagnostics } from "./pairing-diagnostics.mjs";
+import { ERROR_CODES, pairingDiagnostics, probePairingFailure } from "./pairing-diagnostics.mjs";
 import { connectionMessagingReady } from "./connection-readiness.mjs";
 
 let phase = "arguments";
 const diagnostics = pairingDiagnostics();
 let deadline;
+let failureDeadlineExhausted = false;
 async function wait(read) {
   while (Date.now() < deadline) {
     const value = await read();
@@ -168,6 +169,10 @@ async function check(executable, directory) {
     await messagingReady(offerer);
     diagnostics.enter("answerer_ready_recheck");
     await messagingReady(answerer);
+  } catch (error) {
+    failureDeadlineExhausted = Date.now() >= deadline;
+    await probePairingFailure(owned, diagnostics);
+    throw error;
   } finally {
     const previous = phase;
     phase = "retirement";
@@ -177,6 +182,7 @@ async function check(executable, directory) {
     }));
     if (exits.some(result => result.status !== "fulfilled")) {
       diagnostics.enter("retirement");
+      failureDeadlineExhausted = Date.now() >= deadline;
       throw new Error("retirement_incomplete");
     }
     phase = previous;
@@ -195,7 +201,7 @@ try {
 } catch (error) {
   const code = error instanceof CoreError && ERROR_CODES.has(error.code) ? error.code : "unavailable";
   process.stdout.write(JSON.stringify({ passed: false, phase, error_code: code,
-    diagnostics: diagnostics.failure(Number.isFinite(deadline) && Date.now() >= deadline) }) + "\n");
+    diagnostics: diagnostics.failure(failureDeadlineExhausted) }) + "\n");
   process.stderr.write("Independent public pairing check failed.\n");
   process.exitCode = 1;
 }
