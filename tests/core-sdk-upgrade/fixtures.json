@@ -1,6 +1,7 @@
 {
   "v": 1,
   "baseline_source": "174728edad62aae6ef16e95b075183d06c5cdda3",
+  "baseline_tree": "239d041f87b26f50879008ac947481464dcf4551",
   "baseline_api": {"major": 1, "minor": 0},
   "baseline_python": {"carrier": "mesh-chat-service wheel", "client_version": "0.2.0-experimental", "standalone_wheel": false},
   "baseline_typescript": "0.2.0-experimental",

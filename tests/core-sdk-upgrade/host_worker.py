@@ -13,15 +13,20 @@ assert Path(mesh_chat.__file__).resolve().is_relative_to(Path(sys.argv[1]).resol
 from mesh_chat.core_api.composition import bind_service_stream
 from mesh_chat.core_api.session import Grant
 from mesh_chat.service import MeshChatService
-from mesh_chat.vault import VaultStore
+from mesh_chat.vault import VaultStore, SCHEMA_VERSION
 from mesh_chat.errors import StorageUnavailable
 
 config = json.loads(sys.stdin.buffer.readline(16385))
+assert SCHEMA_VERSION == 1
 key = Path(config["key_file"]).read_bytes()
 root = Path(config["profile_dir"])
 try:
     store = VaultStore(root, key, allow_unprotected_for_tests=True)
-except StorageUnavailable:
+    if config.get("refusal_only"):
+        store.get("profile", "local")  # Wrong keys/corrupt records are failures.
+except StorageUnavailable as error:
+    if str(error) != "Unsupported vault schema":
+        raise
     print(json.dumps({"refused_before_service_construction": True}), flush=True)
     raise SystemExit(0)
 if config.get("refusal_only"):

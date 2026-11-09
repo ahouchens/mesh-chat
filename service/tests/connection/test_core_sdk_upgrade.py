@@ -32,6 +32,10 @@ def pinned_install():
     metadata = json.loads((ARTIFACTS / "upgrade-artifacts.json").read_text())
     expected = json.loads((FIXTURES / "fixtures.json").read_text())
     assert metadata["baseline_source"] == expected["baseline_source"]
+    assert metadata["baseline_tree"] == expected["baseline_tree"]
+    assert {kind: item["filename"] for kind, item in metadata["artifacts"].items()} == {
+        "python_service_carrier": "mesh_chat_service-0.9.66-py3-none-any.whl",
+        "typescript": "mesh-chat-core-client-0.2.0-experimental.tgz"}
     for item in metadata["artifacts"].values():
         assert hashlib.sha256((ARTIFACTS / item["filename"]).read_bytes()).hexdigest() == item["sha256"]
     with isolated_project() as work:
@@ -153,7 +157,7 @@ def test_actual_candidate_sdk_to_pinned_old_host_with_local_composer_refusal(ins
         remote.close()
 
 
-def test_pinned_v1_vault_forward_migration_and_actual_old_binary_downgrade_refusal(pinned_install, tmp_path, monkeypatch):
+def test_pinned_v1_vault_forward_migration_and_old_installed_component_format_refusal(pinned_install, tmp_path, monkeypatch):
     key = os.urandom(32)
     key_file = tmp_path / "synthetic-key"
     key_file.write_bytes(key)
@@ -202,6 +206,7 @@ def test_pinned_v1_vault_forward_migration_and_actual_old_binary_downgrade_refus
         assert service.store._db.execute("SELECT value FROM meta WHERE name='schema_version'").fetchone()[0] == "1"
     finally:
         service.close()
+
     old_reader = PinnedHost(pinned_install, upgraded_root, key_file, refusal_only=True)
     assert old_reader.admission == {"refused_before_service_construction": False}
     old_reader.close()
@@ -232,3 +237,24 @@ def test_pinned_v1_vault_forward_migration_and_actual_old_binary_downgrade_refus
         assert len(service.store.list("message")) == 2
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("failure", ["wrong_key", "corrupt_database", "corrupt_record"])
+def test_other_pinned_storage_failures_cannot_qualify_as_schema_refusal(pinned_install, tmp_path, failure):
+    work, site, _, env, _ = pinned_install
+    key = os.urandom(32)
+    root = tmp_path / "invalid-baseline-vault"
+    with VaultStore(root, key, allow_unprotected_for_tests=True) as store:
+        store.put("profile", "local", {"display_name": "Synthetic negative control"})
+        if failure == "corrupt_record":
+            store._db.execute("UPDATE records SET sealed=? WHERE kind='profile'", (b"invalid",))
+    if failure == "corrupt_database":
+        (root / "mesh-chat.vault").write_bytes(b"not sqlite")
+    key_file = tmp_path / "synthetic-negative-key"
+    key_file.write_bytes(os.urandom(32) if failure == "wrong_key" else key)
+    config = {"profile_dir": str(root), "key_file": str(key_file), "refusal_only": True}
+    result = subprocess.run([sys.executable, "-I", "-B", "host_worker.py", str(site)], cwd=work, env=env,
+        input=json.dumps(config).encode() + b"\n", capture_output=True, timeout=30)
+    assert result.returncode != 0
+    assert b'"refused_before_service_construction": true' not in result.stdout.lower()
+

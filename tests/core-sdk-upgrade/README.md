@@ -25,7 +25,7 @@ the pinned commit before `git archive`; missing source/artifacts fail. Use a
 short writable temporary root on Windows for pip/npm caches. Consumers always
 install outside the checkout; no source aliases or private runtime substitution.
 
-The five cases run actual installed old Python/TypeScript clients against
+The eight cases run actual installed old Python/TypeScript clients against
 candidate Core; candidate installed clients against the pinned installed host
 with composer rejected locally before any composer frame; and a copied actual
 v1 vault upgraded through candidate Core. The latter preserves an old queued
@@ -33,6 +33,10 @@ message/receipt/draft, injects migration commit failure and verifies v1 remains
 readable by actual old code, then commits format2, sends/replays the migrated
 draft after reopen, and starts the actual pinned old VaultStore to prove format2
 refusal before constructing its service. No monkeypatched schema maximum is used.
+Only the pinned format-1 component's exact `Unsupported vault schema` failure
+qualifies as that refusal. Wrong-key, corrupt-record and corrupt-database
+negative controls fail instead. Fixture admission requires the exact baseline
+tree and the two expected artifact names before verifying archive hashes.
 
 Host fixtures suppress network startup only. Parser/session, cryptography,
 SQLite transactions, domain message writes, outbox and receipt handling are
