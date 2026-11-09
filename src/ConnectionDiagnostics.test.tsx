@@ -1,11 +1,14 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 const api = vi.hoisted(() => ({ serviceCommand: vi.fn(), coreApiConnectionSupport: vi.fn(), appBuildInfo: vi.fn(), desktopServiceHealth: vi.fn(), coreApiCapabilities: vi.fn(), coreApiProfile: vi.fn() }));
-vi.mock("./api", () => ({
+vi.mock("./api", async () => {
+  const { admittedApiFixture } = await import("./test/admitted-api");
+  return admittedApiFixture(({
   ...api,
   coreApiConnectionSupport: async (action: string) =>
     api.serviceCommand(action === "clear" ? "clear_connection_diagnostics" : "connection_diagnostics"),
 }));
+});
 import { ConnectionDiagnostics, currentWebRTCState, diagnosticReport, versionDetails } from "./ConnectionDiagnostics";
 import { closeWebRTCSession, setWebRTCSession, type WebRTCSession } from "./webrtc-session";
 import packageInfo from "../package.json";
