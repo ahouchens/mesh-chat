@@ -7,7 +7,6 @@ from ctypes import wintypes
 import os
 from pathlib import Path
 import sys
-from uuid import uuid4
 
 import pytest
 
@@ -16,6 +15,9 @@ if os.name != "nt":
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "service/src"))
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from native_interop_peers import windows_pipe_name
 
 import RNS
 from mesh_chat.core_api.client import CoreClient, CoreClientError
@@ -48,7 +50,9 @@ def current_image():
 def trusted_application_client(service):
     endpoint = duplex = None
     try:
-        name = rf"\\.\pipe\mesh-chat-boundary-{uuid4().hex[:16]}"
+        # The exact native-interop generator must create a production-admitted
+        # endpoint, not merely pass an isolated string assertion.
+        name = windows_pipe_name()
         endpoint = start(service, pipe_name=name, client_image=current_image())
         duplex = connect(name)
         yield CoreClient.open(duplex.readline, duplex.write)
