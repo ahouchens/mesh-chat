@@ -10,6 +10,9 @@ The retained request vectors separately exercise every advertised component
 operation through JSON serialization, schema validation, the production parser
 and permission admission. The permission-denied session must reject before any
 domain effect. Unsupported future operations are not advertised as implemented.
+The `native.command` vector uses the separate private-host schema and is rejected
+by the public schema. Only the explicit trusted UI fixture bootstrap attaches the
+private native port; ordinary public owner grants do not acquire it.
 
 After committing source, run the exact-source fast gate:
 
