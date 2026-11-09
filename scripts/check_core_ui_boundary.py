@@ -12,6 +12,27 @@ import xml.etree.ElementTree as ET
 
 
 ROOT = Path(__file__).resolve().parents[1]
+PYTHON_SELECTION = (
+    "service/tests/connection/test_ui_core_boundary_requests.py",
+    "service/tests/connection/test_ui_core_boundary_ci.py",
+    "service/tests/connection/test_ui_core_boundary_calls.py",
+    "service/tests/connection/test_ui_core_boundary_replay_authority.py",
+)
+RENDERED_CASES = {("tests/core-ui-boundary/app.test.tsx",
+                   "rendered UI through the production framed Core session > " + name) for name in (
+    "creates one fresh identity from rendered onboarding and resolves a lost committed reply",
+    "enqueues durable text through the real serializer and service",
+    "keeps accepted text cleared when the following snapshot fails",
+    "retries an uncertain committed enqueue with the same key and one durable record",
+    "preserves canonical workspace conversation fields from rendered channel send",
+    "serializes thread_root to a real timeline query without legacy field aliases",
+)}
+
+
+def rendered_inventory(path):
+    tests = list(ET.parse(path).getroot().iter("testcase"))
+    identities = [(case.get("classname"), case.get("name")) for case in tests]
+    return len(identities) == len(RENDERED_CASES) and set(identities) == RENDERED_CASES
 
 
 def git(*args):
@@ -59,8 +80,10 @@ def main():
         begin = time.monotonic()
         status = subprocess.run(command, cwd=ROOT, env=environment, timeout=180).returncode
         summary = junit_summary(junit) if junit.exists() else {"passed": False, "missing_junit": True}
-        if name == "rendered_ui" and summary.get("tests_executed") != 6:
+        if name == "rendered_ui" and (not junit.exists() or not rendered_inventory(junit)):
             summary.update(passed=False, incomplete_required_inventory=True)
+        if name == "python" and junit.with_suffix(".inventory.json").exists():
+            summary["inventory_sha256"] = hashlib.sha256(junit.with_suffix(".inventory.json").read_bytes()).hexdigest()
         results[name] = {**summary, "exit_code": status, "wall_seconds": time.monotonic() - begin}
     passed = all(result["passed"] and result["exit_code"] == 0 for result in results.values())
     result = {"v": 1, "source_commit": source, "source_tree": git("rev-parse", "HEAD^{tree}"),
