@@ -20,6 +20,16 @@ and scenario rows below to complete; their named remaining obligations still
 apply, including packaged cross-platform transport and unavailable physical
 qualification.
 
+Latest public pairing integration `787b6aa` has 79 passing actor/installed-SDK
+controls and 50 passing TypeScript SDK tests. Its full policy run remains failed
+with nine inventory defects and 3,359 passes. Native channel disposal and
+profile-bound WebRTC effects have focused component coverage; actual platform
+cleanup, credential UI, independent cross-platform receipts and media retirement
+remain required. The new normal Windows installed-runtime gate requires actual
+EFS and frozen execution; its wiring and component tests are not that evidence.
+CI `42683615511` finishes failed at the older source because both native interop
+jobs fail initialization. The pipe-name repair requires a fresh full run.
+
 Wave 2 now has a complete local policy pass at `538ba226` (2,815 cases, no skips),
 exact rendered-App/Core recovery evidence, installed SDK consumer checks and
 pinned component upgrade/downgrade fixtures. These strengthen the local boundary

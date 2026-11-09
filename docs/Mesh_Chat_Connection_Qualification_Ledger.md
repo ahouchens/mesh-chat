@@ -2,6 +2,35 @@
 
 ## Integration revalidation (2026-11-09)
 
+### Integrated public pairing and native cleanup review
+
+Source `787b6aa4f9fff789a251668cf82b3da3b5fbc8f9`, tree
+`fcdeca25187e2fc2aa7bd2e6bcc7267241897936`, includes A's public pairing
+producer and deadline/terminal corrections. Exact SDK staging passes. The lead
+executes 79 pairing protocol/actual-actor/installed-SDK tests without skips in
+11.81s (`dist/reports/pairing-positive-review.xml`), plus all 50 TypeScript SDK
+tests and strict model/reducer typing. Native/mailbox boundaries in the public
+actor controls are explicit doubles; these do not qualify native traffic.
+
+Full policy at that source finishes with **3,359 passed, nine failed, zero
+skipped**, 417.68s (`dist/reports/pairing-policy.xml`). Eight direct-evidence
+fixture cases expose an inventory path anchored to the plugin checkout instead
+of the invocation repository. One case requires the three new public pairing
+vectors. This is failed qualification; repairs and a complete rerun are required.
+
+Earlier integrated component checks:
+
+- `b31a3a9`: B's WebRTC effect-owner wiring, 61 frontend passes in 3.59s.
+- `60e3ec4`: finite Windows-host audit paths, 103 passes in 3.01s.
+- `0d4758e`: C's exact Android peer/channel disposal coordinator, actual Kotlin
+  source compilation and 21 JVM passes in 0.113s. Failed wrappers remain owned;
+  successful disposal stages are not repeated. Platform callback quiescence and
+  device cleanup still require actual Android execution.
+- `b4d3277`: D's required installed Windows bootstrap report, 162 focused passes
+  in 9.01s. The producer requires an outside-checkout installed SDK and source-bound
+  frozen executable, actual EFS attributes and two acknowledged clean exits.
+  That producer has not yet executed locally or in CI; no EFS/SC21 pass is inferred.
+
 ### Current full run and Android provider integration
 
 Full CI [42683615511](https://github.com/ahouchens/mesh-chat/actions/runs/42683615511)
@@ -70,10 +99,20 @@ has ZIP SHA-256 `b5ec990d9a99d15cfa531e2665b416224465acb9afb9767a1d2f003a48249a4
 Source review and the actual pipe validator identify the controller's
 `mesh-native-qualification-` prefix as invalid; production requires `mesh-chat-`.
 Initialization succeeds before endpoint construction rejects that name, leaving
-the controller's 15-second connect wait to fail. D owns the harness correction
-and regression; production pipe policy and deadlines remain unchanged. Android
-interop and Windows direct work were still running at this checkpoint. There is
-no passing Windows–Android native traffic evidence from this run.
+the controller's 15-second connect wait to fail. D's harness correction and
+regression are integrated as `19dcf00` / `1ba621c`; production pipe policy
+and deadlines remain unchanged. The exact nine-case Windows component gate
+passes after repair (3.55s, zero skips). Android interoperability subsequently
+fails at initialize with `RendezvousUnavailable`, artifact `13706216921`, ZIP
+SHA-256 `a3675eaf674183c49d4e56b285180284166a754d1d83ba5a2a4a5e84b6214fef`.
+All other jobs pass; the final gate fails. There is no passing Windows–Android
+native traffic evidence from this run.
+
+Windows direct artifact `13705073010`, ZIP SHA-256
+`8d8f5399b2abe59c46c342f7a0eb61ad602322da10f978c2517dbcdb469dcf86`,
+independently validates all 25 fabric, ten recovery and 12 setup cases without
+failures/skips. Binary hashes remain runner-reported because this archive contains
+reports, not the binaries.
 
 Subsequent local integration `9cfc3363fb55b8a22a2961fdccf358b65bb2185e`, tree
 `c6018a370cb09f3e24c6afda417846eede62aa45`, includes provider fix `0bfb95d`.

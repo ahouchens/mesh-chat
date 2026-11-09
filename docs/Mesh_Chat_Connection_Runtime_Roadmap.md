@@ -10,6 +10,17 @@ composer state, independent SDK distributions and upgrades, supervisor-owned
 native lifecycle/pairing, and the remaining packaged transport/fault matrix.
 The ledger records exact scope; this is not full M2–M5 completion.
 
+Current public pairing source `787b6aa` passes 79 actor/installed-SDK checks and
+50 TypeScript SDK tests, but its full policy run fails nine inventory checks
+(3,359 pass). Repairs must pass the complete gate. Android exact peer/channel
+disposal and WebRTC effect-owner wiring are integrated with component evidence;
+device cleanup and actual native credential interaction remain unqualified.
+The required normal Windows installed-runtime/EFS producer is wired into CI;
+standalone Android host packaging and the native profile UI remain underway.
+Completed CI `42683615511` at older `21bb99c` fails native interoperability;
+the invalid controller pipe namespace is repaired locally, awaiting a fresh run.
+No default selector or scenario promotion follows from these component passes.
+
 Wave 2 local source `538ba226` passes 2,815 required policy cases and strict
 model/reducer typing. Composer recovery, retained call-operation tickets,
 private inspector bindings, profile retirement and standalone SDK staging are

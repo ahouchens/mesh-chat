@@ -11,7 +11,7 @@ reports. Exact evidence and limits are in the ledger. Wave 2 is activated below.
 Existing human authorization covers continued implementation, integration and
 worker follow-ups without another permission request.
 
-Current integration is `7eefaf3`, including C's reviewed Android provider correction
+Current pairing integration is `787b6aa`, including C's reviewed Android provider correction
 `0bfb95d`. Separate protected catalog authority avoids reading the profile key
 at locked startup; each OS credential confirmation uses its own AndroidX result
 registration. The lead's exact SDK staging and 115 lifecycle/mobile-host checks
@@ -20,23 +20,29 @@ facade; Windows remains unsupported until its native provider exists. D adds the
 three registry cases to required Android execution. Compilation and JVM checks
 do not qualify successful OS credential interaction on a device.
 
-Full CI `42683615511` remains pinned to the earlier `21bb99c` checkpoint. Policy,
-Windows packaged first-contact pairing, 649-Python/ten-App boundary, 47 Android
-cases and Linux direct transport are independently validated. Broad verification
-also passes. Windows native interoperability fails during initialization: the
-controller generated a pipe name outside the unchanged production namespace.
-D repairs that harness mismatch; remaining jobs retain their separate outcomes.
-This run cannot qualify the subsequently integrated provider.
+Full CI `42683615511` completed with a failed gate at the earlier `21bb99c`
+checkpoint. Policy, Windows packaged first-contact pairing, 649-Python/ten-App
+boundary, 47 Android cases and both direct-transport platforms are independently
+validated. Broad verification also passes. Windows native interoperability fails
+because its controller used an invalid pipe namespace; Android then fails
+rendezvous. Repair `19dcf00` is integrated at `1ba621c`, with all nine Windows
+component cases passing. A fresh full run is required for the repaired controller
+and all subsequently integrated production changes.
 
-C's cancellation/terminal hooks and original pairing deadline are integrated;
-59 actor/native cases pass. A's public producer is held until its absolute
-deadline binding and positive parent recovery tests pass. C's normal Windows
-app-owned host and D's independent launcher are integrated; 15 host components,
-ten launcher/staging checks and the exact nine-case Windows component gate pass.
-These explicitly do not qualify EFS, frozen independent-host traffic or SC21.
-B's native effect-scope helpers pass 13 checks; call-site wiring continues.
-C is repairing Android disposal acknowledgment before claiming actual resource
-retirement. The older checkpoints below retain their chronology.
+C's hooks and A's durable public pairing producer are integrated at `787b6aa`.
+Exact SDK staging, 79 actual-actor/installed-consumer checks, 50 TypeScript SDK
+tests and strict model/reducer typing pass. B's WebRTC call-site scope wiring
+passes 61 focused checks. C's native disposal coordinator retains failed peer
+and channel wrappers until exact acknowledgments; all 21 actual-source JVM
+checks pass after integration at `0d4758e`. Actual Android execution is pending.
+D's normal installed Windows bootstrap gate is integrated at `b4d3277`, with
+162 focused checks passing. Its actual frozen/EFS producer remains CI-only;
+these component results do not qualify SC21. The full local policy run at
+`787b6aa` has 3,359 passes and nine failures: eight external-fixture inventory
+path failures and one missing pairing-vector inventory. D's pairing vectors
+are integrated; the inventory-root repair and complete rerun remain required.
+B continues native profile UI and C the standalone Android host. The older
+checkpoints below retain their chronology.
 
 Current Wave 2 CI `42676194199` at `da81565` fails two synthetic run-context
 fixtures and Windows first-time pairing (`approved_path`, both carriers absent).
