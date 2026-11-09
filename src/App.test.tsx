@@ -895,6 +895,8 @@ describe("first-run remote invitation consent", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "Your display name" }), { target: { value: "Alex" } });
     expect((submit as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText(/cannot decrypt or forge/i)).toBeTruthy();
+    fireEvent.submit(submit.closest("form")!);
+    expect(api.coreApiCreateProfile).not.toHaveBeenCalled();
     expect(api.serviceCommand).not.toHaveBeenCalledWith("accept_invitation", expect.anything());
 
     fireEvent.click(screen.getByRole("checkbox", { name: /Connect to this access point/ }));
@@ -905,6 +907,37 @@ describe("first-run remote invitation consent", () => {
       "accept_invitation",
       { invitation: "MESHCHAT2:first-run" },
     ));
+  });
+
+  it("requires explicit first-run I2P consent even if a disabled form is submitted", async () => {
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue({ ...snapshot(), profile: null });
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "preview_invitation") return {
+        display_name: "Taylor", identity_hash: "11".repeat(16), destination_hash: approved.destination_hash,
+        fingerprint: "AAAA BBBB", hints: [], expires_at: 2_000_000_000,
+        i2p_access_point: { b32: B32, label: "Approved relay", relay: "i2p" },
+      };
+      if (command === "create_profile") return profile;
+      if (command === "snapshot") return snapshot([approved]);
+      return {};
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Join a chat" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Invitation" }), { target: { value: "MESHI2P1:first-run" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    const consent = await screen.findByRole("checkbox", { name: /Use this I2P access point/ });
+    fireEvent.change(screen.getByRole("textbox", { name: "Your display name" }), { target: { value: "Alex" } });
+    const submit = screen.getByRole("button", { name: "Connect to Taylor" });
+    fireEvent.submit(submit.closest("form")!);
+    expect(api.coreApiCreateProfile).not.toHaveBeenCalled();
+    expect(api.coreApiAcceptInvitation).not.toHaveBeenCalled();
+    fireEvent.click(consent);
+    fireEvent.click(submit);
+    await waitFor(() => expect(api.coreApiAcceptInvitation).toHaveBeenCalledWith("MESHI2P1:first-run", true));
+    expect(api.coreApiCreateProfile).toHaveBeenCalledWith("Alex", expect.any(String));
   });
 
   it("offers WebRTC join from the first-run welcome and opens it after profile creation", async () => {
