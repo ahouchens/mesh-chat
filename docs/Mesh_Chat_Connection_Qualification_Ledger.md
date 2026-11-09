@@ -11,6 +11,21 @@ defects. These findings are repair inputs, not passing evidence. The lead has
 verified the clean baseline and presence of the native Windows implementation;
 combined Wave 1 execution and full CI qualification are pending.
 
+Lead verification at documentation-only descendant `623a7d0` (production code
+unchanged from the baseline): `pytest service/tests/connection/test_contracts.py`
+passed **25 tests, zero skips**, in 10.62 seconds. A task-local audit executed
+the existing vector-generating test, retained requests listed in the manifest's
+`experimental_component_operations`, serialized them through JSON, and called
+production `parse_request`: **81 accepted, 40 rejected/errored, 121 vectors**.
+This count uses that explicit manifest intersection; it is not the supplied
+audit's 124-vector selection. The failures confirm the schema suite does not
+establish production request acceptance. D owns the committed regression suite.
+
+The GitHub API reports baseline CI run
+[42598859239](https://github.com/ahouchens/mesh-chat/actions/runs/42598859239)
+successful at `435b497`; it contains the Windows desktop host and generic verify
+jobs. This observation is not a new full qualification run or artifact review.
+
 The [coordination inventory](Mesh_Chat_Core_Integration_Coordination.md) records
 owners, cross-boundary requirements and remaining specification obligations.
 Physical qualification remains unavailable and publication is outside scope.
