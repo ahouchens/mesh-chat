@@ -40,6 +40,17 @@ privacy filtering, not actual peer delivery. The probe uses at most two concurre
 existing public queries, two seconds each, retains the original failure and
 requires host shutdown. The Windows timeout's cause remains unproven.
 
+C's correction `f161626` changes only `NativeWebRtcInteropTest.kt`. An actual
+compiled-host JVM control with explicit Android thread doubles reproduces the
+old helper skipping its creator wait when main-thread close reports pending.
+The corrected flow reaches the wait, retains custody after creation unwind, and
+requires disposal acknowledgment before off-main close returns. The edited
+instrumentation source separately compiles against cached production classes.
+It retains existing timing bounds, adds complete zero-accounting assertions,
+and preserves the original exception while attempting all teardown. No production
+code or emulator results change in this local evidence; all affected cases must
+rerun in CI. Temporary ownership of this single test file returns to D.
+
 Lead `72a531937653de41a2368fc4356cc8e91d30aaed`, tree
 `03b31043171811d4c1f7ea42dbabb92de9cab41d`, integrates the tracked group SDK
 import repair `1866660` and reproduced Android runner stdin repair `b59f951`.

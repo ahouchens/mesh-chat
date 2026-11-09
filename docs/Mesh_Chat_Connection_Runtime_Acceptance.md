@@ -34,6 +34,10 @@ cleanup failures prevent overall Android acceptance. Bounded pairing diagnostics
 and supported readiness queries are integrated with 324 focused passes; neither
 component result resolves the timeout or qualifies cross-platform delivery.
 
+The Android helper correction `f161626` preserves the cleanup contract and has
+JVM control-flow and separate compilation evidence only. It is not accepted as
+an emulator repair until all required cases pass at the new checkpoint.
+
 Latest repaired source `32cc1d5` is under full manual qualification
 `42704405112`. Its required local policy passes 3,463 tests and exact Windows
 boundary passes nine tests with no skips. The App/Core boundary at `986815f`

@@ -25,6 +25,11 @@ C owns the narrow cancellation-helper correction. Source `ba2b12f` includes
 safe current pairing failure probes and the supported readiness operation, with
 324 focused passes; the timeout still needs actual platform evidence.
 
+The isolated Android cancellation test correction `f161626` is integrated with
+actual-source JVM control and separate-module compilation. It preserves production
+custody and timing bounds, and adds explicit acknowledged-close/zero-accounting
+checks. Source-bound emulator reexecution remains required.
+
 The current repaired checkpoint is `32cc1d5`, pushed for full manual CI
 `42704405112`. All 3,463 required local policy cases and nine Windows boundary
 cases pass without skips; the App/Core boundary at `986815f` passes 670 Python

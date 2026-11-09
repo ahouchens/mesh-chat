@@ -43,6 +43,15 @@ public query per initialized peer with a two-second timeout before shutdown,
 retains only safe projected state, and preserves the original failure. The lead
 passes 324 focused consumer/matrix/selection cases without skips in 14.46s.
 
+C's isolated instrumentation correction `f161626` is now integrated. It handles
+only the expected main-thread pending signal, retains the existing one-second
+nonblocking and 35-second creator-wait bounds, then requires acknowledged close
+and complete zero native accounting. Helper and outer teardown preserve original
+failures while attempting all cleanup. Actual-source JVM control reproduces the
+old skipped wait; the edited test compiles in a separate Kotlin module. Production
+disposal is unchanged. The exact test path is returned to D after integration;
+all required emulator cases still need the next source-bound CI run.
+
 The shared feature branch is now `32cc1d5765a1ae1a3ad91e752e341b95cbce2e40`
 (tree `cae703b3360004bdd0bf2d0b55793fed7efafe08`). Full manual CI
 `42704405112` is running; duplicate PR run `42704390818` was canceled.
