@@ -44,8 +44,9 @@ class IsolatedBootstrapEngine:
         self.session = object()
         self.network = self.interface = None
         self.closed = False
-        self._temporary = tempfile.TemporaryDirectory(prefix="mesh-bootstrap-", dir=directory)
+        self._temporary = tempfile.TemporaryDirectory(prefix="mb-", dir=directory)
         try:
+            self._check_storage(Path(self._temporary.name))
             self.network = ReticulumNetwork(Path(self._temporary.name), identity, "",
                 NetworkSettings(nearby_discovery=False, lan_fallback=False), self._inbound, self._status)
             self.network.remember_contact(peer_identity, self.peer)
@@ -58,6 +59,21 @@ class IsolatedBootstrapEngine:
         except BaseException:
             self.close()
             raise
+
+    @staticmethod
+    def _check_storage(directory):
+        # Directory creation alone succeeds for Windows paths whose resource
+        # filenames cannot be opened. Detect this before advertising readiness.
+        for relative in ("reticulum/storage/resources", "reticulum/storage/cache/announces"):
+            parent = directory / relative
+            probe = parent / ("0" * 64)
+            try:
+                parent.mkdir(parents=True, exist_ok=True)
+                with probe.open("xb"):
+                    pass
+                probe.unlink()
+            except OSError as exc:
+                raise ValidationError("Bootstrap storage is unavailable") from exc
 
     def _check(self, *, online=False):
         if self.closed or time.monotonic() >= self.deadline or time.time() >= self.expires_at:

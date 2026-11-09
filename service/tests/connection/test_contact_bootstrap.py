@@ -13,9 +13,38 @@ import RNS
 
 from mesh_chat.app_protocol import parse_payload
 from mesh_chat.direct_bootstrap_process import BootstrapProcess
+from mesh_chat.direct_bootstrap_worker import BootstrapWorker
 from mesh_chat.errors import ValidationError
 from mesh_chat.invitations import create_invitation
 from mesh_chat.network import validate_unknown_source_signature
+
+
+@pytest.mark.parametrize("storage_kind", ["resources", "announces"])
+def test_unwritable_bootstrap_storage_retires_worker_before_network_readiness(tmp_path, monkeypatch, storage_kind):
+    import json
+    from mesh_chat import isolated_bootstrap
+
+    original_open = Path.open
+
+    def open_storage(path, mode="r", *args, **kwargs):
+        if mode == "xb" and path.parent.name == storage_kind:
+            raise FileNotFoundError("Resource filename is not writable")
+        return original_open(path, mode, *args, **kwargs)
+
+    def forbidden_network(*args, **kwargs):
+        pytest.fail("Unwritable storage must fail before constructing the network")
+
+    monkeypatch.setattr(Path, "open", open_storage)
+    monkeypatch.setattr(isolated_bootstrap, "ReticulumNetwork", forbidden_network)
+    worker = BootstrapWorker(tmp_path)
+    identities = [RNS.Identity(), RNS.Identity()]
+    response = json.loads(worker.call(json.dumps({"operation": "initialize_contact", "payload": {
+        "private_identity": identities[0].get_private_key().hex(),
+        "peer_identity": identities[1].get_public_key().hex(), "expires_at": int(time.time()) + 90,
+    }})))
+    assert response == {"ok": False, "error": "bootstrap_unavailable"}
+    assert worker.retired and worker.engine is None
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_android_contact_fixture_finishes_with_real_isolated_desktop_worker(tmp_path):
