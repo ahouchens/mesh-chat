@@ -1,4 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Group, Snapshot, Workspace, WorkspaceChannel, WorkspaceMessage } from "./types";
 import { ComposerHostFixture, composerCapabilities } from "./test/composer-host";
@@ -153,6 +154,15 @@ afterEach(() => {
 });
 
 describe("Core application serialization", () => {
+  it("keeps the direct composer usable when Strict Mode replays presentation effects", async () => {
+    render(<StrictMode><App /></StrictMode>);
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Message Taylor" })).toHaveProperty("readOnly", false));
+    const field = screen.getByRole("textbox", { name: "Message Taylor" });
+    fireEvent.change(field, { target: { value: "Strict Mode message" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await screen.findByRole("textbox", { name: "Saved message text" });
+    expect(sends()).toHaveLength(1); expect(directComposer.messageCount).toBe(1);
+  });
   function deferred<T>() {
     let resolve!: (value: T) => void;
     const promise = new Promise<T>((finish) => { resolve = finish; });

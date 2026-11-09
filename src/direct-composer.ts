@@ -155,9 +155,13 @@ export class DirectComposerController {
     });
   }
 
-  freezeAndFlush(): Promise<void> {
+  freeze(): void {
     this.frozen = true;
     this.emit();
+  }
+
+  freezeAndFlush(): Promise<void> {
+    this.freeze();
     return this.serialize(async () => {
       if (!this.composer || !this.dirty || this.pendingUpdate || this.pendingSend || this.recoveryText !== null) return;
       this.pendingUpdate = { expectedRevision: this.composer.revision, updateKey: this.composer.update_key,
