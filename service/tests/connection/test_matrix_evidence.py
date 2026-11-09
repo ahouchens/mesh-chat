@@ -6,6 +6,13 @@ import xml.etree.ElementTree as ET
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def isolate_synthetic_reports_from_live_workflow(monkeypatch):
+    # These component fixtures describe example/mesh run 2, never the live CI
+    # run. A test exercising CI admission opts back in with an explicit context.
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 import connection_matrix as matrix
 import native_runtime_materials as runtime_materials
@@ -183,6 +190,74 @@ def test_required_runtime_materials_cannot_qualify_a_different_or_partial_archiv
         path.write_text(json.dumps(record))
     with pytest.raises((ValueError, FileNotFoundError)):
         matrix.collect(tmp_path, source, tree, ["verification"])
+
+
+def native_interop_reports(directory, source, tree, artifacts, *, workload="full"):
+    from test_ui_core_boundary_interop_controller import interop_reports
+    folder = directory / "native-interop"
+    folder.mkdir()
+    reports = interop_reports(source, tree, artifacts, workload=workload)
+    for role, report in zip(("windows", "android"), reports):
+        (folder / f"native-interop-{role}.json").write_text(json.dumps(report))
+    return reports
+
+
+def test_required_native_interop_revalidates_both_actual_platform_roles_and_tested_images(tmp_path):
+    source, tree, android = fixture(tmp_path)
+    native_interop_reports(tmp_path, source, tree, android["artifacts"])
+    result = matrix.collect(tmp_path, source, tree, ["verification", "android", "native_interop"])
+    native = [item for item in result["suites"] if item["suite"] in {"native_windows_peer", "native_android_peer"}]
+    assert len(native) == 2 and all(item["checks"] == 109 and item["cleanup"] == "passed" for item in native)
+    assert result["native_interop"]["receipt_iterations_per_role"] == 100
+    assert result["native_interop"]["periodic_cold_starts_per_role"] == 10
+    assert set(result["report_sha256"]) >= {"native_interop_windows", "native_interop_android"}
+
+
+def test_quick_native_smoke_is_required_and_cannot_satisfy_full_gate(tmp_path):
+    source, tree, android = fixture(tmp_path)
+    native_interop_reports(tmp_path, source, tree, android["artifacts"], workload="quick")
+    required = ["verification", "android", "native_interop"]
+    result = matrix.collect(tmp_path, source, tree, required, native_workload="quick")
+    native = [item for item in result["suites"] if item["suite"] in {"native_windows_peer", "native_android_peer"}]
+    assert len(native) == 2 and all(item["checks"] == 8 and item["evidence_level"].endswith("_quick_smoke") for item in native)
+    assert result["native_interop"]["receipt_iterations_per_role"] == 5
+    assert result["native_interop"]["periodic_cold_starts_per_role"] == 1
+    assert result["native_interop"]["impairment"] == "not executed"
+    with pytest.raises(ValueError): matrix.collect(tmp_path, source, tree, required)
+
+
+@pytest.mark.parametrize("workload", ["quick", "full"])
+def test_ci_native_context_accepts_exact_run_and_rejects_another_attempt(tmp_path, monkeypatch, workload):
+    source, tree, android = fixture(tmp_path)
+    native_interop_reports(tmp_path, source, tree, android["artifacts"], workload=workload)
+    for key, value in {"GITHUB_ACTIONS": "true", "GITHUB_REPOSITORY": "example/mesh", "GITHUB_REPOSITORY_ID": "1",
+                       "GITHUB_RUN_ID": "2", "GITHUB_RUN_ATTEMPT": "1"}.items():
+        monkeypatch.setenv(key, value)
+    required = ["verification", "android", "native_interop"]
+    assert matrix.collect(tmp_path, source, tree, required, native_workload=workload)["native_interop"]["workload"] == workload
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
+    with pytest.raises(ValueError, match="another workflow run or attempt"):
+        matrix.collect(tmp_path, source, tree, required, native_workload=workload)
+
+
+@pytest.mark.parametrize("fault", ["missing_windows", "missing_android", "other_windows_binary", "other_android_apk", "cross_peer_message", "prior_attempt"])
+def test_gate_cannot_substitute_other_binaries_or_old_run_native_reports(tmp_path, monkeypatch, fault):
+    source, tree, android = fixture(tmp_path)
+    reports = native_interop_reports(tmp_path, source, tree, android["artifacts"])
+    role = "windows" if fault in {"missing_windows", "other_windows_binary"} else "android"
+    path = tmp_path / f"native-interop/native-interop-{role}.json"
+    record = json.loads(path.read_text())
+    if fault.startswith("missing_"): path.unlink()
+    else:
+        if fault == "other_windows_binary": record["artifacts"]["sidecar_sha256"] = "1" * 64
+        elif fault == "other_android_apk": record["artifacts"][next(iter(record["artifacts"]))] = "1" * 64
+        elif fault == "cross_peer_message": record["execution"]["scenarios"][0]["messages"][0]["inbound"] = "1" * 64
+        else:
+            for key, value in {"GITHUB_ACTIONS": "true", "GITHUB_REPOSITORY": "example/mesh", "GITHUB_REPOSITORY_ID": "1",
+                               "GITHUB_RUN_ID": "2", "GITHUB_RUN_ATTEMPT": "2"}.items(): monkeypatch.setenv(key, value)
+        path.write_text(json.dumps(record))
+    with pytest.raises((ValueError, FileNotFoundError)):
+        matrix.collect(tmp_path, source, tree, ["verification", "android", "native_interop"])
 
 
 def test_android_report_without_typed_app_bridge_execution_cannot_qualify(tmp_path):

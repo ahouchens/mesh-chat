@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { admitCoreRequest, ProfileRetiredError, type CoreRequestAdmission } from "./core-admission";
 import { onBackButtonPress } from "@tauri-apps/api/app";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
@@ -91,6 +92,7 @@ export class ServiceCommandError extends Error {
 
 function normalizedServiceError(reason: unknown): ServiceCommandError {
   if (reason instanceof ServiceCommandError) return reason;
+  if (reason instanceof ProfileRetiredError) return new ServiceCommandError(reason.code);
   const text = reason instanceof Error ? reason.message : String(reason);
   try {
     const parsed = JSON.parse(text) as { code?: unknown; details?: unknown; retry_after_ms?: unknown };
@@ -140,17 +142,18 @@ export async function initializeService(displayName?: string): Promise<Snapshot>
 export async function serviceCommand<T>(
   command: string,
   payload: Record<string, unknown> = {},
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<T> {
   try {
     if (command === "snapshot") {
-      return await coreApiRequest<T>("application.snapshot");
+      return await admit(() => coreApiRequest<T>("application.snapshot"));
     }
-    return await coreApiRequest<T>("native.command", { command, payload });
+    return await admit(() => coreApiRequest<T>("native.command", { command, payload }));
   } catch (reason) {
     if (!String(reason).includes("core_api_unavailable")) throw reason;
   }
   try {
-    return await invoke<T>("service_command", { command, payload });
+    return await admit(() => invoke<T>("service_command", { command, payload }));
   } catch (reason) {
     throw normalizedServiceError(reason);
   }
@@ -161,6 +164,7 @@ export async function coreApiCapabilities(): Promise<{
   api_minor: number;
   stability: string;
   operations: string[];
+  optional_keyed_operations?: string[];
   profiles: string[];
   limits?: Record<string, number>;
 }> {
@@ -181,8 +185,9 @@ export async function coreApiSendMessage(
   destination: string,
   text: string,
   idempotencyKey: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<unknown> {
-  return invokeCoreCommand("core_api_send_message", { destination, text, idempotencyKey });
+  return admit(() => invokeCoreCommand("core_api_send_message", { destination, text, idempotencyKey }));
 }
 
 export async function coreApiRequest<T>(
@@ -217,8 +222,9 @@ export async function coreApiCreateInvitation(
 
 export async function coreApiCreateProfile(
   displayName: string, idempotencyKey: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<Record<string, unknown>> {
-  return await coreApiRequest("profile.create", { display_name: displayName }, idempotencyKey) as Record<string, unknown>;
+  return await admit(() => coreApiRequest("profile.create", { display_name: displayName }, idempotencyKey)) as Record<string, unknown>;
 }
 
 type BootstrapPreviews = {
@@ -261,10 +267,11 @@ function validBootstrapPreview(kind: keyof BootstrapPreviews, preview: unknown):
 
 export async function coreApiCreateWorkspace(
   name: string, description: string, idempotencyKey: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<Record<string, unknown>> {
   const profile = await coreApiProfile();
-  return await coreApiRequest("workspace.create",
-    { profile: profile.profile, name, description }, idempotencyKey) as Record<string, unknown>;
+  return await admit(() => coreApiRequest("workspace.create",
+    { profile: profile.profile, name, description }, idempotencyKey)) as Record<string, unknown>;
 }
 
 export async function coreApiSnapshot(): Promise<Record<string, unknown>> {
@@ -282,17 +289,18 @@ export async function coreApiPreviewInvitation(
 export async function coreApiAcceptInvitation(
   document: string,
   i2pConsent = false,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<{ profile: string; peer: string; trust: string }> {
   const profile = await coreApiProfile();
-  return coreApiRequest("peer.pairing_accept", {
+  return admit(() => coreApiRequest("peer.pairing_accept", {
     profile: profile.profile,
     document,
     i2p_consent: i2pConsent,
-  });
+  }));
 }
 
-export async function coreApiDraftSet(destination: string, text: string): Promise<unknown> {
-  return invokeCoreCommand("core_api_draft_set", { destination, text });
+export async function coreApiDraftSet(destination: string, text: string, admit: CoreRequestAdmission = admitCoreRequest): Promise<unknown> {
+  return admit(() => invokeCoreCommand("core_api_draft_set", { destination, text }));
 }
 
 export async function coreApiDraftGet(destination: string): Promise<unknown> {
@@ -309,12 +317,13 @@ export async function coreApiCallSettings(): Promise<Record<string, unknown>> {
 
 export async function coreApiUpdateCallSettings(
   settings: Record<string, unknown>,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<Record<string, unknown>> {
   const profile = await coreApiProfile();
-  const result = await coreApiRequest("call.settings_update", {
+  const result = await admit(() => coreApiRequest("call.settings_update", {
     profile: profile.profile,
     settings,
-  }) as { settings?: Record<string, unknown> };
+  })) as { settings?: Record<string, unknown> };
   return result.settings ?? {};
 }
 
@@ -322,10 +331,11 @@ export async function coreApiCallControl(
   action: string,
   params: Record<string, unknown>,
   idempotencyKey: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<Record<string, unknown>> {
   const profile = await coreApiProfile();
-  const result = await coreApiRequest<{ result: Record<string, unknown> }>("call.control",
-    { profile: profile.profile, action, ...params }, idempotencyKey);
+  const result = await admit(() => coreApiRequest<{ result: Record<string, unknown> }>("call.control",
+    { profile: profile.profile, action, ...params }, idempotencyKey));
   return result.result;
 }
 
@@ -356,8 +366,9 @@ export async function loadCallSettings(): Promise<Record<string, unknown>> {
 
 export async function saveCallSettings(
   settings: Record<string, unknown>,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<Record<string, unknown>> {
-  return await coreApiUpdateCallSettings(settings);
+  return await coreApiUpdateCallSettings(settings, admit);
 }
 
 export async function coreApiNetworkSettings(): Promise<Record<string, unknown>> {
@@ -370,12 +381,13 @@ export async function coreApiNetworkSettings(): Promise<Record<string, unknown>>
 
 export async function coreApiUpdateNetworkSettings(
   settings: Record<string, unknown>,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<Record<string, unknown>> {
   const profile = await coreApiProfile();
-  const result = await coreApiRequest("settings.update", {
+  const result = await admit(() => coreApiRequest("settings.update", {
     profile: profile.profile,
     settings,
-  }) as { settings?: Record<string, unknown> };
+  })) as { settings?: Record<string, unknown> };
   return result.settings ?? {};
 }
 
@@ -391,14 +403,16 @@ export async function loadNetworkSettings(): Promise<Record<string, unknown>> {
 
 export async function saveNetworkSettings(
   settings: Record<string, unknown>,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<Record<string, unknown>> {
-  return await coreApiUpdateNetworkSettings(settings);
+  return await coreApiUpdateNetworkSettings(settings, admit);
 }
 
 export async function coreApiCreateGroup(
   title: string,
   postingPolicy: "members" | "owner_admins",
   memberDestinations: string[],
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<{ group: string; name: string; posting_policy: string }> {
   const profile = await coreApiProfile();
   const members: string[] = [];
@@ -406,38 +420,40 @@ export async function coreApiCreateGroup(
     const target = await coreApiPeerForDestination(destination);
     members.push(target.peer);
   }
-  return coreApiRequest("group.create", {
+  return admit(() => coreApiRequest("group.create", {
     profile: profile.profile,
     title,
     posting_policy: postingPolicy,
     members,
-  });
+  }));
 }
 
-export async function coreApiSendGroupMessage(group: string, text: string): Promise<unknown> {
+export async function coreApiSendGroupMessage(group: string, text: string, admit: CoreRequestAdmission = admitCoreRequest): Promise<unknown> {
   const profile = await coreApiProfile();
-  return coreApiRequest("group.message_enqueue", {
+  return admit(() => coreApiRequest("group.message_enqueue", {
     profile: profile.profile,
     group,
     text,
-  });
+  }));
 }
 
 export async function coreApiSubmitWorkspacePrompt(
   promptId: string, idempotencyKey: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<unknown> {
   const profile = await coreApiProfile();
-  return coreApiRequest("workspace.join_prompt",
-    { profile: profile.profile, prompt: promptId }, idempotencyKey);
+  return admit(() => coreApiRequest("workspace.join_prompt",
+    { profile: profile.profile, prompt: promptId }, idempotencyKey));
 }
 
 export async function coreApiJoinWorkspace(
   document: string, idempotencyKey: string, i2pConsent = false,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<unknown> {
   const profile = await coreApiProfile();
-  return coreApiRequest("workspace.join",
+  return admit(() => coreApiRequest("workspace.join",
     { profile: profile.profile, document,
-      ...(i2pConsent ? { i2p_consent: true } : {}) }, idempotencyKey);
+      ...(i2pConsent ? { i2p_consent: true } : {}) }, idempotencyKey));
 }
 
 export async function coreApiPreviewWorkspaceInvitation(
@@ -450,10 +466,11 @@ export async function coreApiPreviewWorkspaceInvitation(
 
 export async function coreApiCreateWorkspaceInvitation(
   workspace: string, connection: Record<string, unknown>, idempotencyKey: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<unknown> {
   const profile = await coreApiProfile();
-  return coreApiRequest("workspace.invitation_create",
-    { profile: profile.profile, workspace, ...connection }, idempotencyKey);
+  return admit(() => coreApiRequest("workspace.invitation_create",
+    { profile: profile.profile, workspace, ...connection }, idempotencyKey));
 }
 
 export async function coreApiWorkspaceJoinDecision(
@@ -461,13 +478,14 @@ export async function coreApiWorkspaceJoinDecision(
   request: string,
   accept: boolean,
   idempotencyKey: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<unknown> {
   const profile = await coreApiProfile();
-  return coreApiRequest(
+  return admit(() => coreApiRequest(
     accept ? "workspace.join_approve" : "workspace.join_decline",
     { profile: profile.profile, workspace, request },
     idempotencyKey,
-  );
+  ));
 }
 
 export async function coreApiCreateWorkspaceChannel(
@@ -477,6 +495,7 @@ export async function coreApiCreateWorkspaceChannel(
   visibility: "public" | "private",
   members: string[],
   idempotencyKey: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<{ channel: string; name: string }> {
   const profile = await coreApiProfile();
   const params: Record<string, unknown> = {
@@ -486,14 +505,14 @@ export async function coreApiCreateWorkspaceChannel(
     visibility,
   };
   if (visibility === "private" && members.length) params.members = members;
-  const created = await coreApiRequest<{ channel: string; name: string }>(
-    "workspace.channel_create", params, idempotencyKey);
+  const created = await admit(() => coreApiRequest<{ channel: string; name: string }>(
+    "workspace.channel_create", params, idempotencyKey));
   if (topic) {
-    await coreApiRequest(
+    await admit(() => coreApiRequest(
       "workspace.channel_update",
       { profile: profile.profile, workspace, channel: created.channel, name, topic },
       idempotencyKey + ":topic",
-    );
+    ));
   }
   return created;
 }
@@ -501,13 +520,14 @@ export async function coreApiCreateWorkspaceChannel(
 export async function coreApiSubmitDeviceLink(
   document: string,
   idempotencyKey: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<NonNullable<Snapshot["workspaces"]>[number]> {
   const profile = await coreApiProfile();
-  const submitted = await coreApiRequest<{ workspace: string; name: string }>(
+  const submitted = await admit(() => coreApiRequest<{ workspace: string; name: string }>(
     "workspace.device_link_submit",
     { profile: profile.profile, document },
     idempotencyKey,
-  );
+  ));
   const snapshot = await coreApiSnapshot() as unknown as Snapshot;
   const workspace = (snapshot.workspaces ?? []).find((item) => item.name === submitted.name);
   if (!workspace) throw new Error("workspace_not_found");
@@ -517,13 +537,14 @@ export async function coreApiSubmitDeviceLink(
 export async function coreApiCreateWorkspaceDeviceLink(
   workspace: string,
   idempotencyKey: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<{ id: string; workspace_id: string; link: string; text: string; value: string; expires_at: number }> {
   const profile = await coreApiProfile();
-  const created = await coreApiRequest<{ document: string; link: string; expires_at: number }>(
+  const created = await admit(() => coreApiRequest<{ document: string; link: string; expires_at: number }>(
     "workspace.device_link_create",
     { profile: profile.profile, workspace },
     idempotencyKey,
-  );
+  ));
   return {
     id: created.link,
     workspace_id: workspace,
@@ -539,12 +560,13 @@ export async function coreApiWorkspaceConnection(
   action: string,
   params: Record<string, unknown>,
   idempotencyKey: string = newOperationId(),
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<Record<string, unknown>> {
   const profile = await coreApiProfile();
   const payload: Record<string, unknown> = { profile: profile.profile, action, ...params };
   if (workspace) payload.workspace = workspace;
-  const result = await coreApiRequest("workspace.connection", payload,
-    idempotencyKey) as { result?: Record<string, unknown> };
+  const result = await admit(() => coreApiRequest("workspace.connection", payload,
+    idempotencyKey)) as { result?: Record<string, unknown> };
   return result.result ?? {};
 }
 
@@ -553,11 +575,12 @@ export async function coreApiWorkspaceHistory(
   action: "status" | "start" | "cancel" | "prune" | "revisions" | "tombstones" | "hide_message" | "hide_direct",
   params: Record<string, unknown>,
   idempotencyKey: string = newOperationId(),
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<Record<string, unknown>> {
   const profile = await coreApiProfile();
-  const result = await coreApiRequest("workspace.history",
+  const result = await admit(() => coreApiRequest("workspace.history",
     { profile: profile.profile, workspace, action, ...params },
-    idempotencyKey) as { result?: Record<string, unknown> };
+    idempotencyKey)) as { result?: Record<string, unknown> };
   return result.result ?? {};
 }
 
@@ -566,10 +589,11 @@ export async function coreApiWorkspaceAccessRecommendation(
   action: "list" | "create" | "send" | "preview" | "preview_by_id" | "apply" | "apply_by_id",
   params: Record<string, unknown>,
   idempotencyKey: string = newOperationId(),
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<Record<string, unknown>> {
   const profile = await coreApiProfile();
-  const result = await coreApiRequest("workspace.access_recommendation",
-    { profile: profile.profile, workspace, action, ...params }, idempotencyKey) as { result?: Record<string, unknown> };
+  const result = await admit(() => coreApiRequest("workspace.access_recommendation",
+    { profile: profile.profile, workspace, action, ...params }, idempotencyKey)) as { result?: Record<string, unknown> };
   return result.result ?? {};
 }
 
@@ -586,36 +610,40 @@ export async function coreApiRuntimeMutate(
   action: "background_set" | "notification_previews" | "notification_open",
   params: Record<string, unknown>,
   idempotencyKey: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<Record<string, unknown>> {
   const profile = await coreApiProfile();
-  const result = await coreApiRequest("runtime.mutate",
-    { profile: profile.profile, action, ...params }, idempotencyKey) as { result?: Record<string, unknown> };
+  const result = await admit(() => coreApiRequest("runtime.mutate",
+    { profile: profile.profile, action, ...params }, idempotencyKey)) as { result?: Record<string, unknown> };
   return result.result ?? {};
 }
 
 export async function coreApiRemoveWorkspaceMember(
   workspace: string, member: string, idempotencyKey: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<unknown> {
   const profile = await coreApiProfile();
-  return coreApiRequest("workspace.member_remove",
-    { profile: profile.profile, workspace, member }, idempotencyKey);
+  return admit(() => coreApiRequest("workspace.member_remove",
+    { profile: profile.profile, workspace, member }, idempotencyKey));
 }
 
 export async function coreApiWorkspaceChannelState(
   workspace: string, action: "subscribe" | "mute" | "leave" | "sync",
   params: Record<string, unknown>, idempotencyKey: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<unknown> {
   const profile = await coreApiProfile();
-  return coreApiRequest("workspace.channel_state",
-    { profile: profile.profile, workspace, action, ...params }, idempotencyKey);
+  return admit(() => coreApiRequest("workspace.channel_state",
+    { profile: profile.profile, workspace, action, ...params }, idempotencyKey));
 }
 
 export async function coreApiRecoverWorkspaceChannel(
   workspace: string, channel: string, idempotencyKey: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<unknown> {
   const profile = await coreApiProfile();
-  return coreApiRequest("workspace.channel_recover",
-    { profile: profile.profile, workspace, channel }, idempotencyKey);
+  return admit(() => coreApiRequest("workspace.channel_recover",
+    { profile: profile.profile, workspace, channel }, idempotencyKey));
 }
 
 export async function coreApiWorkspaceSnapshot(): Promise<Record<string, unknown>> {
@@ -638,54 +666,60 @@ export async function coreApiTimelineMutation(
   action: "thread_reply" | "thread_read" | "mentions_read" | "notification_preference" | "workspace_read" | "direct_read" | "channel_message" | "direct_message" | "message_edit" | "message_delete" | "reaction_set",
   params: Record<string, unknown>,
   idempotencyKey: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<Record<string, unknown>> {
   const profile = await coreApiProfile();
-  const result = await coreApiRequest("workspace.timeline_mutation",
-    { profile: profile.profile, workspace, action, ...params }, idempotencyKey) as { result?: Record<string, unknown> };
+  const result = await admit(() => coreApiRequest("workspace.timeline_mutation",
+    { profile: profile.profile, workspace, action, ...params }, idempotencyKey)) as { result?: Record<string, unknown> };
   return result.result ?? {};
 }
 
 export async function coreApiWorkspaceInvitationRevoke(
   workspace: string, invitation: string, idempotencyKey: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<unknown> {
   const profile = await coreApiProfile();
-  return coreApiRequest("workspace.invitation_revoke",
-    { profile: profile.profile, workspace, invitation }, idempotencyKey);
+  return admit(() => coreApiRequest("workspace.invitation_revoke",
+    { profile: profile.profile, workspace, invitation }, idempotencyKey));
 }
 
 export async function coreApiAdmissionGrantList(
   workspace: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<{ grants: AdmissionGrant[] }> {
   const profile = await coreApiProfile();
-  return coreApiRequest("workspace.admission_grant_list",
-    { profile: profile.profile, workspace }) as Promise<{ grants: AdmissionGrant[] }>;
+  return admit(() => coreApiRequest("workspace.admission_grant_list",
+    { profile: profile.profile, workspace })) as Promise<{ grants: AdmissionGrant[] }>;
 }
 
 export async function coreApiAdmissionGrantCreate(
   workspace: string, member: string, device: string, v2Ready: boolean,
   idempotencyKey: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<unknown> {
   const profile = await coreApiProfile();
-  return coreApiRequest("workspace.admission_grant_create", {
+  return admit(() => coreApiRequest("workspace.admission_grant_create", {
     profile: profile.profile, workspace, admin_member: member, admin_device: device,
     max_admissions: 5, lifetime_days: 7, v2_ready: v2Ready,
-  }, idempotencyKey);
+  }, idempotencyKey));
 }
 
 export async function coreApiAdmissionGrantAccept(
   workspace: string, grant: string, idempotencyKey: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<unknown> {
   const profile = await coreApiProfile();
-  return coreApiRequest("workspace.admission_grant_accept",
-    { profile: profile.profile, workspace, grant }, idempotencyKey);
+  return admit(() => coreApiRequest("workspace.admission_grant_accept",
+    { profile: profile.profile, workspace, grant }, idempotencyKey));
 }
 
 export async function coreApiAdmissionGrantEnd(
   workspace: string, grant: string, idempotencyKey: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<unknown> {
   const profile = await coreApiProfile();
-  return coreApiRequest("workspace.admission_grant_end",
-    { profile: profile.profile, workspace, grant }, idempotencyKey);
+  return admit(() => coreApiRequest("workspace.admission_grant_end",
+    { profile: profile.profile, workspace, grant }, idempotencyKey));
 }
 
 export async function coreApiWorkspaceAdminSubmit(
@@ -695,6 +729,7 @@ export async function coreApiWorkspaceAdminSubmit(
   requestedRole: "admin" | "member" | null,
   note: string,
   idempotencyKey: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<unknown> {
   const profile = await coreApiProfile();
   const params: Record<string, unknown> = {
@@ -703,23 +738,25 @@ export async function coreApiWorkspaceAdminSubmit(
   if (targetMember) params.target_member = targetMember;
   if (requestedRole) params.requested_role = requestedRole;
   if (note) params.note = note;
-  return coreApiRequest("workspace.admin_request_submit", params, idempotencyKey);
+  return admit(() => coreApiRequest("workspace.admin_request_submit", params, idempotencyKey));
 }
 
 export async function coreApiWorkspaceDisplayNameRequest(
   workspace: string, displayName: string, idempotencyKey: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<unknown> {
   const profile = await coreApiProfile();
-  return coreApiRequest("workspace.display_name_request",
-    { profile: profile.profile, workspace, display_name: displayName }, idempotencyKey);
+  return admit(() => coreApiRequest("workspace.display_name_request",
+    { profile: profile.profile, workspace, display_name: displayName }, idempotencyKey));
 }
 
 export async function coreApiWorkspaceReadHintSync(
   workspace: string, enabled: boolean, idempotencyKey: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<unknown> {
   const profile = await coreApiProfile();
-  return coreApiRequest("workspace.read_hint_sync",
-    { profile: profile.profile, workspace, enabled }, idempotencyKey);
+  return admit(() => coreApiRequest("workspace.read_hint_sync",
+    { profile: profile.profile, workspace, enabled }, idempotencyKey));
 }
 
 export async function coreApiWorkspaceAuthorityOffer(
@@ -729,16 +766,17 @@ export async function coreApiWorkspaceAuthorityOffer(
   successorDevice: string,
   outgoingRole: "admin" | "member" | null,
   idempotencyKey: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<unknown> {
   const profile = await coreApiProfile();
-  return coreApiRequest("workspace.authority_offer", {
+  return admit(() => coreApiRequest("workspace.authority_offer", {
     profile: profile.profile,
     workspace,
     transition_kind: transitionKind,
     successor_member: successorMember,
     successor_device: successorDevice,
     outgoing_owner_role: outgoingRole,
-  }, idempotencyKey);
+  }, idempotencyKey));
 }
 
 export async function coreApiWorkspaceAuthority(
@@ -746,25 +784,27 @@ export async function coreApiWorkspaceAuthority(
   transition: string,
   action: "accept" | "finalize",
   idempotencyKey: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<unknown> {
   const profile = await coreApiProfile();
-  return coreApiRequest(
+  return admit(() => coreApiRequest(
     action === "accept" ? "workspace.authority_accept" : "workspace.authority_finalize",
     { profile: profile.profile, workspace, transition },
     idempotencyKey,
-  );
+  ));
 }
 
 export async function coreApiReportAuthorityLoss(
   workspace: string,
   idempotencyKey: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<unknown> {
   const profile = await coreApiProfile();
-  return coreApiRequest(
+  return admit(() => coreApiRequest(
     "workspace.authority_loss_report",
     { profile: profile.profile, workspace },
     idempotencyKey,
-  );
+  ));
 }
 
 export async function coreApiWorkspaceLifecycle(
@@ -772,13 +812,14 @@ export async function coreApiWorkspaceLifecycle(
   action: "close" | "leave" | "remove",
   idempotencyKey: string,
   confirmation?: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<unknown> {
   const profile = await coreApiProfile();
   const operation = action === "close" ? "workspace.close"
     : action === "leave" ? "workspace.leave" : "workspace.remove_data";
   const params: Record<string, unknown> = { profile: profile.profile, workspace };
   if (action === "remove") params.confirmation = confirmation ?? "";
-  return coreApiRequest(operation, params, idempotencyKey);
+  return admit(() => coreApiRequest(operation, params, idempotencyKey));
 }
 
 export async function coreApiWorkspaceAdminRequest(
@@ -786,13 +827,14 @@ export async function coreApiWorkspaceAdminRequest(
   request: string,
   action: "approve" | "decline" | "cancel" | "dismiss",
   idempotencyKey: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<unknown> {
   const profile = await coreApiProfile();
-  return coreApiRequest(
+  return admit(() => coreApiRequest(
     "workspace.admin_request_" + action,
     { profile: profile.profile, workspace, request },
     idempotencyKey,
-  );
+  ));
 }
 
 export async function coreApiWorkspaceMetadata(
@@ -800,39 +842,42 @@ export async function coreApiWorkspaceMetadata(
   name: string,
   description: string,
   idempotencyKey: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<unknown> {
   const profile = await coreApiProfile();
-  return coreApiRequest(
+  return admit(() => coreApiRequest(
     "workspace.metadata_update",
     { profile: profile.profile, workspace, name, description },
     idempotencyKey,
-  );
+  ));
 }
 
 export async function coreApiWorkspaceRetention(
   workspace: string,
   retentionDays: number | null,
   idempotencyKey: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<unknown> {
   const profile = await coreApiProfile();
-  return coreApiRequest(
+  return admit(() => coreApiRequest(
     "workspace.retention_update",
     { profile: profile.profile, workspace, retention_days: retentionDays },
     idempotencyKey,
-  );
+  ));
 }
 
 export async function coreApiRequestDeviceRemoval(
   workspace: string,
   device: string,
   idempotencyKey: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<unknown> {
   const profile = await coreApiProfile();
-  return coreApiRequest(
+  return admit(() => coreApiRequest(
     "workspace.device_removal_request",
     { profile: profile.profile, workspace, device },
     idempotencyKey,
-  );
+  ));
 }
 
 export async function coreApiDecideDeviceRemoval(
@@ -840,13 +885,14 @@ export async function coreApiDecideDeviceRemoval(
   request: string,
   approve: boolean,
   idempotencyKey: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<unknown> {
   const profile = await coreApiProfile();
-  return coreApiRequest(
+  return admit(() => coreApiRequest(
     approve ? "workspace.device_removal_approve" : "workspace.device_removal_decline",
     { profile: profile.profile, workspace, request },
     idempotencyKey,
-  );
+  ));
 }
 
 export async function coreApiWorkspaceDeviceLinkDecision(
@@ -854,13 +900,14 @@ export async function coreApiWorkspaceDeviceLinkDecision(
   request: string,
   approve: boolean,
   idempotencyKey: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<unknown> {
   const profile = await coreApiProfile();
-  return coreApiRequest(
+  return admit(() => coreApiRequest(
     approve ? "workspace.device_link_approve" : "workspace.device_link_decline",
     { profile: profile.profile, workspace, request },
     idempotencyKey,
-  );
+  ));
 }
 
 export async function coreApiUpdateChannelMembers(
@@ -868,13 +915,14 @@ export async function coreApiUpdateChannelMembers(
   channel: string,
   members: string[],
   idempotencyKey: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<unknown> {
   const profile = await coreApiProfile();
-  return coreApiRequest(
+  return admit(() => coreApiRequest(
     "workspace.channel_members_update",
     { profile: profile.profile, workspace, channel, members },
     idempotencyKey,
-  );
+  ));
 }
 
 export async function coreApiOfferChannelTransfer(
@@ -882,26 +930,28 @@ export async function coreApiOfferChannelTransfer(
   channel: string,
   member: string,
   idempotencyKey: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<unknown> {
   const profile = await coreApiProfile();
-  return coreApiRequest(
+  return admit(() => coreApiRequest(
     "workspace.channel_transfer_offer",
     { profile: profile.profile, workspace, channel, member },
     idempotencyKey,
-  );
+  ));
 }
 
 export async function coreApiAcceptChannelTransfer(
   workspace: string,
   channel: string,
   idempotencyKey: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<unknown> {
   const profile = await coreApiProfile();
-  return coreApiRequest(
+  return admit(() => coreApiRequest(
     "workspace.channel_transfer_accept",
     { profile: profile.profile, workspace, channel },
     idempotencyKey,
-  );
+  ));
 }
 
 export async function coreApiUpdateWorkspaceChannel(
@@ -911,20 +961,21 @@ export async function coreApiUpdateWorkspaceChannel(
   topic: string,
   archived: boolean,
   idempotencyKey: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<unknown> {
   const profile = await coreApiProfile();
   if (archived) {
-    return coreApiRequest(
+    return admit(() => coreApiRequest(
       "workspace.channel_archive",
       { profile: profile.profile, workspace, channel },
       idempotencyKey,
-    );
+    ));
   }
-  return coreApiRequest(
+  return admit(() => coreApiRequest(
     "workspace.channel_update",
     { profile: profile.profile, workspace, channel, name, topic },
     idempotencyKey,
-  );
+  ));
 }
 
 export async function coreApiWorkspacePolicy(
@@ -933,9 +984,10 @@ export async function coreApiWorkspacePolicy(
   posting: string,
   invitationRequests: string,
   idempotencyKey: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<unknown> {
   const profile = await coreApiProfile();
-  return coreApiRequest(
+  return admit(() => coreApiRequest(
     "workspace.policy_update",
     {
       profile: profile.profile,
@@ -945,7 +997,7 @@ export async function coreApiWorkspacePolicy(
       invitation_requests: invitationRequests,
     },
     idempotencyKey,
-  );
+  ));
 }
 
 export async function coreApiWorkspaceMemberRole(
@@ -953,46 +1005,51 @@ export async function coreApiWorkspaceMemberRole(
   member: string,
   role: "member" | "admin",
   idempotencyKey: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<unknown> {
   const profile = await coreApiProfile();
-  return coreApiRequest(
+  return admit(() => coreApiRequest(
     "workspace.member_role",
     { profile: profile.profile, workspace, member, role },
     idempotencyKey,
-  );
+  ));
 }
 
 export async function coreApiConnectionDocument(
   action: "preview_direct" | "create_reply" | "preview_reply",
   params: Record<string, unknown>,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<Record<string, unknown>> {
   const profile = await coreApiProfile();
-  return await coreApiRequest("connection.document",
-    { profile: profile.profile, action, ...params }) as Record<string, unknown>;
+  return await admit(() => coreApiRequest("connection.document",
+    { profile: profile.profile, action, ...params })) as Record<string, unknown>;
 }
 
 export async function coreApiConnectionSupport(
   action: "help" | "diagnostics" | "clear", params: Record<string, unknown> = {},
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<Record<string, unknown>> {
   const profile = await coreApiProfile();
-  return await coreApiRequest("connection.support",
-    { profile: profile.profile, action, ...params }) as Record<string, unknown>;
+  return await admit(() => coreApiRequest("connection.support",
+    { profile: profile.profile, action, ...params })) as Record<string, unknown>;
 }
 
 export async function coreApiRecoveryTransfer(
   action: "export" | "import", params: Record<string, unknown>,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<Record<string, unknown>> {
   const profile = await coreApiProfile();
-  return await coreApiRequest("recovery.transfer",
-    { profile: profile.profile, action, ...params }) as Record<string, unknown>;
+  return await admit(() => coreApiRequest("recovery.transfer",
+    { profile: profile.profile, action, ...params })) as Record<string, unknown>;
 }
 
 export async function coreApiContactInvitation(
   action: "receive" | "decide", params: Record<string, unknown>,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<Record<string, unknown>> {
   const profile = await coreApiProfile();
-  const result = await coreApiRequest("contact.invitation",
-    { profile: profile.profile, action, ...params }) as {
+  const result = await admit(() => coreApiRequest("contact.invitation",
+    { profile: profile.profile, action, ...params })) as {
       contact_invitation?: Record<string, unknown> };
   return result.contact_invitation ?? {};
 }
@@ -1007,30 +1064,33 @@ export async function coreApiLinkPreview(
 
 export async function coreApiDecidePeerRequest(
   destination: string, accept: boolean,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<unknown> {
   const target = await coreApiPeerForDestination(destination);
-  return coreApiRequest("peer.decide",
-    { profile: target.profile, peer: target.peer, accept });
+  return admit(() => coreApiRequest("peer.decide",
+    { profile: target.profile, peer: target.peer, accept }));
 }
 
 export async function coreApiConversationReaction(
   kind: "direct" | "group", targetId: string, messageId: string,
   emoji: string, active: boolean,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<Record<string, unknown>> {
   const profile = await coreApiProfile();
-  const result = await coreApiRequest("conversation.mutate", {
+  const result = await admit(() => coreApiRequest("conversation.mutate", {
     profile: profile.profile, action: "reaction_set", kind,
     target_id: targetId, message_id: messageId, emoji, active,
-  }) as { conversation?: Record<string, unknown> };
+  })) as { conversation?: Record<string, unknown> };
   return result.conversation ?? {};
 }
 
 export async function coreApiConversation(
   action: "delete" | "restore", kind: "direct" | "group", targetId: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<Record<string, unknown>> {
   const profile = await coreApiProfile();
-  const result = await coreApiRequest("conversation.mutate",
-    { profile: profile.profile, action, kind, target_id: targetId }) as {
+  const result = await admit(() => coreApiRequest("conversation.mutate",
+    { profile: profile.profile, action, kind, target_id: targetId })) as {
       conversation?: Record<string, unknown> };
   return result.conversation ?? {};
 }
@@ -1038,38 +1098,42 @@ export async function coreApiConversation(
 export async function coreApiUpdatePeer(
   destination: string, action: "rename" | "verify" | "unverify",
   displayName?: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<unknown> {
   const target = await coreApiPeerForDestination(destination);
-  return coreApiRequest("peer.update", {
+  return admit(() => coreApiRequest("peer.update", {
     profile: target.profile, peer: target.peer, action,
     ...(displayName !== undefined ? { display_name: displayName } : {}),
-  });
+  }));
 }
 
 export async function coreApiRouteUpdate(
   action: "preview" | "apply" | "create", params: Record<string, unknown>,
   idempotencyKey: string = crypto.randomUUID(),
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<Record<string, unknown>> {
   const profile = await coreApiProfile();
-  const result = await coreApiRequest("route.update",
-    { profile: profile.profile, action, ...params }, idempotencyKey) as { route?: Record<string, unknown> };
+  const result = await admit(() => coreApiRequest("route.update",
+    { profile: profile.profile, action, ...params }, idempotencyKey)) as { route?: Record<string, unknown> };
   return result.route ?? {};
 }
 
 export async function coreApiOpenWorkspaceDirect(
   workspace: string, member: string, idempotencyKey: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<unknown> {
   const profile = await coreApiProfile();
-  return coreApiRequest("workspace.direct_open",
-    { profile: profile.profile, workspace, member }, idempotencyKey);
+  return admit(() => coreApiRequest("workspace.direct_open",
+    { profile: profile.profile, workspace, member }, idempotencyKey));
 }
 
 export async function coreApiWorkspaceDisplayNameDecision(
   workspace: string, request: string, approve: boolean, idempotencyKey: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<unknown> {
   const profile = await coreApiProfile();
-  return coreApiRequest("workspace.display_name_decide",
-    { profile: profile.profile, workspace, request, approve }, idempotencyKey);
+  return admit(() => coreApiRequest("workspace.display_name_decide",
+    { profile: profile.profile, workspace, request, approve }, idempotencyKey));
 }
 
 export async function coreApiRemoteProfiles(): Promise<Record<string, unknown>> {
@@ -1081,74 +1145,79 @@ export async function coreApiRemoteProfiles(): Promise<Record<string, unknown>> 
 export async function coreApiRemoteProfile(
   action: "create" | "test" | "retry" | "remove" | "remove_propagation" | "approve_propagation",
   params: Record<string, unknown>, idempotencyKey: string = crypto.randomUUID(),
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<unknown> {
   const profile = await coreApiProfile();
-  return coreApiRequest("remote_profile.mutate",
-    { profile: profile.profile, action, ...params }, idempotencyKey);
+  return admit(() => coreApiRequest("remote_profile.mutate",
+    { profile: profile.profile, action, ...params }, idempotencyKey));
 }
 
 export async function coreApiWorkspaceDraftSet(
   workspace: string, conversation: string, text: string, idempotencyKey: string,
   extra: { threadRoot?: string; mentions?: string[] } = {},
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<unknown> {
   const profile = await coreApiProfile();
-  return coreApiRequest("workspace.draft_set", {
+  return admit(() => coreApiRequest("workspace.draft_set", {
     profile: profile.profile, workspace, conversation, text,
     ...(extra.threadRoot ? { thread_root: extra.threadRoot } : {}),
     ...(extra.mentions?.length ? { mention_member_ids: extra.mentions } : {}),
-  }, idempotencyKey);
+  }, idempotencyKey));
 }
 
-export async function coreApiGroupDraftSet(group: string, text: string): Promise<unknown> {
+export async function coreApiGroupDraftSet(group: string, text: string, admit: CoreRequestAdmission = admitCoreRequest): Promise<unknown> {
   const profile = await coreApiProfile();
-  return coreApiRequest("group.draft_set", { profile: profile.profile, group, text });
+  return admit(() => coreApiRequest("group.draft_set", { profile: profile.profile, group, text }));
 }
 
 export async function coreApiGroupInvitation(
   invitation: string,
   accept: boolean,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<unknown> {
   const profile = await coreApiProfile();
-  return coreApiRequest(accept ? "group.invitation_accept" : "group.invitation_decline", {
+  return admit(() => coreApiRequest(accept ? "group.invitation_accept" : "group.invitation_decline", {
     profile: profile.profile,
     invitation,
-  });
+  }));
 }
 
 export async function coreApiRetryGroupInvitation(
   group: string,
   destination: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<unknown> {
   const profile = await coreApiProfile();
   const member = await coreApiPeerForDestination(destination);
-  return coreApiRequest("group.invitation_retry", {
+  return admit(() => coreApiRequest("group.invitation_retry", {
     profile: profile.profile,
     group,
     member: member.peer,
-  });
+  }));
 }
 
-export async function coreApiLeaveGroup(group: string): Promise<unknown> {
+export async function coreApiLeaveGroup(group: string, admit: CoreRequestAdmission = admitCoreRequest): Promise<unknown> {
   const profile = await coreApiProfile();
-  return coreApiRequest("group.leave", { profile: profile.profile, group });
+  return admit(() => coreApiRequest("group.leave", { profile: profile.profile, group }));
 }
 
-export async function coreApiCloseGroup(group: string): Promise<unknown> {
+export async function coreApiCloseGroup(group: string, admit: CoreRequestAdmission = admitCoreRequest): Promise<unknown> {
   const profile = await coreApiProfile();
-  return coreApiRequest("group.close", { profile: profile.profile, group });
+  return admit(() => coreApiRequest("group.close", { profile: profile.profile, group }));
 }
 
 export async function coreApiRemoveGroupMember(
   group: string,
   destination: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<unknown> {
   const profile = await coreApiProfile();
   const member = await coreApiPeerForDestination(destination);
-  return coreApiRequest("group.member_remove", {
+  return admit(() => coreApiRequest("group.member_remove", {
     profile: profile.profile,
     group,
     member: member.peer,
-  });
+  }));
 }
 
 export async function lockService(): Promise<void> {

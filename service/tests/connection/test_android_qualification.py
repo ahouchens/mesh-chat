@@ -124,7 +124,32 @@ def test_failed_runner_cannot_reuse_prior_success_or_leak_private_output(tmp_pat
     assert gate.report(1) == 1
     result = json.loads((tmp_path / "android-qualification.json").read_text())
     assert result["passed"] is False
-    assert set(result) == {"v", "passed", "evidence_level", "failure_type", "phase"}
+    assert set(result) == {"v", "passed", "evidence_level", "failure_type", "phase", "failed_run_reports"}
+    assert len(result["failed_run_reports"]["suites"]) == 4
+
+
+def test_failed_runner_preserves_all_case_failures_and_later_missing_suites(tmp_path, monkeypatch):
+    monkeypatch.setattr(gate, "REPORTS", tmp_path)
+    directory = tmp_path / "android-webrtc"
+    directory.mkdir()
+    identity, _, inventory = inventory_fixture(directory)
+    monkeypatch.setattr(gate, "source", lambda: identity)
+    first, second = gate.cases("webrtc")[:2]
+    (directory / first["report"]).write_text("RAW private SDP signed document\nFAILURES!!!")
+    (directory / second["report"]).unlink()
+    assert gate.report(1) == 1
+    result = json.loads((tmp_path / "android-qualification.json").read_text())
+    assert result["passed"] is False and "RAW" not in json.dumps(result)
+    webrtc, *later = result["failed_run_reports"]["suites"]
+    assert webrtc["inventory"] == "valid" and webrtc["passed_case_reports"] == 19
+    assert webrtc["failed_case_reports"] == webrtc["missing_case_reports"] == 1
+    assert {issue["scenario_id"] for issue in webrtc["issues"]} == {first["id"], second["id"]}
+    assert all(item["inventory"] == "missing" and item["unvalidated_case_reports"] == item["required_case_reports"] for item in later)
+    # Stale inventory never promotes old successful text into passing reports.
+    inventory["source_commit"] = "f" * 40
+    (directory / "inventory.json").write_text(json.dumps(inventory))
+    stale = gate.failed_run_reports(identity)["suites"][0]
+    assert stale["inventory"] == "invalid" and stale["passed_case_reports"] == 0
 
 
 def test_adb_cannot_consume_the_remaining_scenario_inventory(tmp_path):

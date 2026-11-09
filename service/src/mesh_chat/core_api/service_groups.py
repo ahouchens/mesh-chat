@@ -1,16 +1,67 @@
 """Private adapter for first-class group operations."""
 
 from ..errors import ValidationError
+from ..group_service import GroupMutationCapacityExceeded
 from .errors import ApiFailure
 from .groups import (GroupInvitationObservation, GroupMembershipObservation,
                      GroupMessageObservation, GroupObservation)
 from .service_messages import storage_errors
+from .optional_mutations import OptionalMutationJournal
 
 
 class ServiceGroups:
     def __init__(self, service):
         self._service = service
         self._store = service.store
+        self._optional = OptionalMutationJournal(self._store)
+        transactional = all(callable(getattr(self._store, name, None)) for name in (
+            "read_snapshot", "opaque_id", "operation_result", "conditional_put_and_delete", "record_count"))
+        self.optional_keyed_operations = tuple(operation for operation, methods in (
+            ("group.create", ("prepare_group_create", "validate_group_create", "wake_group_outbox")),
+            ("group.message_enqueue", ("prepare_group_send", "validate_group_send", "wake_group_outbox")))
+            if transactional and all(callable(getattr(service, method, None)) for method in methods))
+
+    def _reconcile_optional(self, outcome):
+        self._service.wake_group_outbox(outcome["delivery_ids"])
+        self._service._changed()
+
+    def create_keyed(self, scope, title, member_ids, posting_policy, operation_id):
+        self._require_local(scope.profile)
+        if "group.create" not in self.optional_keyed_operations:
+            raise ApiFailure("unsupported_operation")
+        def project(outcome, receipt):
+            group = self._store.get("group", outcome["group_id"])
+            if group is None:
+                raise ApiFailure("idempotency_expired")
+            if group.get("owner_destination") != self._service._require_profile()["destination_hash"]:
+                raise ApiFailure("forbidden")
+            return self._observation(group)
+        def prepare():
+            try:
+                return self._service.prepare_group_create(title, list(member_ids), posting_policy, operation_id)
+            except GroupMutationCapacityExceeded as error:
+                raise ApiFailure("resource_exhausted") from error
+        return self._optional.apply(scope, "group.create", operation_id,
+            {"title": title, "members": list(member_ids), "posting_policy": posting_policy},
+            validate=lambda: self._service.validate_group_create(title, list(member_ids), posting_policy),
+            prepare=prepare,
+            select_outcome=lambda plan: {**plan.result, "delivery_ids": list(plan.delivery_ids)}, project=project,
+            reconcile=self._reconcile_optional)
+
+    def send_keyed(self, scope, group_id, text, operation_id):
+        self._require_local(scope.profile)
+        if "group.message_enqueue" not in self.optional_keyed_operations:
+            raise ApiFailure("unsupported_operation")
+        def project(outcome, receipt):
+            message = self._store.get("group_message", outcome["message_id"])
+            if message is None or message.get("group_id") != group_id:
+                raise ApiFailure("idempotency_expired")
+            return GroupMessageObservation(message["text"], message["id"], receipt["accepted_at"], receipt["expires_at"])
+        return self._optional.apply(scope, "group.message_enqueue", operation_id, {"group": group_id, "text": text},
+            validate=lambda: self._service.validate_group_send(group_id, text),
+            prepare=lambda: self._service.prepare_group_send(group_id, text, operation_id),
+            select_outcome=lambda plan: {**plan.result, "delivery_ids": list(plan.delivery_ids)}, project=project,
+            reconcile=self._reconcile_optional)
 
     def _require_local(self, profile):
         if profile != "local":

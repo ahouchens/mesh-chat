@@ -1,0 +1,100 @@
+name: Packaged Windows Android native interoperability
+
+on:
+  workflow_call:
+    inputs:
+      workload:
+        description: Source-bound quick PR smoke or full qualification
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  native_windows_peer:
+    name: Actual frozen Windows native peer
+    runs-on: windows-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: service/requirements-dev.lock
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - run: python -m pip install --disable-pip-version-check -r service/requirements-dev.lock
+      - run: npm ci --ignore-scripts --prefix scripts/native-interop-artifact
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-windows-tested-${{ github.sha }}
+          path: .
+      - name: Run actual frozen peer concurrently with KVM Android
+        uses: ./scripts/native-interop-artifact
+        with:
+          role: windows
+          workload: ${{ inputs.workload }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-interop-windows-${{ github.sha }}
+          path: dist/reports/native-interop-windows.json
+          if-no-files-found: error
+          retention-days: 14
+
+  native_android_peer:
+    name: Actual optimized Android peer on Linux KVM
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: service/requirements-dev.lock
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v4
+      - run: python -m pip install --disable-pip-version-check -r service/requirements-dev.lock
+      - run: npm ci --ignore-scripts --prefix scripts/native-interop-artifact
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-webrtc-debug
+          path: .
+      - name: Enable KVM for the actual native Android peer
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Install the pinned KVM system image
+        run: sdkmanager "emulator" "platform-tools" "system-images;android-35;google_apis;x86_64"
+      - name: Run optimized own-UID Binder/native peer concurrently with Windows
+        uses: ./scripts/native-interop-artifact
+        with:
+          role: android
+          workload: ${{ inputs.workload }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-interop-android-${{ github.sha }}
+          path: dist/reports/native-interop-android.json
+          if-no-files-found: error
+          retention-days: 14

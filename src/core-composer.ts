@@ -70,6 +70,7 @@ export interface ComposerEnqueue extends MessageAcceptance {
 export interface ComposerPort {
   query(sendRevision?: string): Promise<CoreComposer>;
   update(expectedRevision: string | null, text: string, updateKey: string): Promise<ComposerUpdate>;
+  updateForRetirement?(expectedRevision: string | null, text: string, updateKey: string): Promise<ComposerUpdate>;
   enqueue(draftRevision: string): Promise<ComposerEnqueue>;
 }
 

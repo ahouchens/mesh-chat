@@ -2,6 +2,131 @@
 
 ## Integration revalidation (2026-11-09)
 
+### Corrected pairing and combined qualification checkpoint
+
+Source `6875b00d7a3502ce662b33acdfdc6bc84c0b4ab7`, tree
+`b9e02254cf654040c47ecc6e5223153e0d993575`, passes the complete 3,251-case
+required policy inventory, zero failures/skips, in 336.65s. Qualification ID:
+`a666ed1903c74a8889fde787d9df5d59`; reports are
+`dist/reports/policy-recovery-group.{xml,json,inventory.json}`. Exact SDK staging
+also passes. Its exact boundary passes 649 Python plus eight rendered-App cases
+in 47.54s without skips. Completed policy scratch was removed; reports remain.
+
+C reproduced first-time pairing with real native DataChannels and isolated
+Reticulum processes. The carrier and explicit approval were intact, but the new
+pairing projection called an approval-requiring lookup for a pending contact,
+faulting the entire connection runtime. Narrow repair `0af2687` uses the
+host-derived destination only for that denial projection; actual authority
+checks remain in the grant/adoption paths. It was cherry-picked with attribution
+as `e7f6497`, excluding the still-held Android provider ancestor `0b012c3`.
+The lead's real first-contact/receipt and pairing-runtime regressions pass 31
+cases, zero skips, in 21.78s. This is source execution, not frozen-package proof.
+
+Source `efbddfa2ed35bfbdda85ff220a83c925abd3bf3e`, tree
+`0bd10b8c6a73e5d4a7d4f37d134a2accbda22361`, adds D's two rendered group replay
+cases and B's final reconnect-factory admission guard. Its exact boundary passes
+649 Python plus **ten** rendered-App cases, zero failures/skips, in 41.42s.
+The group cases lose real committed replies, replay the exact caller key and
+payload after modal reopening, and preserve a newer draft without another
+durable group/message/outbox/receipt. Group membership uses real signed domain
+messages over an explicitly in-process fixture. The lead's 27 focused reconnect
+admission/runtime checks pass. None establishes full renderer-restart group-key
+durability, physical media retirement, native interoperability or SC21 traffic.
+
+The corrected source is ready for a new full packaged qualification run. Android
+profile-provider wiring remains held for separate protected catalog-key storage
+and dedicated native credential-result routing; the shared Tauri activity-result
+callback cannot establish which activity supplied a successful result.
+
+### Current full CI failure and local repairs
+
+Full run `42676194199` targets `da815655792241629f19f0e7ac02b8402a744790`,
+tree `ea96a33605a4cff7620023bbff8ca4c1e88163a1`. Its retained selection
+requires all six families and the full native workload. The lead verified
+selection artifact `13700217574`, ZIP SHA-256
+`235e2a75c7d219b931a2a4f32cb09bf5c04ec425024d82f82af7ece0f83b6964`.
+The run cannot pass: policy recorded 3,184 passes and two failures, zero skips;
+broad verification recorded 4,389 passes, the same two failures and 51 platform
+skips. Synthetic matrix fixtures inherited the real GitHub run context. Repair
+`3425095` isolates those fixtures while explicit positive/negative CI controls
+retain strict production run/attempt matching. The lead reran all 94 matrix
+checks under an unrelated live-style CI context: zero failures or skips, 4.64s.
+
+Windows also failed explicit first-time pairing at `approved_path`, with both
+carriers absent and bridges detached. Preapproved durable receipts, native
+control/lifecycle, pipe consumers, WebView2 and frozen-material checks had passed.
+Those preceding passes do not qualify first-time pairing. The retained failure
+reports no transport faults or peer stderr; process termination during cleanup
+is not a diagnosed cause. C owns production handoff diagnosis and D owns probe
+diagnostics. Desktop report artifact `13700996616` has verified ZIP SHA-256
+`279dd742957f2b5cafb38b898cbc3a21ce8d941e375b3cd6b79f3d8b88ae9c0f`.
+Reports are retained under `.test-tmp/ci-evidence-da81565/desktop-transport`.
+The lead subsequently hashed every entry of native artifact `13700018594` in
+memory (ZIP SHA-256
+`1c42f24bb6fdb543501148f97fa8222ac24d2d5561f12ede6559a550020faeaf`). The
+retained sidecar SHA-256
+`8f4719e2f6b167d64241961ba009a5c8a453f487ff14b377967893f5862d0575` and
+build-manifest digest match the native control/lifecycle, materials, packaged
+lifecycle and preapproved-transport reports. No executable was extracted or run
+locally. The separate WebView2 probe binary digest remains a runner claim.
+Required native topology has not executed in this run.
+
+Android also failed two manual native adoption instrumentation cases, the Kotlin
+`workspaceJoinIsConvergentWithoutACallerKey` unit assertion (20 passes, one
+failure), and public AAR license verification. The final runner exception must
+not obscure the earlier test failures. Failed report artifact `13701676421` has
+verified ZIP SHA-256
+`a5c1bc1f29487851dc1a3279c95445f8bbb1fcdba5ecfbd76f13f5d1a95bdb84`.
+Lead inspection found that the manual-adoption fixture assigns synthetic path
+readiness to the new outer executor wrapper instead of its reconnect executor;
+the same fixture also accesses the native port through the obsolete location.
+D owns correcting those instrumentation hooks and verifying the intended inner
+port. A owns the Kotlin assertion and license packaging diagnosis. This fixture
+finding does not establish the cause of the separate Windows pairing failure.
+The required native-interoperability job was skipped after prerequisite failure.
+
+The workflow finished with a failed final gate. Both direct-network jobs passed;
+the lead independently validated 25 fabric, 10 recovery and 12 setup cases per
+platform with zero skips using pinned `da81565` validators. Linux artifact
+`13701687559` has ZIP SHA-256
+`5bfee1c2a84e83155122a239295a7a6814b98a6395d42e46b8eca6e99c577af0`;
+Windows artifact `13701943154` has ZIP SHA-256
+`f0513f652452ebce3f77b425b83ab767cd5d951810fc8b27fefa3b311cc22f10`.
+These controlled native/Python suites do not qualify packaged cross-platform
+interoperability. Their binary digests remain runner claims in report archives.
+
+Local source `a899b8576ee2130510b5bf98b6a64b7b44bf7f71`, tree
+`ebd717956b4b7ff7ceb215b8afa4cc4357879b77`, integrates the fixture repair,
+independent group authority tests and the remaining API/component admission
+guards. Its exact boundary gate passes 640 Python plus eight rendered-App cases,
+zero failures/skips, in 34.57s. B reports 719 frontend passes and TypeScript
+compilation passing at `ddf4776`; plain native effect auditing remains separate.
+At `50474ec78d082ad17e4bafd450187780823abd2a`, nine independent consumer staging
+checks pass without skips in 1.36s, including actual offline archive installation
+and public SDK import outside the checkout. This is staging evidence only:
+normal app-owned host bootstrap and public pairing/receipt traffic remain open.
+
+### Gated call recovery and Android fixture repairs
+
+Source `5556cc0f502c70da10f81f7685f3a5b2b6963ac1`, tree
+`2171f4e3b46cf67c1e0f4617d3e0fe2964ffcbe2`, integrates protected call acceptance,
+caller-scoped discovery and abandonment, exact trusted retirement tickets,
+asynchronous completion, SDK helpers and the Kotlin CI repairs. Exact SDK staging
+passes; the lead's 248 call-recovery, legacy-call, installed-consumer, license
+and contract checks pass without skips in 13.92s. The extension remains
+unadvertised on ordinary hosts. A typed substitute retirement provider in tests
+does not establish actual browser media cleanup, native recovery or permission
+to replace unresolved media. A host that has activated the protected catalog
+cannot bypass its fences by rebinding without the provider.
+
+D's `3a122d4` Android instrumentation correction targets the actual inner
+reconnect executor while preserving the existing synthetic-path scope and
+readiness deadline. The lead's 20 adapter checks pass without skips in 1.99s;
+emulator confirmation remains required. Follow-up `7b2718b` retains all failed
+case inventories and JVM reports. `f7d9844` completes the three call-recovery
+request vectors through actual Core framing, with explicit component-provider
+scope and ordinary-host unsupported controls. No required vector is waived.
+
 ### Wave 2 interim CI and packaging repairs
 
 Full workflow `42665862417` targets source
@@ -13,8 +138,11 @@ executed and passed, zero failures or skips, qualification ID
 The workflow is not accepted: Windows failed frozen-material verification;
 broad verification passed 4,075 tests but failed one stale frontend history
 assertion (51 environment-specific skips); Android instrumentation compilation
-could not resolve its transitive Binder SDK dependency. Direct jobs were still
-running when this checkpoint was recorded.
+could not resolve its transitive Binder SDK dependency. Direct jobs subsequently
+completed successfully: both Windows and Linux passed 25 fabric, 10 recovery
+and 12 setup cases with zero skips. The lead validated each retained inventory
+and report using pinned `dcac85e` validators. Binary hashes in these report-only
+archives remain runner claims. The final workflow gate failed.
 
 Read-only inspection of the retained Windows executable confirmed SHA-256
 `1b9d37786c8c626fcd28c4d9e8021480c95e63c9c070255798a87fe4927df8b2` and identified
@@ -30,6 +158,95 @@ repository-byte repairs plus prepared reaction/invitation hooks. The lead ran
 zero skips, 12.30 seconds. Invitation preparation does not itself establish atomic
 personal adoption/workspace join; parent integration remains required. Runtime
 profile host binding and actual Windows–Android topology remain pending.
+
+### Combined native custody review
+
+Source `5cf3478f45bd8052d1e0dd4684c2c0ada4a7362d` integrates concrete supervisor
+pairing, complete private native lease accounting, the queued-creation
+cancellation fix, and the Android instrumentation dependency correction. Strict
+model/reducer typing passes. The complete local required run executed 2,982 cases:
+2,977 passed, five failed, zero skipped in 287.14 seconds. Four failures were
+boundary vectors still routing runtime lifecycle requests through the ordinary
+service session or omitting `profile.catalog`; D owns their correction. The
+remaining Bash fixture failed sandbox path traversal and passed independently
+with the necessary filesystem access. This is not a passing policy gate.
+
+Follow-up `02db485`, integrated at `8e396b7`, retains an acquired profile service
+through any handle-authority validation failure. The full corrected policy run
+and packaged CI remain required. Supervisor-owned initial pairing still needs
+its trusted host entry wired into the topology controller; a manually driven
+native handshake does not establish that coverage.
+
+The corrected complete policy run at
+`1e288ecbf9da00d49c84ee63ff9ece76a3f15f7d` passes all 3,108 collected/executed
+cases with zero failures or skips in 306.43 seconds. Qualification ID:
+`6b165305c11c4d418b07f57484b6b60c`; retained files are
+`dist/reports/policy-runtime-custody.{xml,json,inventory.json}`. Seven warnings
+concern existing JUnit metadata/upstream deprecation behavior. This source also
+contains the two-role topology infrastructure, whose actual execution and
+supervisor-owned pairing-entry followup remain pending. Passing its controller
+component tests is not transport qualification.
+
+### Native retirement and UI lifetime follow-up
+
+Source `5a523d75940e903a023f5637c5cb37074631e4f1` integrates the private,
+marked-profile supervisor pairing entry, immediate routing removal after a lost
+native creation return, and truthful mobile shutdown acknowledgment. Android
+keeps its native response pump alive until deferred vault cleanup finishes.
+The lead's combined Windows host, private pairing, mobile bootstrap and profile
+lifecycle check passed 76 tests, zero skips, in 6.74 seconds. The retained report
+is `.test-tmp/native-retirement-review.xml`.
+
+Source `0f19638a58aa2086af97813ce2cdf78ff8167dbb` adds the private mobile profile
+host foundation. Its 14 encrypted-vault/Core lifecycle tests passed in 2.39
+seconds with zero skips (`.test-tmp/mobile-profile-review.xml`). OS key retrieval
+and authentication are explicit boundary doubles in this run; production
+Kotlin/Binder/provider wiring remains pending.
+
+UI worker source `bb14d2bce5f043df9e8ae129901e7217c8d1815c` passed 630 Python
+boundary cases plus eight rendered-App cases, zero skips, in 41.81 seconds.
+Final worker source `002ddd4fae9b979748f2c6d45d6f7c9d913d27af` changes only the
+notification presentation fixture after that gate and passes all 700 frontend
+tests across 43 files in 58.98 seconds, plus TypeScript compilation. These are
+worker-reported checks, not a claim that the exact final worker head repeated
+the Python boundary gate. The batch is integrated at `ec96794708876675ee02d9fea97a8a6cd25fa362`.
+It hides retired profile content, bounds final UI work to one second, preserves
+uncertain lock outcomes for retry, and fences delayed notification admission.
+Full renderer-restart call intent recovery and live public profile selection
+remain open. No new packaged qualification is claimed by these local checks.
+
+### Supervisor topology and optional group-key checkpoint
+
+Source `a3a98ce69624d5a7d083c7264da5af3a320d9f09`, tree
+`147ab5d759b3e060da3f0824a22055fe6ccfbc51`, passes all 3,178 required policy
+cases with zero failures or skips in 324.46 seconds. Qualification ID:
+`35a8948d124c4779abb5e52c00097eb4`; reports are
+`dist/reports/policy-supervisor-group.{xml,json,inventory.json}`. Source-bound
+Python/TypeScript SDK staging and isolated imports also pass. The new optional
+group create/enqueue caller keys retain legacy unkeyed SDK behavior; keyed
+acceptance commits primary records, recipient jobs, quota and receipts together.
+This closes two advertised optional extensions, not the remaining mutation audit.
+
+That source also contains D's supervisor-driven topology controller and explicit
+quick/full selection. Full manual qualification requires both direct initiators,
+Windows-initiated TURN UDP/TCP/TLS and impairment cases, selected-path negative
+controls, and 100 receipt iterations per role with ten periodic cold restarts.
+Quick PR smoke has a distinct evidence level and cannot satisfy the full or
+release gate. Neither mode has executed on the combined native artifacts yet.
+
+Follow-ups are integrated at `d4091fdabb4514f85d181865c417d4f5f0263425`, tree
+`c425112e0868173dc460bcf515571a2233157f68`: offline keyed group invalidation
+observations, mobile runtime-host routing and failed-opener channel custody,
+group/workspace draft/send/read admission fences, and crossed-caller call-media
+denial. The lead's exact-source boundary gate passes 640 Python cases plus eight
+rendered-App cases, zero skips, in 48.03 seconds. The focused actual mobile/group
+run passes 63 cases, zero skips, in 13.28 seconds. Reports are
+`dist/reports/core-ui-boundary.json` and `.test-tmp/host-group-final.xml`.
+B separately reports all 708 frontend tests and TypeScript compilation passing
+at `b2b632e`. Remaining delayed settings/contact/admin admission paths are being
+repaired; live platform authentication and independent public consumers remain
+open. Subsequent documentation-only merge `0e110070` clarifies the accepted
+independent-consumer design and ownership; it adds no execution claim.
 
 ### Runtime catalog and installed SDK checkpoint
 

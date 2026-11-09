@@ -31,8 +31,10 @@ its durable identity; the SDK never retries or invents keys.
 `createProfile`, `workspaceJoin` and `workspaceAdmissionGrantList` require an
 explicit caller key. Old calls without it now fail locally before I/O. Other
 helpers preserve the manifest's current keyed/repeatable/convergent distinctions.
-Repeatable group creation/send currently has no replay guarantee; this remains
-a Core contract gap. Composer helpers require minor 1, all three composer
+Legacy unkeyed group creation/send has no replay guarantee. `createGroup` and
+`sendGroup` take an optional final caller key, require their advertised
+`optional_keyed_operations` entry and three optional-key limits, and never fall
+back to an unkeyed call. Other mutation identity gaps remain open. Composer helpers require minor 1, all three composer
 operations and all nine positive integer limits. They use Core-issued update
 keys and persisted send revisions.
 

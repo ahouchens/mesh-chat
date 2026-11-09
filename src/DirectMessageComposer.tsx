@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Send } from "lucide-react";
 import { openCoreComposer } from "./core-composer";
 import { DirectComposerController } from "./direct-composer";
+import { ProfileRetiredError, useProfileLifetime } from "./profile-lifetime";
 
 interface Props {
   destination: string;
@@ -11,28 +12,36 @@ interface Props {
 }
 
 export function DirectMessageComposer(props: Props) {
+  const lifetime = useProfileLifetime();
   const [resource, setResource] = useState<{ controller: DirectComposerController; textUtf8Bytes: number } | null>(null);
   const [error, setError] = useState("");
   const [reload, setReload] = useState(0);
   useEffect(() => {
     let active = true;
+    if (lifetime && !lifetime.active) return;
+    const generation = lifetime?.capture();
     setResource(null);
     setError("");
     void openCoreComposer(props.destination).then(async ({ port, textUtf8Bytes }) => {
-      const controller = new DirectComposerController(port);
-      if (!active) return;
+      if (!active || (lifetime && !lifetime.isCurrent(generation!))) return;
+      const controller = new DirectComposerController(lifetime ? {
+        query: (...args) => lifetime.isCurrent(generation!) ? port.query(...args) : Promise.reject(new ProfileRetiredError()),
+        update: (...args) => lifetime.mutate(generation!, () => port.update(...args)),
+        updateForRetirement: (...args) => lifetime.mutate(generation!, () => port.update(...args), true),
+        enqueue: (...args) => lifetime.mutate(generation!, () => port.enqueue(...args)),
+      } : port);
       setResource({ controller, textUtf8Bytes });
       await controller.load();
     }).catch((reason: unknown) => {
       const code = reason && typeof reason === "object" && "code" in reason ? reason.code : null;
-      if (active) setError(code === "unsupported_operation"
+      if (active && (!lifetime || lifetime.isCurrent(generation!))) setError(code === "unsupported_operation"
         ? "This runtime needs an update before saved drafts can be sent. Update Mesh Chat and reload the draft."
         : code === "forbidden" ? "This draft is not authorized for the contact. Check the connection approval before reloading."
           : code === "locked" ? "Unlock your profile before loading this draft."
             : "The saved draft is unavailable. Reload it before sending.");
     });
     return () => { active = false; };
-  }, [props.destination, reload]);
+  }, [props.destination, reload, lifetime]);
 
   if (!resource) return <div className="composer" aria-busy={!error}>
     <label className="sr-only" htmlFor="message-composer">Message {props.displayName}</label>
@@ -48,6 +57,7 @@ function LoadedComposer({ controller, textUtf8Bytes, ...props }: Props & {
   controller: DirectComposerController;
   textUtf8Bytes: number;
 }) {
+  const lifetime = useProfileLifetime();
   const view = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const acceptedRevision = useRef<string | null>(null);
   const mounted = useRef(true);
@@ -67,8 +77,16 @@ function LoadedComposer({ controller, textUtf8Bytes, ...props }: Props & {
   }, [controller, view.canSave, view.text, tooLarge]);
 
   useEffect(() => () => {
-    if (controller.getSnapshot().canSave) void controller.save();
-  }, [controller]);
+    if ((!lifetime || lifetime.active) && controller.getSnapshot().canSave) void controller.save();
+  }, [controller, lifetime]);
+
+  useEffect(() => {
+    if (!lifetime || !lifetime.active) return;
+    return lifetime.register(lifetime.capture(), async () => {
+      await controller.freezeAndFlush();
+      if (controller.getSnapshot().retry || controller.getSnapshot().recoveryText !== null) throw new Error("composer_outcome_pending");
+    });
+  }, [controller, lifetime]);
 
   useEffect(() => {
     props.onSendingChange(view.phase === "sending");

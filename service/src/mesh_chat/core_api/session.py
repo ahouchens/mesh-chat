@@ -42,6 +42,9 @@ from .views import (call_ice_view, call_media_view, call_settings_view, device_r
 from .errors import ApiFailure, failure_code
 from .limits import MAX_FRAME_BYTES, MAX_REQUEST_JSON_DEPTH, MAX_REQUEST_JSON_TOKENS
 from .composer import Composer, COMPOSER_LIMITS
+from .optional_mutations import OPTIONAL_KEY_LIMITS
+from .call_operations import CALL_OPERATION_LIMITS
+from .requests import CALL_RECOVERY_OPERATIONS
 from .views import composer_view
 from .requests import COMPOSER_OPERATIONS
 from .diagnostics import Diagnostics, MAX_DIAGNOSTICS, MAX_DIAGNOSTIC_BYTES
@@ -129,6 +132,9 @@ PERMISSION_BY_OPERATION = {
     "call.ice_servers": "read",
     "call.media_query": "read",
     "call.control": "send",
+    "call.operation_list": "read",
+    "call.operation_query": "read",
+    "call.operation_abandon": "send",
     "settings.query": "read",
     "settings.update": "send",
     "message.reaction_set": "send",
@@ -285,6 +291,7 @@ class Ports:
     profile_bootstrap: object | None = None
     drafts: object | None = None
     calls: object | None = None
+    call_recovery: object | None = None
     settings: object | None = None
     reactions: object | None = None
     groups: object | None = None
@@ -317,6 +324,7 @@ class CoreSession:
         self._profile_bootstrap = ports.profile_bootstrap
         self._drafts = ports.drafts
         self._calls = ports.calls
+        self._call_recovery = ports.call_recovery
         self._settings = ports.settings
         self._reactions = ports.reactions
         self._groups = ports.groups
@@ -333,6 +341,7 @@ class CoreSession:
             (DRAFT_OPERATIONS, self._drafts),
             (CALL_OPERATIONS, self._calls),
             (CALL_CONTROL_OPERATIONS, self._calls),
+            (CALL_RECOVERY_OPERATIONS, self._call_recovery),
             (SETTINGS_OPERATIONS, self._settings),
             (REACTION_OPERATIONS, self._reactions),
             (GROUP_OPERATIONS, self._groups),
@@ -656,16 +665,29 @@ class CoreSession:
                 return group_membership_view(params["profile"], params["group"], observation)
             if operation == "group.message_enqueue":
                 group_id = self._group_identifier(grant, profile, params["group"])
-                observation = self._groups.send(profile, group_id, params["text"])
+                if key is None:
+                    observation = self._groups.send(profile, group_id, params["text"])
+                else:
+                    if operation not in getattr(self._groups, "optional_keyed_operations", ()):
+                        raise ApiFailure("unsupported_operation")
+                    observation = self._groups.send_keyed(MessageScope(grant.caller, profile), group_id,
+                        params["text"], self._operation_id(grant, profile, key))
+                message = (self._handle(grant, "group_message", profile, observation.message_id)
+                           if getattr(observation, "message_id", None) is not None else None)
                 return group_message_sent_view(params["profile"], params["group"],
-                                               observation)
+                                               observation, message)
             if operation == "group.create":
                 contacts = [self._peers(grant, profile).get(handle)
                             for handle in params["members"]]
                 if any(contact is None for contact in contacts):
                     raise ApiFailure("forbidden")
-                observation = self._groups.create(
-                    profile, params["title"], contacts, params["posting_policy"])
+                if key is None:
+                    observation = self._groups.create(profile, params["title"], contacts, params["posting_policy"])
+                else:
+                    if operation not in getattr(self._groups, "optional_keyed_operations", ()):
+                        raise ApiFailure("unsupported_operation")
+                    observation = self._groups.create_keyed(MessageScope(grant.caller, profile), params["title"],
+                        contacts, params["posting_policy"], self._operation_id(grant, profile, key))
                 return group_view(
                     params["profile"],
                     self._handle(grant, "group", profile, observation.group_id),
@@ -685,12 +707,29 @@ class CoreSession:
             else:
                 observation = self._settings.get(profile)
             return network_settings_view(params["profile"], observation)
+        if operation in CALL_RECOVERY_OPERATIONS:
+            scope = MessageScope(grant.caller, profile)
+            rows = self._call_recovery.operation_rows(scope)
+            if operation == "call.operation_list":
+                observations = [self._call_recovery.operation_query(scope, row["operation_id"]) for row in rows]
+                return {"profile": params["profile"], "operations": [self._call_operation_view(grant, profile, item) for item in observations]}
+            target = next((row["operation_id"] for row in rows
+                           if self._handle(grant, "call_operation", profile, row["operation_id"]) == params["operation"]), None)
+            if target is None:
+                raise ApiFailure("forbidden")
+            observation = (self._call_recovery.operation_abandon(scope, target, self._required_operation_id(grant, profile, key))
+                           if operation == "call.operation_abandon" else self._call_recovery.operation_query(scope, target))
+            return {"profile": params["profile"], "operation": self._call_operation_view(grant, profile, observation)}
         if operation in CALL_OPERATIONS + CALL_CONTROL_OPERATIONS:
             if operation == "call.settings_update":
                 observation = self._calls.update(profile, params["settings"])
             elif operation == "call.ice_servers":
                 return call_ice_view(params["profile"], self._calls.ice(profile))
             elif operation == "call.control":
+                if callable(getattr(self._calls, "control_scoped", None)):
+                    return {"profile": params["profile"], "result": self._calls.control_scoped(
+                        MessageScope(grant.caller, profile), params["action"], params,
+                        self._required_operation_id(grant, profile, key))}
                 return {"profile": params["profile"], "result": self._calls.control(
                     profile, params["action"], params,
                     self._required_operation_id(grant, profile, key))}
@@ -1374,6 +1413,13 @@ class CoreSession:
             return workspace_channel_transfer_accept_view(
                 params["profile"], params["workspace"], params["channel"])
 
+    def _call_operation_view(self, grant, profile, observation):
+        return {"operation": self._handle(grant, "call_operation", profile, observation["operation_id"]),
+                "call": self._handle(grant, "call", profile, observation["call_id"]),
+                "runtime": self._handle(grant, "call_runtime", profile, observation["runtime_epoch"]),
+                **{field: observation[field] for field in ("action", "accepted_at", "expires_at", "expired",
+                   "current_runtime", "state", "disposition", "replacement_safe")}}
+
     def _capabilities(self, profiles):
         limits = {"frame_bytes": MAX_FRAME_BYTES, "request_json_depth": MAX_REQUEST_JSON_DEPTH,
                   "request_json_structural_tokens": MAX_REQUEST_JSON_TOKENS, "profiles": MAX_PROFILES,
@@ -1396,8 +1442,15 @@ class CoreSession:
             limits.update(diagnostic_count=MAX_DIAGNOSTICS, diagnostic_bytes=MAX_DIAGNOSTIC_BYTES)
         if self._composer is not None:
             limits.update(COMPOSER_LIMITS)
-        return {"api_major": 1, "api_minor": 1, "stability": "experimental",
-                "operations": list(self._operations), "profiles": list(profiles), "limits": limits}
+        if set(CALL_RECOVERY_OPERATIONS) <= set(self._operations):
+            limits.update(CALL_OPERATION_LIMITS)
+        result = {"api_major": 1, "api_minor": 1, "stability": "experimental",
+                  "operations": list(self._operations), "profiles": list(profiles), "limits": limits}
+        optional = sorted(set(getattr(self._groups, "optional_keyed_operations", ())) & set(self._operations))
+        if optional:
+            result["optional_keyed_operations"] = optional
+            limits.update(OPTIONAL_KEY_LIMITS)
+        return result
 
     def _observe(self, grant, profile, operation, params):
         view = self._observations.profile(profile)

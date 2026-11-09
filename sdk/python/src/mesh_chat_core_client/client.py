@@ -59,7 +59,7 @@ class CoreClient:
             raise CoreClientError("transport_closed")
         if not isinstance(operation, str) or not operation:
             raise ValueError("Operation name is required")
-        if needs_key(operation, params) and (not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9._:-]{16,128}", key)):
+        if (key is not None or needs_key(operation, params)) and (not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9._:-]{16,128}", key)):
             raise ValueError("Operation requires a caller-provided idempotency_key")
         self._sequence += 1
         request_id = f"client:{self._sequence}"
@@ -209,10 +209,21 @@ class CoreClient:
     def unblock(self, handle, peer):
         return self.request("peer.unblock", {"profile": handle, "peer": peer})
 
-    def create_group(self, handle, title, posting_policy, members):
+    def _require_optional_keyed(self, operation):
+        caps = self.capabilities
+        supported = caps.get('optional_keyed_operations')
+        names = ('optional_key_idempotency_seconds', 'optional_keys_per_caller_profile', 'optional_keys_per_vault')
+        if (caps.get('api_minor', 0) < 1 or not isinstance(supported, list) or operation not in supported
+                or not isinstance(caps.get('operations'), list) or operation not in caps['operations'] or not isinstance(caps.get('limits'), dict)
+                or any(type(caps['limits'].get(name)) is not int or not 0 < caps['limits'][name] <= 9007199254740991 for name in names)):
+            raise CoreClientError('unsupported_operation')
+
+    def create_group(self, handle, title, posting_policy, members, key=None):
+        if key is not None:
+            self._require_optional_keyed("group.create")
         return self.request("group.create", {
             "profile": handle, "title": title, "posting_policy": posting_policy,
-            "members": members})
+            "members": members}, idempotency_key=key)
 
     def retry_group_invitation(self, handle, group, member):
         return self.request("group.invitation_retry", {
@@ -233,9 +244,11 @@ class CoreClient:
         return self.request("group.member_remove", {
             "profile": handle, "group": group, "member": member})
 
-    def send_group(self, handle, group, text):
+    def send_group(self, handle, group, text, key=None):
+        if key is not None:
+            self._require_optional_keyed("group.message_enqueue")
         return self.request("group.message_enqueue", {
-            "profile": handle, "group": group, "text": text})
+            "profile": handle, "group": group, "text": text}, idempotency_key=key)
 
     def groups(self, handle):
         return self.request("group.query", {"profile": handle})
@@ -249,6 +262,30 @@ class CoreClient:
 
     def update_network_settings(self, handle, settings):
         return self.request("settings.update", {"profile": handle, "settings": settings})
+
+    def _require_call_recovery(self):
+        caps = self.capabilities
+        supported, limits = caps.get("operations"), caps.get("limits")
+        names = ("call_operations_per_caller_profile", "call_operations_per_vault", "call_operation_retention_seconds",
+                 "call_operation_keys_per_caller_profile", "call_operation_keys_per_vault")
+        if (type(caps.get("api_minor")) is not int or caps["api_minor"] < 1
+                or not isinstance(supported, list) or not all(isinstance(name, str) for name in supported)
+                or not {"call.operation_list", "call.operation_query", "call.operation_abandon"} <= set(supported)
+                or not isinstance(limits, dict)
+                or any(type(limits.get(name)) is not int or not 0 < limits[name] <= 9007199254740991 for name in names)):
+            raise CoreClientError("unsupported_operation")
+
+    def call_operation_list(self, profile):
+        self._require_call_recovery()
+        return self.request("call.operation_list", {"profile": profile})
+
+    def call_operation_query(self, profile, operation):
+        self._require_call_recovery()
+        return self.request("call.operation_query", {"profile": profile, "operation": operation})
+
+    def call_operation_abandon(self, profile, operation, key):
+        self._require_call_recovery()
+        return self.request("call.operation_abandon", {"profile": profile, "operation": operation}, idempotency_key=key)
 
     def call_control(self, handle, action, key, **params):
         return self.request("call.control",

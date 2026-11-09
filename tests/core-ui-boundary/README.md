@@ -38,11 +38,22 @@ Windows host artifact. It rechecks the boundary reports against the required
 source commit/tree, retained JUnit and collection digests, run identities and
 zero-failure/zero-skip execution. The uniform manifest includes separate
 `core_ui_boundary_python`, `core_ui_boundary_rendered` and
-`core_windows_boundary` records. Rendered execution must contain all six named
-cases (eight after the Wave 2 composer remount additions); Windows must contain
+`core_windows_boundary` records. Rendered execution must contain all ten named
+cases, including composer remount and keyed group create/send reply-loss controls; Windows must contain
 all three named cases. Python counts come from the
 complete collection of the required boundary files, rather than a historical
 case count. The final gate requires only the standard library.
+
+The group send case opens a real group only after another real identity signs
+its join statement and production invitation, manifest and correlated receipt
+handlers finish the membership update. The fixture uses an in-process recording
+transport for that setup. It does not patch member status, mock Core responses
+or claim native delivery evidence. UI requests still reach the actual framed
+Core and encrypted journal. Lost keyed creation/send replies must replay the
+original prepared scope, payload and caller key, preserve a newer draft, and
+leave one durable group/message and unchanged outbox/receipt counts. The opaque
+group acceptance reference is never queried as a direct message. Full renderer
+restart recovery of group action keys remains outside these two cases.
 
 Independent authority tests pass JSON frames through the actual Core session.
 Signed workspace removal must deny replay of an earlier accepted message or
@@ -79,8 +90,8 @@ five clean process exits. It remains control/resource-lifecycle evidence;
 product pairing, Windows-Android delivery, authenticated receipts, selected
 paths, impairment and media coexistence require their own actual evidence.
 
-The staged native topology uses concurrent Windows and Linux KVM jobs after
-both source-bound packages are available. `native_interop_rendezvous.py` and
+The required native topology workflow uses concurrent Windows and Linux KVM jobs
+after both source-bound packages are available. `native_interop_rendezvous.py` and
 `native_interop_artifacts.py` bound setup/control to repository, source commit,
 workflow run, run attempt, workflow-owned publishing role and phase. Each runner
 keeps an ephemeral X25519 private key in memory; only its public key and
@@ -104,6 +115,41 @@ preflight and crypto/artifact tests are controller component evidence until the
 actual packaged peer jobs execute. GitHub supports artifact exchange while a
 workflow is running; see the [official artifact toolkit](https://github.com/actions/toolkit/blob/main/packages/artifact/README.md)
 and [artifact REST provenance/digest fields](https://docs.github.com/en/rest/actions/artifacts).
+
+The Node Action owns its KVM emulator for the whole controller lifetime. Both
+roles rehash the exact retained producer artifacts before starting product
+hosts. The trusted private pairing port delegates native offer/answer creation,
+signing, mailbox polling and custody transfer to the production supervisor.
+Controllers supply explicit Core contact decisions and disclosure consent.
+Direct paths run with both Windows and Android initiating; TURN UDP/TCP/TLS and
+impairment paths run with Windows initiating. Both platforms exchange messages
+and receipts in every case. Full runs execute 100 receipt iterations with a
+same-vault process restart every ten iterations. Known affected pull requests
+retain an actual native quick smoke: both direct initiators, TURN UDP, five
+receipt iterations and one cold restart. Manual, scheduled, release, merge-queue,
+push and unknown-diff selection stays full. Each host and the final gate recompute
+selection from the source and event; quick reports have a distinct evidence
+level and cannot satisfy full requirements. Native allocation accounting must be complete;
+unavailable disposal counts cannot stand in for zero leases. Every path retires
+its exact native reservations, and the soak compares actual allocations with
+its quiescent warm baseline.
+
+The Android emulator's Linux kernel applies a selected-socket profile of 75ms
+delay and 10ms jitter in each direction with 0.1% random loss. This adds 150ms
+nominal RTT to the hosted-runner baseline. Reports retain actual selected-pair
+RTT separately and report whether random loss was observed. Own-process socket
+descriptors and actual kernel flows correlate packet counters; TCP/TLS and UDP
+negative controls require counted kernel drops, no authenticated receipt during
+the block, and the same queued message's receipt after restoration. Missing
+kernel support, ambiguous sockets, absent RTT, stale observations, platform
+substitution or incomplete evidence fail the required suite.
+
+These controllers use private qualification authority for transport inspection.
+They do not qualify section 11's independently installed public Windows
+TypeScript/Android Kotlin consumer scenario, physical devices, UI media,
+packaged upgrade/uninstall, or a supported release matrix. Controller and fault
+unit fixtures are component evidence; only actual source-bound CI reports from
+both jobs can qualify the native matrix.
 
 For development, run `python tests/core-ui-boundary/run_python.py --source <HEAD SHA> --junit .test-tmp/boundary.xml`
 or `vitest run --config tests/core-ui-boundary/vitest.config.ts` directly.

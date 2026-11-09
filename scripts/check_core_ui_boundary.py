@@ -27,6 +27,9 @@ PYTHON_SELECTION = (
     "service/tests/connection/test_ui_core_boundary_runtime_materials.py",
     "service/tests/connection/test_ui_core_boundary_sdk_staging.py",
     "service/tests/connection/test_ui_core_boundary_interop_peers.py",
+    "service/tests/connection/test_ui_core_boundary_interop_evidence.py",
+    "service/tests/connection/test_ui_core_boundary_interop_faults.py",
+    "service/tests/connection/test_ui_core_boundary_interop_controller.py",
 )
 RENDERED_CASES = {("tests/core-ui-boundary/app.test.tsx",
                    "rendered UI through the production framed Core session > " + name) for name in (
@@ -38,6 +41,8 @@ RENDERED_CASES = {("tests/core-ui-boundary/app.test.tsx",
     "serializes thread_root to a real timeline query without legacy field aliases",
     "restores an unsent composer after renderer remount and real vault reopen",
     "resolves a lost draft enqueue reply after remount and vault reopen without a second send",
+    "replays lost committed group creation with the original caller key and one durable group",
+    "replays lost committed group send once and preserves a newer draft through actual Core",
 )}
 
 

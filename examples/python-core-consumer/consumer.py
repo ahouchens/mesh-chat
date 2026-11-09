@@ -26,7 +26,25 @@ def main():
             print(json.dumps(report), file=sys.stderr)
             return 0
         profile = client.capabilities["profiles"][0]
-        if "--exercise-profile-lock" in sys.argv:
+        if "--recover-call" in sys.argv:
+            operation = client.call_operation_list(profile)["operations"][0]["operation"]
+            queried = client.call_operation_query(profile, operation)["operation"]
+            abandoned = client.call_operation_abandon(profile, operation, "sdk-call-abandon-key-0001")["operation"]
+            repeated = client.call_operation_abandon(profile, operation, "sdk-call-abandon-key-0001")["operation"]
+            report.update(recovered=queried["operation"] == operation,
+                          cleanup_pending=abandoned["disposition"] == "cleanup_pending",
+                          replacement_blocked=not abandoned["replacement_safe"], same_operation=repeated == abandoned)
+        elif "--exercise-keyed-group-create" in sys.argv:
+            peer = client.profile(profile)["peers"][0]
+            result = client.create_group(profile, "SDK qualification group", "members", [peer], "sdk-group-create-key-0001")
+            repeated = client.create_group(profile, "SDK qualification group", "members", [peer], "sdk-group-create-key-0001")
+            report["same_group"] = result["group"] == repeated["group"]
+        elif "--exercise-keyed-group-send" in sys.argv:
+            group = client.groups(profile)["groups"][0]["group"]
+            result = client.send_group(profile, group, "SDK qualification group message", "sdk-group-send-key-0001")
+            repeated = client.send_group(profile, group, "SDK qualification group message", "sdk-group-send-key-0001")
+            report.update(accepted=result["accepted"], same_message=result["message"] == repeated["message"])
+        elif "--exercise-profile-lock" in sys.argv:
             profile = client.profile_catalog()["selected_profile"]
             result = client.lock_profile(profile, "sdk-profile-lock-key-0001")
             report["locked"] = next(row for row in result["profiles"] if row["profile"] == profile)["state"] == "locked"

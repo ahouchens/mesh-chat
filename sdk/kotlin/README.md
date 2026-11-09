@@ -69,6 +69,12 @@ Unlock accepts an expiring, single-use opaque credential reference from trusted
 platform authentication. The SDK never issues credentials or reads Keystore
 keys. Selection and reconciliation do not unlock a profile implicitly.
 
+`createGroup` and `sendGroup` accept an optional final caller key. Explicit keyed
+calls require the operation in `optional_keyed_operations` and all three
+positive optional-key limits. Legacy no-key calls preserve repeatable behavior;
+they have no replay guarantee. The SDK never invents keys or falls back to an
+unkeyed call. Keyed send acceptance is a durable local enqueue, not delivery.
+
 The [independent example](../../examples/android-core-consumer/README.md) compiles
 outside the checkout against this AAR. CI records its APKs, SDK digest, and
 cross-UID Binder checks. Durable peer messaging, restart/partition recovery,

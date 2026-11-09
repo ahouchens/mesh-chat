@@ -51,6 +51,50 @@ private fun capabilities(major: Int = 1): JSONObject = JSONObject()
 
 class CoreClientTest {
     @Test
+    fun callRecoveryRequiresCapabilitiesAndPreservesExplicitAbandonKey() {
+        val unsupported = Scripted(success("client:1", capabilities()))
+        val oldClient = CoreClient.open(unsupported)
+        val error = runCatching { oldClient.callOperationAbandon(PROFILE, PEER, "explicit-abandon-key00") }.exceptionOrNull()
+        assertEquals("unsupported_operation", (error as CoreException).code)
+        assertEquals(1, unsupported.written.size)
+        val caps = capabilities().put("api_minor", 1).put("operations", org.json.JSONArray(listOf(
+            "call.operation_list", "call.operation_query", "call.operation_abandon")))
+        for (name in listOf("call_operations_per_caller_profile", "call_operations_per_vault", "call_operation_retention_seconds",
+                "call_operation_keys_per_caller_profile", "call_operation_keys_per_vault")) caps.getJSONObject("limits").put(name, 256)
+        val transport = Scripted(success("client:1", caps), success("client:2", JSONObject()))
+        val client = CoreClient.open(transport)
+        assertTrue(runCatching { client.callOperationAbandon(PROFILE, PEER, "bad") }.isFailure)
+        assertEquals(1, transport.written.size)
+        client.callOperationAbandon(PROFILE, PEER, "explicit-abandon-key00")
+        val frame = JSONObject(transport.written[1])
+        assertEquals("explicit-abandon-key00", frame.getString("idempotency_key"))
+        assertEquals(PEER, frame.getJSONObject("params").getString("operation"))
+        assertEquals(2, transport.written.size)
+    }
+
+    @Test
+    fun malformedMajorNeverCoercesToSupportedVersion() {
+        for (major in listOf<Any>("1", 1.5, true)) {
+            val transport = Scripted(success("client:1", capabilities().put("api_major", major)))
+            val error = runCatching { CoreClient.open(transport) }.exceptionOrNull()
+            assertEquals("incompatible_version", (error as CoreException).code)
+            assertTrue(transport.closed)
+            assertEquals(1, transport.written.size)
+        }
+    }
+
+    @Test
+    fun explicitGroupKeyRequiresFeatureAndPreservesLegacyNoKeyCall() {
+        val transport = Scripted(success("client:1", capabilities()), success("client:2", JSONObject()))
+        val client = CoreClient.open(transport)
+        val error = runCatching { client.createGroup(PROFILE, "Title", "members", listOf(PEER), "explicit-group-key-0001") }.exceptionOrNull()
+        assertEquals("unsupported_operation", (error as CoreException).code)
+        assertEquals(1, transport.written.size)
+        client.createGroup(PROFILE, "Title", "members", listOf(PEER))
+        assertFalse(JSONObject(transport.written[1]).has("idempotency_key"))
+    }
+
+    @Test
     fun missingComposerCapabilityRejectsBeforeAnyMutationFrame() {
         val transport = Scripted(success("client:1", capabilities()))
         val client = CoreClient.open(transport)
@@ -263,7 +307,7 @@ class CoreClientTest {
     }
 
     @Test
-    fun workspaceJoinIsConvergentWithoutACallerKey() {
+    fun workspaceJoinPreservesExplicitCallerKeyAndRefusesMissingKey() {
         val transport = Scripted(
             success("client:1", capabilities()),
             success(
@@ -273,10 +317,12 @@ class CoreClientTest {
             ),
         )
         val client = CoreClient.open(transport)
+        assertTrue(runCatching { client.workspaceJoin(PROFILE, "invitation") }.exceptionOrNull() is IllegalArgumentException)
+        assertEquals(1, transport.written.size)
         client.workspaceJoin(PROFILE, "invitation", "workspace-join-key-0001")
         val join = JSONObject(transport.written[1])
         assertEquals("workspace.join", join.getString("operation"))
-        assertFalse(join.has("idempotency_key"))
+        assertEquals("workspace-join-key-0001", join.getString("idempotency_key"))
     }
 
     @Test

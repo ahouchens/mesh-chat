@@ -17,6 +17,7 @@ const api = vi.hoisted(() => {
   });
   return {
   beginCallAudio: vi.fn(async () => ({ granted: true })),
+  coreApiCapabilities: vi.fn(async () => ({ api_major: 1, api_minor: 0, stability: "experimental", operations: [], profiles: [] })),
   coreApiBootstrapPreview: vi.fn(async (kind: string, document: string): Promise<unknown> =>
     serviceCommand(kind === "personal" ? "preview_invitation" : kind === "workspace" ? "preview_workspace_invitation" : "preview_workspace_device_link",
       kind === "device_link" ? { device_link: document } : { invitation: document })),
@@ -34,6 +35,10 @@ const api = vi.hoisted(() => {
   coreApiPeerForDestination: vi.fn(async (_destination: string): Promise<{ profile: string; peer: string; destination: string }> => { throw new Error("core_api_unavailable"); }),
   coreApiProfile: vi.fn(async () => ({ profile: "presentation-profile" })),
   coreApiRequest: vi.fn(async (operation: string, params?: Record<string, unknown>): Promise<unknown> => {
+    if (operation === "runtime.mutate" && params) {
+      const { profile: _profile, action, ...payload } = params;
+      return { result: await api.coreApiRuntimeMutate(String(action), payload) };
+    }
     if (operation === "call.control" && params) {
       const { profile: _profile, action, ...payload } = params;
       return { result: await api.coreApiCallControl(String(action), payload) };
@@ -234,7 +239,10 @@ const api = vi.hoisted(() => {
   };
 });
 
-vi.mock("./api", () => api);
+vi.mock("./api", async () => {
+  const { admittedApiFixture } = await import("./test/admitted-api");
+  return admittedApiFixture(api);
+});
 
 // Presentation fixtures use the new composer protocol directly. App.core.test
 // and D's independent boundary suite retain the actual native/API serializer.
@@ -520,6 +528,10 @@ afterEach(async () => {
   api.coreApiCreateInvitation.mockImplementation(async (payload: Record<string, unknown>) => api.serviceCommand("create_invitation", payload));
   api.coreApiPeerForDestination.mockImplementation(async () => { throw new Error("core_api_unavailable"); });
   api.coreApiRequest.mockImplementation(async (operation: string, params?: Record<string, unknown>) => {
+    if (operation === "runtime.mutate" && params) {
+      const { profile: _profile, action, ...payload } = params;
+      return { result: await api.coreApiRuntimeMutate(String(action), payload) };
+    }
     if (operation === "call.control" && params) {
       const { profile: _profile, action, ...payload } = params;
       return { result: await api.coreApiCallControl(String(action), payload) };

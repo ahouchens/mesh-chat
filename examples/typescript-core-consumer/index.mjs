@@ -12,6 +12,25 @@ try {
     installed_package: import.meta.resolve("@mesh-chat/core-client").includes("node_modules"), sdk_only: true };
   if (process.argv.includes("--create-profile")) {
     report.created = (await client.createProfile("SDK qualification", "sdk-create-profile-key-0001")).display_name === "SDK qualification";
+  } else if (process.argv.includes("--recover-call")) {
+    const operation = (await client.callOperationList(profile)).operations[0].operation;
+    const queried = (await client.callOperationQuery(profile, operation)).operation;
+    const abandoned = (await client.callOperationAbandon(profile, operation, "sdk-call-abandon-key-0001")).operation;
+    const repeated = (await client.callOperationAbandon(profile, operation, "sdk-call-abandon-key-0001")).operation;
+    report.recovered = queried.operation === operation;
+    report.cleanup_pending = abandoned.disposition === "cleanup_pending";
+    report.replacement_blocked = !abandoned.replacement_safe;
+    report.same_operation = JSON.stringify(repeated) === JSON.stringify(abandoned);
+  } else if (process.argv.includes("--exercise-keyed-group-create")) {
+    const peer = (await client.profileQuery(profile)).peers[0];
+    const first = await client.createGroup(profile, "SDK qualification group", "members", [peer], "sdk-group-create-key-0001");
+    const repeated = await client.createGroup(profile, "SDK qualification group", "members", [peer], "sdk-group-create-key-0001");
+    report.same_group = first.group === repeated.group;
+  } else if (process.argv.includes("--exercise-keyed-group-send")) {
+    const group = (await client.groups(profile)).groups[0].group;
+    const first = await client.sendGroup(profile, group, "SDK qualification group message", "sdk-group-send-key-0001");
+    const repeated = await client.sendGroup(profile, group, "SDK qualification group message", "sdk-group-send-key-0001");
+    report.accepted = first.accepted; report.same_message = first.message === repeated.message;
   } else if (process.argv.includes("--exercise-profile-lock")) {
     const selected = (await client.profileCatalog()).selected_profile;
     const result = await client.lockProfile(selected, "sdk-profile-lock-key-0001");

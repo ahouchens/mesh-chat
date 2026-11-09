@@ -1,3 +1,4 @@
+import { useProfileRequestAdmission } from "./profile-lifetime";
 import { useEffect, useRef, useState } from "react";
 import { coreApiConnectionDocument, serviceCommand } from "./api";
 import { InvitationImportActions, InvitationQrCode } from "./InvitationTransfer";
@@ -130,6 +131,7 @@ function actionFailure(action: string, reason: unknown, retryAction: string) {
 export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = false, resumeExisting = false, onShared, initialDocument = "", onOpenWorkspace }: {
   invitationId?: string; workspaceId?: string; autoStart?: boolean; resumeExisting?: boolean; onShared?: () => void; initialDocument?: string; onOpenWorkspace?: (workspace: Workspace) => Promise<void>;
 }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   const [input, setInput] = useState(initialDocument);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [setup, setSetup] = useState<Setup | null>(null);
@@ -150,7 +152,7 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
   const check = async (value: Setup) => {
     setSetup(value); setOutgoing(""); setCheckedAt(0);
     try {
-      const current = await serviceCommand<Setup>("check_direct_setup", { setup_id: value.setup_id });
+      const current = await serviceCommand<Setup>("check_direct_setup", { setup_id: value.setup_id }, admitProfileRequest);
       if (!current?.readiness) throw new Error("Readiness unavailable");
       setSetup(current); setOutgoing(current.can_share ? current.text ?? "" : ""); setCheckedAt(Date.now());
       return current;
@@ -166,7 +168,7 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
     if (autoStart && invitationId) void offer();
     if (workspaceId || (invitationId && resumeExisting)) {
       setBusy(true);
-      void serviceCommand<Setup>("resume_direct_setup", invitationId ? { invitation_id: invitationId } : { workspace_id: workspaceId }).then(async value => { if (value.setup_id) await check(value); else setSetup({ ...value, readiness:"refresh_required", can_share:false }); })
+      void serviceCommand<Setup>("resume_direct_setup", invitationId ? { invitation_id: invitationId } : { workspace_id: workspaceId }, admitProfileRequest).then(async value => { if (value.setup_id) await check(value); else setSetup({ ...value, readiness:"refresh_required", can_share:false }); })
         .catch(() => setError("Could not reopen setup. Paste fresh connection details from the owner below."))
         .finally(() => setBusy(false));
     }
@@ -176,7 +178,7 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
     let active = true;
     const timer = setInterval(() => {
       const epoch = revision.current;
-      void serviceCommand<Setup>("check_direct_setup", { setup_id: setup.setup_id }).then((value) => {
+      void serviceCommand<Setup>("check_direct_setup", { setup_id: setup.setup_id }, admitProfileRequest).then((value) => {
         if (active && epoch === revision.current) {
           setSetup(value); setOutgoing(value.can_share ? value.text ?? "" : ""); setCheckedAt(Date.now());
         }
@@ -189,7 +191,7 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
     setBusy(true); setError(""); setIncomingOpen(true);
     try {
       const document = await normalizeInvitationInput(input);
-      const checked = await coreApiConnectionDocument("preview_direct", { document }) as unknown as Preview;
+      const checked = await coreApiConnectionDocument("preview_direct", { document }, admitProfileRequest) as unknown as Preview;
       setInput(document); setPreview(checked);
     } catch { setError("Could not verify these connection details. They may be incomplete, changed or expired. Ask the sender to refresh the connection details and send the complete message."); }
     finally { setBusy(false); }
@@ -198,7 +200,7 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
     if (!invitationId) return;
     revision.current++; setBusy(true); setError(""); setFeedback("");
     try {
-      const value = await serviceCommand<Setup>("prepare_direct_offer", { invitation_id: invitationId });
+      const value = await serviceCommand<Setup>("prepare_direct_offer", { invitation_id: invitationId }, admitProfileRequest);
       await check(value); setBack(false);
     } catch { setError("Could not prepare fresh connection details. Check that this invitation is still active and the app is unlocked."); }
     finally { setBusy(false); }
@@ -212,14 +214,14 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
     try {
       const command = preview.kind === "offer" ? "prepare_direct_answer" : preview.kind === "answer" ? "prepare_direct_ready" : "accept_direct_ready";
       const value = await serviceCommand<Setup>(command, { document: input,
-        ...(preview.kind === "offer" ? { operation_id: operation.current.id } : {}) });
+        ...(preview.kind === "offer" ? { operation_id: operation.current.id } : {}) }, admitProfileRequest);
       action = "check this device before connecting or sharing";
       const readiness = await check(value); setBack(false);
       if (preview.kind !== "offer" && !["both_no_address", "no_route", "network_changed", "refresh_required"].includes(readiness.readiness ?? "")) {
         action = "connect the devices";
         const connected = await serviceCommand<Setup>("connect_direct_setup", {
           setup_id: value.setup_id, document: preview.kind === "answer" ? value.text : input,
-        });
+        }, admitProfileRequest);
         action = "check this device after starting the connection";
         await check(connected);
       }
@@ -253,7 +255,7 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
   const cancel = async () => {
     if (!setup?.setup_id) return;
     setBusy(true);
-    try { await serviceCommand("cancel_direct_setup", { setup_id: setup.setup_id }); setSetup({ ...setup, state: "cancelled", readiness:"cancelled", can_share:false }); setOutgoing(""); }
+    try { await serviceCommand("cancel_direct_setup", { setup_id: setup.setup_id }, admitProfileRequest); setSetup({ ...setup, state: "cancelled", readiness:"cancelled", can_share:false }); setOutgoing(""); }
     catch { setError("Could not cancel setup. Lock the app to retire its active connections."); }
     finally { setBusy(false); }
   };
@@ -261,7 +263,7 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
     if (!setup?.setup_id) return;
     setBusy(true); setError(""); setFeedback("");
     try {
-      await serviceCommand("configure_direct_firewall", { setup_id: setup.setup_id });
+      await serviceCommand("configure_direct_firewall", { setup_id: setup.setup_id }, admitProfileRequest);
       await check(setup);
       setFeedback("Windows firewall permission recorded for this temporary setup.");
     } catch (reason) { setError(actionFailure("allow UDP through Windows Firewall", reason, "Allow UDP in Windows Firewall")); }
@@ -278,11 +280,11 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
       let value: Setup;
       if (invitationId) {
         value = await serviceCommand<Setup>("prepare_direct_offer", {
-          invitation_id: invitationId, manual_host: host, manual_port: port });
+          invitation_id: invitationId, manual_host: host, manual_port: port }, admitProfileRequest);
       } else if (preview?.kind === "offer") {
         if (operation.current.document !== input) operation.current = { document: input, id: crypto.randomUUID() };
         value = await serviceCommand<Setup>("prepare_direct_answer", {
-          document: input, operation_id: operation.current.id, manual_host: host, manual_port: port });
+          document: input, operation_id: operation.current.id, manual_host: host, manual_port: port }, admitProfileRequest);
       } else { setError("Check the received message before setting a manual forward."); return; }
       revision.current++;
       const current = await check(value); setBack(false); setPreview(null); setInput(""); setIncomingOpen(false);
@@ -297,7 +299,7 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
   const openWorkspaceById = async (workspaceId: string) => {
     if (!onOpenWorkspace) return;
     try {
-      const snapshot = await serviceCommand<{ workspaces: Workspace[] }>("workspace_snapshot", {});
+      const snapshot = await serviceCommand<{ workspaces: Workspace[] }>("workspace_snapshot", {}, admitProfileRequest);
       const workspace = snapshot.workspaces.find((item) => item.id === workspaceId);
       if (workspace) await onOpenWorkspace(workspace);
     } catch { setError("Could not open the workspace. Close this dialog and open it from the workspace list."); }
@@ -309,7 +311,7 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
   const retry = async () => {
     if (!setup?.setup_id) return;
     revision.current++; setBusy(true); setError(""); setOutgoing(""); setBack(false);
-    try { await check(await serviceCommand<Setup>("retry_direct_setup", { setup_id: setup.setup_id })); }
+    try { await check(await serviceCommand<Setup>("retry_direct_setup", { setup_id: setup.setup_id }, admitProfileRequest)); }
     catch { setError("Could not refresh this saved exchange. Ask the owner to refresh the same invitation and paste it here. Your join request stays saved."); }
     finally { setBusy(false); }
   };
