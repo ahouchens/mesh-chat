@@ -2,6 +2,7 @@
 import base64
 import json
 import sys
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -52,6 +53,123 @@ def test_mobile_default_remains_legacy(mobile_request):
     assert json.loads(mobile_bridge.initialize(mobile_request))["ok"]
     assert mobile_bridge._service._connection_policy == "legacy"
     assert mobile_bridge._service._connection_runtime is None
+
+
+@pytest.mark.parametrize("field", ["profile_dir", "vault_key", "platform"])
+def test_live_mobile_runtime_cannot_be_reused_for_another_profile_binding(mobile_request, field):
+    assert json.loads(mobile_bridge.initialize(mobile_request))["ok"]
+    service = mobile_bridge._service
+    changed = json.loads(mobile_request)
+    changed[field] = {"profile_dir": changed["profile_dir"] + "-other",
+                      "vault_key": base64.b64encode(b"c" * 32).decode(), "platform": "ios"}[field]
+    assert not json.loads(mobile_bridge.initialize(json.dumps(changed)))["ok"]
+    assert mobile_bridge._service is service
+
+
+def test_trusted_native_entry_starts_exactly_one_owner(mobile_request):
+    assert json.loads(mobile_bridge.initialize_native(mobile_request))["ok"]
+    owner = mobile_bridge._service._connection_runtime
+    assert owner is not None
+    assert json.loads(mobile_bridge.initialize_native(mobile_request))["ok"]
+    assert mobile_bridge._service._connection_runtime is owner
+
+
+def test_retired_mobile_emitter_cannot_publish_into_replacement_incarnation(mobile_request):
+    assert json.loads(mobile_bridge.initialize(mobile_request))["ok"]
+    old_emit = mobile_bridge._service.emit
+    assert json.loads(mobile_bridge.shutdown())["ok"]
+    assert json.loads(mobile_bridge.initialize(mobile_request))["ok"]
+    mobile_bridge.drain_events()
+    old_emit({"type": "event", "event": "old-profile-secret"})
+    assert json.loads(mobile_bridge.drain_events())["result"] == []
+
+
+def test_failed_mobile_close_retains_exact_owner_and_blocks_other_profile(mobile_request, monkeypatch):
+    assert json.loads(mobile_bridge.initialize(mobile_request))["ok"]
+    service = mobile_bridge._service
+    original = service.close
+
+    def failed_close():
+        raise OSError("cleanup unavailable")
+
+    monkeypatch.setattr(service, "close", failed_close)
+    assert not json.loads(mobile_bridge.shutdown())["ok"]
+    assert mobile_bridge._service is None
+    assert mobile_bridge._retiring_service is service
+    assert service._shutdown.is_set()
+    changed = json.loads(mobile_request)
+    changed["profile_dir"] += "-other"
+    assert not json.loads(mobile_bridge.initialize(json.dumps(changed)))["ok"]
+    assert mobile_bridge._retiring_service is service
+    monkeypatch.setattr(service, "close", original)
+    assert json.loads(mobile_bridge.shutdown())["ok"]
+    assert service._store_closed and mobile_bridge._retiring_service is None
+
+
+def test_deferred_mobile_close_blocks_replacement_until_store_and_workers_finish(mobile_request, monkeypatch):
+    assert json.loads(mobile_bridge.initialize(mobile_request))["ok"]
+    service = mobile_bridge._service
+    released = threading.Event()
+    service._pending_contact_carriers = {"pending": SimpleNamespace(close=lambda: None, wait=released.wait)}
+    assert json.loads(mobile_bridge.shutdown())["ok"]
+    assert mobile_bridge._retiring_service is service
+    assert not json.loads(mobile_bridge.initialize(mobile_request))["ok"]
+    assert mobile_bridge._service is None
+    assert not service._store_closed
+    released.set()
+    service._close_finalizer.join(3)
+    assert service._store_closed
+    assert json.loads(mobile_bridge.initialize(mobile_request))["ok"]
+    assert mobile_bridge._service is not service
+
+
+def test_overflow_emitter_rechecks_incarnation_after_event_lock_release(mobile_request, monkeypatch):
+    assert json.loads(mobile_bridge.initialize(mobile_request))["ok"]
+    service, token = mobile_bridge._service, mobile_bridge._event_incarnation
+    invalidated = []
+    replacement = SimpleNamespace(_shutdown=service._shutdown,
+                                  _mark_workspace_invalidation_overflow=lambda: invalidated.append("new"))
+    lock = mobile_bridge._events_lock
+    class ReplaceOnRelease:
+        def __enter__(self): return lock.__enter__()
+        def __exit__(self, *args):
+            result = lock.__exit__(*args)
+            mobile_bridge._service = replacement
+            mobile_bridge._event_incarnation = "replacement"
+            return result
+    mobile_bridge._events.extend({"event": "filler"} for _ in range(mobile_bridge._events.maxlen))
+    try:
+        monkeypatch.setattr(mobile_bridge, "_events_lock", ReplaceOnRelease())
+        service.emit({"event": "late-overflow"})
+        assert invalidated == []
+    finally:
+        mobile_bridge._service, mobile_bridge._event_incarnation = service, token
+        monkeypatch.setattr(mobile_bridge, "_events_lock", lock)
+
+
+def test_failed_unpublished_constructor_retains_its_cleanup_owner(mobile_request, monkeypatch):
+    from mesh_chat.connection import composition
+    captured = []
+
+    def failed_owner(service):
+        captured.append(service)
+        service._direct_native.close = lambda: (_ for _ in ()).throw(OSError("native close unavailable"))
+        raise RuntimeError("owner construction failed")
+
+    monkeypatch.setattr(composition, "native_runtime", failed_owner)
+    try:
+        assert not json.loads(mobile_bridge.initialize_native(mobile_request))["ok"]
+        service, = captured
+        assert mobile_bridge._service is None
+        assert mobile_bridge._retiring_service is service
+        assert not service._store_closed
+        assert not json.loads(mobile_bridge.initialize(mobile_request))["ok"]
+    finally:
+        if captured:
+            from mesh_chat.direct_native import NativeChannel
+            service._direct_native.close = lambda: NativeChannel.close(service._direct_native)
+            assert json.loads(mobile_bridge.shutdown())["ok"]
+            assert service._store_closed
 
 
 @pytest.mark.parametrize("field", ["connection_policy", "native_webrtc_host"])
