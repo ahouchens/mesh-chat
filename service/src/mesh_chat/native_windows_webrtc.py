@@ -364,6 +364,10 @@ class WindowsNativeWebRTCHost:
             if lease is not None:
                 with self._lock:
                     lease.cancelled = True
+                    if lease.session is not None:
+                        lease.session.closed = True
+                        if self._sessions.get(resource) is lease.session:
+                            self._sessions.pop(resource, None)
                     # Only a known never-submitted coroutine releases its own
                     # reservation. Unknown timeout keeps custody until finish.
                     if not lease.started and coroutine is not None and (
