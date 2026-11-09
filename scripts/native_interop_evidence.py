@@ -5,10 +5,9 @@ import json
 import math
 import re
 import time
+from native_interop_workload import LEVEL, PATH_CASES, SCOPE, workload as required_workload
 
 SCENARIOS = ("direct", "turn_udp", "turn_tcp", "turn_tls", "impaired", "cold_start_receipts")
-LEVEL = "packaged_windows_android_emulator_native_interop"
-SCOPE = "Actual frozen Windows and optimized Android own-UID hosts, production encrypted mailbox, native packets and authenticated receipts; no physical or UI media qualification"
 APPLICATION = ("enqueued_packets", "enqueued_controls", "enqueued_bytes", "received_packets", "received_controls", "received_bytes")
 ACCOUNTING = ("capacity", "reserved_count", "creating_count", "allocated_count", "active_count", "retiring_count")
 
@@ -169,10 +168,12 @@ def _message(value, identities):
         identities.add(value[key])
 
 
-def verify_report(record, source, tree, role):
-    fields = {"v", "passed", "evidence_level", "role", "scope", "context", "source_commit", "source_tree", "platform", "preflight", "artifacts", "execution"}
+def verify_report(record, source, tree, role, *, workload="full"):
+    plan = required_workload(workload)
+    fields = {"v", "passed", "evidence_level", "role", "scope", "workload", "context", "source_commit", "source_tree", "platform", "preflight", "artifacts", "execution"}
     _require(isinstance(record, dict) and set(record) == fields and type(record["v"]) is int and record["v"] == 1
-        and record["passed"] is True and record["evidence_level"] == LEVEL and record["scope"] == SCOPE
+        and record["passed"] is True and record["evidence_level"] == plan["level"] and record["scope"] == plan["scope"]
+        and record["workload"] == workload
         and record["role"] == role and role in {"windows", "android"}
         and record["source_commit"] == source and record["source_tree"] == tree, "Native interop report has wrong source, scope, role or outcome")
     context = record["context"]
@@ -200,15 +201,21 @@ def verify_report(record, source, tree, role):
     execution = record["execution"]
     _require(isinstance(execution, dict) and set(execution) == {"identity", "scenarios", "receipt_iterations", "processes_started", "forced_exits", "clean_exits", "webview_processes", "cleanup", "final_host_accounting"}
         and token(execution["identity"], 64) and execution["cleanup"] == "passed", "Native execution or exact cleanup is incomplete")
-    for field, count in (("processes_started", 11), ("forced_exits", 10), ("clean_exits", 1), ("webview_processes", 0)):
+    cold_starts = (plan["iterations"] - 1) // plan["cold_start_every"] + 1
+    for field, count in (("processes_started", cold_starts + 1), ("forced_exits", cold_starts), ("clean_exits", 1), ("webview_processes", 0)):
         _require(type(execution[field]) is int and execution[field] == count, "Periodic process restart/clean exit inventory differs")
     accounting(execution["final_host_accounting"], empty=True)
     cases = execution["scenarios"]
-    _require(isinstance(cases, list) and [item.get("scenario") for item in cases if isinstance(item, dict)] == list(SCENARIOS[:5]), "Required native path matrix is incomplete")
+    _require(isinstance(cases, list) and [(item.get("scenario"), item.get("initiator")) for item in cases if isinstance(item, dict)] == list(plan["paths"]), "Required native path/initiator matrix is incomplete")
     identities = set()
     for case in cases:
         scenario = case["scenario"]
-        _require(set(case) == {"scenario", "before", "after", "native_delta", "messages", "impairment", "negative", "retired_host_accounting"}, "Native case contains unexpected or missing fields")
+        _require(set(case) == {"scenario", "initiator", "supervisor_pairing", "before", "after", "native_delta", "messages", "impairment", "negative", "retired_host_accounting"}, "Native case contains unexpected or missing fields")
+        pairing = case["supervisor_pairing"]
+        _require(isinstance(pairing, dict) and set(pairing) == {"operation", "role", "state", "transferred_cancel_preserves_carrier"}
+            and token(pairing["operation"], 64) and pairing["role"] == ("offer" if role == case["initiator"] else "answer")
+            and pairing["state"] == "transferred" and pairing["transferred_cancel_preserves_carrier"] is True,
+            "Initial pairing did not use the supervisor-owned role and exact custody transfer")
         accounting(case["retired_host_accounting"], empty=True)
         _delta(case, scenario)
         _require(isinstance(case["messages"], list) and len(case["messages"]) == (20 if scenario == "impaired" else 1), "Native receipt workload is incomplete")
@@ -246,14 +253,14 @@ def verify_report(record, source, tree, role):
                 "Impairment loss/actual selected-pair RTT evidence is incomplete")
         else: _require(impairment is None, "Unexecuted role cannot claim kernel impairment counters")
     iterations = execution["receipt_iterations"]
-    _require(isinstance(iterations, list) and len(iterations) == 100, "Required 100 receipt iterations are incomplete")
+    _require(isinstance(iterations, list) and len(iterations) == plan["iterations"], "Required receipt iterations are incomplete")
     previous = None
     services = set()
     baseline = None
     for index, item in enumerate(iterations):
         _require(isinstance(item, dict) and set(item) == {"iteration", "cold_start", "native_resources", "warm_baseline_resources", "previous_service", "current_service", "identity", "before", "after", "native_delta", "message", "host_accounting", "warm_baseline_host_accounting"}
             and type(item["iteration"]) is int and item["iteration"] == index + 1
-            and item["cold_start"] is (index % 10 == 0) and item["identity"] == execution["identity"], "Receipt iteration or periodic cold-start schedule differs")
+            and item["cold_start"] is (index % plan["cold_start_every"] == 0) and item["identity"] == execution["identity"], "Receipt iteration or periodic cold-start schedule differs")
         for key in ("previous_service", "current_service"): _require(token(item[key], 64), "Service epoch is missing")
         if previous is not None: _require(item["previous_service"] == previous, "Receipt iterations crossed an unreported runtime")
         else: services.add(item["previous_service"])
@@ -278,9 +285,9 @@ def verify_report(record, source, tree, role):
     return record
 
 
-def verify_pair(windows, android, source, tree, *, context=None):
-    verify_report(windows, source, tree, "windows")
-    verify_report(android, source, tree, "android")
+def verify_pair(windows, android, source, tree, *, context=None, workload="full"):
+    verify_report(windows, source, tree, "windows", workload=workload)
+    verify_report(android, source, tree, "android", workload=workload)
     _require(windows["context"] == android["context"] and windows["execution"]["identity"] != android["execution"]["identity"],
              "Native peers used another run/attempt or the same profile identity")
     if context is not None:

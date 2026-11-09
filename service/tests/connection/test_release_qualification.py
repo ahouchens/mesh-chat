@@ -14,6 +14,15 @@ from connection_ci import COMPONENTS, SUITES
 SOURCE, TREE, VERSION = "a" * 40, "b" * 40, "1.2.3"
 
 
+def test_release_rejects_quick_native_workload_even_when_jobs_pass(tmp_path):
+    path, _, _ = fixture(tmp_path)
+    manifest = json.loads(path.read_text())
+    manifest["native_workload"] = "quick"
+    path.write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="Quick native smoke"):
+        release.qualification(path, SOURCE, TREE)
+
+
 def component(name, *, tests=None, checks=None):
     return {"suite": name, "evidence_level": "component", "source_commit": SOURCE,
             "source_tree": TREE, "tests": tests, "checks": checks,

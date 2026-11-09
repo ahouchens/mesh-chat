@@ -12,9 +12,10 @@ import native_interop_evidence as evidence
 from native_interop_rendezvous import APPROVAL_PHASES, OFFER_PHASES, checked_payload
 
 
-def interop_reports(source="a" * 40, tree="b" * 40, android_artifacts=None):
+def interop_reports(source="a" * 40, tree="b" * 40, android_artifacts=None, *, workload="full"):
     """Complete fake runs for rejection tests only; no dist report is written."""
     from android_qualification import APKS, CORE_APKS, CONSUMER_ARTIFACTS, ROOT
+    plan = evidence.required_workload(workload)
     if android_artifacts is None:
         android_artifacts = {path.relative_to(ROOT).as_posix(): "e" * 64 for path in (*APKS, *CORE_APKS, *CONSUMER_ARTIFACTS)}
     def message(name, role):
@@ -37,9 +38,10 @@ def interop_reports(source="a" * 40, tree="b" * 40, android_artifacts=None):
     for role in ("windows", "android"):
         cases, iterations = [], []
         identity = evidence.digest([role, "identity"])
-        for name in evidence.SCENARIOS[:5]:
-            before = selection(name, role, role + "initial", name, 0, 1)
-            after = selection(name, role, role + "initial", name, 1, 2)
+        for name, initiator in plan["paths"]:
+            case_id = name + ":" + initiator
+            before = selection(case_id, role, role + "initial", name, 0, 1)
+            after = selection(case_id, role, role + "initial", name, 1, 2)
             negative = None
             if name in {"turn_tcp", "turn_tls", "impaired"}:
                 negative = {"blocked_packets": 2 if role == "android" else None, "delivered_while_blocked": False,
@@ -52,11 +54,13 @@ def interop_reports(source="a" * 40, tree="b" * 40, android_artifacts=None):
                     "jitter_ms_each_way": 10, "loss_percent_each_way": 0.1, "added_nominal_rtt_ms": 150,
                     "socket_correlation": "unique_own_pid_socket_and_kernel_flow", "loss_observed": False,
                     "counters": {direction: {"bytes": 1000, "packets": 10, "dropped": 0} for direction in ("egress", "ingress")}}
-            cases.append({"scenario": name, "before": before, "after": after,
+            cases.append({"scenario": name, "initiator": initiator, "supervisor_pairing": {
+                "operation": evidence.digest([role, case_id, "operation"]), "role": "offer" if role == initiator else "answer",
+                "state": "transferred", "transferred_cancel_preserves_carrier": True}, "before": before, "after": after,
                 "native_delta": {name: 1 for name in evidence.APPLICATION},
-                "messages": [message(f"{name}:{index}", role) for index in range(20 if name == "impaired" else 1)],
+                "messages": [message(f"{case_id}:{index}", role) for index in range(20 if name == "impaired" else 1)],
                 "impairment": impairment, "negative": negative, "retired_host_accounting": counts()})
-        for index in range(100):
+        for index in range(plan["iterations"]):
             generation = index // 10 + 1
             service = role + str(generation)
             previous = role + ("initial" if generation == 1 else str(generation - 1)) if index % 10 == 0 else service
@@ -66,7 +70,7 @@ def interop_reports(source="a" * 40, tree="b" * 40, android_artifacts=None):
                 "warm_baseline_resources": 1, "previous_service": evidence.digest(previous), "current_service": evidence.digest(service),
                 "identity": identity, "before": before, "after": after, "native_delta": {name: 1 for name in evidence.APPLICATION},
                 "host_accounting": counts(1), "warm_baseline_host_accounting": counts(1), "message": message(f"soak:{index}", role)})
-        result.append({"v": 1, "passed": True, "evidence_level": evidence.LEVEL, "role": role, "scope": evidence.SCOPE,
+        result.append({"v": 1, "passed": True, "evidence_level": plan["level"], "role": role, "scope": plan["scope"], "workload": workload,
             "context": {"repository": "example/mesh", "repository_id": 1, "run_id": 2, "run_attempt": 1, "source_commit": source},
             "source_commit": source, "source_tree": tree,
             "platform": {"windows": True} if role == "windows" else {"emulated": True, "abi": "x86_64", "kvm": True},
@@ -74,7 +78,8 @@ def interop_reports(source="a" * 40, tree="b" * 40, android_artifacts=None):
                           "scope": "outbound health and advertisement only; no allocation or selected path"},
             "artifacts": {"sidecar_sha256": "d" * 64, "build_input_sha256": "e" * 64, "build_manifest_sha256": "f" * 64} if role == "windows" else dict(android_artifacts),
             "execution": {"identity": identity, "scenarios": cases, "receipt_iterations": iterations,
-                "processes_started": 11, "forced_exits": 10, "clean_exits": 1, "webview_processes": 0, "cleanup": "passed"}})
+                "processes_started": (plan["iterations"] - 1) // 10 + 2, "forced_exits": (plan["iterations"] - 1) // 10 + 1,
+                "clean_exits": 1, "webview_processes": 0, "cleanup": "passed"}})
         result[-1]["execution"]["final_host_accounting"] = counts()
     return tuple(result)
 
@@ -88,12 +93,12 @@ def test_complete_two_role_fixture_is_accepted_only_with_cross_matching_actual_m
 @pytest.mark.parametrize("fault", ["source", "tree", "scope", "platform", "missing_case", "wrong_selected_protocol", "packet_delta",
     "no_receipt", "duplicate_message", "missing_negative", "block_no_packet", "delivered_under_block", "no_restore",
     "iteration_missing", "process_count", "cold_schedule", "old_service", "warm_growth", "native_lease_growth", "unknown_native_zero",
-    "unretired_native", "identity_changed", "cleanup", "raw_extra"])
+    "unretired_native", "identity_changed", "cleanup", "wrong_initiator", "manual_pairing", "cancel_reclaimed", "raw_extra"])
 def test_native_matrix_rejects_partial_or_unexecuted_required_evidence(role, fault):
     reports = interop_reports()
     value = reports[0 if role == "windows" else 1]
     execution = value["execution"]
-    case = execution["scenarios"][2]
+    case = next(case for case in execution["scenarios"] if case["scenario"] == "turn_tcp")
     if fault == "source": value["source_commit"] = "c" * 40
     elif fault == "tree": value["source_tree"] = "c" * 40
     elif fault == "scope": value["scope"] = "physical full native and media qualification"
@@ -118,6 +123,9 @@ def test_native_matrix_rejects_partial_or_unexecuted_required_evidence(role, fau
         execution["scenarios"][0]["retired_host_accounting"].update(reserved_count=1, allocated_count=1, retiring_count=1)
     elif fault == "identity_changed": execution["receipt_iterations"][-1]["identity"] = "f" * 64
     elif fault == "cleanup": execution["cleanup"] = "unavailable"
+    elif fault == "wrong_initiator": case["initiator"] = "android"
+    elif fault == "manual_pairing": case["supervisor_pairing"]["role"] = "manual"
+    elif fault == "cancel_reclaimed": case["supervisor_pairing"]["transferred_cancel_preserves_carrier"] = False
     else: case["after"]["raw_sdp"] = "secret"
     with pytest.raises(ValueError): evidence.verify_pair(*reports, "a" * 40, "b" * 40)
 
@@ -129,7 +137,7 @@ def test_pair_cannot_mix_runs_peers_or_impairment_profiles(fault):
     elif fault == "attempt": android["context"]["run_attempt"] += 1
     elif fault == "same_identity": android["execution"]["identity"] = windows["execution"]["identity"]
     elif fault == "other_message": android["execution"]["scenarios"][0]["messages"][0]["inbound"] = "f" * 64
-    elif fault == "other_negative": android["execution"]["scenarios"][2]["negative"]["inbound"] = "f" * 64
+    elif fault == "other_negative": next(case for case in android["execution"]["scenarios"] if case["scenario"] == "turn_tcp")["negative"]["inbound"] = "f" * 64
     elif fault == "other_iteration": android["execution"]["receipt_iterations"][-1]["message"]["inbound"] = "f" * 64
     elif fault == "loss_profile": android["execution"]["scenarios"][-1]["impairment"]["loss_percent_each_way"] = 1
     elif fault == "fake_loss": android["execution"]["scenarios"][-1]["impairment"]["loss_observed"] = True
@@ -159,7 +167,7 @@ def test_transport_filtering_uses_one_broker_url_and_never_counts_configuration_
 def test_fixed_plan_and_phase_inventory_fit_ten_artifacts_per_job_including_final_report():
     assert checked_payload("control", {"scenarios": list(evidence.SCENARIOS), "iterations": 100, "cold_start_every": 10})
     windows = {"key", *OFFER_PHASES, *("negative_checked_" + name for name in ("turn_tcp", "turn_tls", "impaired"))}
-    android = {"key", "approved", "impaired_ready", *("negative_ready_" + name for name in ("turn_tcp", "turn_tls", "impaired"))}
+    android = {"key", "offer", "approved", "impaired_ready", *("negative_ready_" + name for name in ("turn_tcp", "turn_tls", "impaired"))}
     assert len(windows) + 1 == 10 and len(android) + 1 <= 10
     assert all(name in APPROVAL_PHASES for name in windows | android if name.startswith("negative"))
 
@@ -174,6 +182,32 @@ def test_workflow_keeps_two_actual_concurrent_platform_jobs_and_owned_emulator_l
     for role, job in (("windows", windows), ("android", android)):
         action = next(step for step in job["steps"] if step.get("uses") == "./scripts/native-interop-artifact")
         assert action["with"]["role"] == role and action["env"]["GITHUB_TOKEN"] == "${{ github.token }}"
+        assert action["with"]["workload"] == "${{ inputs.workload }}"
+        assert next(step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@"))["with"]["fetch-depth"] == 0
         assert any(step.get("if") == "always()" and step.get("uses", "").startswith("actions/upload-artifact@") for step in job["steps"])
     assert not any(step.get("uses", "").startswith("reactivecircus/") for step in android["steps"])
     assert any("system-images;android-35;google_apis;x86_64" in step.get("run", "") for step in android["steps"])
+
+
+def test_controller_uses_supervisor_pairing_and_both_direct_initiators():
+    source = Path(controller.__file__).read_text()
+    assert all(name in source for name in ("pairing_begin", "pairing_status", "pairing_cancel"))
+    assert all(name not in source for name in ("native_webrtc_offer", "native_webrtc_accept",
+        "native_webrtc_bind_onboarding", "native_webrtc_apply_answer", "signal_publish", "signal_fetch"))
+    assert [(name, role) for name, role in evidence.PATH_CASES if name == "direct"] == [
+        ("direct", "windows"), ("direct", "android")]
+
+
+@pytest.mark.parametrize("mode", ["quick", "full"])
+def test_workload_cannot_be_relabelled_or_substituted_for_the_other_matrix(mode):
+    reports = interop_reports(workload=mode)
+    evidence.verify_pair(*reports, "a" * 40, "b" * 40, workload=mode)
+    other = "full" if mode == "quick" else "quick"
+    with pytest.raises(ValueError):
+        evidence.verify_pair(*reports, "a" * 40, "b" * 40, workload=other)
+    # Changing labels alone cannot bypass the actual fixed native inventory.
+    for report in reports:
+        report.update(workload=other, scope=evidence.required_workload(other)["scope"],
+                      evidence_level=evidence.required_workload(other)["level"])
+    with pytest.raises(ValueError):
+        evidence.verify_pair(*reports, "a" * 40, "b" * 40, workload=other)

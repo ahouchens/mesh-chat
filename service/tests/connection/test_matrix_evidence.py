@@ -185,11 +185,11 @@ def test_required_runtime_materials_cannot_qualify_a_different_or_partial_archiv
         matrix.collect(tmp_path, source, tree, ["verification"])
 
 
-def native_interop_reports(directory, source, tree, artifacts):
+def native_interop_reports(directory, source, tree, artifacts, *, workload="full"):
     from test_ui_core_boundary_interop_controller import interop_reports
     folder = directory / "native-interop"
     folder.mkdir()
-    reports = interop_reports(source, tree, artifacts)
+    reports = interop_reports(source, tree, artifacts, workload=workload)
     for role, report in zip(("windows", "android"), reports):
         (folder / f"native-interop-{role}.json").write_text(json.dumps(report))
     return reports
@@ -200,10 +200,23 @@ def test_required_native_interop_revalidates_both_actual_platform_roles_and_test
     native_interop_reports(tmp_path, source, tree, android["artifacts"])
     result = matrix.collect(tmp_path, source, tree, ["verification", "android", "native_interop"])
     native = [item for item in result["suites"] if item["suite"] in {"native_windows_peer", "native_android_peer"}]
-    assert len(native) == 2 and all(item["checks"] == 108 and item["cleanup"] == "passed" for item in native)
+    assert len(native) == 2 and all(item["checks"] == 109 and item["cleanup"] == "passed" for item in native)
     assert result["native_interop"]["receipt_iterations_per_role"] == 100
     assert result["native_interop"]["periodic_cold_starts_per_role"] == 10
     assert set(result["report_sha256"]) >= {"native_interop_windows", "native_interop_android"}
+
+
+def test_quick_native_smoke_is_required_and_cannot_satisfy_full_gate(tmp_path):
+    source, tree, android = fixture(tmp_path)
+    native_interop_reports(tmp_path, source, tree, android["artifacts"], workload="quick")
+    required = ["verification", "android", "native_interop"]
+    result = matrix.collect(tmp_path, source, tree, required, native_workload="quick")
+    native = [item for item in result["suites"] if item["suite"] in {"native_windows_peer", "native_android_peer"}]
+    assert len(native) == 2 and all(item["checks"] == 8 and item["evidence_level"].endswith("_quick_smoke") for item in native)
+    assert result["native_interop"]["receipt_iterations_per_role"] == 5
+    assert result["native_interop"]["periodic_cold_starts_per_role"] == 1
+    assert result["native_interop"]["impairment"] == "not executed"
+    with pytest.raises(ValueError): matrix.collect(tmp_path, source, tree, required)
 
 
 @pytest.mark.parametrize("fault", ["missing_windows", "missing_android", "other_windows_binary", "other_android_apk", "cross_peer_message", "prior_attempt"])

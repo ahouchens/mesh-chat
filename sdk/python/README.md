@@ -39,8 +39,10 @@ fallback send.
 an explicit `key` argument. Legacy calls without it fail locally before I/O.
 The manifest distinguishes keyed operations from `repeatable`,
 `convergent_desired_state`, and `last_write_wins`. Repeatable group sends/creates
-currently have **no replay guarantee**; this SDK does not invent unsupported
-keys to disguise that remaining Core contract gap.
+without an explicit advertised key have **no replay guarantee**. `create_group`
+and `send_group` accept an optional final `key`; keyed calls require their names
+in `optional_keyed_operations` and all three positive optional-key limits.
+They never fall back to an unkeyed send. Other legacy mutation gaps remain open.
 
 The host owns forward storage migration. First composer use atomically raises
 the vault floor from 1 to 2. An older format-1 host must refuse that migrated

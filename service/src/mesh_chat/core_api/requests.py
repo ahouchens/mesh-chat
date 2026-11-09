@@ -270,6 +270,7 @@ KEYED_OPERATIONS = frozenset({
 })
 
 OPTIONAL_KEY_OPERATIONS = frozenset({
+    "group.create", "group.message_enqueue",
     "workspace.access_recommendation", "workspace.history", "workspace.connection",
     "group.draft_set", "peer.update", "conversation.mutate", "peer.decide",
     "link.preview", "contact.invitation", "recovery.transfer", "connection.support",

@@ -193,6 +193,17 @@ class WindowsPeer:
     def path(self, logical, physical):
         return self.private("qualification.path_evidence", {"logical_session": logical, "expected_physical": physical})
 
+    def pairing_begin(self, operation_id, role, *, pairing_code=None, direct=False):
+        payload = {"operation_id": operation_id, "role": role, "allow_direct_ip_disclosure": direct}
+        if pairing_code is not None: payload["pairing_code"] = pairing_code
+        return self.private("qualification.pairing_begin", payload)
+
+    def pairing_status(self, operation_id):
+        return self.private("qualification.pairing_status", {"operation_id": operation_id})
+
+    def pairing_cancel(self, operation_id):
+        return self.private("qualification.pairing_cancel", {"operation_id": operation_id})
+
     def stop(self, *, crash=False):
         process = self.process
         if process is None:
@@ -343,6 +354,17 @@ class AndroidPeer:
     def path(self, logical, physical):
         return self._request("inspect", {"command": "qualification.path_evidence", "payload": {
             "logical_session": logical, "expected_physical": physical}})
+
+    def pairing_begin(self, operation_id, role, *, pairing_code=None, direct=False):
+        payload = {"operation_id": operation_id, "role": role, "allow_direct_ip_disclosure": direct}
+        if pairing_code is not None: payload["pairing_code"] = pairing_code
+        return self._request("inspect", {"command": "qualification.pairing_begin", "payload": payload})
+
+    def pairing_status(self, operation_id):
+        return self._request("inspect", {"command": "qualification.pairing_status", "payload": {"operation_id": operation_id}})
+
+    def pairing_cancel(self, operation_id):
+        return self._request("inspect", {"command": "qualification.pairing_cancel", "payload": {"operation_id": operation_id}})
 
     def stop(self, *, crash=False, delete_profile=False):
         process = self.process

@@ -4,6 +4,9 @@ inputs:
   role:
     description: windows or android
     required: true
+  workload:
+    description: Source-bound quick or full native workload
+    required: true
   python:
     description: Selected installed Python interpreter
     required: false

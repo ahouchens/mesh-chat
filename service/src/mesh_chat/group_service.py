@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import time
 import uuid
 from types import SimpleNamespace
+from dataclasses import dataclass, field
 from typing import Any
 
 from .app_protocol import (
@@ -49,6 +51,10 @@ GROUP_RETRY_MAX_SECONDS = 60
 MAX_PENDING_GROUP_INVITATIONS = 32
 MAX_PENDING_GROUP_INVITATIONS_PER_OWNER = 8
 MAX_PENDING_GROUP_MANIFESTS = 32
+
+
+class GroupMutationCapacityExceeded(ValidationError):
+    """A keyed creation cannot reserve another group in the bounded profile."""
 
 
 def _new_id() -> str:
@@ -98,6 +104,23 @@ def _pending_member(contact: dict[str, Any]) -> dict[str, Any]:
         "role": GroupRole.MEMBER.value,
         "status": "invited",
     }
+
+
+@dataclass(frozen=True)
+class PreparedGroupMutation:
+    operation_id: str | None
+    input_fingerprint: str
+    result: dict[str, Any]
+    records: tuple[tuple[str, str, dict[str, Any]], ...]
+    deletions: tuple[tuple[str, str], ...]
+    expected: dict[tuple[str, str], dict[str, Any] | None]
+    expected_collections: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
+    delivery_ids: tuple[str, ...] = ()
+
+
+def _group_input(action, **params):
+    return hashlib.sha256(json.dumps({'action': action, **params}, sort_keys=True,
+        separators=(',', ':'), ensure_ascii=True).encode()).hexdigest()
 
 
 class GroupServiceMixin:
@@ -633,9 +656,7 @@ class GroupServiceMixin:
         self._changed()
         return True
 
-    def create_group(
-        self, title: str, member_ids: list[str], posting_policy: str
-    ) -> dict[str, Any]:
+    def validate_group_create(self, title, member_ids, posting_policy):
         profile = self._require_profile()
         identity = getattr(self, "_identity", None)
         if identity is None:
@@ -656,6 +677,25 @@ class GroupServiceMixin:
         if any(contact["trust"] not in ACTIVE_TRUST for contact in contacts):
             raise ContactNotApproved("Every group invitee must be an approved contact")
 
+        return profile, identity, policy, contacts
+
+    @staticmethod
+    def _validate_group_operation_id(operation_id):
+        try:
+            if str(uuid.UUID(operation_id)) != operation_id:
+                raise ValueError()
+        except (TypeError, ValueError, AttributeError) as error:
+            raise ValidationError('Group operation ID is invalid') from error
+
+    def prepare_group_create(self, title, member_ids, posting_policy, operation_id):
+        self._validate_group_operation_id(operation_id)
+        return self._prepare_group_create(title, member_ids, posting_policy, operation_id)
+
+    def _prepare_group_create(self, title, member_ids, posting_policy, operation_id=None):
+        profile, identity, policy, contacts = self.validate_group_create(title, member_ids, posting_policy)
+        groups = dict(self.store.items('group', limit=257)) if operation_id is not None else {}
+        if operation_id is not None and len(groups) >= 256:
+            raise GroupMutationCapacityExceeded('Group profile capacity is exhausted')
         genesis_created = create_group_genesis(
             identity,
             title,
@@ -749,6 +789,7 @@ class GroupServiceMixin:
                 document=checked_invite.serialized,
                 epoch=checked_invite.group_epoch,
                 manifest_hash=checked_invite.manifest_hash,
+                queue_retry=False,
             )
             records.extend(
                 [
@@ -757,11 +798,33 @@ class GroupServiceMixin:
                 ]
             )
             deliveries.append(delivery)
-        self.store.put_many(records)
-        for delivery in deliveries:
-            self._attempt_group_delivery(delivery["id"])
+        expected = {('profile', 'local'): profile, ('identity', 'local'): self.store.get('identity', 'local'),
+                    ('group', group['id']): None}
+        expected.update({('contact', contact['id']): contact for contact in contacts})
+        return PreparedGroupMutation(operation_id,
+            _group_input('create', title=title, member_ids=member_ids, posting_policy=posting_policy),
+            {'group_id': group['id']}, tuple(records), (), expected,
+            {'group': groups} if operation_id is not None else {}, tuple(item['id'] for item in deliveries))
+
+    def create_group(self, title, member_ids, posting_policy):
+        prepared = self._prepare_group_create(title, member_ids, posting_policy)
+        self.store.put_and_delete(prepared.records, prepared.deletions)
+        self.finish_prepared_group(prepared)
+        return self._public_group(self._require_group(prepared.result['group_id']))
+
+    def wake_group_outbox(self, delivery_ids):
+        for delivery_id in delivery_ids:
+            delivery = self.store.get('group_delivery', delivery_id)
+            if (delivery is not None and delivery.get('state') not in FINAL_DELIVERY_STATES
+                    and float(delivery.get('expires_at', 0)) > time.time()):
+                self._queue_group_retry(delivery_id)
+
+    def finish_prepared_group(self, prepared, *, attempt=True):
+        self.wake_group_outbox(prepared.delivery_ids)
+        if attempt:
+            for delivery_id in prepared.delivery_ids:
+                self._attempt_group_delivery(delivery_id)
         self._changed()
-        return self._public_group(self._require_group(group["id"]))
 
     def accept_group_invitation(self, invitation_id: str) -> dict[str, Any]:
         invitation_record = self.store.get("group_invitation", invitation_id)
@@ -922,7 +985,7 @@ class GroupServiceMixin:
         self._changed()
         return self._public_group(group)
 
-    def send_group_message(self, group_id: str, text: str) -> dict[str, Any]:
+    def validate_group_send(self, group_id, text):
         group = self._require_group(group_id)
         if group.get("status") != "active":
             raise ContactNotApproved("Group is not active")
@@ -947,6 +1010,16 @@ class GroupServiceMixin:
         ]
         if not recipients:
             raise ValidationError("No other active group members can receive this message")
+        return group, profile, recipients
+
+    def prepare_group_send(self, group_id, text, operation_id):
+        self._validate_group_operation_id(operation_id)
+        return self._prepare_group_send(group_id, text, operation_id)
+
+    def _prepare_group_send(self, group_id, text, operation_id=None):
+        group, profile, recipients = self.validate_group_send(group_id, text)
+        from copy import deepcopy
+        original_group = deepcopy(group)
         sequence = int(group.get("next_sender_sequence", 0)) + 1
         group["next_sender_sequence"] = sequence
         group["updated_at"] = time.time()
@@ -973,29 +1046,24 @@ class GroupServiceMixin:
                 text=text,
                 group_message_id=message_id,
                 sender_sequence=sequence,
+                queue_retry=False,
             )
             for recipient in recipients
         ]
-        self.store.put_and_delete(
-            [
-                ("group", group["id"], group),
-                ("group_message", message_id, message),
-                *[
-                    ("group_delivery", delivery["id"], delivery)
-                    for delivery in deliveries
-                ],
-            ],
-            [
-                (
-                    "conversation_hidden",
-                    self._conversation_marker_id("group", group["id"]),
-                )
-            ],
-        )
-        for delivery in deliveries:
-            self._attempt_group_delivery(delivery["id"])
-        self._changed()
-        return self._public_group_message(message)
+        records = [('group', group['id'], group), ('group_message', message_id, message),
+                   *[('group_delivery', item['id'], item) for item in deliveries]]
+        deletions = [('conversation_hidden', self._conversation_marker_id('group', group['id']))]
+        expected = {('profile', 'local'): profile, ('identity', 'local'): self.store.get('identity', 'local'),
+                    ('group', group['id']): original_group, ('group_message', message_id): None}
+        return PreparedGroupMutation(operation_id, _group_input('send', group_id=group_id, text=text),
+            {'group_id': group_id, 'message_id': message_id}, tuple(records), tuple(deletions), expected,
+            delivery_ids=tuple(item['id'] for item in deliveries))
+
+    def send_group_message(self, group_id, text):
+        prepared = self._prepare_group_send(group_id, text)
+        self.store.put_and_delete(prepared.records, prepared.deletions)
+        self.finish_prepared_group(prepared)
+        return self._public_group_message(self.store.get('group_message', prepared.result['message_id']))
 
     def remove_group_member(self, group_id: str, destination_hash: str) -> dict[str, Any]:
         group = self._require_group(group_id)
