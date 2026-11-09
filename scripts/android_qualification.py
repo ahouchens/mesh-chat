@@ -55,6 +55,8 @@ TYPED_CORE_BRIDGE = (
     "typedProfileWorkspaceAndSettingsReachProductionCore",
     "typedDraftAndLostReplyRetryKeepOneDurableMessage",
     "typedErrorsPreserveConflictAndCallerAuthority",
+    "typedSettingsMutationsReadBackFromTheRealDomain",
+    "typedCallControlSignsQueuesAndEndsAnApprovedCall",
 )
 CORE_CONSUMER = ("consumerQueriesProductionFacadeAcrossUid", "externalCallerCannotAcquireOwnerScope",
                  "detachingConsumerCanReattachToItsProfile", "privateControlIsRejectedThroughThePublicPackage",

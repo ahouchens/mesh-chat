@@ -86,11 +86,13 @@ class ServiceCallSettings:
                 elif action == "candidate":
                     value = self._service.add_call_candidate(params["call_id"], params["candidate"])
                 elif action == "signal_publish":
-                    value = self._service.signal_publish(params["document"], params["role"],
+                    role = {"caller": "offer", "callee": "answer"}.get(params["role"], params["role"])
+                    value = self._service.signal_publish(params["document"], role,
                                                         params.get("session_id"),
                                                         params.get("mailbox_token"))
                 elif action == "signal_fetch":
-                    value = self._service.signal_fetch(params["session"], params["role"],
+                    role = {"caller": "offer", "callee": "answer"}.get(params["role"], params["role"])
+                    value = self._service.signal_fetch(params["session"], role,
                                                       params.get("mailbox_token"))
                 else:
                     raise ApiFailure("invalid_request")

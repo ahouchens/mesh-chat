@@ -35,7 +35,8 @@ class BoundaryHost:
             self.workspace_id, self.channel_id, "Boundary root message", str(uuid4()), str(uuid4()))
         permissions = frozenset({"observe", "read", "send", "approve", "pair", "connect",
                                  "diagnose", "runtime_owner", "profile_owner"})
-        self.session = bind_service_stream(self.service, lambda: Grant("boundary-ui", permissions, ("local",)))
+        self.session = bind_service_stream(self.service, lambda: Grant("boundary-ui", permissions, ("local",)),
+                                          private_native=True)
         self.call("runtime.capabilities")
 
     def call(self, operation, params=None, key=None):

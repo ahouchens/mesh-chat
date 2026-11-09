@@ -255,6 +255,35 @@ def test_facade_application_snapshot_returns_ui_state(host):
         owner.close()
 
 
+def test_call_control_executes_real_signed_invite_and_hangup_through_core(host):
+    service = host()
+    owner = HostedClient(service)
+    fingerprint = "sha-256 " + ":".join(["AB"] * 32)
+    sdp = "\r\n".join(["v=0", "o=- 1 2 IN IP4 127.0.0.1", "s=-", "t=0 0",
+                         "a=fingerprint:" + fingerprint,
+                         "m=audio 9 UDP/TLS/RTP/SAVPF 111", "a=mid:0"]) + "\r\n"
+    try:
+        client = CoreClient.open(owner.reader.readline, owner.writer.write)
+        profile = client.capabilities["profiles"][0]
+        started = client.request("call.control", {"profile": profile, "action": "start",
+            "contact_id": "internal-peer", "media": "audio", "sdp": sdp,
+            "dtls_fingerprint": fingerprint}, idempotency_key="start-call-core-key")
+        call = started["result"]
+        assert call["state"] == "dialing"
+        assert service.store.get("call", call["id"])["state"] == "dialing"
+        invites = service.store.list("message")
+        assert len(invites) == 1 and invites[0]["kind"] == "call_signal"
+        document = json.loads(invites[0]["text"])
+        assert document["call_id"] == call["id"]
+        ended = client.request("call.control", {"profile": profile, "action": "end",
+            "call_id": call["id"], "reason": "completed"}, idempotency_key="end-call-core-key00")
+        assert ended["result"]["state"] == "ended"
+        assert service.store.get("call", call["id"])["state"] == "ended"
+        assert len(service.store.list("message")) == 2
+    finally:
+        owner.close()
+
+
 def test_facade_workspace_create_returns_workspace_summary(host):
     service = host()
     owner = HostedClient(service, frozenset({"observe", "read", "approve"}))
