@@ -51,14 +51,18 @@ def host_grant(caller, permissions, profiles=ALLOWED_PROFILES, *, scope="consume
 
 
 def bind_host_stream(service, *, caller, permissions, profiles=ALLOWED_PROFILES,
-                     scope="consumer", private_native=False, private_profile_bootstrap=False):
+                     scope="consumer", private_native=False, private_profile_bootstrap=False,
+                     private_composer_legacy=False):
     """Bind one already-trusted stream to a fixed caller and permission set."""
     grant = host_grant(caller, permissions, profiles, scope=scope,
                        private_profile_bootstrap=private_profile_bootstrap)
     if private_native and scope != "owner":
         raise ValueError("Private native binding requires the application owner")
+    if type(private_composer_legacy) is not bool or (private_composer_legacy and scope != "owner"):
+        raise ValueError("Private composer migration requires the application owner")
     return bind_service_stream(service, lambda: grant, private_native=private_native,
-                                private_profile_bootstrap=private_profile_bootstrap)
+                                private_profile_bootstrap=private_profile_bootstrap,
+                                private_composer_legacy=private_composer_legacy)
 
 
 def serve_host(service, reader, writer, *, caller, permissions,
