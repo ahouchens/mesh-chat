@@ -356,3 +356,52 @@ def test_actual_signed_member_removal_erases_draft_and_denies_accepted_lookup(gr
         assert reply["error"]["code"] == "forbidden", reply
         assert "member acceptance" not in json.dumps(reply) and "member unsent draft" not in json.dumps(reply)
     assert rows(service) == before
+
+
+def test_expired_group_send_receipt_stays_consumed_and_discloses_no_accepted_text(group_host):
+    pair, _ = group_host
+    service = pair.owner
+    invoke, scope, grants = public(service)
+    revision = save(invoke, scope, "historical group plaintext")["result"]["applied_revision"]
+    assert send(invoke, scope, revision)["ok"]
+    identifier, receipt = service.store.items(SENDS)[0]
+    service.store.put(SENDS, identifier, {**receipt, "expires_at": time.time()-1})
+    before = rows(service)
+    expired = query(invoke, scope)
+    assert expired["result"]["last_send"]["status"] == "expired"
+    assert "historical group plaintext" not in json.dumps(expired)
+    assert query(invoke, scope, revision)["error"]["code"] == "idempotency_expired"
+    assert send(invoke, scope, revision)["error"]["code"] == "idempotency_expired"
+    assert rows(service) == before
+    grants[0] = replace(grants[0], permissions=frozenset({"observe", "send"}))
+    for response in (query(invoke, scope), query(invoke, scope, revision), send(invoke, scope, revision)):
+        assert response["error"]["code"] == "forbidden"
+        assert "historical group plaintext" not in json.dumps(response)
+    assert rows(service) == before
+
+
+def test_group_revision_and_update_credentials_cannot_be_retargeted_to_another_group(group_host):
+    from test_group_service import _sent_values, _deliver
+    pair, _ = group_host
+    service = pair.owner
+    invoke, scope, _ = public(service)
+    state = save(invoke, scope, "scoped original group text")["result"]["composer"]
+    peer = invoke("profile.query", {"profile": scope["profile"]})["result"]["peers"][0]
+    created = invoke("group.create", {"profile": scope["profile"], "title": "Another signed group",
+                                      "members": [peer], "posting_policy": "members"})
+    assert created["ok"], created
+    invite = _sent_values(pair.owner_network, "group_invite",
+        recipient=bytes.fromhex(pair.member_profile["destination_hash"]))[-1]
+    _deliver(pair.member, invite, source_profile=pair.owner_profile, destination_profile=pair.member_profile)
+    invitation = pair.member.snapshot()["group_invitations"][0]
+    pair.member.accept_group_invitation(invitation["id"])
+    accept = _sent_values(pair.member_network, "group_accept",
+        recipient=bytes.fromhex(pair.owner_profile["destination_hash"]))[-1]
+    _deliver(service, accept, source_profile=pair.member_profile, destination_profile=pair.owner_profile)
+    another = {"profile": scope["profile"], "group": created["result"]["group"]}
+    before = rows(service)
+    for response in (query(invoke, another, state["revision"]), send(invoke, another, state["revision"]),
+                     save(invoke, another, "retargeted update", state)):
+        assert response["error"]["code"] == "forbidden", response
+    assert rows(service) == before and query(invoke, another)["result"]["text"] == ""
+    assert query(invoke, scope)["result"]["text"] == "scoped original group text"
