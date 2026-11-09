@@ -2,6 +2,7 @@ package com.meshchat.runtime
 
 import android.Manifest
 import android.app.Activity
+import android.app.KeyguardManager
 import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -52,6 +53,7 @@ import javax.crypto.spec.GCMParameterSpec
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.SynchronousQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.RejectedExecutionException
@@ -60,6 +62,7 @@ import java.util.concurrent.RejectedExecutionException
 class InitializeArgs {
     var displayName: String? = null
 }
+
 
 @InvokeArg
 class ThemeArgs {
@@ -151,6 +154,18 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
     private val preferences by lazy {
         activity.getSharedPreferences("mesh-chat-vault", Context.MODE_PRIVATE)
     }
+    private val profileAuthorization = NativeProfileAuthorization()
+    private data class PendingProfileUnlock(val invoke: Invoke, val challenge: String)
+    private val pendingProfileUnlock = AtomicReference<PendingProfileUnlock?>(null)
+    private val profileProvider by lazy {
+        NativeProfileProvider(
+            activity.filesDir.resolve("mesh-chat/profile-v1").canonicalPath,
+            activity.applicationContext.packageName,
+            { vaultKey() }, profileAuthorization,
+            beforeOpen = { prepareProfileRuntime() },
+            publication = { context -> profilePublished(context) },
+        )
+    }
     private var multicastLock: WifiManager.MulticastLock? = null
     private var audioFocusRequest: AudioFocusRequest? = null
     private var legacyAudioFocusListener: AudioManager.OnAudioFocusChangeListener? = null
@@ -225,6 +240,127 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
         val packed = cipher.iv + cipher.doFinal(raw)
         check(preferences.edit().putString("wrapped-key", Base64.encodeToString(packed, Base64.NO_WRAP)).commit())
         return raw
+    }
+
+    private fun prepareProfileRuntime() {
+        NativeWebRtcBridge.attach(activity.applicationContext)
+        synchronized(this) {
+            val wifi = activity.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            multicastLock = multicastLock ?: wifi.createMulticastLock("mesh-chat-reticulum").apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+        }
+        createNotificationChannels()
+    }
+
+    private fun profilePublished(raw: String) {
+        // Called directly from the trusted Python host; no renderer facts.
+        val state = JSONObject(raw).getString("state")
+        CoreApiBridge.runtimeRebound()
+        pythonExecutor.execute {
+            if (state == "unlocked") {
+                runtimeInitialized = true
+                BackgroundRuntime.applyDefault(activity)
+                syncNativeState()
+                startNotificationPump()
+                activity.runOnUiThread { BackgroundRuntime.restoreIfEnabled(activity) }
+            } else {
+                BackgroundRuntime.stop(activity, preservePreference = true)
+                synchronized(this) {
+                    multicastLock?.let { if (it.isHeld) it.release() }
+                    multicastLock = null
+                }
+            }
+        }
+    }
+
+    private fun profileFailure(invoke: Invoke, code: String) = resolve(invoke,
+        JSONObject().put("ok", false).put("error", JSONObject().put("code", code)).toString())
+
+    @Command
+    fun authorizeProfileUnlock(invoke: Invoke) {
+        if (!BuildConfig.MESH_SHARED_NATIVE) {
+            profileFailure(invoke, "unsupported_operation")
+            return
+        }
+        val request = try { JSONObject(invoke.getRawArgs()) } catch (_: Exception) {
+            profileFailure(invoke, "invalid_request"); return
+        }
+        val profile = request.opt("profile")
+        if (request.keys().asSequence().toSet() != setOf("profile") || profile !is String || profile.length !in 1..128) {
+            profileFailure(invoke, "invalid_request"); return
+        }
+        val keyguard = activity.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+        if (keyguard == null || !keyguard.isDeviceSecure) {
+            profileFailure(invoke, "authentication_unavailable"); return
+        }
+        @Suppress("DEPRECATION")
+        val intent = keyguard.createConfirmDeviceCredentialIntent("Unlock Mesh Chat", "Confirm your device credential to unlock this profile.")
+        if (intent == null) {
+            profileFailure(invoke, "authentication_unavailable"); return
+        }
+        if (pendingProfileUnlock.get() != null) {
+            profileFailure(invoke, "resource_exhausted"); return
+        }
+        pythonExecutor.execute {
+            var challenge: String? = null
+            try {
+                val reply = JSONObject(python().getModule("mesh_chat.mobile_bridge")
+                    .callAttr("begin_profile_unlock_auth", profile).toString())
+                if (!reply.optBoolean("ok")) { resolve(invoke, reply.toString()); return@execute }
+                val admitted = reply.getJSONObject("result").getString("challenge")
+                challenge = admitted
+                val pending = PendingProfileUnlock(invoke, admitted)
+                if (!profileAuthorization.begin(admitted) || !pendingProfileUnlock.compareAndSet(null, pending)) {
+                    profileAuthorization.cancel(admitted)
+                    python().getModule("mesh_chat.mobile_bridge").callAttr("cancel_profile_unlock_auth", admitted)
+                    profileFailure(invoke, "resource_exhausted"); return@execute
+                }
+                activity.runOnUiThread {
+                    try {
+                        startActivityForResult(invoke, intent, "profileUnlockAuthenticationResult")
+                    } catch (_: Exception) {
+                        pendingProfileUnlock.compareAndSet(pending, null)
+                        profileAuthorization.cancel(pending.challenge)
+                        pythonExecutor.execute { python().getModule("mesh_chat.mobile_bridge").callAttr("cancel_profile_unlock_auth", pending.challenge) }
+                        profileFailure(invoke, "authentication_unavailable")
+                    }
+                }
+            } catch (_: Exception) {
+                challenge?.let {
+                    pendingProfileUnlock.get()?.takeIf { pending -> pending.challenge == it }
+                        ?.let { pending -> pendingProfileUnlock.compareAndSet(pending, null) }
+                    profileAuthorization.cancel(it)
+                    runCatching { python().getModule("mesh_chat.mobile_bridge").callAttr("cancel_profile_unlock_auth", it) }
+                }
+                profileFailure(invoke, "unavailable")
+            }
+        }
+    }
+
+    @ActivityCallback
+    private fun profileUnlockAuthenticationResult(invoke: Invoke, result: ActivityResult) {
+        val pending = pendingProfileUnlock.get()
+        if (pending == null || pending.invoke !== invoke || !pendingProfileUnlock.compareAndSet(pending, null)) {
+            profileFailure(invoke, "authentication_cancelled"); return
+        }
+        val verified = result.resultCode == Activity.RESULT_OK && profileAuthorization.verified(pending.challenge)
+        pythonExecutor.execute {
+            try {
+                val module = python().getModule("mesh_chat.mobile_bridge")
+                if (!verified) {
+                    module.callAttr("cancel_profile_unlock_auth", pending.challenge)
+                    profileFailure(invoke, if (result.resultCode == Activity.RESULT_OK) "resync_required" else "authentication_cancelled")
+                } else {
+                    resolve(invoke, module.callAttr("complete_profile_unlock_auth", pending.challenge).toString())
+                }
+            } catch (_: Exception) {
+                profileFailure(invoke, "unavailable")
+            } finally {
+                profileAuthorization.cancel(pending.challenge)
+            }
+        }
     }
 
     private fun bridge(function: String, requestJson: String? = null): String {
@@ -542,24 +678,22 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
             try {
                 val profileDir = activity.filesDir.resolve("mesh-chat/profile-v1")
                 check(profileDir.mkdirs() || profileDir.isDirectory)
-                NativeWebRtcBridge.attach(activity.applicationContext)
-                val request = JSONObject()
-                    .put("profile_dir", profileDir.canonicalPath)
-                    .put("vault_key", Base64.encodeToString(vaultKey(), Base64.NO_WRAP))
-                    .put("display_name", args.displayName)
-                    .put("platform", "android")
-                val wifi = activity.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-                multicastLock = multicastLock ?: wifi.createMulticastLock("mesh-chat-reticulum").apply {
-                    setReferenceCounted(false)
-                    acquire()
+                val initialized = if (BuildConfig.MESH_SHARED_NATIVE) {
+                    python().getModule("mesh_chat.mobile_bridge")
+                        .callAttr("initialize_native_host", profileProvider, args.displayName).toString()
+                } else {
+                    prepareProfileRuntime()
+                    bridge("initialize", JSONObject()
+                        .put("profile_dir", profileDir.canonicalPath)
+                        .put("vault_key", Base64.encodeToString(vaultKey(), Base64.NO_WRAP))
+                        .put("display_name", args.displayName).put("platform", "android").toString())
                 }
-                createNotificationChannels()
-                val initialized = bridge(
-                    if (BuildConfig.MESH_SHARED_NATIVE) "initialize_native" else "initialize",
-                    request.toString(),
-                )
-                runtimeInitialized = JSONObject(initialized).optBoolean("ok", false)
-                if (!runtimeInitialized) {
+                val status = JSONObject(initialized)
+                val lockedHost = BuildConfig.MESH_SHARED_NATIVE && status.optJSONObject("error")?.optString("code") == "locked"
+                runtimeInitialized = status.optBoolean("ok", false) || lockedHost
+                CoreApiBridge.runtimeRebound()
+                if (!status.optBoolean("ok", false)) {
+                    if (lockedHost) startNotificationPump()
                     resolve(invoke, initialized)
                     return@execute
                 }
@@ -990,6 +1124,21 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
             )
         } catch (error: Throwable) {
             reject(invoke, "set_background_availability", error)
+        }
+    }
+
+    @Command
+    fun lockProfile(invoke: Invoke) {
+        if (!BuildConfig.MESH_SHARED_NATIVE) {
+            shutdown(invoke)
+            return
+        }
+        pythonExecutor.execute {
+            try {
+                resolve(invoke, bridge("lock_profile_host"))
+            } catch (_: Exception) {
+                profileFailure(invoke, "unavailable")
+            }
         }
     }
 

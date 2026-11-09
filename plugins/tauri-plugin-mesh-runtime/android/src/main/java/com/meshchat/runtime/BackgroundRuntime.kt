@@ -204,6 +204,12 @@ object BackgroundRuntime {
 
     fun initialize(): String {
         check(configured)
+        if (BuildConfig.MESH_SHARED_NATIVE) {
+            val current = JSONObject(bridge("profile_runtime_context"))
+            check(current.optBoolean("ok") && current.optJSONObject("result")?.optString("state") == "unlocked") {
+                "native profile requires explicit authenticated unlock"
+            }
+        }
         nativeWebRtcReady = NativeWebRtcBridge.initialize(appContext)
         createNotificationChannels()
         acquireMulticast()
@@ -219,13 +225,18 @@ object BackgroundRuntime {
             }
             return JSONObject().put("ok", true).toString()
         }
-        val profileDir = appContext.filesDir.resolve("mesh-chat/profile-v1")
-        check(profileDir.mkdirs() || profileDir.isDirectory)
-        val request = JSONObject()
-            .put("profile_dir", profileDir.canonicalPath)
-            .put("vault_key", Base64.encodeToString(vaultKey(), Base64.NO_WRAP))
-            .put("platform", "android")
-        val initialized = bridge("initialize", request.toString())
+        val initialized = if (BuildConfig.MESH_SHARED_NATIVE) {
+            // Attach the existing owner; a background service cannot reopen a
+            // locked slot or manufacture a new profile key/provider.
+            JSONObject().put("ok", true).toString()
+        } else {
+            val profileDir = appContext.filesDir.resolve("mesh-chat/profile-v1")
+            check(profileDir.mkdirs() || profileDir.isDirectory)
+            bridge("initialize", JSONObject()
+                .put("profile_dir", profileDir.canonicalPath)
+                .put("vault_key", Base64.encodeToString(vaultKey(), Base64.NO_WRAP))
+                .put("platform", "android").toString())
+        }
         check(JSONObject(initialized).optBoolean("ok", false)) {
             "background runtime initialization was rejected"
         }
