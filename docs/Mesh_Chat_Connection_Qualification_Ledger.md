@@ -2,6 +2,42 @@
 
 ## Integration revalidation (2026-11-09)
 
+### Completed Wave 1 implementation, full qualification pending
+
+The combined implementation is `174728edad62aae6ef16e95b075183d06c5cdda3`,
+tree `239d041f87b26f50879008ac947481464dcf4551`. The feature branch was
+fast-forward pushed to that commit. The finite inventory of 92 supported keyed
+mutation actions now has implemented parents, including route create/apply;
+this inventory is bounded review evidence, not a proof of every runtime property.
+
+Workspace reconnect consent, access approval and contact invitations commit their
+prepared records and operation receipts together before effects. Successful
+no-op mutations also consume their keys. Current signed membership and explicit
+consent are checked before replay. Route creation reserves the resource and key
+before allocation, then commits the exact signed document, generation, stable
+delivery job and completion together. Route application atomically replaces
+consented scope and generation. Resource retirement retries exact cleanup and
+retains capacity through the possible lease when storage failure and restart
+lose the cleanup handle. A successful transport handoff is not a peer receipt.
+
+| Executed check | Source | Result and limits |
+| --- | --- | --- |
+| Lead full required policy inventory | `174728e` | 2,489 passed, zero failures/skips, 226.04 s. One upstream LXMF deprecation warning. JUnit and collection inventory retained. |
+| Lead combined route/participant regression cases | `174728e` | 45 passed, zero skips, 4.58 s; fault, replay, resource and scope behavior. |
+| Strict model/reducer mypy | `174728e` | Passed for both selected source files. |
+| D independent UI boundary | `174728e` | 297 Python plus six rendered-App cases, zero failures/skips, 20.55 s; Tauri invocation is substituted. |
+| D actual Windows pipe boundary | `174728e` | Three cases, zero failures/skips, 2.36 s; production pipe and in-process domain, not packaged transport delivery. |
+| D evidence/CI validation | `174728e` | 86 cases, zero skips, 3.59 s. Production retained-report validators independently accepted exact source/tree, report and inventory hashes, complete case identities and run IDs under `python -S`; negative controls rejected altered evidence. |
+| A all Core/contracts/participant tests | `2563b6b` | 664 passed, zero failures/skips, 28.02 s. This precedes the final C lease-capacity follow-up and is not relabeled as combined-source evidence. |
+
+The full five-family workflow
+[42644737670](https://github.com/ahouchens/mesh-chat/actions/runs/42644737670)
+was explicitly dispatched for `174728e`. Its duplicate PR-triggered run
+`42644746899` was canceled. Platform artifacts and the final aggregate gate still
+need validation. Wave 1 is not accepted and general Wave 2 remains inactive.
+No release, publication, physical-device or Windows–Android interoperability
+claim follows from these local checks.
+
 ### First combined implementation checkpoint
 
 The lead merged A `947e338`, C `1141e25`, B `8f1ceab`, then D `28752d5`

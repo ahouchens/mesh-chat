@@ -4,6 +4,15 @@ Baseline: `435b497150e5f0d12cb1c5dc7b4602da7a66ec4c`.
 Lead branch: `codex/mesh-core-integration-lead`.
 This file records assignments and integration decisions, not passing evidence.
 
+Current checkpoint: all finite Wave 1 keyed-action implementation batches are
+merged at `174728e` and pushed to the shared feature branch. Local policy and
+independent UI/Windows boundary checks pass; exact results are in the ledger.
+Full qualification run `42644737670` is pending. A/B/C hold production changes;
+D has completed independent source and retained-evidence review and remains
+available for concrete CI failures. General Wave 2 is not activated until the
+full exact-source gate passes. Existing human authorization covers continued
+integration and worker follow-ups without another permission request.
+
 ## Wave 1 ownership and gate
 
 | Owner | Exclusive changes | Required outcome |
