@@ -569,24 +569,9 @@ class MeshChatService(
         self._native_webrtc_controls: dict[str, dict] = {}
         self._native_recovered_bindings = {}
         self._background_reconnect_supervisor = None
-        identity_record = store.get("identity", "local")
-        profile_record = store.get("profile", "local")
-        if identity_record is not None or profile_record is not None:
-            if identity_record is None or profile_record is None:
-                raise ValidationError("Local profile is incomplete")
-            self._identity = RNS.Identity.from_bytes(_unb64(identity_record["private_key"]))
-            if self._identity is None:
-                raise ValidationError("Stored private identity is invalid")
-            self._restore_participant_interfaces()
-            self._prepare_lan_fallback()
-            if self.settings.i2p_enabled and self.settings.i2p_managed:
-                self._i2p_router.start()
-            self._start_network(profile_record["display_name"])
-            with self._dispatch_lock:
-                self._recover_outbox()
-
         self._retry_thread = threading.Thread(target=self._retry_loop, daemon=True)
         try:
+            self._load_local_profile()
             self._retry_thread.start()
             from .native_webrtc_events import NativeEventInbox
             self._native_webrtc_events = NativeEventInbox()
@@ -611,6 +596,23 @@ class MeshChatService(
             if not self._store_closed:
                 raise NativeStartupIncomplete(self)
             raise
+
+    def _load_local_profile(self):
+        identity_record = self.store.get("identity", "local")
+        profile_record = self.store.get("profile", "local")
+        if identity_record is not None or profile_record is not None:
+            if identity_record is None or profile_record is None:
+                raise ValidationError("Local profile is incomplete")
+            self._identity = RNS.Identity.from_bytes(_unb64(identity_record["private_key"]))
+            if self._identity is None:
+                raise ValidationError("Stored private identity is invalid")
+            self._restore_participant_interfaces()
+            self._prepare_lan_fallback()
+            if self.settings.i2p_enabled and self.settings.i2p_managed:
+                self._i2p_router.start()
+            self._start_network(profile_record["display_name"])
+            with self._dispatch_lock:
+                self._recover_outbox()
 
     def _start_network(self, display_name: str) -> None:
         if self._identity is None or self.network is not None:
@@ -5935,7 +5937,7 @@ class MeshChatService(
         self._closing_contact_carriers = tuple(carriers.values())
         if not hasattr(self, "_closing_native_handles"):
             self._closing_native_handles = {}
-        for session in self._native_webrtc_live | self._native_webrtc_creating:
+        for session in getattr(self, "_native_webrtc_live", set()) | getattr(self, "_native_webrtc_creating", set()):
             physical = self._native_resources.physical(session)
             if physical is not None:
                 self._closing_native_handles[physical] = session
@@ -6021,7 +6023,8 @@ class MeshChatService(
         # daemon finalizer waits for that worker and closes the vault exactly
         # once without delaying desktop's sidecar deadline.
         workers_stopped = (contact_carriers_stopped and connection_stopped and self._direct_recovery.wait(timeout=0.1)
-                           and packets_stopped and callbacks_stopped and not self._retry_thread.is_alive())
+                           and packets_stopped and callbacks_stopped and not self._retry_thread.is_alive()
+                           and (native_thread is None or not native_thread.is_alive()))
         if not workers_stopped:
             finalizer = threading.Thread(
                 target=self._finish_deferred_close,
@@ -6038,6 +6041,9 @@ class MeshChatService(
         """Close the vault after bounded shutdown had to leave a worker active."""
 
         try:
+            native_thread = getattr(self, "_native_webrtc_event_thread", None)
+            if native_thread is not None and native_thread is not threading.current_thread():
+                native_thread.join()
             for carrier in getattr(self, "_closing_contact_carriers", ()):
                 carrier.wait()
             self._direct_packets.wait()
@@ -6069,4 +6075,6 @@ class MeshChatService(
                 return
             with self._dispatch_lock:
                 self.store.close()
+                self._identity = None
+                self.network = None
                 self._store_closed = True
