@@ -12,7 +12,7 @@ from mesh_chat.reconnect import verify_connection_capabilities
 from mesh_chat.remote import create_profile_document
 from mesh_chat.workspace_reconnect import create_workspace_reconnect_capability
 
-from test_workspace_service import _joined_pair, _service
+from test_workspace_service import _deliver, _flush, _joined_pair, _service
 
 
 @pytest.fixture
@@ -75,6 +75,28 @@ def test_workspace_consent_preparation_does_not_persist_device_profile_or_send(p
     assert checked.relay_consent_scope == "workspace"
     assert ("reconnect_device", "local") in {(kind, identifier) for kind, identifier, _ in writes}
     assert rows(owner.store) == before and network.sent == sent
+
+
+def test_workspace_consent_preparation_preserves_exchanged_signed_reconnect_identity(prepared_pair):
+    owner, network, member, workspace = prepared_pair
+    owner._call_settings.signal_mailbox_url = "https://mail.example.test"
+    member._call_settings.signal_mailbox_url = "https://mail.example.test"
+    member._call_settings.turn_url = "turn:relay.example.test"
+    owner.workspace_reconnect_consent_set(workspace["id"], True, True, "workspace")
+    for item in _flush(owner, network):
+        _deliver(member, item, source_profile=owner._require_profile(), recipient_profile=member._require_profile())
+    member_workspace = member._require_workspace(workspace["id"])
+    peer, _, manifest_device = peer_for(member, member_workspace)
+    retained = member.store.get("reconnect_profile", peer)
+    assert retained["remote_device_id"].startswith("dev-")
+    assert retained["remote_device_id"] != manifest_device.device_id
+    before = rows(member.store)
+    profile, writes, _ = prepare_consent(member, member_workspace)
+    assert profile["remote_capabilities"] == retained["remote_capabilities"]
+    assert profile["remote_device_id"] == retained["remote_device_id"]
+    assert rows(member.store) == before
+    member.store.commit_operation(str(uuid4()), "e" * 64, {"profile": profile["id"]}, writes)
+    assert member.workspace_reconnect_status(workspace["id"])["ready_count"] == 1
 
 
 def test_parent_commit_rolls_back_device_consent_outbox_due_and_receipt_together(prepared_pair, monkeypatch):
