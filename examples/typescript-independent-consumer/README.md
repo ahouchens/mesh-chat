@@ -29,6 +29,15 @@ the executable image. The SDK does not open a vault or retrieve a vault key.
 The production host route and public pairing are being integrated. This source
 and its protocol checks do not establish packaged host or SC21 qualification.
 
+`bootstrap-check.mjs` is a separate installed application check. It uses only
+this normal launch route and the installed public SDK to verify a fresh empty
+host, explicit profile creation, same-key replay, changed-payload rejection and
+the same public identity after a clean host reopen. The Python qualification
+producer separately checks actual EFS attributes on the profile directory and
+vault file. Its retained report contains selected checks and artifact hashes;
+it excludes the identity, paths, caller key and raw host output. This bootstrap
+check does not exchange peer messages or qualify SC21.
+
 Input and output are bounded newline-delimited JSON on dedicated inherited
 streams. Each input contains `id`, `operation`, `params`, and, for a keyed
 mutation, the caller's explicit `idempotency_key`. The operation allowlist covers

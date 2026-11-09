@@ -124,6 +124,8 @@ jobs:
       - run: python scripts/build_sidecar.py
       - name: Verify notices and native materials inside the frozen runtime archive
         run: python scripts/native_runtime_materials.py --expected-source "${{ github.sha }}"
+      - name: Qualify independently installed SDK and normal Windows runtime with EFS
+        run: python scripts/check_independent_core_consumers.py --expected-source "${{ github.sha }}"
       - name: Qualify packaged native WebRTC messaging
         run: python scripts/check_native_windows_messaging.py --expected-source "${{ github.sha }}"
       - name: Soak packaged native WebRTC messaging
@@ -168,6 +170,8 @@ jobs:
             dist/reports/native-windows-control.json
             dist/reports/native-windows-lifecycle.json
             dist/reports/native-runtime-materials.json
+            dist/reports/windows-independent-bootstrap.json
+            dist/reports/windows-independent-sdk/**
           if-no-files-found: error
       - name: Retain the exact tested native Windows sidecar and build inputs
         uses: actions/upload-artifact@v4

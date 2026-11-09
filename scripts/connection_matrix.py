@@ -13,6 +13,7 @@ from connection_evidence import evidence as policy_evidence
 from core_boundary_evidence import UI_LEVEL, WINDOWS_LEVEL, ui_evidence, windows_evidence
 from native_windows_evidence import verify_report as native_evidence
 from native_runtime_materials import verify_report as runtime_materials_evidence
+from check_independent_core_consumers import verify_report as independent_bootstrap_evidence
 from native_interop_evidence import verify_pair as native_interop_pair
 from native_interop_workload import workload as required_native_workload
 from direct_qualification import SUITES as DIRECT_SUITES, read_suite as direct_suite
@@ -256,6 +257,20 @@ def collect(directory: Path, source: str, tree: str, required, *, native_workloa
         suites.append(suite_record("windows_runtime_materials", record["evidence_level"], source, tree,
                                    report="windows_runtime_materials", checks=record["inventory"]["notice_files_verified"],
                                    artifacts={field: record[field] for field in bindings}))
+        path = directory / "desktop/windows-independent-bootstrap.json"
+        record = independent_bootstrap_evidence(read(path), source, tree)
+        installed_sdk = path.parent / record["sdk_artifact"]
+        if (not 0 < installed_sdk.stat().st_size <= 2 * 1024 * 1024
+                or hashlib.sha256(installed_sdk.read_bytes()).hexdigest() != record["sdk_sha256"]):
+            raise ValueError("Retained independent SDK differs from the installed artifact")
+        if (any(record[field] != native_records[0][field] for field in bindings)
+                or record["run_id"] in {item["run_id"] for item in (*native_records, packaged, transport, pairing)}):
+            raise ValueError("Independent application did not execute a distinct run of the same frozen runtime")
+        reports["windows_independent_bootstrap"] = path
+        suites.append(suite_record("windows_independent_bootstrap", record["evidence_level"], source, tree,
+                                   report="windows_independent_bootstrap", checks=len(record["checks"]),
+                                   cleanup=record["cleanup"],
+                                   artifacts={field: record[field] for field in (*bindings, "sdk_sha256")}))
     if "android" in required:
         for record in android["suites"]:
             suites.append(suite_record("android_" + record["suite"], android["evidence_level"], source, tree,

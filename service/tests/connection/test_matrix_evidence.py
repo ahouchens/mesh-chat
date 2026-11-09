@@ -1,4 +1,5 @@
 import json
+import hashlib
 from pathlib import Path
 import sys
 import xml.etree.ElementTree as ET
@@ -89,6 +90,13 @@ def fixture(directory):
             native["timings_ms"] = {"open_max": 100, "control_max": 200, "control_p95": 150}
         (directory / f"desktop/native-windows-{kind}.json").write_text(json.dumps(native))
     (directory / "desktop/native-runtime-materials.json").write_text(json.dumps(materials_report(source, tree)))
+    from test_ui_core_boundary_independent_consumers import bootstrap_record
+    bootstrap = bootstrap_record(source, tree)
+    sdk = directory / "desktop" / bootstrap["sdk_artifact"]
+    sdk.parent.mkdir()
+    sdk.write_bytes(b"Synthetic SDK bytes for report rejection checks only")
+    bootstrap["sdk_sha256"] = hashlib.sha256(sdk.read_bytes()).hexdigest()
+    (directory / "desktop/windows-independent-bootstrap.json").write_text(json.dumps(bootstrap))
     return source, tree, android
 
 
@@ -156,7 +164,8 @@ def test_gate_revalidates_policy_inventory_and_both_platform_component_reports(t
     assert set(result["report_sha256"]) == {"policy", "windows_transport", "windows_packaged_lifecycle",
                                           "windows_packaged_transport", "windows_packaged_pairing", "android",
                                           "core_ui_boundary", "core_windows_boundary",
-                                          "windows_native_control", "windows_native_lifecycle", "windows_runtime_materials"}
+                                          "windows_native_control", "windows_native_lifecycle", "windows_runtime_materials",
+                                          "windows_independent_bootstrap"}
     assert result["windows_packaged_lifecycle_checks"] == list(PACKAGED_CHECKS)
     assert result["core_ui_boundary_python_tests"] == len(PYTHON_SELECTION)
     assert result["core_ui_boundary_rendered_tests"] == len(RENDERED_CASES)
@@ -188,6 +197,26 @@ def test_required_runtime_materials_cannot_qualify_a_different_or_partial_archiv
         elif fault == "scope": record["scope"] = "all licensing complete"
         elif fault == "module": inventory["required_modules_verified"].pop()
         else: inventory["notice_files_verified"] += 1
+        path.write_text(json.dumps(record))
+    with pytest.raises((ValueError, FileNotFoundError)):
+        matrix.collect(tmp_path, source, tree, ["verification"])
+
+
+@pytest.mark.parametrize("fault", ["missing", "source", "scope", "efs", "other_runtime", "reused_run", "cleanup", "sdk_missing", "sdk_changed"])
+def test_required_installed_windows_host_cannot_use_components_or_another_runtime(tmp_path, fault):
+    source, tree, _ = fixture(tmp_path)
+    path = tmp_path / "desktop/windows-independent-bootstrap.json"
+    record = json.loads(path.read_text())
+    if fault == "missing": path.unlink()
+    else:
+        if fault == "source": record["source_commit"] = "c" * 40
+        elif fault == "scope": record["scope"] = "DPAPI component only"
+        elif fault == "efs": record["checks"]["efs_vault_file"] = False
+        elif fault == "other_runtime": record["sidecar_sha256"] = "a" * 64
+        elif fault == "reused_run": record["run_id"] = "c" * 32
+        elif fault == "sdk_missing": (path.parent / record["sdk_artifact"]).unlink()
+        elif fault == "sdk_changed": (path.parent / record["sdk_artifact"]).write_bytes(b"Other SDK bytes")
+        else: record["cleanup"] = "pending"
         path.write_text(json.dumps(record))
     with pytest.raises((ValueError, FileNotFoundError)):
         matrix.collect(tmp_path, source, tree, ["verification"])
@@ -470,7 +499,7 @@ def test_suite_manifest_is_uniform_across_every_required_component(tmp_path):
         "policy", "windows_transport", "windows_packaged_lifecycle",
         "windows_packaged_transport", "windows_packaged_pairing",
         "core_ui_boundary_python", "core_ui_boundary_rendered", "core_windows_boundary",
-        "windows_native_control", "windows_native_lifecycle", "windows_runtime_materials",
+        "windows_native_control", "windows_native_lifecycle", "windows_runtime_materials", "windows_independent_bootstrap",
         "android_webrtc", "android_signaling", "android_core_api", "android_core_consumer",
         *("direct_Linux_" + name for name in DIRECT_SUITES),
         *("direct_Windows_" + name for name in DIRECT_SUITES)]

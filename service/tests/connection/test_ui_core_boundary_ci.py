@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import sys
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -60,6 +61,19 @@ def test_required_inventory_binds_test_paths_to_the_actual_pytest_root(tmp_path,
     item.nodeid = "other/" + item.nodeid
     with pytest.raises(ValueError, match="was not collected"):
         inventory.pytest_collection_finish(session)
+
+
+def test_normal_installed_windows_runtime_is_a_required_distinct_artifact_bound_gate():
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+    steps = workflow["jobs"]["desktop-host"]["steps"]
+    build = next(index for index, step in enumerate(steps) if step.get("run") == "python scripts/build_sidecar.py")
+    qualification = next(index for index, step in enumerate(steps)
+                         if "scripts/check_independent_core_consumers.py" in step.get("run", ""))
+    assert qualification > build
+    assert "continue-on-error" not in steps[qualification] and "if" not in steps[qualification]
+    uploads = [step for step in steps if step.get("uses", "").startswith("actions/upload-artifact@")]
+    assert any("dist/reports/windows-independent-bootstrap.json" in step["with"]["path"] for step in uploads)
+    assert "windows_independent_bootstrap" in ci.COMPONENTS["verification"]
 
 
 def test_android_typed_app_cases_are_required_by_the_artifact_bound_inventory():

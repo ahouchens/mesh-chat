@@ -181,6 +181,14 @@ The separate required Windows gate now collects nine cases: the original three
 app-pipe cases and six normal app-owned host checks. The latter execute actual
 DPAPI and image-authenticated pipes with explicitly unprotected test Vault
 storage. They do not qualify EFS or the independently installed frozen runtime.
+The distinct `windows-independent-bootstrap.json` producer runs the copied
+frozen runtime and installed SDK outside the checkout in normal app-owned mode.
+It requires real EFS protection, explicit fresh profile creation/key replay,
+changed-payload rejection, public identity continuity after reopen and two
+acknowledged clean host exits. The final matrix binds its executable/build
+digests to the other tested native Windows artifacts. Missing EFS, bootstrap or
+cleanup fails this gate. This is installed Windows bootstrap evidence only;
+Android, pairing and SC21 receipt traffic remain separate requirements.
 The fresh-profile case starts with no profile or identity, verifies a signed
 invitation through private preview without any vault write or network/event
 effect, then creates only through
