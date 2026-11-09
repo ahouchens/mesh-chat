@@ -663,9 +663,9 @@ def _parse_request(value, operations):
                 raise ApiFailure("invalid_request")
         if operation == "workspace.admission_grant_create":
             if (type(params["max_admissions"]) is not int
-                    or not 1 <= params["max_admissions"] <= 50
+                    or not 1 <= params["max_admissions"] <= 5
                     or type(params["lifetime_days"]) is not int
-                    or not 1 <= params["lifetime_days"] <= 90
+                    or not 1 <= params["lifetime_days"] <= 7
                     or type(params["v2_ready"]) is not bool):
                 raise ApiFailure("invalid_request")
         return operation, params
