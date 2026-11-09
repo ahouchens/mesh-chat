@@ -58,9 +58,14 @@ def fixture(directory):
     android = {"v": 1, "passed": True, "source_commit": source, "source_tree": tree,
                "evidence_level": "android_emulator_optimized_native_and_python_components",
                "artifacts": {str(path.relative_to(matrix.ROOT)).replace("\\", "/"): "e" * 64
-                  for path in (*matrix.APKS, *matrix.CORE_APKS, *matrix.CONSUMER_ARTIFACTS)},
+                  for path in (*matrix.APKS, *matrix.CORE_APKS, *matrix.CONSUMER_ARTIFACTS, *matrix.INDEPENDENT_ARTIFACTS)},
                "platform": {"emulated": True, "test_host_cleanup": "passed"}, "suites": []}
-    for suite, run in (("webrtc", "f"), ("signaling", "a"), ("core_api", "b"), ("core_consumer", "c")):
+    from verify_android_independent_consumer import CHECKS as ANDROID_CHECKS, SCOPE as ANDROID_SCOPE, APPLICATION_FILES
+    android["independent_distribution"] = {"v": 1, "passed": True, "source_commit": source,
+        "source_tree": tree, "checks": dict(ANDROID_CHECKS), "scope": ANDROID_SCOPE,
+        "application_files": {name: "d" * 64 for name in APPLICATION_FILES},
+        "artifacts": {str(path.relative_to(matrix.ROOT)).replace("\\", "/"): "e" * 64 for path in matrix.INDEPENDENT_ARTIFACTS}}
+    for suite, run in zip(matrix.ANDROID_SUITES, ("f", "a", "b", "c", "d")):
         cases = matrix.cases(suite)
         android["suites"].append({"suite": suite, "run_id": run * 32, "tests_collected": len(cases),
             "tests_executed": len(cases), "tests_passed": len(cases), "tests_failed": 0, "tests_skipped": 0,
@@ -163,7 +168,7 @@ def test_gate_revalidates_policy_inventory_and_both_platform_component_reports(t
     source, tree, _ = fixture(tmp_path)
     result = matrix.collect(tmp_path, source, tree, ["policy", "verification", "android"])
     assert result["policy_tests_executed"] == 1
-    assert result["android_tests_executed"] == 50
+    assert result["android_tests_executed"] == 52
     assert set(result["windows_transport_checks"]) == CHECKS
     assert set(result["report_sha256"]) == {"policy", "windows_transport", "windows_packaged_lifecycle",
                                           "windows_packaged_transport", "windows_packaged_pairing", "android",
@@ -523,7 +528,7 @@ def test_suite_manifest_is_uniform_across_every_required_component(tmp_path):
         "windows_packaged_transport", "windows_packaged_pairing",
         "core_ui_boundary_python", "core_ui_boundary_rendered", "core_windows_boundary",
         "windows_native_control", "windows_native_lifecycle", "windows_runtime_materials", "windows_independent_bootstrap", "windows_independent_pairing",
-        "android_webrtc", "android_signaling", "android_core_api", "android_core_consumer",
+        "android_webrtc", "android_signaling", "android_core_api", "android_core_consumer", "android_core_independent",
         *("direct_Linux_" + name for name in DIRECT_SUITES),
         *("direct_Windows_" + name for name in DIRECT_SUITES)]
     policy = records[0]
@@ -532,7 +537,7 @@ def test_suite_manifest_is_uniform_across_every_required_component(tmp_path):
     android = [record for record in records if record["suite"].startswith("android_")]
     assert [record["tests"]["collected"] for record in android] == [
         len(matrix.cases("webrtc")), len(matrix.cases("signaling")),
-        len(matrix.cases("core_api")), len(matrix.cases("core_consumer"))]
+        len(matrix.cases("core_api")), len(matrix.cases("core_consumer")), len(matrix.cases("core_independent"))]
     assert all(record["cleanup"] == "passed" for record in android)
     direct = [record for record in records if record["suite"].startswith("direct_")]
     assert all(record["tests"]["executed"] == 1 and record["checks"] is None for record in direct)

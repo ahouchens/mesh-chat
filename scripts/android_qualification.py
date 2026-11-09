@@ -10,6 +10,9 @@ import subprocess
 import time
 from uuid import uuid4
 
+from verify_android_independent_consumer import (ARTIFACTS as INDEPENDENT_ARTIFACTS, SCOPE as INDEPENDENT_SCOPE,
+    verify_record as verify_independent_distribution, verify_source_inputs as verify_independent_source_inputs)
+
 
 ROOT = Path(__file__).resolve().parents[1]
 REPORTS = ROOT / "dist/reports"
@@ -72,6 +75,8 @@ CORE_CONSUMER = ("consumerQueriesProductionFacadeAcrossUid", "externalCallerCann
                  "detachingConsumerCanReattachToItsProfile", "privateControlIsRejectedThroughThePublicPackage",
                  "consumerCanEnqueueAndReadAMessageThroughThePublicPackage",
                  "consumerCanQueryAnEnqueuedMessageAfterHostRestart")
+CORE_INDEPENDENT = ("freshLifecycleCreatesOnceAndRetires", "coldStartRequiresNativeCredential")
+SUITES = ("webrtc", "signaling", "core_api", "core_consumer", "core_independent")
 SIGNALING = (
     ("embeddedDefaultAndChoicesSurviveProcessRestart", "seed"),
     ("embeddedDefaultAndChoicesSurviveProcessRestart", "verify"),
@@ -96,6 +101,8 @@ def cases(suite):
         entries += [("NativeProfileResultRegistrationTest", method, "none") for method in PROFILE_RESULT_REGISTRATION]
     elif suite == "core_consumer":
         entries = (("CorePackageConsumerTest", method, "none") for method in CORE_CONSUMER)
+    elif suite == "core_independent":
+        entries = (("IndependentConsumerTest", method, "none") for method in CORE_INDEPENDENT)
     elif suite != "webrtc":
         raise ValueError("Unknown qualification suite")
     result = [{"id": f"{name}.{method}.{phase}", "class": name, "method": method, "phase": phase,
@@ -106,6 +113,8 @@ def cases(suite):
     for item in result:
         if item["class"] == "NativeProfileResultRegistrationTest":
             item["scope"] = PROFILE_RESULT_SCOPE
+        if item["class"] == "IndependentConsumerTest":
+            item["scope"] = INDEPENDENT_SCOPE
     return result
 
 
@@ -133,7 +142,8 @@ def digest(path):
 
 
 def artifacts(suite="webrtc"):
-    selected = CONSUMER_ARTIFACTS if suite == "core_consumer" else CORE_APKS if suite == "core_api" else APKS
+    selected = (INDEPENDENT_ARTIFACTS if suite == "core_independent" else CONSUMER_ARTIFACTS
+                if suite == "core_consumer" else CORE_APKS if suite == "core_api" else APKS)
     return {str(path.relative_to(ROOT)).replace("\\", "/"): digest(path) for path in selected}
 
 
@@ -182,7 +192,8 @@ def emulator_and_cleanup():
     if adb("shell", "getprop", "ro.kernel.qemu") != "1":
         raise ValueError("Required emulator qualification environment is unavailable")
     packages = (APP_ID, APP_ID + ".test", "com.meshchat.runtime.test", "com.meshchat.core.hostfixture",
-                "com.meshchat.core.consumer", "com.meshchat.core.consumer.test")
+                "com.meshchat.core.consumer", "com.meshchat.core.consumer.test",
+                "com.meshchat.core.independent", "com.meshchat.core.independent.test")
     for package in packages:
         adb("shell", "am", "force-stop", package)
     processes = adb("shell", "ps", "-A").splitlines()
@@ -198,7 +209,7 @@ def emulator_and_cleanup():
 def failed_run_reports(identity):
     """Retain every report outcome without asserting artifact/platform acceptance."""
     suites = []
-    for suite in ("webrtc", "signaling", "core_api", "core_consumer"):
+    for suite in SUITES:
         directory = REPORTS / f"android-{suite}"
         required = cases(suite)
         observed = {"suite": suite, "inventory": "missing", "required_case_reports": len(required),
@@ -247,14 +258,18 @@ def report(status):
             raise ValueError("Android qualification runner failed")
         result["phase"] = "source_and_artifacts"
         identity = source()
-        binaries = {**artifacts("webrtc"), **artifacts("core_api"), **artifacts("core_consumer")}
+        binaries = {**artifacts("webrtc"), **artifacts("core_api"), **artifacts("core_consumer"), **artifacts("core_independent")}
+        distribution = json.loads((REPORTS / "android-independent-distribution.json").read_text(encoding="utf-8"))
+        verify_independent_distribution(distribution, identity, binaries)
+        verify_independent_source_inputs(distribution)
         suites = []
-        for suite in ("webrtc", "signaling", "core_api", "core_consumer"):
+        for suite in SUITES:
             result["phase"] = suite
             suites.append(verify_suite(REPORTS / f"android-{suite}", suite, identity,
                                        artifacts(suite)))
         result["phase"] = "cleanup"
-        result.update(identity, artifacts=binaries, suites=suites, platform=emulator_and_cleanup(), passed=True)
+        result.update(identity, artifacts=binaries, suites=suites, platform=emulator_and_cleanup(),
+                      independent_distribution=distribution, passed=True)
         del result["phase"]
     except Exception as error:
         # Instrumentation text can contain private documents. Keep it in the test
@@ -273,7 +288,7 @@ def report(status):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=("prepare", "list", "report"))
-    parser.add_argument("--suite", choices=("webrtc", "signaling", "core_api", "core_consumer"))
+    parser.add_argument("--suite", choices=SUITES)
     parser.add_argument("--status", type=int, default=1)
     args = parser.parse_args()
     if args.command == "report":

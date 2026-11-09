@@ -97,6 +97,8 @@ jobs:
           path: |
             dist/mobile/**
             dist/android-core-consumer/**
+            dist/android-independent-consumer/**
+            plugins/tauri-plugin-mesh-runtime/android/runtime-host/build/repository/**
             sdk/kotlin/build/repository/**
             sdk/kotlin/build/test-results/**
             sdk/kotlin/build/reports/tests/**

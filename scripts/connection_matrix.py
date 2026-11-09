@@ -8,7 +8,8 @@ from pathlib import Path
 import re
 from types import SimpleNamespace
 
-from android_qualification import APKS, CORE_APKS, CONSUMER_ARTIFACTS, ROOT, cases
+from android_qualification import APKS, CORE_APKS, CONSUMER_ARTIFACTS, INDEPENDENT_ARTIFACTS, SUITES as ANDROID_SUITES, ROOT, cases
+from verify_android_independent_consumer import verify_record as independent_android_distribution
 from connection_evidence import evidence as policy_evidence
 from core_boundary_evidence import UI_LEVEL, WINDOWS_LEVEL, ui_evidence, windows_evidence
 from native_windows_evidence import verify_report as native_evidence
@@ -98,16 +99,18 @@ def android_evidence(record, source, tree):
     binaries = record.get("artifacts")
     hashes(binaries)
     if set(binaries) != ({str(path.relative_to(ROOT)).replace("\\", "/") for path in APKS}
-                         | {str(path.relative_to(ROOT)).replace("\\", "/") for path in (*CORE_APKS, *CONSUMER_ARTIFACTS)}):
+                         | {str(path.relative_to(ROOT)).replace("\\", "/") for path in (*CORE_APKS, *CONSUMER_ARTIFACTS, *INDEPENDENT_ARTIFACTS)}):
         raise ValueError("Android evidence does not identify every tested APK")
     platform = record.get("platform", {})
     if platform.get("emulated") is not True or platform.get("test_host_cleanup") != "passed":
         raise ValueError("Android emulator execution or cleanup is unqualified")
     suites = record.get("suites")
-    if not isinstance(suites, list) or len(suites) != 4:
+    independent_android_distribution(record.get("independent_distribution", {}),
+                                    {"source_commit": source, "source_tree": tree}, binaries)
+    if not isinstance(suites, list) or len(suites) != len(ANDROID_SUITES):
         raise ValueError("Android suite inventory is incomplete")
     run_ids = set()
-    for suite, expected in zip(suites, ("webrtc", "signaling", "core_api", "core_consumer")):
+    for suite, expected in zip(suites, ANDROID_SUITES):
         run_id = suite.get("run_id")
         if not isinstance(run_id, str) or not re.fullmatch(r"[a-f0-9]{32}", run_id) or run_id in run_ids:
             raise ValueError("Android suite run identity is missing or duplicated")

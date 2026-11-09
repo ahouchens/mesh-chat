@@ -195,8 +195,8 @@ def verify_report(record, source, tree, role, *, workload="full"):
     if role == "windows":
         _require(set(artifacts) == {"sidecar_sha256", "build_input_sha256", "build_manifest_sha256"}, "Frozen Windows binary/build evidence is incomplete")
     else:
-        from android_qualification import APKS, CORE_APKS, CONSUMER_ARTIFACTS, ROOT
-        _require(set(artifacts) == {path.relative_to(ROOT).as_posix() for path in (*APKS, *CORE_APKS, *CONSUMER_ARTIFACTS)},
+        from android_qualification import APKS, CORE_APKS, CONSUMER_ARTIFACTS, INDEPENDENT_ARTIFACTS, ROOT
+        _require(set(artifacts) == {path.relative_to(ROOT).as_posix() for path in (*APKS, *CORE_APKS, *CONSUMER_ARTIFACTS, *INDEPENDENT_ARTIFACTS)},
                  "Android interop does not identify all previously qualified APK/AAR inputs")
     execution = record["execution"]
     _require(isinstance(execution, dict) and set(execution) == {"identity", "scenarios", "receipt_iterations", "processes_started", "forced_exits", "clean_exits", "webview_processes", "cleanup", "final_host_accounting"}

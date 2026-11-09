@@ -80,6 +80,24 @@ def test_evidence_counts_actual_execution_and_hashes_each_report(tmp_path):
     assert all(len(case["report_sha256"]) == 64 for case in result["scenarios"])
 
 
+@pytest.mark.parametrize("fault", ["missing", "skipped", "wrong_process_case", "scope"])
+def test_ordinary_android_host_requires_fresh_and_separate_cold_process_cases(tmp_path, fault):
+    identity, artifacts, inventory = inventory_fixture(tmp_path, "core_independent")
+    result = gate.verify_suite(tmp_path, "core_independent", identity, artifacts)
+    assert result["tests_executed"] == 2
+    assert all(case["scope"] == gate.INDEPENDENT_SCOPE for case in result["scenarios"])
+    case = gate.cases("core_independent")[1]
+    report = tmp_path / case["report"]
+    if fault == "missing": report.unlink()
+    elif fault == "skipped": report.write_text(report.read_text().replace("STATUS_CODE: 0", "STATUS_CODE: -3"))
+    elif fault == "wrong_process_case": report.write_text(successful_output("e" * 32, gate.CORE_INDEPENDENT[0], case["class"]))
+    else:
+        inventory["scenarios"][1]["scope"] = "Successful OS unlock and native peer receipts"
+        (tmp_path / "inventory.json").write_text(json.dumps(inventory))
+    with pytest.raises((ValueError, FileNotFoundError)):
+        gate.verify_suite(tmp_path, "core_independent", identity, artifacts)
+
+
 @pytest.mark.parametrize("method", gate.PROFILE_RESULT_REGISTRATION)
 @pytest.mark.parametrize("fault", ["missing", "not_run", "skipped"])
 def test_each_native_result_registration_case_must_execute(tmp_path, method, fault):
@@ -145,7 +163,7 @@ def test_failed_runner_cannot_reuse_prior_success_or_leak_private_output(tmp_pat
     result = json.loads((tmp_path / "android-qualification.json").read_text())
     assert result["passed"] is False
     assert set(result) == {"v", "passed", "evidence_level", "failure_type", "phase", "failed_run_reports"}
-    assert len(result["failed_run_reports"]["suites"]) == 4
+    assert len(result["failed_run_reports"]["suites"]) == 5
 
 
 def test_failed_runner_preserves_all_case_failures_and_later_missing_suites(tmp_path, monkeypatch):
@@ -177,7 +195,7 @@ def test_adb_cannot_consume_the_remaining_scenario_inventory(tmp_path):
     assert bash and Path(bash).is_file(), "The required runner integration test needs Bash"
     scripts = tmp_path / "scripts"
     scripts.mkdir()
-    for name in ("test_android_webrtc.sh", "android_qualification.py"):
+    for name in ("test_android_webrtc.sh", "android_qualification.py", "verify_android_independent_consumer.py"):
         (scripts / name).write_text((SCRIPT.parent / name).read_text(), encoding="utf-8", newline="\n")
     for binary in gate.APKS:
         target = tmp_path / binary.relative_to(gate.ROOT)
