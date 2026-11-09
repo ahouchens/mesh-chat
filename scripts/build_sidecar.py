@@ -28,6 +28,9 @@ def _build_fingerprint(target: str) -> str:
     """Hash every source/configuration input which affects the sidecar bytes."""
     inputs = [
         REPOSITORY / "scripts" / "build_sidecar.py",
+        REPOSITORY / "scripts" / "native_runtime_materials.py",
+        REPOSITORY / "scripts" / "native-runtime-materials-v1.json",
+        REPOSITORY / "THIRD_PARTY_NOTICES.md",
         SERVICE / "entrypoint.py",
         SERVICE / "mesh-chat-service.spec",
         SERVICE / "pyproject.toml",
