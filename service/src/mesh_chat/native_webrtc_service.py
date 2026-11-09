@@ -21,11 +21,12 @@ from .errors import (
     ContactNotApproved, IdentityMismatch, NativeUnavailable, NetworkUnavailable, ValidationError,
 )
 from .native_webrtc_control import NativeWebRTCControlMixin
+from .native_pairing_service import NativePairingServiceMixin
 from .webrtc_interface import WebRTCInterface
 from .webrtc_signaling import _fingerprint
 
 
-class NativeWebRTCServiceMixin(NativeWebRTCControlMixin):
+class NativeWebRTCServiceMixin(NativePairingServiceMixin, NativeWebRTCControlMixin):
     _native_answer_exchange_timeout = 120.0
 
     def _native_work_allowed(self):
@@ -468,7 +469,10 @@ class NativeWebRTCServiceMixin(NativeWebRTCControlMixin):
                 if profile_id is not None:
                     if self.native_reconnect_session(profile_id):
                         raise NativeUnavailable("Native reconnect profile already has a peer")
-                self._native_resources.reserve(session_id)
+                physical = self._native_resources.reserve(session_id)
+                capture = getattr(self, "_native_pairing_allocation_reserved", None)
+                if capture is not None:
+                    capture(session_id, physical)
                 if profile_id is not None:
                     self._native_webrtc_profile_sessions[profile_id] = session_id
                 self._native_webrtc_live.add(session_id)

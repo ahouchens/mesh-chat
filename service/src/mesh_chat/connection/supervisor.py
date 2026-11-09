@@ -67,6 +67,8 @@ class ConnectionSupervisor:
                 surrendered = self._surrendered.get(key, ())
                 lease = next((value for value in self._handoffs.values()
                               if value.resource == event.allocated), None)
+                if lease is not None and event.now >= lease.deadline:
+                    self.reject_handoff(lease.operation)
                 if event.allocated in surrendered or (lease and lease.target != key):
                     event = Failed(event.operation, event.now, Failure.INTERNAL)
                 elif event.allocated and self._owned_elsewhere(key, event.allocated):
@@ -112,11 +114,17 @@ class ConnectionSupervisor:
                 raise CapacityExceeded("Connection cleanup must complete")
             return result.state
 
-    def commit_handoff(self, operation: Operation, resource: Resource, target: ConnectionKey):
+    def commit_handoff(self, operation: Operation, resource: Resource, target: ConnectionKey, now: float):
         """Atomically bind pending custody to one receiver, before publication."""
         with self._lock:
             lease = self._handoffs.get(operation)
+            if lease is not None and now >= lease.deadline:
+                self.reject_handoff(operation)
+                return False
             if (lease is None or lease.target is not None or target.scope == "pairing"
+                    or resource.adapter_epoch != lease.source.adapter_epoch
+                    or any(other.resource == resource for source, other in self._handoffs.items()
+                           if source != operation)
                     or resource in self._retiring or lease.source in self._retiring
                     or self._owned_elsewhere(operation.key, resource)):
                 return False

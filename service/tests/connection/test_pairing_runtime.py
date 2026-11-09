@@ -1,7 +1,11 @@
 """Private pairing policy traces; these are simulated, not transport evidence."""
 from dataclasses import replace
+import json
+import os
 from threading import Event
 from time import monotonic
+from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 
@@ -14,6 +18,10 @@ from mesh_chat.connection.reducer import transition
 from mesh_chat.connection.runtime import ConnectionRuntime
 from mesh_chat.connection.model import Execution
 from mesh_chat.connection.supervisor import ConnectionSupervisor
+from mesh_chat.call_manager import CallOutcomeRequiresResync
+from mesh_chat.errors import ContactNotApproved, NativeUnavailable, ValidationError
+from mesh_chat.service import MeshChatService
+from mesh_chat.vault import VaultStore
 
 
 def pairing(preferred=True):
@@ -158,7 +166,7 @@ def test_committed_handoff_lease_survives_lost_return_and_target_adoption_then_o
     owner, source = ready_handoff()
     physical = Resource("native", "physical-peer")
     target = ConnectionKey("contact", "peer", "local", "remote")
-    assert owner.commit_handoff(source.operation, physical, target)
+    assert owner.commit_handoff(source.operation, physical, target, 0.2)
     owner.register(ConnectionState(target, "epoch", Authority(1, True, True, True), Desired.ENABLED))
     owner.tick(0.2)
     work, = owner.drain()
@@ -179,7 +187,7 @@ def test_unadopted_handoff_has_bounded_owner_cleanup_and_late_adoption_is_denied
     target = ConnectionKey("contact", "peer", "local", "remote")
     physical = Resource("native", "physical-peer") if committed else source.resource
     if committed:
-        assert owner.commit_handoff(source.operation, physical, target)
+        assert owner.commit_handoff(source.operation, physical, target, 0.2)
     owner.tick(100)
     assert Retire(physical) in owner.drain()
     assert physical in owner._retiring
@@ -188,6 +196,31 @@ def test_unadopted_handoff_has_bounded_owner_cleanup_and_late_adoption_is_denied
     work, = owner.drain()
     owner.dispatch(target, Adopted(work.operation, 100.1, physical))
     assert owner.snapshot(target).carrier is None
+
+
+@pytest.mark.parametrize("fence", [False, True])
+def test_handoff_commit_after_deadline_or_explicit_stop_cannot_publish_custody(fence):
+    owner, source = ready_handoff()
+    target = ConnectionKey("contact", "peer", "local", "remote")
+    if fence:
+        owner.revoke_handoffs({source.operation.key})
+    assert not owner.commit_handoff(source.operation, Resource("native", "physical-peer"), target,
+                                    0.2 if fence else 100)
+    assert not owner.handoff_committed(source.operation)
+    assert Retire(source.resource) in owner.drain()
+
+
+def test_handoff_adoption_after_deadline_is_denied_even_without_a_tick():
+    owner, source = ready_handoff()
+    target = ConnectionKey("contact", "peer", "local", "remote")
+    physical = Resource("native", "physical-peer")
+    assert owner.commit_handoff(source.operation, physical, target, 0.2)
+    owner.register(ConnectionState(target, "epoch", Authority(1, True, True, True), Desired.ENABLED))
+    owner.tick(0.3)
+    work, = owner.drain()
+    owner.dispatch(target, Adopted(work.operation, 100, physical))
+    assert owner.snapshot(target).carrier is None
+    assert Retire(physical) in owner.drain()
 
 
 @pytest.mark.parametrize("adopt_before_exception", [False, True])
@@ -225,3 +258,244 @@ def test_runtime_commit_then_callback_exception_keeps_transfer_receipt(adopt_bef
     finally:
         runtime.stop()
         runtime.wait()
+
+
+FINGERPRINT = "sha-256 " + ":".join(["AB"] * 32)
+SDP = "v=0\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\na=fingerprint:" + FINGERPRINT + "\r\n"
+
+
+@pytest.fixture
+def native_pairing(tmp_path, monkeypatch):
+    """Actual vault/signatures/runtime; native and mailbox boundaries are doubles."""
+    from mesh_chat import service as service_module
+    opened, documents = [], {}
+    monkeypatch.setattr(MeshChatService, "_start_network", lambda *_: None)
+    monkeypatch.setattr(MeshChatService, "_prepare_lan_fallback", lambda *_: None)
+    monkeypatch.setattr(ConnectionRuntime, "start", lambda *_: None)
+    def publish(base, document, role, *, session, **_):
+        assert any(item.store.list("workspace_operation") for item in opened)
+        documents[session, role] = document
+        return {"session_id": session, "role": role}
+    def fetch(base, session, role, *, pending=False, **_):
+        document = documents.get((session, role))
+        assert document or pending
+        return {"document": document, "pending": not bool(document)}
+    monkeypatch.setattr(service_module, "publish_signal", publish)
+    monkeypatch.setattr(service_module, "fetch_signal", fetch)
+    def create(directory=None, key=None):
+        directory = directory or tmp_path / str(len(opened))
+        key = key or os.urandom(32)
+        created, closed, controls = [], [], []
+        def offer(physical, ice, channels):
+            created.append((physical, json.loads(ice)))
+            return json.dumps({"ok": True, "sdp": SDP})
+        host = SimpleNamespace(createOffer=offer, acceptOffer=lambda physical, sdp, ice, channels: offer(physical, ice, channels),
+            applyAnswer=lambda *_: json.dumps({"ok": True}), send=lambda *_: True,
+            sendControl=lambda physical, label, text: controls.append((physical, label, json.loads(text))) or True,
+            stats=lambda _: json.dumps({"ok": True, "result": {"ice_connection_state": "connected", "data_channel_state": "open"}}),
+            close=closed.append)
+        service = MeshChatService(VaultStore(directory, key, allow_unprotected_for_tests=True), directory,
+            lambda _: None, connection_policy="shared-native", native_webrtc_host=host)
+        opened.append(service)
+        service.create_profile("Synthetic")
+        service.update_call_settings({**service._call_settings.to_dict(), "signal_mailbox_url": "https://signal.example.test",
+                                      "turn_url": "turn:relay.example.test"})
+        return service, host, created, closed, controls, key
+    yield create, documents
+    for service in opened:
+        service.close()
+
+
+def run_until(service, condition, timeout=3):
+    deadline = monotonic() + timeout
+    while not condition() and monotonic() < deadline:
+        service._connection_runtime.step()
+        Event().wait(0.002)
+    assert condition(), (service._connection_runtime.owner.diagnostics.snapshot()[0][-15:])
+
+
+def test_actual_pairing_composition_exchanges_signed_offer_answer_without_granting_contact_trust(native_pairing):
+    create, _ = native_pairing
+    first, _, created, _, controls, _ = create()
+    offer_id, answer_id = str(uuid4()), str(uuid4())
+    first.native_pairing_begin(offer_id, role="offer", authorized=lambda: True)
+    run_until(first, lambda: first.native_pairing_status(offer_id)["pairing_code"] is not None)
+    code = first.native_pairing_status(offer_id)["pairing_code"]
+    second, _, accepted, _, _, _ = create()
+    second.native_pairing_begin(answer_id, role="answer", pairing_code=code, authorized=lambda: True)
+    run_until(second, lambda: second.native_pairing_status(answer_id)["state"] == "awaiting_approval")
+    # Pending WAIT_ANSWER is driven by the owner's existing cadence.
+    first._connection_runtime.now = lambda: monotonic() + 6
+    run_until(first, lambda: first.native_pairing_status(offer_id)["state"] == "awaiting_approval")
+    assert len(created) == len(accepted) == 1
+    assert created[0][1]["iceTransportPolicy"] == accepted[0][1]["iceTransportPolicy"] == "relay"
+    for service, intent in ((first, offer_id), (second, answer_id)):
+        context = service._native_pairing_contexts[intent]
+        assert service._native_webrtc_peers[context["session"]]
+        assert not service._native_webrtc_profile_sessions and not service._native_webrtc_sessions
+        assert not service._connection_runtime.snapshots()[intent]["messaging_ready"]
+        receipts = str(service.store.list("workspace_operation"))
+        assert code not in receipts and SDP not in receipts and FINGERPRINT not in receipts
+        assert service.store.list("contact") == []
+    run_until(first, lambda: any(message[2].get("type") == "contact_invitation" for message in controls))
+    assert not first._connection_runtime.snapshots()[offer_id]["messaging_ready"]
+
+
+def test_native_pairing_replay_never_reallocates_and_restart_requires_resync(native_pairing, tmp_path):
+    create, _ = native_pairing
+    service, _, created, _, _, key = create(tmp_path / "persistent")
+    operation = str(uuid4())
+    service.native_pairing_begin(operation, role="offer", authorized=lambda: True)
+    run_until(service, lambda: service.native_pairing_status(operation)["pairing_code"] is not None)
+    same = service.native_pairing_begin(operation, role="offer", authorized=lambda: True)
+    assert same["pairing_code"] and len(created) == 1
+    with pytest.raises(ValidationError):
+        service.native_pairing_begin(operation, role="offer", authorized=lambda: True, allow_direct_ip_disclosure=True)
+    service.close()
+    reopened, _, created_again, *_ = create(tmp_path / "persistent", key)
+    with pytest.raises(CallOutcomeRequiresResync):
+        reopened.native_pairing_begin(operation, role="offer", authorized=lambda: True)
+    assert created_again == []
+
+
+@pytest.mark.parametrize("cancel_before_allocation", [False, True])
+def test_pairing_cancellation_closes_only_its_exact_peer_without_replacement(native_pairing, cancel_before_allocation):
+    create, _ = native_pairing
+    service, _, created, closed, _, _ = create()
+    operation = str(uuid4())
+    service.native_pairing_begin(operation, role="offer", authorized=lambda: True)
+    if not cancel_before_allocation:
+        run_until(service, lambda: service.native_pairing_status(operation)["pairing_code"] is not None)
+    service.native_pairing_cancel(operation)
+    run_until(service, lambda: service._native_pairing_contexts[operation]["state"] == "retired")
+    for _ in range(6):
+        service._connection_runtime.step()
+        Event().wait(0.002)
+    assert len(created) == (0 if cancel_before_allocation else 1)
+    assert not service._native_webrtc_live
+    assert not created or created[0][0] in closed
+
+
+def test_current_caller_revocation_during_native_create_prevents_publish_and_retires_exact_allocation(native_pairing):
+    create, documents = native_pairing
+    service, host, created, closed, _, _ = create()
+    allowed = [True]
+    original = host.createOffer
+    def revoke(*args):
+        result = original(*args)
+        allowed[0] = False
+        return result
+    host.createOffer = revoke
+    operation = str(uuid4())
+    service.native_pairing_begin(operation, role="offer", authorized=lambda: allowed[0])
+    run_until(service, lambda: service._native_pairing_contexts[operation]["state"] == "retired")
+    assert len(created) == 1 and created[0][0] in closed
+    assert documents == {}
+    with pytest.raises(ContactNotApproved):
+        service.native_pairing_status(operation)
+
+
+def test_domain_checked_handoff_adopts_only_actual_physical_peer_then_requires_normal_path(native_pairing):
+    """Approval/contact rows are explicit component fixtures, not bootstrap qualification."""
+    from test_reconnect_service import _add_contact
+    create, _ = native_pairing
+    first, _, created, _, _, _ = create()
+    second, _, _, _, _, _ = create()
+    first_id, second_id = str(uuid4()), str(uuid4())
+    first.native_pairing_begin(first_id, role="offer", authorized=lambda: True)
+    run_until(first, lambda: first.native_pairing_status(first_id)["pairing_code"] is not None)
+    code = first.native_pairing_status(first_id)["pairing_code"]
+    second.native_pairing_begin(second_id, role="answer", pairing_code=code, authorized=lambda: True)
+    run_until(second, lambda: second.native_pairing_status(second_id)["state"] == "awaiting_approval")
+    first._connection_runtime.now = lambda: monotonic() + 6
+    run_until(first, lambda: first.native_pairing_status(first_id)["state"] == "awaiting_approval")
+    _add_contact(first, "contact-second", second._identity, second._require_profile()["destination_hash"])
+    _add_contact(second, "contact-first", first._identity, first._require_profile()["destination_hash"])
+    for service, intent, other, contact in ((first, first_id, second, "contact-first"), (second, second_id, first, "contact-second")):
+        context = service._native_pairing_contexts[intent]
+        document = other.reconnect_capabilities_create(contact)["capabilities"]
+        service._native_control_receive(context["session"], "mesh-onboarding",
+            json.dumps({"type": "connection_capabilities", "document": document}))
+        assert service._native_webrtc_controls[context["session"]].get("profile_id")
+        assert not service.native_manual_carrier_authorized(service._native_webrtc_controls[context["session"]]["profile_id"])
+    context = first._native_pairing_contexts[first_id]
+    physical, session = context["physical"], context["session"]
+    profile_id = first._native_webrtc_controls[session]["profile_id"]
+    assert first._native_pairing_ready(context), first._reconnect_profile_public(first._reconnect_profile(profile_id))["effective"]["reasons"]
+    attached = []
+    def attach(logical, *, expected_physical):
+        assert logical == session and expected_physical == physical
+        attached.append(expected_physical)
+        return {"bridge_id": "fixture-bridge"}
+    first.webrtc_attach_native = attach
+    first.reconnect_path_status = lambda _: {"has_path": True, "ready": True}
+    # The native bindings are captured at construction; attachment resolves the
+    # current trusted service method, as production does.
+    first._connection_runtime.now = lambda: monotonic() + 12
+    run_until(first, lambda: first._native_pairing_contexts[first_id]["state"] == "transferred")
+    first._connection_runtime.now = monotonic
+    run_until(first, lambda: first._native_webrtc_profile_sessions.get(profile_id) == session)
+    run_until(first, lambda: any(state.carrier is not None for state in first._connection_runtime.owner.snapshots()
+                               if state.key.profile_id == profile_id))
+    state = next(state for state in first._connection_runtime.owner.snapshots() if state.key.profile_id == profile_id)
+    assert state.carrier.resource == Resource("native", physical)
+    assert first._connection_runtime.owner.handoff_committed(next(iter(first._connection_runtime._handoff_attempts.values())))
+    assert len(created) == 1
+    assert not first._connection_runtime.snapshots()[first_id]["messaging_ready"]
+    # Original intent cancellation has surrendered cleanup authority.
+    assert first.native_pairing_cancel(first_id)["state"] == "transferred"
+    assert session in first._native_webrtc_live
+
+
+def test_completed_lock_drops_pairing_capabilities_and_identity_references(native_pairing):
+    create, _ = native_pairing
+    service, *_ = create()
+    intent = str(uuid4())
+    service.native_pairing_begin(intent, role="offer", authorized=lambda: True)
+    run_until(service, lambda: service.native_pairing_status(intent)["pairing_code"] is not None)
+    context = service._native_pairing_contexts[intent]
+    assert context["identity"]() is service._identity
+    service.close()
+    assert service._store_closed and service._identity is None
+    assert context == {} and service._core_signal_attempts == {} and service._core_signal_results == {}
+
+
+def test_pairing_parent_receipt_rollback_prevents_native_and_signaling_effects(native_pairing, monkeypatch):
+    create, documents = native_pairing
+    service, _, created, _, _, _ = create()
+    original = service.store._write_records_locked
+    def fail(*args):
+        original(*args)
+        raise OSError("admission transaction rolled back")
+    monkeypatch.setattr(service.store, "_write_records_locked", fail)
+    with pytest.raises(OSError):
+        service.native_pairing_begin(str(uuid4()), role="offer", authorized=lambda: True)
+    assert not service._native_pairing_contexts and not created and not documents
+    assert service.store.list("workspace_operation") == []
+
+
+def test_late_failed_native_create_retains_exact_close_until_acknowledged(native_pairing):
+    create, documents = native_pairing
+    service, host, created, closed, _, _ = create()
+    offer = host.createOffer
+    def unknown(*args):
+        offer(*args)
+        raise OSError("create reply lost after allocation")
+    host.createOffer = unknown
+    close_attempts = []
+    def close(physical):
+        close_attempts.append(physical)
+        if len(close_attempts) < 3:
+            raise OSError("close acknowledgement unavailable")
+        closed.append(physical)
+    host.close = close
+    intent = str(uuid4())
+    service.native_pairing_begin(intent, role="offer", authorized=lambda: True)
+    run_until(service, lambda: bool(service._connection_runtime._cleanup_failed))
+    assert len(created) == 1 and not closed and not documents
+    physical = created[0][0]
+    assert set(close_attempts) == {physical}
+    service._connection_runtime.now = lambda: monotonic() + 6
+    run_until(service, lambda: service._native_pairing_contexts[intent]["state"] == "retired")
+    assert closed == [physical] and set(close_attempts) == {physical}
+    assert len(created) == 1 and not service._native_webrtc_live

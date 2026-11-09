@@ -107,7 +107,7 @@ class NativeWebRTCControlMixin:
             except (ContactNotApproved, ValidationError):
                 return False
 
-    def _authorized_manual_native_carrier(self, profile):
+    def _authorized_manual_native_carrier(self, profile, *, allow_pairing_session=None):
         contact = self._reconnect_contact(profile["contact_id"])
         public = self._reconnect_profile_public(profile)
         reasons = set(public["effective"].get("reasons") or ())
@@ -118,6 +118,9 @@ class NativeWebRTCControlMixin:
                 or reasons - automatic_only):
             raise ContactNotApproved("Manual carrier authority is unavailable")
         for session_id, peer in self._native_webrtc_peers.items():
+            pairing_owned = getattr(self, "_native_pairing_owned", lambda _: False)
+            if session_id != allow_pairing_session and pairing_owned(session_id):
+                continue
             pending = getattr(self, "_pending_contact_carriers", {}).get(session_id)
             if pending is not None and (not pending.transfer_ready or not pending.current()):
                 continue
