@@ -105,11 +105,19 @@ class CoreRuntimeHost:
     def _open(self, profile):
         self._recheck_invocation()
         opened = profile.open()  # Existing OS key slot is authoritative; never cached here.
-        if (hasattr(getattr(opened, "store", None), "opaque_id")
-                and bytes.fromhex(opened.store.opaque_id("core-api-handle-key", "v1")) != profile.handle_key):
-            error = NativeUnavailable("Profile opener returned a different key slot")
+        if (opened is None or not callable(getattr(opened, "close", None))
+                or not callable(getattr(getattr(opened, "_shutdown", None), "is_set", None))
+                or type(getattr(opened, "_store_closed", None)) is not bool
+                or not isinstance(getattr(opened, "_runtime_incarnation", None), str)):
+            return opened  # The lifecycle port quarantines a malformed provider.
+        try:
+            if bytes.fromhex(opened.store.opaque_id("core-api-handle-key", "v1")) != profile.handle_key:
+                raise NativeUnavailable("Profile opener returned a different key slot")
+        except Exception as error:
+            # Acquisition transferred custody. Preserve it for every validation
+            # failure, including storage exceptions and malformed key material.
             error.retiring_service = opened
-            raise error
+            raise
         return opened
 
     def _publish(self, service):
