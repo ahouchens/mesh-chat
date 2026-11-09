@@ -108,6 +108,7 @@ MAX_PENDING_REQUESTS = 100
 CONTACT_FLUSH_ATTEMPTS = 4
 ROUTE_REFRESH_MARGIN_SECONDS = 10 * 60
 ROUTE_REFRESH_RETRY_SECONDS = 5 * 60
+MAX_ROUTE_UPDATE_JOBS = 256
 DELETED_MESSAGE_REPLAY_GRACE_SECONDS = 24 * 60 * 60
 
 DIRECT_RETRY_STATES = {
@@ -1203,6 +1204,7 @@ class MeshChatService(
         if scope_kind != "workspace_device" or not isinstance(scope_id, str) or not isinstance(peer_destination, str):
             raise ValidationError("Route update scope is invalid")
         workspace = self._require_workspace(scope_id)
+        self._require_current_workspace_access("route_update", {"workspace_id": workspace["id"]})
         if workspace.get("state") != "active":
             raise ValidationError("Workspace is not active")
         manifest = self._workspace_current_manifest(workspace)
@@ -1217,7 +1219,12 @@ class MeshChatService(
     def create_route_update_command(
         self, scope_kind: Any, scope_id: Any, peer_destination: Any = None,
         *, preferred_external_port: int | None = None,
+        operation_id: str | None = None,
     ) -> dict[str, Any]:
+        if operation_id is not None:
+            with self._dispatch_lock:
+                return self._create_keyed_route_update(scope_kind, scope_id, peer_destination,
+                    preferred_external_port, operation_id)
         if self._identity is None:
             raise ValidationError("Local identity is unavailable")
         canonical_scope, audience, _public_key, _label = self._route_update_binding(
@@ -1270,9 +1277,99 @@ class MeshChatService(
             "delivery_mode": "automatic" if delivered_live else "share_required",
         }
 
+    def _create_keyed_route_update(self, scope_kind, scope_id, peer_destination, preferred_external_port, operation_id):
+        from .participant_service import ParticipantReservationCapacity, ParticipantReservationUnavailable
+
+        if self._identity is None or self._shutdown.is_set():
+            raise ParticipantReservationUnavailable("Local profile is unavailable")
+        canonical, audience, public_key, _ = self._route_update_binding(scope_kind, scope_id, peer_destination)
+        operation_id, digest, replay = self._workspace_operation("create_route_update", operation_id, {
+            "scope_kind": scope_kind, "scope_id": scope_id, "peer_destination": peer_destination,
+            "preferred_external_port": preferred_external_port,
+        })
+        if replay is not None and replay != {"action": "participant_host", "intent_id": operation_id}:
+            raise ParticipantReservationUnavailable("Route reservation is unavailable")
+        generation_id = f"out:{scope_kind}:{canonical}:{audience.hex()}"
+        previous = self.store.get("participant_host_intent", operation_id)
+        generation = self.store.get("route_generation", generation_id) or {}
+        now = time.time()
+        outbox = self.store.items("route_update_outbox")
+        expired = [("route_update_outbox", identifier) for identifier, item in outbox
+                   if float(item.get("expires_at", 0)) <= now]
+        if previous is None and len(outbox) - len(expired) >= MAX_ROUTE_UPDATE_JOBS:
+            raise ParticipantReservationCapacity("Too many route update jobs")
+        if previous is None:
+            intent = self.reserve_participant_host_intent(operation_id, digest,
+                purpose="personal" if scope_kind == "contact" else "workspace", scope_id=canonical,
+                maximum_expires_at=int(now) + 24 * 60 * 60,
+                relationship_scope={"kind": scope_kind, "id": scope_id}, peer_destination=audience.hex(),
+                generation_id=generation_id, base_generation=int(generation.get("generation", 0)),
+                preferred_external_port=preferred_external_port)
+        else:
+            intent = previous
+        access = dict(self.materialize_participant_host_intent(operation_id, digest))
+        host_id = access.pop("host_session_id")
+        completion = self.store.get("participant_host_completion", operation_id)
+        if completion is not None:
+            if completion.get("input_digest") != digest or not isinstance(completion.get("result"), dict):
+                raise ParticipantReservationUnavailable("Route completion is unavailable")
+            result = dict(completion["result"])
+        else:
+            serialized = create_signed_route_update(self._identity, scope_kind=scope_kind, scope_id=canonical,
+                audience_destination=audience, generation=intent["generation"], access=access)
+            result = {**route_update_formats(serialized), "expires_at": access["expires_at"],
+                "generation": intent["generation"], "host_session_id": host_id,
+                "methods": sorted({item["path"] for item in access["endpoints"]}),
+                "delivery_mode": "share_required"}
+            job = {"id": operation_id, "input_digest": digest, "state": "pending", "document": serialized,
+                "expires_at": access["expires_at"], "scope_kind": scope_kind, "scope_id": scope_id,
+                "peer_destination": audience.hex(), "recipient_public_key": _b64(public_key),
+                "generation_id": generation_id, "generation": intent["generation"], "host_session_id": host_id}
+            writes = self._prepare_participant_host_completion(operation_id, digest, result=result)
+            writes.extend([
+                ("route_generation", generation_id, {"id": generation_id, "generation": intent["generation"],
+                    "updated_at": time.time(), "host_session_id": host_id, "document": serialized,
+                    "relationship_scope": {"kind": scope_kind, "id": scope_id}, "peer_destination": audience.hex(),
+                    "preferred_external_port": next((int(item["port"]) for item in access["endpoints"]
+                        if item.get("path") in {"pcp", "upnp", "nat_pmp"}), None)}),
+                ("route_update_outbox", operation_id, job),
+            ])
+            # The immutable global receipt already reserves the key. Complete
+            # this reservation atomically without replacing its receipt pointer.
+            self.store.put_and_delete(writes, expired)
+            self._retry_route_update_outbox(operation_id)
+        job = self.store.get("route_update_outbox", operation_id)
+        result["delivery_mode"] = "automatic" if job is not None and job.get("state") == "submitted" else "share_required"
+        return result
+
+    def _retry_route_update_outbox(self, operation_id=None):
+        if self.network is None:
+            return
+        for identifier, job in self.store.items("route_update_outbox", limit=MAX_ROUTE_UPDATE_JOBS):
+            if operation_id is not None and identifier != operation_id:
+                continue
+            if float(job.get("expires_at", 0)) <= time.time():
+                self.store.delete("route_update_outbox", identifier)
+                continue
+            if job.get("state") != "pending":
+                continue
+            try:
+                _, audience, public_key, _ = self._route_update_binding(
+                    job["scope_kind"], job["scope_id"], job["peer_destination"])
+                self.materialize_participant_host_intent(identifier, job["input_digest"])
+                if _b64(public_key) != job["recipient_public_key"]:
+                    continue
+            except Exception:
+                continue
+            if self._send_live_route_update(job["document"], audience=audience,
+                    recipient_public_key=public_key, expires_at=int(job["expires_at"]),
+                    logical_id=str(uuid.uuid5(uuid.UUID(identifier), "route-update-delivery"))):
+                self.store.put("route_update_outbox", identifier, {**job, "state": "submitted"})
+
     def _send_live_route_update(
         self, serialized: str, *, audience: bytes,
         recipient_public_key: bytes, expires_at: int,
+        logical_id: str | None = None,
     ) -> bool:
         if self.network is None:
             return False
@@ -1289,7 +1386,7 @@ class MeshChatService(
             profile = self._require_profile()
             local = bytes.fromhex(profile["destination_hash"])
             self.network.send(
-                logical_id=_new_id(),
+                logical_id=logical_id or _new_id(),
                 conversation_id=conversation_id(local, audience),
                 recipient_public_key=recipient_public_key,
                 recipient_destination=audience,
@@ -1306,6 +1403,7 @@ class MeshChatService(
     def _refresh_callback_routes(self) -> None:
         """Refresh an expiring hosted route over an already usable Reticulum path."""
 
+        self._retry_route_update_outbox()
         if self.network is None:
             return
         path_known = getattr(self.network, "path_known", None)
@@ -1416,7 +1514,7 @@ class MeshChatService(
                     response["updated_at"] = now
                     self.store.put("connection_response", response_id, response)
 
-    def _verified_scoped_route_update(self, raw: Any) -> tuple[Any, str, str]:
+    def _verified_scoped_route_update(self, raw: Any, *, check_generation: bool = True) -> tuple[Any, str, str]:
         if not isinstance(raw, str):
             raise ValidationError("Reconnect update must be text")
         update = verify_route_update(raw)
@@ -1439,6 +1537,7 @@ class MeshChatService(
                 raise ValidationError("Reconnect update contact scope is invalid")
         else:
             workspace = self._require_workspace(update.scope_id)
+            self._require_current_workspace_access("route_update", {"workspace_id": workspace["id"]})
             if workspace.get("state") != "active":
                 raise ValidationError("Workspace is not active")
             manifest = self._workspace_current_manifest(workspace)
@@ -1453,7 +1552,7 @@ class MeshChatService(
             label = device_match[0].display_name
         generation_id = f"in:{update.scope_kind}:{update.scope_id}:{update.issuer_destination.hex()}"
         previous = self.store.get("route_generation", generation_id)
-        if previous is not None and update.generation <= int(previous.get("generation", 0)):
+        if check_generation and previous is not None and update.generation <= int(previous.get("generation", 0)):
             raise ValidationError("Reconnect update is stale or was already used")
         return update, durable_scope, label
 
@@ -1461,7 +1560,10 @@ class MeshChatService(
         update, _scope, label = self._verified_scoped_route_update(raw)
         return {**update.preview(), "issuer_display_name": label}
 
-    def apply_route_update(self, raw: Any) -> dict[str, Any]:
+    def apply_route_update(self, raw: Any, *, operation_id: str | None = None) -> dict[str, Any]:
+        if operation_id is not None:
+            with self._dispatch_lock:
+                return self._apply_keyed_route_update(raw, operation_id)
         update, durable_scope, label = self._verified_scoped_route_update(raw)
         generation_id = f"in:{update.scope_kind}:{update.scope_id}:{update.issuer_destination.hex()}"
         generation_record = {
@@ -1484,6 +1586,42 @@ class MeshChatService(
             **update.preview(), "issuer_display_name": label,
             "connection_results": record.get("candidate_results", []),
         }
+
+    def _apply_keyed_route_update(self, raw, operation_id):
+        from .participant_service import ParticipantReservationUnavailable
+
+        if self._identity is None or self._shutdown.is_set():
+            raise ParticipantReservationUnavailable("Local profile is unavailable")
+        update, scope, label = self._verified_scoped_route_update(raw, check_generation=False)
+        operation_id, digest, replay = self._workspace_operation("apply_route_update", operation_id, {"update": raw})
+        generation_id = f"in:{update.scope_kind}:{update.scope_id}:{update.issuer_destination.hex()}"
+        generation = self.store.get("route_generation", generation_id)
+        if replay is not None:
+            if generation is None or int(generation.get("generation", 0)) != update.generation:
+                raise ParticipantReservationUnavailable("Route generation was superseded")
+        else:
+            if generation is not None and update.generation <= int(generation.get("generation", 0)):
+                raise ValidationError("Reconnect update is stale or was already used")
+            generation = {"id": generation_id, "generation": update.generation, "updated_at": time.time(),
+                          "runtime_epoch": self._participant_runtime_epoch()}
+            record, writes, deletions = self._prepare_participant_scope_replacement(update.access,
+                scope_kind=update.scope_kind, scope_id=scope,
+                additional_writes=[("route_generation", generation_id, generation)])
+            self.store.commit_operation(operation_id, digest,
+                {"generation_id": generation_id, "generation": update.generation, "access_id": record["id"]},
+                writes, deletions, redact_command_cache=True)
+            self.reconcile_prepared_participant_access()
+            if self.network is not None:
+                self.network.remember_contact(update.issuer_public_identity, update.issuer_destination)
+                self.network.reannounce()
+            self._changed()
+        record = self.store.get("participant_access", update.access["id"])
+        if (record is None or record.get("access") != update.access
+                or {"kind": update.scope_kind, "id": scope} not in record.get("scopes", [])):
+            raise ContactNotApproved("Route access consent is no longer active")
+        results = (record.get("candidate_results", []) if self.network is not None
+                   and generation.get("runtime_epoch") == self._participant_runtime_epoch() else [])
+        return {**update.preview(), "issuer_display_name": label, "connection_results": results}
 
     def _ensure_contact_request(self, contact: dict[str, Any]) -> dict[str, Any]:
         for message in self.store.list("message"):

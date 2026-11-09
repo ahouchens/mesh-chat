@@ -1200,7 +1200,7 @@ class CoreSession:
             if target is None:
                 raise ApiFailure("forbidden")
             result = self._workspace_admin.route_update(
-                target, params["action"], params, None)
+                target, params["action"], params, self._required_operation_id(grant, target, key))
             return {"route": result}
         if operation in WORKSPACE_DIRECT_OPEN_OPERATIONS:
             target, inside = self._workspace_scope(grant, profiles, params)
