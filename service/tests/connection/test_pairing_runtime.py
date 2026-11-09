@@ -85,6 +85,18 @@ def test_ordinary_reconnect_cannot_skip_attachment_and_path_with_pairing_handoff
     assert Retire(work.resource) in failed.effects
 
 
+def test_pairing_actor_cannot_adopt_a_carrier_and_bypass_checked_handoff():
+    start = transition(pairing(), Tick(0))
+    work, = start.effects
+    physical = Resource("native", "physical-peer")
+    rejected = transition(start.state, Adopted(work.operation, 0.1, physical))
+    assert rejected.reason == "invalid_adoption"
+    assert rejected.state.carrier is None and rejected.state.pairing_terminal
+    assert Retire(physical) in rejected.effects
+    assert not any(isinstance(effect, Work) for effect in rejected.effects)
+    assert not snapshot(rejected.state, 0.2)["messaging_ready"]
+
+
 @pytest.mark.parametrize("handoff_fails", [False, True])
 def test_actual_runtime_handoff_is_once_and_exception_keeps_exact_cleanup(handoff_fails):
     results, retired, attempts = [], [], []
