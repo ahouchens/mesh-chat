@@ -150,6 +150,21 @@
       "send"
     ]
   },
+  "action_permissions": {
+    "remote_profile.mutate": {
+      "create": "approve",
+      "approve_propagation": "approve",
+      "remove": "approve",
+      "remove_propagation": "approve"
+    },
+    "workspace.access_recommendation": {
+      "apply": "approve",
+      "apply_by_id": "approve"
+    },
+    "workspace.connection": {
+      "reconnect_consent": "approve"
+    }
+  },
   "operations": [
     {
       "operation": "bootstrap.preview",

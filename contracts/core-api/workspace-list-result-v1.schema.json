@@ -85,6 +85,7 @@
             "removed",
             "revoked",
             "archived",
+            "closed",
             "linking",
             "device_removed"
           ]

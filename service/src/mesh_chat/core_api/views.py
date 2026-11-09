@@ -215,7 +215,7 @@ def pairing_request_view(profile, peer, value):
 
 WORKSPACE_ROLES = {"owner", "admin", "member"}
 WORKSPACE_STATES = {"active", "joining", "linking", "left", "removed", "device_removed",
-                    "revoked", "archived"}
+                    "revoked", "archived", "closed"}
 
 
 def workspace_list_view(profile, items):

@@ -146,6 +146,13 @@ def test_session_permissions_match_the_operation_contract():
     assert declared == PERMISSION_BY_OPERATION
 
 
+def test_consent_action_permissions_match_the_public_contract():
+    import json
+    from mesh_chat.core_api.session import ADDITIONAL_PERMISSION_BY_ACTION
+    manifest = json.loads((ROOT / "contracts/core-api/operations-v1.json").read_text())
+    assert manifest["action_permissions"] == ADDITIONAL_PERMISSION_BY_ACTION
+
+
 def test_application_allowlist_matches_the_desktop_renderer_allowlist():
     import re
     from mesh_chat.core_api.native_commands import NATIVE_COMMANDS

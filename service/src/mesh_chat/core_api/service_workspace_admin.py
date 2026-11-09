@@ -23,7 +23,7 @@ MAX_DOCUMENT_BYTES = 65536
 CHANNEL_STATES = {"active", "archived", "left"}
 ROLES = {"owner", "admin", "member"}
 STATES = {"active", "joining", "linking", "left", "removed", "device_removed",
-          "revoked", "archived"}
+          "revoked", "archived", "closed"}
 MEMBER_STATES = {"active", "invited", "leaving", "left", "removed"}
 ROLES_ASSIGNABLE = {"admin", "member"}
 
