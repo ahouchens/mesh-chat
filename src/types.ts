@@ -972,6 +972,7 @@ export type CallState =
 
 export interface CallSummary {
   id: string;
+  core_handle?: string;
   contact_id: string;
   role: "caller" | "callee";
   media: "audio" | "video";

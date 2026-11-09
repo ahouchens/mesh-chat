@@ -323,8 +323,9 @@ export async function coreApiCallControl(
   idempotencyKey: string,
 ): Promise<Record<string, unknown>> {
   const profile = await coreApiProfile();
-  return coreApiRequest("call.control",
-    { profile: profile.profile, action, ...params }, idempotencyKey) as Promise<Record<string, unknown>>;
+  const result = await coreApiRequest<{ result: Record<string, unknown> }>("call.control",
+    { profile: profile.profile, action, ...params }, idempotencyKey);
+  return result.result;
 }
 
 export async function coreApiCallMedia(call: string): Promise<Record<string, unknown>> {

@@ -118,6 +118,8 @@ beforeEach(() => {
       if (payload.operation === "workspace.timeline_mutation") return { result: await mutation(params) };
       if (payload.operation === "native.command") return { profiles: [], sessions: [] };
       if (payload.operation === "call.settings_query") return { settings: {} };
+      if (payload.operation === "remote_profile.query") return { profiles: current.remote_profiles ?? [] };
+      if (payload.operation === "remote_profile.mutate") return { result: {} };
       if (payload.operation === "workspace.history") return { result: { status: "complete", eligible: false } };
       throw new Error(`Unexpected Core operation: ${String(payload.operation)}`);
     }
@@ -132,6 +134,27 @@ afterEach(() => {
 });
 
 describe("Core application serialization", () => {
+  it("uses a keyed Core mutation for explicit remote propagation approval", async () => {
+    current = { ...current, remote_profiles: [{
+      id: "remote-access-id", label: "Field access", origin: "manual", expires_at: 2_000_000_000,
+      endpoint_count: 1, connected_endpoint_count: 1, state: "connected", path_available: true,
+      ratchet_ready: true, offline_delivery_recommended: true, offline_delivery_approved: false,
+      offline_delivery_available: false, propagation_identifier: "11".repeat(16), scope_count: 1,
+      retry_count: 0, last_error: null, last_connected_at: 1, capabilities: [], allow_private: false,
+    }] };
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Settings" }));
+    const settings = await screen.findByRole("region", { name: "Settings" });
+    fireEvent.click(within(settings).getByRole("button", { name: "Connections" }));
+    expect(requests("remote_profile.mutate")).toHaveLength(0);
+    fireEvent.click(within(settings).getByRole("button", { name: "Approve offline delivery" }));
+    await waitFor(() => expect(requests("remote_profile.mutate")).toHaveLength(1));
+    expect(requests("remote_profile.mutate")[0]).toEqual({ operation: "remote_profile.mutate", params: {
+      profile: profileHandle, action: "approve_propagation", remote_profile_id: "remote-access-id",
+    }, idempotencyKey: expect.any(String) });
+    expect(requests("native.command").some(({ params }) => params.command === "approve_remote_propagation")).toBe(false);
+  });
+
   async function openProfileSetup() {
     current = { ...current, profile: null };
     render(<App />);
