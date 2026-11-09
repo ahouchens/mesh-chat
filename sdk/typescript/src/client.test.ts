@@ -19,6 +19,50 @@ const CAPABILITIES = {
   limits: { frame_bytes: MAX_FRAME_BYTES, received_scan_count: 128 },
 };
 
+test("a stalled write has the same finite exchange deadline", async () => {
+  let closed = false;
+  const transport: LineTransport = {
+    writeLine: () => new Promise<void>(() => {}),
+    readLine: () => new Promise<string>(() => {}),
+    close: () => { closed = true; },
+  };
+  await assert.rejects(CoreClient.open(transport, { requestTimeoutMs: 10 }), TimeoutError);
+  assert.equal(closed, true);
+});
+
+test("composer refuses an older host before writing and never invents a key", async () => {
+  const transport = new Scripted(success("client:1", CAPABILITIES));
+  const client = await CoreClient.open(transport);
+  await assert.rejects(client.enqueueDraft(PROFILE, PEER, "a".repeat(64)),
+    (error: unknown) => error instanceof CoreError && error.code === "unsupported_operation");
+  await assert.rejects(client.createProfile("New profile"), ProtocolError);
+  await assert.rejects(client.workspaceJoin(PROFILE, "signed document"), ProtocolError);
+  await assert.rejects(client.workspaceAdmissionGrantList(PROFILE, "w".repeat(64)), ProtocolError);
+  assert.equal(transport.written.length, 1);
+});
+
+test("all repaired keyed helpers preserve an explicit caller key", async () => {
+  const transport = new Scripted(success("client:1", CAPABILITIES), success("client:2", {}),
+    success("client:3", {}), success("client:4", {}));
+  const client = await CoreClient.open(transport);
+  const key = "explicit-caller-key-0001";
+  await client.createProfile("New profile", key);
+  await client.workspaceJoin(PROFILE, "signed document", key);
+  await client.workspaceAdmissionGrantList(PROFILE, "w".repeat(64), key);
+  assert.ok(transport.written.slice(1).every(line => JSON.parse(line).idempotency_key === key));
+});
+
+test("ambiguous JSON and admission errors fail closed without a second frame", async () => {
+  for (const body of ['{"v":1,"v":2}', '{"value":9007199254740992}', '{"value":"\\ud800"}']) {
+    assert.throws(() => decodeResponse(body + "\n"), ProtocolError);
+  }
+  const transport = new Scripted(failure(null, "unavailable"));
+  await assert.rejects(CoreClient.open(transport),
+    (error: unknown) => error instanceof CoreError && error.code === "unavailable");
+  assert.equal(transport.closed, true);
+  assert.equal(transport.written.length, 1);
+});
+
 function success(requestId: string | null, result: unknown): string {
   return `${JSON.stringify({ api_version: 1, request_id: requestId, ok: true, result })}\n`;
 }
@@ -144,12 +188,12 @@ test("EOF closes the client and fails the outstanding request", async () => {
   await assert.rejects(client.profileQuery(PROFILE), TransportClosedError);
 });
 
-test("a silent peer times out without closing the transport or resending", async () => {
+test("a silent peer times out and closes so a late reply cannot shift correlation", async () => {
   const transport = new Silent(success("client:1", CAPABILITIES));
   const client = await CoreClient.open(transport);
   await assert.rejects(client.request("profile.query", { profile: PROFILE }, { timeoutMs: 10 }), TimeoutError);
   assert.equal(transport.written.length, 2);
-  assert.equal(client.closed, false);
+  assert.equal(client.closed, true);
 });
 
 test("concurrent requests stay serialized and correlated in order", async () => {
@@ -711,13 +755,13 @@ test("workspace preview and join use the declared envelopes", async () => {
   );
   const client = await CoreClient.open(transport);
   assert.equal((await client.workspacePreview(PROFILE, "invitation")).name, "Core");
-  assert.equal((await client.workspaceJoin(PROFILE, "invitation")).state, "joining");
+  assert.equal((await client.workspaceJoin(PROFILE, "invitation", "workspace-join-key-0001")).state, "joining");
   const preview = JSON.parse(transport.written[1]);
   const join = JSON.parse(transport.written[2]);
   assert.equal(preview.operation, "workspace.invitation_preview");
   assert.equal("idempotency_key" in preview, false);
   assert.equal(join.operation, "workspace.join");
-  assert.equal("idempotency_key" in join, false);
+  assert.equal(join.idempotency_key, "workspace-join-key-0001");
 });
 
 test("pairingRequest targets the peer without a caller key", async () => {

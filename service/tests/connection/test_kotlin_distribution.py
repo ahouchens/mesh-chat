@@ -12,6 +12,7 @@ from verify_kotlin_distribution import verify
 def artifact(tmp_path, extra=None):
     classes = io.BytesIO()
     with zipfile.ZipFile(classes, "w") as jar:
+        jar.writestr("META-INF/LICENSE", (Path(__file__).resolve().parents[3] / "LICENSE").read_bytes())
         for name in ("com/meshchat/runtime/core/CoreClient.class", "com/meshchat/runtime/IMeshCoreApi.class"):
             jar.writestr(name, b"fixture")
         if extra: jar.writestr(extra, b"fixture")

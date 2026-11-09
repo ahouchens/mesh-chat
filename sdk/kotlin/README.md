@@ -4,6 +4,9 @@
 `CoreExchangeTransport`, and the public `IMeshCoreApi` Binder interface. The AAR
 contains no Python runtime, native transport, vault, or host implementation.
 It is an unpublished component, not yet a supported M5 release.
+The AAR includes the project's MIT license in `classes.jar/META-INF/LICENSE`.
+The SDK never opens or owns a vault, profile directory or key. It provides no
+profile export, key export or uninstall-erasure guarantee.
 
 Client and AIDL sources now live entirely under this SDK directory. The runtime
 host consumes the client module as a dependency. Its package names and Binder
@@ -47,6 +50,18 @@ when no request ID could be correlated. Closing the client detaches local transp
 connection separately. Neither action is an owner-stop command. A failed or
 timed-out mutation has an unknown outcome: do not blindly retry it; use the
 operation's idempotency key and durable status where available.
+Binder calls are blocking; the host enforces its dispatch bounds. The SDK does
+not cancel a remotely committed operation or retry a timed-out caller task.
+Use an application-owned bounded worker task and resolve unknown outcomes
+through Core before explicitly retrying the original identity.
+
+First composer mutation raises host vault format 1 to 2 atomically. Old format-1
+hosts must refuse migrated storage; binary downgrade is unsupported. API minor
+compatibility does not imply storage downgrade safety. The experimental pair is
+API1.0/source174728e with SDK0.2 versus candidate API1.1/SDK0.3.0-experimental.
+Python's first standalone wheel uses PEP440 version0.3.0.dev0 for this cohort.
+Android ABI/API-level and actual packaged evidence belong to each CI artifact
+manifest; staging declares no supported upgrade window.
 
 The [independent example](../../examples/android-core-consumer/README.md) compiles
 outside the checkout against this AAR. CI records its APKs, SDK digest, and

@@ -1,95 +1,87 @@
-"""Build the Python wheel, install it into an empty target and import it.
+"""Build/install the standalone client artifact; never package the service."""
 
-This qualifies the packaged Python artifact without publishing anything.
-"""
-
-from __future__ import annotations
-
+import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-SERVICE = ROOT / "service"
+PACKAGE = ROOT / "sdk/python"
 
 
-def run(arguments: list[str], *, cwd: Path, env: dict[str, str] | None = None) -> str:
-    completed = subprocess.run(
-        arguments, cwd=cwd, env=env, text=True, capture_output=True, check=False
-    )
-    if completed.returncode != 0:
-        raise SystemExit(
-            f"command failed ({completed.returncode}): {' '.join(arguments)}\n"
-            f"{completed.stdout}\n{completed.stderr}"
-        )
-    return completed.stdout
+def run(args, cwd, env):
+    return subprocess.run(args, cwd=cwd, env=env, check=True, text=True,
+                          capture_output=True, timeout=120).stdout
 
 
-def main() -> int:
-    with tempfile.TemporaryDirectory(prefix="mesh-chat-wheel-") as temporary:
+def verify(wheel):
+    with zipfile.ZipFile(wheel) as archive:
+        names = archive.namelist()
+        if (len(names) != len(set(names)) or len(names) > 100
+                or sum(info.file_size for info in archive.infolist()) > 2 * 1024 * 1024):
+            raise ValueError("Invalid standalone archive bounds")
+        for name in names:
+            if name.startswith("/") or "\\" in name or ".." in Path(name).parts:
+                raise ValueError("Archive path escapes package")
+            modules = {"mesh_chat_core_client/" + item + ".py" for item in
+                       ("__init__", "client", "compatibility", "errors", "framing", "limits", "protocol", "types", "windows")}
+            if not (name in modules or name.startswith("mesh_chat_core_client-0.3.0.dev0.dist-info/")):
+                raise ValueError("Non-client payload entered standalone wheel")
+            if name.endswith((".dll", ".so", ".pyc")):
+                raise ValueError("Runtime/native payload entered standalone wheel")
+        if "mesh_chat_core_client/client.py" not in names:
+            raise ValueError("Missing standalone client")
+        if "mesh_chat_core_client-0.3.0.dev0.dist-info/licenses/LICENSE" not in names:
+            raise ValueError("Missing client license")
+    return {"artifact": wheel.name, "sha256": hashlib.sha256(wheel.read_bytes()).hexdigest(),
+            "size_bytes": wheel.stat().st_size, "files": sorted(names)}
+
+
+def stage(output):
+    output.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="mesh-core-python-distribution-") as temporary:
         work = Path(temporary)
-        wheels = work / "wheels"
-        wheels.mkdir()
-        run([sys.executable, "-m", "pip", "wheel", str(SERVICE), "--no-deps",
-             "--no-build-isolation", "--wheel-dir", str(wheels)], cwd=work)
-        artifacts = sorted(wheels.glob("mesh_chat_service-*.whl"))
-        if len(artifacts) != 1:
-            raise SystemExit(f"expected one wheel, found {artifacts}")
-        target = work / "site"
-        run([sys.executable, "-m", "pip", "install", str(artifacts[0]), "--no-deps",
-             "--target", str(target)], cwd=work)
-        environment = {**os.environ, "PYTHONPATH": str(target)}
-        code = (
-            "import json, importlib.metadata as metadata, os, pathlib, tempfile\n"
-            "import mesh_chat.core_api as api\n"
-            "from mesh_chat.core_api.client import CoreClient\n"
-            "from mesh_chat.core_api.composition import bind_service_session\n"
-            "from mesh_chat.core_api.session import Grant\n"
-            "from mesh_chat.service import MeshChatService\n"
-            "from mesh_chat.vault import VaultStore\n"
-            "distribution = metadata.distribution('mesh-chat-service')\n"
-            "scripts = {entry.name for entry in distribution.entry_points}\n"
-            "assert scripts >= {'mesh-chat-service', 'mesh-chat-core'}, scripts\n"
-            "assert api.__version__ == '0.2.0-experimental', api.__version__\n"
-            "assert CoreClient.__name__ == 'CoreClient'\n"
-            "root = pathlib.Path(tempfile.mkdtemp(prefix='mesh-chat-consumer-'))\n"
-            "MeshChatService._start_network = lambda *_: None\n"
-            "MeshChatService._prepare_lan_fallback = lambda *_: None\n"
-            "store = VaultStore(root, os.urandom(32), allow_unprotected_for_tests=True)\n"
-            "service = MeshChatService(store, root, lambda _: None)\n"
-            "service.create_profile('Packaged consumer')\n"
-            "try:\n"
-            "    grant = Grant('packaged-consumer', frozenset({'observe', 'read'}), ('local',))\n"
-            "    session = bind_service_session(service, lambda: grant)\n"
-            "    caps = session.request({'api_version': 1, 'request_id': 'consumer:1',\n"
-            "                            'operation': 'runtime.capabilities', 'params': {}})\n"
-            "    assert caps['ok'], caps\n"
-            "    profile = caps['result']['profiles'][0]\n"
-            "    listed = session.request({'api_version': 1, 'request_id': 'consumer:2',\n"
-            "                              'operation': 'workspace.query',\n"
-            "                              'params': {'profile': profile}})\n"
-            "    assert listed['ok'], listed\n"
-            "finally:\n"
-            "    service.close()\n"
-            "print(json.dumps({'version': api.__version__, 'scripts': sorted(scripts),\n"
-            "                  'facade': 'capabilities+workspace.query'}))\n"
-        )
-        output = run([sys.executable, "-c", code], cwd=work, env=environment)
-        script = target / "bin" / ("mesh-chat-core.exe" if os.name == "nt"
-                                    else "mesh-chat-core")
-        if not script.is_file():
-            raise SystemExit(f"console entry point not installed: {script}")
-        version_output = run([str(script), "--version"], cwd=work, env=environment)
-        if version_output.strip() != "0.2.0-experimental":
-            raise SystemExit(f"unexpected console version: {version_output!r}")
-        print(json.dumps({"passed": True, "wheel": artifacts[0].name,
-                          "console": version_output.strip(),
-                          "smoke": output.strip()}))
-    return 0
+        env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "PIP_CACHE_DIR": str(work / "cache")}
+        run([sys.executable, "-m", "pip", "wheel", str(PACKAGE), "--no-deps", "--no-build-isolation",
+             "--wheel-dir", str(output)], work, env)
+        wheels = list(output.glob("mesh_chat_core_client-0.3.0.dev0-*.whl"))
+        if len(wheels) != 1:
+            raise ValueError("Expected exactly one candidate standalone wheel")
+        wheel = wheels[0]
+        result = verify(wheel)
+        site = work / "site"
+        run([sys.executable, "-m", "pip", "install", str(wheel), "--target", str(site),
+             "--no-deps", "--no-index", "--no-compile"], work, env)
+        smoke = """
+import json, pathlib, sys
+sys.path.insert(0, sys.argv[1])
+import mesh_chat_core_client as package
+assert package.__version__ == '0.3.0.dev0'
+assert pathlib.Path(package.__file__).resolve().is_relative_to(pathlib.Path(sys.argv[1]).resolve())
+assert not any(name == 'mesh_chat' or name.startswith('mesh_chat.') for name in sys.modules)
+assert callable(package.CoreClient.enqueue_draft)
+print(json.dumps({'version':package.__version__,'installed_outside_checkout':True,'private_runtime_imported':False}))
+"""
+        result["consumer"] = json.loads(run([sys.executable, "-I", "-S", "-B", "-c", smoke, str(site)], work, env))
+        result["artifact_path"] = str(wheel.resolve())
+        result["qualification"] = "archive_and_isolated_import_only; real-host tests reported separately"
+        return result
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--output-dir", type=Path, default=ROOT / "dist/sdk/python")
+    args = parser.parse_args()
+    result = stage(args.output_dir.resolve())
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    (args.output_dir / "distribution-report.json").write_text(json.dumps(result, indent=2) + "\n")
+    print(json.dumps(result))
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()

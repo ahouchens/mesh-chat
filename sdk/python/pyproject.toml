@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools==80.9.0", "wheel==0.45.1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mesh-chat-core-client"
+version = "0.3.0.dev0"
+description = "Standalone experimental Mesh Chat Core protocol client"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["src"]
