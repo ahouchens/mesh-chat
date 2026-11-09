@@ -10,7 +10,7 @@ const api = vi.hoisted(() => {
   beginCallAudio: vi.fn(async () => ({ granted: true })),
   coreApiAcceptInvitation: vi.fn(async (invitation: string, i2pConsent = false): Promise<unknown> => serviceCommand("accept_invitation", { invitation, ...(i2pConsent ? { i2p_consent: true } : {}) })),
   coreApiDraftGet: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
-  coreApiDraftSet: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiDraftSet: vi.fn(async (_destination: string, text: string): Promise<unknown> => serviceCommand("save_draft", { contact_id: approved.id, text })),
   coreApiCreateGroup: vi.fn(async (name: string, policy: string, destinations: string[]): Promise<{ group: string; name: string; posting_policy: string }> => {
     const memberIds = destinations.map((destination) => destination === approved.destination_hash ? approved.id : destination);
     const created = await serviceCommand("create_group", { title: name, member_ids: memberIds, posting_policy: policy }) as { id?: string; title?: string; posting_policy?: string };
@@ -455,7 +455,7 @@ afterEach(() => {
   api.coreApiSendMessage.mockImplementation(async (_destination: string, text: string) => api.serviceCommand("send_message", { contact_id: approved.id, text }));
   api.coreApiAcceptInvitation.mockImplementation(async (invitation: string, i2pConsent = false) => api.serviceCommand("accept_invitation", { invitation, ...(i2pConsent ? { i2p_consent: true } : {}) }));
   api.coreApiDraftGet.mockImplementation(async () => { throw new Error("core_api_unavailable"); });
-  api.coreApiDraftSet.mockImplementation(async () => { throw new Error("core_api_unavailable"); });
+  api.coreApiDraftSet.mockImplementation(async (_destination: string, text: string) => api.serviceCommand("save_draft", { contact_id: approved.id, text }));
   api.coreApiCreateInvitation.mockImplementation(async () => { throw new Error("core_api_unavailable"); });
   api.coreApiPeerForDestination.mockImplementation(async () => { throw new Error("core_api_unavailable"); });
   api.coreApiRequest.mockImplementation(async () => { throw new Error("core_api_unavailable"); });

@@ -48,7 +48,6 @@ APPLICATION_COMMANDS = frozenset({
     "verify_webrtc_onboarding_offer",
     "verify_webrtc_onboarding_answer",
     "set_message_reaction",
-    "save_draft",
     "search",
     "create_workspace",
     "prepare_direct_offer",
@@ -70,6 +69,5 @@ APPLICATION_COMMANDS = frozenset({
     "workspace_helper_consent_set",
     "relay_workspace_connection_update",
     "workspace_request_paths",
-    "send_workspace_thread_reply",
     "reconcile_mobile_lifecycle",
 })

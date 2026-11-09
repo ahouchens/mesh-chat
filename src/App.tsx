@@ -5757,14 +5757,9 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       const contactId = write.payload.contact_id;
       if (write.command === "save_draft" && typeof contactId === "string") {
         const contact = snapshot.contacts.find((item) => item.id === contactId);
-        if (contact) {
-          try {
-            await coreApiDraftSet(contact.destination_hash, String(write.payload.text ?? ""));
-            return;
-          } catch (reason) {
-            if (!String(reason).includes("core_api_unavailable")) throw reason;
-          }
-        }
+        if (!contact) throw new Error("core_api_unavailable");
+        await coreApiDraftSet(contact.destination_hash, String(write.payload.text ?? ""));
+        return;
       }
       if ((write.command === "save_workspace_draft"
            || write.command === "save_workspace_direct_draft"
@@ -5790,7 +5785,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
         await coreApiGroupDraftSet(group.core_handle, String(write.payload.text ?? ""));
         return;
       }
-      await serviceCommand(write.command, write.payload);
+      throw new Error("core_api_unavailable");
     });
     // Keep the ordering barrier usable after an individual persistence error;
     // an immediate clear after a successful send must still be able to run.

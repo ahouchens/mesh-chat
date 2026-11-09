@@ -720,7 +720,6 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "verify_webrtc_onboarding_offer"
             | "verify_webrtc_onboarding_answer"
             | "set_message_reaction"
-            | "save_draft"
             | "search"
             | "create_workspace"
             | "prepare_direct_offer"
@@ -742,7 +741,6 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "workspace_helper_consent_set"
             | "relay_workspace_connection_update"
             | "workspace_request_paths"
-            | "send_workspace_thread_reply"
             | "reconcile_mobile_lifecycle"
     )
 }
@@ -2205,7 +2203,6 @@ mod tests {
             "workspace_helper_consent_set",
             "relay_workspace_connection_update",
             "workspace_request_paths",
-            "send_workspace_thread_reply",
             "reconcile_mobile_lifecycle",
         ];
         for command in commands {
