@@ -660,7 +660,8 @@ class CoreSession:
                 return call_ice_view(params["profile"], self._calls.ice(profile))
             elif operation == "call.control":
                 return {"profile": params["profile"], "result": self._calls.control(
-                    profile, params["action"], params)}
+                    profile, params["action"], params,
+                    self._required_operation_id(grant, profile, key))}
             elif operation == "call.media_query":
                 call_id = next(
                     (item for item in self._calls.call_ids(profile)
