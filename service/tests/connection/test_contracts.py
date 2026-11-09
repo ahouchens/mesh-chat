@@ -72,7 +72,7 @@ def request_vectors():
     examples = {
         "runtime.capabilities": {}, "runtime.stop": {}, "application.snapshot": {},
         "native.command": {"command": "workspace_snapshot", "payload": {}},
-        "profile.create": {"display_name": "Alex"},
+        "profile.create": {"display_name": "Alex"}, "profile.catalog": {},
         "bootstrap.preview": {"kind": "personal", "document": "signed-invitation"},
         "workspace.create": {"name": "Lake", "description": ""}, "profile.select": {},
         "profile.unlock": {"credential_handle": handle}, "profile.lock": {}, "profile.query": {},

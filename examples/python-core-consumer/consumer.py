@@ -1,5 +1,6 @@
 """Distribution-only client; the host owns streams, authentication and storage."""
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -25,7 +26,15 @@ def main():
             print(json.dumps(report), file=sys.stderr)
             return 0
         profile = client.capabilities["profiles"][0]
-        if "--keyed-owner" in sys.argv:
+        if "--exercise-profile-lock" in sys.argv:
+            profile = client.profile_catalog()["selected_profile"]
+            result = client.lock_profile(profile, "sdk-profile-lock-key-0001")
+            report["locked"] = next(row for row in result["profiles"] if row["profile"] == profile)["state"] == "locked"
+        elif "--exercise-profile-unlock" in sys.argv:
+            profile = client.profile_catalog()["selected_profile"]
+            result = client.unlock_profile(profile, os.environ["MESH_CORE_TEST_UNLOCK_CREDENTIAL"], "sdk-profile-unlock-key-0001")
+            report["unlocked"] = next(row for row in result["profiles"] if row["profile"] == profile)["state"] == "unlocked"
+        elif "--keyed-owner" in sys.argv:
             client.create_workspace(profile, "SDK qualification", "", "sdk-workspace-create-key-0001")
             workspace = client.workspace_list(profile)["workspaces"][0]["workspace"]
             result = client.workspace_admission_grant_list(profile, workspace, "sdk-admission-list-key-0001")
