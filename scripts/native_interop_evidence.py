@@ -7,6 +7,8 @@ import re
 import time
 
 SCENARIOS = ("direct", "turn_udp", "turn_tcp", "turn_tls", "impaired", "cold_start_receipts")
+PATH_CASES = (("direct", "windows"), ("direct", "android"), ("turn_udp", "windows"),
+              ("turn_tcp", "windows"), ("turn_tls", "windows"), ("impaired", "windows"))
 LEVEL = "packaged_windows_android_emulator_native_interop"
 SCOPE = "Actual frozen Windows and optimized Android own-UID hosts, production encrypted mailbox, native packets and authenticated receipts; no physical or UI media qualification"
 APPLICATION = ("enqueued_packets", "enqueued_controls", "enqueued_bytes", "received_packets", "received_controls", "received_bytes")
@@ -204,11 +206,16 @@ def verify_report(record, source, tree, role):
         _require(type(execution[field]) is int and execution[field] == count, "Periodic process restart/clean exit inventory differs")
     accounting(execution["final_host_accounting"], empty=True)
     cases = execution["scenarios"]
-    _require(isinstance(cases, list) and [item.get("scenario") for item in cases if isinstance(item, dict)] == list(SCENARIOS[:5]), "Required native path matrix is incomplete")
+    _require(isinstance(cases, list) and [(item.get("scenario"), item.get("initiator")) for item in cases if isinstance(item, dict)] == list(PATH_CASES), "Required native path/initiator matrix is incomplete")
     identities = set()
     for case in cases:
         scenario = case["scenario"]
-        _require(set(case) == {"scenario", "before", "after", "native_delta", "messages", "impairment", "negative", "retired_host_accounting"}, "Native case contains unexpected or missing fields")
+        _require(set(case) == {"scenario", "initiator", "supervisor_pairing", "before", "after", "native_delta", "messages", "impairment", "negative", "retired_host_accounting"}, "Native case contains unexpected or missing fields")
+        pairing = case["supervisor_pairing"]
+        _require(isinstance(pairing, dict) and set(pairing) == {"operation", "role", "state", "transferred_cancel_preserves_carrier"}
+            and token(pairing["operation"], 64) and pairing["role"] == ("offer" if role == case["initiator"] else "answer")
+            and pairing["state"] == "transferred" and pairing["transferred_cancel_preserves_carrier"] is True,
+            "Initial pairing did not use the supervisor-owned role and exact custody transfer")
         accounting(case["retired_host_accounting"], empty=True)
         _delta(case, scenario)
         _require(isinstance(case["messages"], list) and len(case["messages"]) == (20 if scenario == "impaired" else 1), "Native receipt workload is incomplete")

@@ -200,7 +200,7 @@ def test_required_native_interop_revalidates_both_actual_platform_roles_and_test
     native_interop_reports(tmp_path, source, tree, android["artifacts"])
     result = matrix.collect(tmp_path, source, tree, ["verification", "android", "native_interop"])
     native = [item for item in result["suites"] if item["suite"] in {"native_windows_peer", "native_android_peer"}]
-    assert len(native) == 2 and all(item["checks"] == 108 and item["cleanup"] == "passed" for item in native)
+    assert len(native) == 2 and all(item["checks"] == 109 and item["cleanup"] == "passed" for item in native)
     assert result["native_interop"]["receipt_iterations_per_role"] == 100
     assert result["native_interop"]["periodic_cold_starts_per_role"] == 10
     assert set(result["report_sha256"]) >= {"native_interop_windows", "native_interop_android"}

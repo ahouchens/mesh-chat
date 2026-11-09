@@ -13,14 +13,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "service/src"))
 
 from native_interop_artifacts import GithubArtifacts, context_from_environment
-from native_interop_evidence import LEVEL, SCENARIOS, SCOPE, Samples, accounting, digest, selection, traffic
+from native_interop_evidence import LEVEL, PATH_CASES, SCENARIOS, SCOPE, Samples, accounting, digest, selection, traffic
 from native_interop_peers import AndroidEmulator, AndroidPeer, PeerFailure, WindowsPeer
 from native_interop_preflight import android_environment, outbound_services
 from native_interop_rendezvous import Rendezvous
 from test_packaged_lifecycle import source_identity
 
-CHANNELS = [{"label": "mesh-reticulum", "binary": True, "ordered": True},
-            {"label": "mesh-onboarding", "binary": False, "ordered": True}]
 OFFERS = {"direct": "offer", **{name: "offer_" + name for name in SCENARIOS[1:5]}}
 
 
@@ -76,6 +74,7 @@ class Controller:
         self.cases, self.cycles = [], []
         self.profile = self.contact = None
         self.identity = None
+        self.pairing = None
 
     def wait(self, action, *, timeout=90, interval=0.25):
         deadline = min(self.deadline, time.monotonic() + timeout)
@@ -91,9 +90,6 @@ class Controller:
 
     def native(self, command, **payload):
         return self.core("native.command", {"command": command, "payload": payload})
-
-    def call(self, action, **params):
-        return self.core("call.control", {"profile": self.profile, "action": action, **params}, uuid4().hex)["result"]
 
     def snapshot(self):
         return self.core("application.snapshot")
@@ -118,33 +114,48 @@ class Controller:
         self.identity = digest(fresh["profile"]["destination_hash"])
         self.core("settings.update", {"profile": self.profile, "settings": {
             "nearby_discovery": False, "lan_fallback": False, "help_route": False}})
-        self.core("call.settings_update", {"profile": self.profile, "settings": {
+        self.default_call_settings = {
             "stun_urls": list(DEFAULT_STUN_URLS), "turn_broker_url": DEFAULT_TURN_BROKER_URL,
             "turn_broker_consent": True, "signal_mailbox_url": DEFAULT_SIGNAL_MAILBOX_URL,
-            "relay_only": False, "store_call_signaling": True}})
+            "turn_url": None, "turn_username": None, "turn_credential": None,
+            "relay_only": False, "store_call_signaling": True}
+        self.core("call.settings_update", {"profile": self.profile, "settings": self.default_call_settings})
+        self.broker_ice = self.core("call.ice_servers", {"profile": self.profile})["ice"]
 
-    def negotiate(self, scenario):
-        self.phase = scenario + "_mailbox_native_negotiation"
-        ice, turn_url = selected_ice(self.core("call.ice_servers", {"profile": self.profile})["ice"], scenario)
-        session = "onboarding-" + uuid4().hex
-        if self.role == "windows":
-            local = self.native("native_webrtc_offer", session_id=session, ice=ice, channels=CHANNELS)
-            offer = self.native("webrtc_onboarding_offer", sdp=local["sdp"], dtls_fingerprint=local["fingerprint"])["document"]
-            code = self.call("signal_publish", document=offer, role="offer")["session_id"]
+    def pairing_status(self):
+        value = self.peer.pairing_status(self.pairing)
+        if value.get("operation_id") != self.pairing:
+            raise PeerFailure("invalid_pairing_identity")
+        if value.get("state") in {"retired", "retiring"}:
+            raise PeerFailure("supervisor_pairing_retired")
+        return value
+
+    def negotiate(self, scenario, initiator):
+        self.phase = scenario + "_supervisor_owned_pairing_" + initiator
+        ice, turn_url = selected_ice(self.broker_ice, scenario)
+        server = ice["iceServers"][0]
+        settings = {**self.default_call_settings, "turn_broker_url": None, "turn_broker_consent": False,
+            "stun_urls": server["urls"] if scenario == "direct" else [], "turn_url": turn_url,
+            "turn_username": server.get("username"), "turn_credential": server.get("credential"),
+            "relay_only": scenario != "direct"}
+        self.core("call.settings_update", {"profile": self.profile, "settings": settings})
+        self.pairing = str(uuid4())
+        if self.role == initiator:
+            admitted = self.peer.pairing_begin(self.pairing, "offer", direct=scenario == "direct")
+            if admitted.get("operation_id") != self.pairing: raise PeerFailure("invalid_pairing_identity")
+            code = self.wait(lambda: self.pairing_status().get("pairing_code"), timeout=120)
             self.publish(OFFERS[scenario], {"shareable": code})
-            answer = self.wait(lambda: self.call("signal_fetch", session=code, role="answer").get("document"), interval=2)
-            checked = self.native("verify_webrtc_onboarding_answer", offer_document=offer, answer_document=answer)
-            self.native("native_webrtc_bind_onboarding", session_id=session, offer_document=offer, answer_document=answer)
-            self.native("native_webrtc_apply_answer", session_id=session, answer_sdp=checked["sdp"])
         else:
             code = self.receive(OFFERS[scenario])["shareable"]
-            offer = self.call("signal_fetch", session=code, role="offer")["document"]
-            checked = self.native("verify_webrtc_onboarding_offer", document=offer)
-            local = self.native("native_webrtc_accept", session_id=session, offer_sdp=checked["sdp"], ice=ice, channels=CHANNELS)
-            self.native("native_webrtc_bind_onboarding", session_id=session, offer_document=offer)
-            answer = self.native("webrtc_onboarding_answer", offer_document=offer, sdp=local["sdp"], dtls_fingerprint=local["fingerprint"])["document"]
-            self.call("signal_publish", document=answer, role="answer")
-        self.wait(lambda: self.native("native_webrtc_stats", session_id=session).get("data_channel_state") == "open")
+            admitted = self.peer.pairing_begin(self.pairing, "answer", pairing_code=code, direct=scenario == "direct")
+            if admitted.get("operation_id") != self.pairing: raise PeerFailure("invalid_pairing_identity")
+        def open_session():
+            self.pairing_status()
+            resources = self.peer.inventory()["resources"]
+            if len(resources) != 1: return None
+            logical = resources[0]["logical_session"]
+            return logical if self.native("native_webrtc_stats", session_id=logical).get("data_channel_state") == "open" else None
+        session = self.wait(open_session, timeout=120)
         return session, turn_url
 
     def approved_contact(self):
@@ -164,12 +175,11 @@ class Controller:
         counts = accounting(self.peer.inventory().get("host_accounting"))
         return counts if counts["active_count"] > 0 and counts["creating_count"] == counts["retiring_count"] == 0 else None
 
-    def pair(self, session):
+    def pair(self, session, initiator):
         self.phase = "explicit_contact_approval"
-        if self.role == "windows":
-            invitation = self.core("peer.pairing_create", {"profile": self.profile, "connection_mode": "webrtc"})
-            self.wait(lambda: self.native("native_webrtc_control", session_id=session, label="mesh-onboarding",
-                text=json.dumps({"type": "contact_invitation", "document": invitation["file"]}))["accepted"])
+        if self.role == initiator:
+            # The production supervisor sends the signed contact invitation;
+            # the controller supplies only each person's explicit decision.
             pending = self.wait(lambda: next((item for item in self.snapshot().get("contacts", []) if item.get("trust") == "pending_request"), None))
             self.core("peer.approve", {"profile": self.profile, "peer": pending["core_handle"]})
         else:
@@ -262,10 +272,18 @@ class Controller:
                 "kernel_socket": digest(fault.socket) if fault is not None else None,
                 "outbound": digest(outbound[0]["id"]), "inbound": digest(inbound[0]["id"])}
 
-    def path_case(self, scenario):
-        session, url = self.negotiate(scenario)
-        if self.contact is None: self.pair(session)
+    def path_case(self, scenario, initiator):
+        session, url = self.negotiate(scenario, initiator)
+        if self.contact is None: self.pair(session, initiator)
+        self.wait(lambda: self.pairing_status().get("state") == "transferred", timeout=120)
+        adopted = self.wait(lambda: self.observe(session, ready=True, scenario=scenario), timeout=120)
+        cancelled = self.peer.pairing_cancel(self.pairing)
+        if cancelled.get("operation_id") != self.pairing or cancelled.get("state") != "transferred":
+            raise ValueError("Retired pairing intent tried to reclaim its transferred carrier")
         before = self.wait(lambda: self.observe(session, ready=True, scenario=scenario), timeout=120)
+        if any(adopted[name] != before[name] for name in
+               ("resource", "logical_session", "adapter_epoch", "service_incarnation")):
+            raise ValueError("Transferred pairing cancellation replaced its adopted carrier")
         self.phase = scenario + "_authenticated_receipts"
         fault, impairment = None, None
         try:
@@ -278,7 +296,7 @@ class Controller:
                     self.publish("impaired_ready", {"approved": True})
                 elif self.receive("impaired_ready") != {"approved": True}:
                     raise ValueError("Actual kernel impairment admission is missing")
-            messages = [self.exchange(scenario, index, padded=scenario == "impaired")[0]
+            messages = [self.exchange(scenario + ":" + initiator, index, padded=scenario == "impaired")[0]
                         for index in range(20 if scenario == "impaired" else 1)]
             negative = self.negative(fault, scenario) if scenario in {"turn_tcp", "turn_tls", "impaired"} else None
             after = self.observe(session, ready=True, scenario=scenario)
@@ -287,7 +305,10 @@ class Controller:
             if scenario == "impaired" and self.role == "android" and (
                     before["pair"]["rtt_ms"] is None or after["pair"]["rtt_ms"] is None):
                 raise ValueError("Actual selected-pair baseline/impaired RTT is unavailable")
-            self.cases.append({"scenario": scenario, "before": selection(before), "after": selection(after),
+            self.cases.append({"scenario": scenario, "initiator": initiator, "supervisor_pairing": {
+                "operation": digest(self.pairing), "role": "offer" if self.role == initiator else "answer", "state": "transferred",
+                "transferred_cancel_preserves_carrier": True},
+                "before": selection(before), "after": selection(after),
                 "native_delta": traffic(before, after), "messages": messages, "impairment": impairment, "negative": negative})
         finally:
             if fault is not None: fault.close()
@@ -297,6 +318,7 @@ class Controller:
 
     def cold_starts(self):
         self.phase = "cold_start_receipts"
+        self.core("call.settings_update", {"profile": self.profile, "settings": self.default_call_settings})
         self.native("reconnect_consent_set", contact_id=self.contact["id"], auto_reconnect=True,
                     allow_direct_ip_disclosure=True)
         previous_message = None
@@ -342,7 +364,7 @@ class Controller:
         self.rendezvous.bind_partner(self.transport.wait(self.partner, "key", timeout=900))
         # Both roles execute this fixed source-bound inventory. Keep bootstrap
         # uploads <=9/job, leaving room for the final retained report artifact.
-        for scenario in SCENARIOS[:5]: self.path_case(scenario)
+        for scenario, initiator in PATH_CASES: self.path_case(scenario, initiator)
         self.cold_starts()
         self.phase = "clean_host_retirement"
         self.native("reconnect_consent_set", contact_id=self.contact["id"], auto_reconnect=False,
