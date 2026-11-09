@@ -11,6 +11,7 @@ the consumer grants); signature-permission packages receive ``consumer`` only.
 """
 
 import threading
+from weakref import WeakSet
 
 from .composition import bind_service_stream
 from .limits import MAX_FRAME_BYTES
@@ -28,6 +29,8 @@ MAX_CALLER_CHARS = 200
 
 _lock = threading.RLock()
 _sessions: dict[tuple[str, str], object] = {}
+_service = None
+_retired_services = WeakSet()
 
 
 def _failure(code):
@@ -43,8 +46,7 @@ def _caller(value):
 
 def exchange(service, caller, frame, scope="consumer"):
     """Exchange one frame for one Binder caller; never widens the host grant."""
-    if service is None:
-        return _failure("unavailable")
+    global _service
     permissions = SCOPES.get(scope) if isinstance(scope, str) else None
     if permissions is None:
         return _failure("forbidden")
@@ -55,6 +57,20 @@ def exchange(service, caller, frame, scope="consumer"):
         return _failure("invalid_request")
     key = (name, scope)
     with _lock:
+        if service in _retired_services:
+            return _failure("unavailable")
+        if service is None or service._shutdown.is_set():
+            if service is None or service is _service:
+                if _service is not None:
+                    _retired_services.add(_service)
+                _detach_sessions()
+                _service = None
+            return _failure("unavailable")
+        if _service is not service:
+            if _service is not None:
+                _retired_services.add(_service)
+            _detach_sessions()
+            _service = service
         session = _sessions.get(key)
         if session is None:
             if len(_sessions) >= MAX_CALLERS:
@@ -70,9 +86,15 @@ def exchange(service, caller, frame, scope="consumer"):
 
 def close_all():
     """Detach every caller session without stopping the app-owned service."""
+    global _service
     with _lock:
-        sessions = list(_sessions.values())
-        _sessions.clear()
+        _detach_sessions()
+        _service = None
+
+
+def _detach_sessions():
+    sessions = tuple(_sessions.values())
+    _sessions.clear()
     for session in sessions:
         session.close()
 

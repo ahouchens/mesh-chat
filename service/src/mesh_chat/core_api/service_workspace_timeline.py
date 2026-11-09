@@ -84,6 +84,8 @@ class ServiceWorkspaceTimeline:
             return self.service.mark_workspace_read(
                 workspace_id, channel_id, params["high_water"], operation_id)
         if action == "notification_preference":
+            mode = {"mentions": "mentions_only", "none": "muted"}.get(
+                params["mode"], params["mode"])
             return self.service.set_workspace_notification_preference(
-                workspace_id, params["conversation"], params["mode"], operation_id)
+                workspace_id, params["conversation"], mode, operation_id)
         raise ValueError("unsupported timeline action")

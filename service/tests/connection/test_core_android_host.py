@@ -114,3 +114,50 @@ def test_owner_scope_is_separate_and_may_approve(host):
         "api_version": 1, "request_id": "android:6",
         "operation": "runtime.capabilities", "params": {}}, "administrator"
     )["error"]["code"] == "forbidden"
+
+
+def test_service_restart_rebinds_the_same_binder_caller_and_requires_negotiation(host):
+    service = host()
+    caller = "com.example.consumer"
+    profile = call(service, caller, "runtime.capabilities")["result"]["profiles"][0]
+    assert call(service, caller, "profile.query", profile=profile)["ok"]
+    service.close()
+    assert call(service, caller, "runtime.capabilities")["error"]["code"] == "unavailable"
+    assert android_host.active_callers() == []
+    reopened = host()
+    assert call(reopened, caller, "profile.query", profile=profile)["error"]["code"] == "negotiation_required"
+    assert call(reopened, caller, "runtime.capabilities")["result"]["profiles"] == [profile]
+    assert call(reopened, caller, "profile.query", profile=profile)["ok"]
+    assert call(reopened, caller, "runtime.stop")["error"]["code"] == "forbidden"
+
+
+def test_missing_service_retires_cached_sessions_before_reinitialization(host, monkeypatch):
+    service = host()
+    monkeypatch.setattr(mobile_bridge, "_service", service)
+    encoded = base64.b64encode(frame("runtime.capabilities")).decode("ascii")
+    exchange = lambda: decode_frame(base64.b64decode(
+        mobile_bridge.core_exchange("com.example.consumer", encoded)))
+    assert exchange()["ok"]
+    service.close()
+    monkeypatch.setattr(mobile_bridge, "_service", None)
+    assert exchange()["error"]["code"] == "unavailable"
+    assert android_host.active_callers() == []
+    monkeypatch.setattr(mobile_bridge, "_service", host())
+    assert exchange()["ok"]
+
+
+def test_retired_service_reference_cannot_reclaim_the_new_incarnation(host):
+    service = host()
+    caller = "com.example.consumer"
+    profile = call(service, caller, "runtime.capabilities")["result"]["profiles"][0]
+    service._identity = None
+    assert call(service, caller, "profile.query", profile=profile)["error"]["code"] == "locked"
+    service.close()
+    replacement = host()
+    assert call(replacement, caller, "runtime.capabilities")["ok"]
+    assert call(service, caller, "runtime.capabilities")["error"]["code"] == "unavailable"
+    assert call(replacement, caller, "profile.query", profile=profile)["ok"]
+    # A delayed lifecycle observer cannot make an old object current again.
+    service._shutdown.clear()
+    assert call(service, caller, "runtime.capabilities")["error"]["code"] == "unavailable"
+    assert call(replacement, caller, "profile.query", profile=profile)["ok"]
