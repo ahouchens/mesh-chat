@@ -21,7 +21,8 @@ val runtimeSources = tasks.register<Sync>("prepareRuntimeSources") {
     into(layout.buildDirectory.dir("generated/runtimeSources"))
 }
 
-android {
+// The legacy DSL advertises a source-set type that AGP 9's objects do not implement.
+extensions.configure<com.android.build.api.dsl.LibraryExtension> {
     namespace = "com.meshchat.core.runtime.host"
     compileSdk = 36
     defaultConfig {
