@@ -1,3 +1,4 @@
+import { useProfileRequestAdmission } from "./profile-lifetime";
 import { useEffect, useState } from "react";
 import { appBuildInfo, coreApiCapabilities, coreApiConnectionSupport, coreApiProfile, desktopServiceHealth } from "./api";
 import packageInfo from "../package.json";
@@ -240,6 +241,7 @@ export function diagnosticReport(build: unknown, raw: unknown, log = false, host
 }
 
 export function ConnectionDiagnostics({ full = false }: { full?: boolean }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   const [build, setBuild] = useState<unknown>(null);
   const [feedback, setFeedback] = useState("");
   const [fallback, setFallback] = useState("");
@@ -279,7 +281,7 @@ export function ConnectionDiagnostics({ full = false }: { full?: boolean }) {
     try { host = await desktopServiceHealth(); } catch { /* Mobile/older hosts may not expose this. */ }
     let facadeValue: unknown = null;
     try { facadeValue = await coreApiCapabilities(); } catch { /* Older hosts and mobile builds may not expose the facade. */ }
-    try { report = await coreApiConnectionSupport("diagnostics"); } catch { /* Copy app information even when the service cannot start. */ }
+    try { report = await coreApiConnectionSupport("diagnostics", undefined, admitProfileRequest); } catch { /* Copy app information even when the service cannot start. */ }
     const text = mode === "version"
       ? JSON.stringify({
         ...versionDetails(build),
@@ -293,7 +295,7 @@ export function ConnectionDiagnostics({ full = false }: { full?: boolean }) {
   };
   const clear = async () => {
     setBusy(true); setFeedback("");
-    try { await coreApiConnectionSupport("clear"); clearWebRTCSessionEvents(); setFallback(""); setFeedback("Diagnostic history cleared. Your workspace and messages are unchanged."); }
+    try { await coreApiConnectionSupport("clear", undefined, admitProfileRequest); clearWebRTCSessionEvents(); setFallback(""); setFeedback("Diagnostic history cleared. Your workspace and messages are unchanged."); }
     catch { setFeedback("Diagnostic history could not be cleared. Try again when the app is unlocked."); }
     finally { setBusy(false); }
   };

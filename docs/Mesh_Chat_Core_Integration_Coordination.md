@@ -11,6 +11,17 @@ reports. Exact evidence and limits are in the ledger. Wave 2 is activated below.
 Existing human authorization covers continued implementation, integration and
 worker follow-ups without another permission request.
 
+Current Wave 2 CI `42676194199` at `da81565` fails two synthetic run-context
+fixtures and Windows first-time pairing (`approved_path`, both carriers absent).
+The fixture repair is integrated and passes all 94 matrix checks under CI-like
+context. C and D prioritize production handoff diagnosis and bounded probe
+diagnostics before another full dispatch. Local `a899b85` passes the exact
+640-Python/eight-rendered-App gate; `50474ec` adds independently installed public
+SDK application staging, with nine focused passes. These do not establish SC21
+traffic or packaged acceptance. A's call recovery must preserve ordinary
+start/end/start behavior and require actual trusted retirement before replacing
+uncertain media resources. B's group keys remain explicit and capability gated.
+
 Wave 2 local checkpoint: `8950053` passes 420 Python and all eight rendered
 boundary cases, including same-vault reopen and uncertain-send recovery. The
 earlier full policy gate passed 2,630 cases at `6e97db5`. Composer storage,
@@ -81,6 +92,25 @@ contract when available. D migrates the topology controller to the private
 supervisor entry and declares quick/full qualification selection. A continues
 atomic optional group keys, then protected call-operation recovery. No new
 packaged run or broader milestone acceptance is implied.
+
+The complete policy checkpoint `a3a98ce` passes 3,178 tests, zero skips. Follow-up
+`d4091fd` passes the exact 640-Python/eight-rendered-App boundary and 63 focused
+mobile/group cases. It includes optional keyed group acceptance, supervisor
+topology control, source-bound quick/full workloads, actual mobile Core routing
+and group/workspace UI admission fences. The next full native CI checkpoint is
+ready for dispatch; platform authentication remains pending and is not inferred
+from OS boundary doubles.
+
+The reviewed SC21 handoff is in `tests/core-ui-boundary/public-consumer-plan.md`.
+A implements public pairing begin/query/cancel after protected call recovery;
+begin and cancel both require caller keys. C owns new ordinary app-owned host
+bootstrap/composition and Android runtime-host packaging, plus the necessary
+`__main__.py` route. A retains `core_api/sidecar_host.py` and `pipe_endpoint.py`.
+Existing Python/TypeScript consumer examples remain A-owned; D creates separate
+independent consumer directories and their build/evidence scripts. The private
+qualifier and seeded cross-UID fixtures cannot qualify SC21. B continues the
+remaining asynchronous admission repairs while C completes the real native
+credential facade. These are authorized implementation handoffs.
 
 ## Active Wave 2 handoff
 

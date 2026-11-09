@@ -238,7 +238,10 @@ const api = vi.hoisted(() => {
   };
 });
 
-vi.mock("./api", () => api);
+vi.mock("./api", async () => {
+  const { admittedApiFixture } = await import("./test/admitted-api");
+  return admittedApiFixture(api);
+});
 
 // Presentation fixtures use the new composer protocol directly. App.core.test
 // and D's independent boundary suite retain the actual native/API serializer.

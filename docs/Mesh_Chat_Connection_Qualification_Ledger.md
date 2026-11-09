@@ -2,6 +2,57 @@
 
 ## Integration revalidation (2026-11-09)
 
+### Current full CI failure and local repairs
+
+Full run `42676194199` targets `da815655792241629f19f0e7ac02b8402a744790`,
+tree `ea96a33605a4cff7620023bbff8ca4c1e88163a1`. Its retained selection
+requires all six families and the full native workload. The lead verified
+selection artifact `13700217574`, ZIP SHA-256
+`235e2a75c7d219b931a2a4f32cb09bf5c04ec425024d82f82af7ece0f83b6964`.
+The run cannot pass: policy recorded 3,184 passes and two failures, zero skips;
+broad verification recorded 4,389 passes, the same two failures and 51 platform
+skips. Synthetic matrix fixtures inherited the real GitHub run context. Repair
+`3425095` isolates those fixtures while explicit positive/negative CI controls
+retain strict production run/attempt matching. The lead reran all 94 matrix
+checks under an unrelated live-style CI context: zero failures or skips, 4.64s.
+
+Windows also failed explicit first-time pairing at `approved_path`, with both
+carriers absent and bridges detached. Preapproved durable receipts, native
+control/lifecycle, pipe consumers, WebView2 and frozen-material checks had passed.
+Those preceding passes do not qualify first-time pairing. The retained failure
+reports no transport faults or peer stderr; process termination during cleanup
+is not a diagnosed cause. C owns production handoff diagnosis and D owns probe
+diagnostics. Desktop report artifact `13700996616` has verified ZIP SHA-256
+`279dd742957f2b5cafb38b898cbc3a21ce8d941e375b3cd6b79f3d8b88ae9c0f`.
+Reports are retained under `.test-tmp/ci-evidence-da81565/desktop-transport`.
+Its executable hashes remain runner claims until independently checked against
+the executable archive. Required native topology has not executed in this run.
+
+Android also failed two manual native adoption instrumentation cases, the Kotlin
+`workspaceJoinIsConvergentWithoutACallerKey` unit assertion (20 passes, one
+failure), and public AAR license verification. The final runner exception must
+not obscure the earlier test failures. Failed report artifact `13701676421` has
+verified ZIP SHA-256
+`a5c1bc1f29487851dc1a3279c95445f8bbb1fcdba5ecfbd76f13f5d1a95bdb84`.
+Lead inspection found that the manual-adoption fixture assigns synthetic path
+readiness to the new outer executor wrapper instead of its reconnect executor;
+the same fixture also accesses the native port through the obsolete location.
+D owns correcting those instrumentation hooks and verifying the intended inner
+port. A owns the Kotlin assertion and license packaging diagnosis. This fixture
+finding does not establish the cause of the separate Windows pairing failure.
+The required native-interoperability job was skipped after prerequisite failure.
+
+Local source `a899b8576ee2130510b5bf98b6a64b7b44bf7f71`, tree
+`ebd717956b4b7ff7ceb215b8afa4cc4357879b77`, integrates the fixture repair,
+independent group authority tests and the remaining API/component admission
+guards. Its exact boundary gate passes 640 Python plus eight rendered-App cases,
+zero failures/skips, in 34.57s. B reports 719 frontend passes and TypeScript
+compilation passing at `ddf4776`; plain native effect auditing remains separate.
+At `50474ec78d082ad17e4bafd450187780823abd2a`, nine independent consumer staging
+checks pass without skips in 1.36s, including actual offline archive installation
+and public SDK import outside the checkout. This is staging evidence only:
+normal app-owned host bootstrap and public pairing/receipt traffic remain open.
+
 ### Wave 2 interim CI and packaging repairs
 
 Full workflow `42665862417` targets source
@@ -89,6 +140,39 @@ It hides retired profile content, bounds final UI work to one second, preserves
 uncertain lock outcomes for retry, and fences delayed notification admission.
 Full renderer-restart call intent recovery and live public profile selection
 remain open. No new packaged qualification is claimed by these local checks.
+
+### Supervisor topology and optional group-key checkpoint
+
+Source `a3a98ce69624d5a7d083c7264da5af3a320d9f09`, tree
+`147ab5d759b3e060da3f0824a22055fe6ccfbc51`, passes all 3,178 required policy
+cases with zero failures or skips in 324.46 seconds. Qualification ID:
+`35a8948d124c4779abb5e52c00097eb4`; reports are
+`dist/reports/policy-supervisor-group.{xml,json,inventory.json}`. Source-bound
+Python/TypeScript SDK staging and isolated imports also pass. The new optional
+group create/enqueue caller keys retain legacy unkeyed SDK behavior; keyed
+acceptance commits primary records, recipient jobs, quota and receipts together.
+This closes two advertised optional extensions, not the remaining mutation audit.
+
+That source also contains D's supervisor-driven topology controller and explicit
+quick/full selection. Full manual qualification requires both direct initiators,
+Windows-initiated TURN UDP/TCP/TLS and impairment cases, selected-path negative
+controls, and 100 receipt iterations per role with ten periodic cold restarts.
+Quick PR smoke has a distinct evidence level and cannot satisfy the full or
+release gate. Neither mode has executed on the combined native artifacts yet.
+
+Follow-ups are integrated at `d4091fdabb4514f85d181865c417d4f5f0263425`, tree
+`c425112e0868173dc460bcf515571a2233157f68`: offline keyed group invalidation
+observations, mobile runtime-host routing and failed-opener channel custody,
+group/workspace draft/send/read admission fences, and crossed-caller call-media
+denial. The lead's exact-source boundary gate passes 640 Python cases plus eight
+rendered-App cases, zero skips, in 48.03 seconds. The focused actual mobile/group
+run passes 63 cases, zero skips, in 13.28 seconds. Reports are
+`dist/reports/core-ui-boundary.json` and `.test-tmp/host-group-final.xml`.
+B separately reports all 708 frontend tests and TypeScript compilation passing
+at `b2b632e`. Remaining delayed settings/contact/admin admission paths are being
+repaired; live platform authentication and independent public consumers remain
+open. Subsequent documentation-only merge `0e110070` clarifies the accepted
+independent-consumer design and ownership; it adds no execution claim.
 
 ### Runtime catalog and installed SDK checkpoint
 

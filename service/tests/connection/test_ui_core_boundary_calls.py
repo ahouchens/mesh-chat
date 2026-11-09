@@ -34,13 +34,13 @@ def android_fixture(tmp_path, request):
         fixture.close()
 
 
-def exchange(operation, params=None, key=None):
+def exchange(operation, params=None, key=None, *, caller="typed-boundary-app"):
     value = {"api_version": 1, "request_id": "android-boundary:1",
              "operation": operation, "params": params or {}}
     if key is not None:
         value["idempotency_key"] = key
     frame = json.dumps(value).encode("utf-8") + b"\n"
-    reply = mobile_bridge.core_exchange("typed-boundary-app", base64.b64encode(frame).decode("ascii"), "owner")
+    reply = mobile_bridge.core_exchange(caller, base64.b64encode(frame).decode("ascii"), "owner")
     return json.loads(base64.b64decode(reply))
 
 
@@ -106,6 +106,39 @@ def test_lost_committed_call_start_resolves_original_ticket_then_cancels_once(an
     assert ended["id"] == committed["id"] and ended["state"] == "ended"
     assert result("call.control", cancel, end_key)["result"]["id"] == committed["id"]
     assert android_fixture.assert_call_ended(committed["id"]) is True
+
+
+def test_call_media_query_rejects_other_callers_profile_and_call_handles_without_disclosure(android_fixture):
+    handle = profile()
+    fingerprint = "sha-256 " + ":".join(["AB"] * 32)
+    sdp = f"v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=fingerprint:{fingerprint}\r\n"
+    started = result("call.control", {"profile": handle, "action": "start", "contact_id": "android-call-peer",
+        "media": "audio", "sdp": sdp, "dtls_fingerprint": fingerprint}, "independent-media-authority-0001")["result"]
+    own_call = next(item for item in result("application.snapshot")["calls"] if item["id"] == started["id"])["core_handle"]
+    own_media = result("call.media_query", {"profile": handle, "call": own_call})
+    assert own_media["profile"] == handle and own_media["call"] == own_call
+    assert own_media["media"] == mobile_bridge._service.call_media(started["id"])
+    assert own_media["media"]["local_sdp"] == sdp
+
+    other = "other-real-host-caller"
+    def other_result(operation, params=None):
+        response = exchange(operation, params, caller=other)
+        assert response["ok"], response
+        return response["result"]
+    other_profile = other_result("runtime.capabilities")["profiles"][0]
+    other_call = next(item for item in other_result("application.snapshot")["calls"] if item["id"] == started["id"])["core_handle"]
+    assert other_profile != handle and other_call != own_call
+    assert other_result("call.media_query", {"profile": other_profile, "call": other_call})["media"] == own_media["media"]
+    before = mobile_bridge._service.store._db.total_changes
+    requests = [(other, other_profile, own_call), (other, handle, other_call),
+                ("typed-boundary-app", handle, other_call), ("typed-boundary-app", other_profile, own_call)]
+    for caller, scoped_profile, call in requests:
+        denied = exchange("call.media_query", {"profile": scoped_profile, "call": call}, caller=caller)
+        assert denied["ok"] is False and denied["error"]["code"] == "forbidden"
+        assert "result" not in denied and sdp not in json.dumps(denied)
+        assert set(denied["error"]) <= {"code", "retry_after_ms", "message"}
+    assert mobile_bridge._service.store._db.total_changes == before
+    assert android_fixture.assert_call_started(started["id"]) is True
 
 
 @pytest.mark.parametrize("android_fixture", [False], indirect=True)
