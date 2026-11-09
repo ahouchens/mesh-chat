@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import time
+import uuid
 from typing import Any
 
 from .errors import ValidationError
@@ -23,6 +26,76 @@ class RemoteProfileServiceMixin:
     def _remote_profiles(self) -> list[dict[str, Any]]:
         return self.store.list("remote_profile")
 
+    def _remote_operation(self, operation_id, action, params):
+        if operation_id is None:
+            return None, None
+        if self._identity is None or self._shutdown.is_set():
+            raise ValidationError("Local profile is unavailable")
+        self._require_profile()
+        try:
+            if not isinstance(operation_id, str) or str(uuid.UUID(operation_id)) != operation_id:
+                raise ValueError
+        except (ValueError, AttributeError) as error:
+            raise ValidationError("Operation ID is invalid") from error
+        material = json.dumps({"operation": "remote_profile." + action, "params": params},
+                              sort_keys=True, ensure_ascii=True, separators=(",", ":"))
+        digest = hashlib.sha256(material.encode("ascii")).hexdigest()
+        return digest, self.store.operation_result(operation_id, digest)
+
+    def _commit_remote_operation(self, operation_id, digest, action, profile_id, records, deletions=()):
+        # Receipts describe committed intent, never a live DNS/socket outcome.
+        outcome = {"action": action, "id": profile_id}
+        if operation_id is None:
+            self.store.put_and_delete(records, deletions)
+        else:
+            self.store.commit_operation(operation_id, digest, outcome, records, deletions)
+
+    def _require_remote_consent(self, profile_id, *, unexpired=True):
+        record = self._require_remote_profile(profile_id)
+        if (record.get("consented_at") is None
+                or not (record.get("scopes") or record.get("propagation_approved_at") is not None)):
+            raise ValidationError("Remote profile consent is no longer current")
+        if unexpired and float(record["profile"]["expires_at"]) <= time.time():
+            raise ValidationError("Remote profile has expired")
+        return record
+
+    def _remote_profile_view(self, record):
+        result = sanitized_profile(record)
+        if getattr(self, "network", None) is None:
+            # Persisted observations from a previous runtime are not live proof.
+            result.update(connected_endpoint_count=0, path_available=False,
+                          ratchet_ready=False, offline_delivery_available=False)
+            if result["state"] in {"connected", "connecting"}:
+                result["state"] = "approved"
+        return result
+
+    @staticmethod
+    def _remote_runtime_intent(kind, operation_id):
+        return ("remote_runtime_intent", kind,
+                {"revision": operation_id or str(uuid.uuid4()), "created_at": time.time()})
+
+    def _reconcile_remote_intents(self):
+        for kind in ("transport", "propagation"):
+            intent = self.store.get("remote_runtime_intent", kind)
+            if intent is None:
+                continue
+            if kind == "propagation":
+                settings = self.store.get("settings", "network") or {}
+                self.settings.approved_propagation_nodes = list(settings.get("approved_propagation_nodes", []))
+            network = getattr(self, "network", None)
+            if network is None:
+                continue
+            try:
+                if kind == "transport":
+                    self._apply_remote_runtime()
+                else:
+                    network.apply_propagation_nodes(self.settings.approved_propagation_nodes)
+            except Exception:
+                # Reconcile current durable intent later, not the old action.
+                continue
+            if self.store.get("remote_runtime_intent", kind) == intent:
+                self.store.delete("remote_runtime_intent", kind)
+
     def _require_remote_profile(self, profile_id: Any) -> dict[str, Any]:
         if not isinstance(profile_id, str) or len(profile_id) != 64:
             raise ValidationError("Remote profile ID is invalid")
@@ -33,7 +106,7 @@ class RemoteProfileServiceMixin:
 
     def list_remote_profiles(self) -> dict[str, Any]:
         self._refresh_remote_profile_states()
-        return {"profiles": [sanitized_profile(item) for item in self._remote_profiles()]}
+        return {"profiles": [self._remote_profile_view(item) for item in self._remote_profiles()]}
 
     def preview_remote_profile(self, value: Any, allow_private: bool = False) -> dict[str, Any]:
         if not isinstance(allow_private, bool):
@@ -63,7 +136,13 @@ class RemoteProfileServiceMixin:
         endpoints: Any,
         propagation_node: Any = None,
         allow_private: Any = False,
+        *,
+        operation_id: str | None = None,
     ) -> dict[str, Any]:
+        with self._dispatch_lock:
+            return self._create_manual_remote_profile(label, endpoints, propagation_node, allow_private, operation_id)
+
+    def _create_manual_remote_profile(self, label, endpoints, propagation_node, allow_private, operation_id):
         if not isinstance(endpoints, list) or not isinstance(allow_private, bool):
             raise ValidationError("Remote profile input is invalid")
         profile = create_profile_document(
@@ -72,14 +151,24 @@ class RemoteProfileServiceMixin:
             propagation_node=propagation_node,
             allow_private=allow_private,
         )
-        record = self._approve_remote_document(
+        digest, replay = self._remote_operation(operation_id, "create", {
+            "label": profile["label"], "endpoints": profile["endpoints"],
+            "propagation_node": profile["propagation_node"], "allow_private": allow_private,
+        })
+        if replay is not None:
+            return self._remote_profile_view(self._require_remote_consent(replay["id"]))
+        record = self._prepare_remote_document(
             profile,
             origin="manual",
             scope_kind="manual",
             scope_id=profile["id"],
             allow_private=allow_private,
         )
-        return sanitized_profile(record)
+        self._commit_remote_operation(operation_id, digest, "create", record["id"],
+                                      [("remote_profile", record["id"], record)])
+        record = self._activate_remote_profile(record)
+        self._changed()
+        return self._remote_profile_view(record)
 
     def approve_remote_profile(
         self,
@@ -108,6 +197,36 @@ class RemoteProfileServiceMixin:
         scope_id: str,
         allow_private: bool = False,
     ) -> dict[str, Any]:
+        record = self._prepare_remote_document(value, origin=origin, scope_kind=scope_kind,
+                                               scope_id=scope_id, allow_private=allow_private)
+        # Consent is durable before any DNS lookup or transport effect.
+        self.store.put("remote_profile", record["id"], record)
+        record = self._activate_remote_profile(record)
+        self._changed()
+        return record
+
+    def _prepare_remote_approval(self, value, *, origin, scope_kind, scope_id,
+                                 allow_private=False, operation_id=None):
+        """Prepare approval for a parent's transaction; perform no I/O effects.
+
+        The parent validates its current signed workspace authority and explicit
+        consent before invoking this hook, and holds its dispatch lock through
+        the combined commit. Only then may it reconcile remote profiles.
+        """
+        if self._identity is None or self._shutdown.is_set():
+            raise ValidationError("Local profile is unavailable")
+        self._require_profile()
+        if type(allow_private) is not bool:
+            raise ValidationError("Private endpoint choice is invalid")
+        record = self._prepare_remote_document(value, origin=origin, scope_kind=scope_kind,
+                                               scope_id=scope_id, allow_private=allow_private)
+        record["next_retry_at"] = time.time()
+        return record, [
+            ("remote_profile", record["id"], record),
+            self._remote_runtime_intent("transport", operation_id),
+        ]
+
+    def _prepare_remote_document(self, value, *, origin, scope_kind, scope_id, allow_private=False):
         checked = validate_profile_document(value, allow_private=allow_private)
         existing = self.store.get("remote_profile", checked["id"])
         if existing is None:
@@ -129,12 +248,6 @@ class RemoteProfileServiceMixin:
             if existing.get("profile") != checked:
                 raise ValidationError("Remote profile ID collision")
             record = add_profile_scope(dict(existing), scope_kind, scope_id)
-        # Consent and scope are durable before any DNS lookup, socket, or
-        # Reticulum interface is created. A failed activation remains safely
-        # retryable after restart.
-        self.store.put("remote_profile", record["id"], record)
-        record = self._activate_remote_profile(record)
-        self._changed()
         return record
 
     def _runtime_remote_endpoints(self) -> list[dict[str, Any]]:
@@ -307,6 +420,11 @@ class RemoteProfileServiceMixin:
                 continue
 
     def reconcile_remote_profiles(self, *, force_dns: bool = False) -> None:
+        with self._dispatch_lock:
+            self._reconcile_remote_profiles(force_dns=force_dns)
+
+    def _reconcile_remote_profiles(self, *, force_dns):
+        self._reconcile_remote_intents()
         now = time.time()
         changed_runtime = False
         for record in self._remote_profiles():
@@ -329,18 +447,25 @@ class RemoteProfileServiceMixin:
                 pass
         self._refresh_remote_profile_states()
 
-    def retry_remote_profile(self, profile_id: Any) -> dict[str, Any]:
-        record = self._require_remote_profile(profile_id)
-        if float(record["profile"]["expires_at"]) <= time.time():
-            raise ValidationError("Remote profile has expired")
+    def retry_remote_profile(self, profile_id: Any, *, operation_id: str | None = None) -> dict[str, Any]:
+        with self._dispatch_lock:
+            return self._retry_remote_profile(profile_id, "retry", operation_id)
+
+    def _retry_remote_profile(self, profile_id, action, operation_id):
+        digest, replay = self._remote_operation(operation_id, action, {"id": profile_id})
+        record = self._require_remote_consent(profile_id)
+        if replay is not None:
+            return self._remote_profile_view(record)
         record["next_retry_at"] = time.time()
-        self.store.put("remote_profile", record["id"], record)
+        self._commit_remote_operation(operation_id, digest, action, record["id"],
+                                      [("remote_profile", record["id"], record)])
         record = self._activate_remote_profile(record)
         self._refresh_remote_profile_states()
-        return sanitized_profile(self._require_remote_profile(record["id"]))
+        return self._remote_profile_view(self._require_remote_profile(record["id"]))
 
-    def test_remote_profile(self, profile_id: Any) -> dict[str, Any]:
-        return self.retry_remote_profile(profile_id)
+    def test_remote_profile(self, profile_id: Any, *, operation_id: str | None = None) -> dict[str, Any]:
+        with self._dispatch_lock:
+            return self._retry_remote_profile(profile_id, "test", operation_id)
 
     def release_remote_scope(self, kind: str, scope_id: str) -> None:
         for record in self._remote_profiles():
@@ -356,7 +481,17 @@ class RemoteProfileServiceMixin:
         except Exception:
             pass
 
-    def remove_remote_profile(self, profile_id: Any) -> dict[str, Any]:
+    def remove_remote_profile(self, profile_id: Any, *, operation_id: str | None = None) -> dict[str, Any]:
+        with self._dispatch_lock:
+            return self._remove_remote_profile(profile_id, operation_id)
+
+    def _remove_remote_profile(self, profile_id, operation_id):
+        digest, replay = self._remote_operation(operation_id, "remove", {"id": profile_id})
+        if replay is not None:
+            if self.store.get("remote_profile", profile_id) is not None:
+                raise ValidationError("Remote profile removal is no longer current")
+            self._reconcile_remote_intents()
+            return {"id": profile_id, "removed": True}
         record = self._require_remote_profile(profile_id)
         if record.get("propagation_approved_at") is not None:
             raise ValidationError(
@@ -364,52 +499,65 @@ class RemoteProfileServiceMixin:
             )
         # Explicit removal detaches transport for every scope but does not alter
         # contact trust, workspace membership, identities, or durable outboxes.
-        self.store.delete("remote_profile", record["id"])
-        try:
-            self._apply_remote_runtime()
-        except Exception:
-            # The durable consent is gone. A stale runtime interface will be
-            # detached by the next reconciliation or service restart.
-            pass
+        self._commit_remote_operation(operation_id, digest, "remove", record["id"],
+            [self._remote_runtime_intent("transport", operation_id)], [("remote_profile", record["id"])])
+        self._reconcile_remote_intents()
         self._changed()
         return {"id": record["id"], "removed": True}
 
-    def approve_remote_propagation(self, profile_id: Any) -> dict[str, Any]:
-        record = self._require_remote_profile(profile_id)
-        if float(record.get("profile", {}).get("expires_at", 0)) <= time.time():
-            raise ValidationError("Remote profile has expired")
+    def approve_remote_propagation(self, profile_id: Any, *, operation_id: str | None = None) -> dict[str, Any]:
+        with self._dispatch_lock:
+            return self._approve_remote_propagation(profile_id, operation_id)
+
+    def _approve_remote_propagation(self, profile_id, operation_id):
+        digest, replay = self._remote_operation(operation_id, "approve_propagation", {"id": profile_id})
+        record = self._require_remote_consent(profile_id)
         node = record["profile"].get("propagation_node")
         if node is None:
             raise ValidationError("Remote profile does not recommend offline delivery")
+        if replay is not None:
+            settings = self.store.get("settings", "network") or {}
+            if record.get("propagation_approved_at") is None or node not in settings.get("approved_propagation_nodes", []):
+                raise ValidationError("Remote propagation approval is no longer current")
+            self._reconcile_remote_intents()
+            return self._remote_profile_view(record)
         record["propagation_approved_at"] = int(time.time())
+        record["propagation_available"] = False
         record["updated_at"] = time.time()
-        nodes = list(self.settings.approved_propagation_nodes)
+        settings = self.store.get("settings", "network") or self.settings.to_dict()
+        nodes = list(settings.get("approved_propagation_nodes", []))
         if node not in nodes:
             if len(nodes) >= 16:
                 raise ValidationError("Propagation-node allowlist is full")
             nodes.append(node)
-        self.settings.approved_propagation_nodes = nodes
         # Persist both approvals before asking LXMF to contact the node.
-        self.store.put_many(
+        settings["approved_propagation_nodes"] = nodes
+        self._commit_remote_operation(operation_id, digest, "approve_propagation", record["id"],
             [
                 ("remote_profile", record["id"], record),
-                ("settings", "network", self.settings.to_dict()),
+                ("settings", "network", settings),
+                self._remote_runtime_intent("propagation", operation_id),
             ]
         )
-        network = getattr(self, "network", None)
-        if network is not None:
-            try:
-                network.apply_propagation_nodes(nodes)
-            except Exception:
-                record["propagation_available"] = False
-                self.store.put("remote_profile", record["id"], record)
+        self._reconcile_remote_intents()
         self._changed()
-        return sanitized_profile(record)
+        return self._remote_profile_view(record)
 
-    def remove_remote_propagation(self, profile_id: Any) -> dict[str, Any]:
+    def remove_remote_propagation(self, profile_id: Any, *, operation_id: str | None = None) -> dict[str, Any]:
+        with self._dispatch_lock:
+            return self._remove_remote_propagation(profile_id, operation_id)
+
+    def _remove_remote_propagation(self, profile_id, operation_id):
+        digest, replay = self._remote_operation(operation_id, "remove_propagation", {"id": profile_id})
         record = self._require_remote_profile(profile_id)
+        if replay is not None:
+            if record.get("propagation_approved_at") is not None:
+                raise ValidationError("Remote propagation removal is no longer current")
+            self._reconcile_remote_intents()
+            return self._remote_profile_view(record)
         node = record["profile"].get("propagation_node")
         record["propagation_approved_at"] = None
+        record["propagation_available"] = False
         record["updated_at"] = time.time()
         still_used = any(
             item["id"] != record["id"]
@@ -417,21 +565,18 @@ class RemoteProfileServiceMixin:
             and item.get("propagation_approved_at") is not None
             for item in self._remote_profiles()
         )
-        nodes = list(self.settings.approved_propagation_nodes)
+        settings = self.store.get("settings", "network") or self.settings.to_dict()
+        nodes = list(settings.get("approved_propagation_nodes", []))
         if node in nodes and not still_used:
             nodes.remove(node)
-        self.settings.approved_propagation_nodes = nodes
-        self.store.put_many(
+        settings["approved_propagation_nodes"] = nodes
+        self._commit_remote_operation(operation_id, digest, "remove_propagation", record["id"],
             [
                 ("remote_profile", record["id"], record),
-                ("settings", "network", self.settings.to_dict()),
+                ("settings", "network", settings),
+                self._remote_runtime_intent("propagation", operation_id),
             ]
         )
-        network = getattr(self, "network", None)
-        if network is not None:
-            try:
-                network.apply_propagation_nodes(nodes)
-            except Exception:
-                pass
+        self._reconcile_remote_intents()
         self._changed()
-        return sanitized_profile(record)
+        return self._remote_profile_view(record)

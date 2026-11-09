@@ -1,6 +1,7 @@
 """Private adapter for typed call settings through the existing domain rules."""
 
 from ..errors import ValidationError
+from ..call_manager import CallOutcomeRequiresResync
 from .calls import CallIceObservation, CallMediaObservation, CallSettingsObservation
 from .errors import ApiFailure
 from .service_messages import storage_errors
@@ -65,26 +66,12 @@ class ServiceCallSettings:
             return CallMediaObservation(dict(value))
 
 
-    def control(self, profile, action, params):
+    def control(self, profile, action, params, operation_id):
         self._require_local(profile)
         with storage_errors():
             try:
-                if action == "start":
-                    value = self._service.start_call(params["contact_id"], params["media"],
-                                                    params["sdp"], params["dtls_fingerprint"])
-                elif action == "answer":
-                    value = self._service.answer_call(params["call_id"], params["sdp"],
-                                                     params["dtls_fingerprint"])
-                elif action == "restart":
-                    value = self._service.restart_call(params["call_id"], params["sdp"],
-                                                      params["dtls_fingerprint"])
-                elif action == "answer_restart":
-                    value = self._service.answer_call_restart(params["call_id"], params["sdp"],
-                                                             params["dtls_fingerprint"])
-                elif action == "end":
-                    value = self._service.end_call(params["call_id"], params["reason"])
-                elif action == "candidate":
-                    value = self._service.add_call_candidate(params["call_id"], params["candidate"])
+                if action in {"start", "answer", "restart", "answer_restart", "end", "candidate"}:
+                    value = self._service.keyed_call_control(action, params, operation_id)
                 elif action == "signal_publish":
                     role = {"caller": "offer", "callee": "answer"}.get(params["role"], params["role"])
                     value = self._service.signal_publish(params["document"], role,
@@ -96,6 +83,8 @@ class ServiceCallSettings:
                                                       params.get("mailbox_token"))
                 else:
                     raise ApiFailure("invalid_request")
+            except CallOutcomeRequiresResync as error:
+                raise ApiFailure("resync_required") from error
             except ValidationError as error:
                 raise ApiFailure("invalid_request") from error
             if not isinstance(value, dict):

@@ -107,9 +107,16 @@ def test_component_versions_match_the_compatibility_declaration():
 
 
 def test_component_clients_cover_every_advertised_operation():
+    import json
     from mesh_chat.core_api.requests import COMPONENT_OPERATIONS
 
     root = Path(__file__).resolve().parents[3]
+    manifest = json.loads((root / "contracts/core-api/operations-v1.json").read_text())
+    private = set(manifest["private_host_operations"])
+    advertised = set(manifest["experimental_component_operations"])
+    assert private == {item["operation"] for item in manifest["operations"]
+                       if item.get("visibility") == "private_host"}
+    assert advertised == set(COMPONENT_OPERATIONS) - private
     clients = {
         "python": root / "service" / "src" / "mesh_chat" / "core_api" / "client.py",
         "typescript": root / "sdk" / "typescript" / "src" / "client.ts",
@@ -119,7 +126,7 @@ def test_component_clients_cover_every_advertised_operation():
     }
     for name, path in clients.items():
         source = path.read_text(encoding="utf-8")
-        missing = [operation for operation in COMPONENT_OPERATIONS
+        missing = [operation for operation in advertised
                    if f'"{operation}"' not in source]
         assert not missing, f"{name} client is missing {missing}"
 

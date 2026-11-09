@@ -18,25 +18,27 @@ from mesh_chat.vault import VaultStore
 
 
 class BoundaryHost:
-    def __init__(self, directory):
+    def __init__(self, directory, *, fresh_profile=False):
         MeshChatService._start_network = lambda *_: None
         MeshChatService._prepare_lan_fallback = lambda *_: None
         store = VaultStore(directory, os.urandom(32), allow_unprotected_for_tests=True)
         self.service = MeshChatService(store, directory, lambda _: None)
-        self.service.create_profile("Boundary Alex")
-        store.put("contact", "boundary-peer", {
-            "id": "boundary-peer", "display_name": "Boundary Blair", "trust": "approved",
-            "destination_hash": "ab" * 16, "created_at": 1, "updated_at": 1,
-        })
-        workspace = self.service.create_workspace(str(uuid4()), "Boundary Team", "Fixture workspace")
-        self.workspace_id = workspace["id"]
-        self.channel_id = self.service.workspace_snapshot()["workspace_channels"][0]["id"]
-        self.root = self.service.send_workspace_message(
-            self.workspace_id, self.channel_id, "Boundary root message", str(uuid4()), str(uuid4()))
+        self.workspace_id = self.channel_id = self.root = None
+        if not fresh_profile:
+            self.service.create_profile("Boundary Alex")
+            store.put("contact", "boundary-peer", {
+                "id": "boundary-peer", "display_name": "Boundary Blair", "trust": "approved",
+                "destination_hash": "ab" * 16, "created_at": 1, "updated_at": 1,
+            })
+            workspace = self.service.create_workspace(str(uuid4()), "Boundary Team", "Fixture workspace")
+            self.workspace_id = workspace["id"]
+            self.channel_id = self.service.workspace_snapshot()["workspace_channels"][0]["id"]
+            self.root = self.service.send_workspace_message(
+                self.workspace_id, self.channel_id, "Boundary root message", str(uuid4()), str(uuid4()))
         permissions = frozenset({"observe", "read", "send", "approve", "pair", "connect",
                                  "diagnose", "runtime_owner", "profile_owner"})
         self.session = bind_service_stream(self.service, lambda: Grant("boundary-ui", permissions, ("local",)),
-                                          private_native=True)
+                                          private_native=True, private_profile_bootstrap=True)
         self.call("runtime.capabilities")
 
     def call(self, operation, params=None, key=None):
@@ -79,7 +81,10 @@ class BoundaryHost:
             return self.call(operation, params)
         if command == "fixture_inspect":
             return {"ok": True, "result": {"messages": self.service.store.list("message"),
-                    "workspace": self.workspace_id, "channel": self.channel_id, "root": self.root}}
+                    "workspace": self.workspace_id, "channel": self.channel_id, "root": self.root,
+                    "profile_count": len(self.service.store.list("profile")),
+                    "identity_count": len(self.service.store.list("identity")),
+                    "profile": self.service.store.get("profile", "local")}}
         raise ValueError(f"Unsupported host command: {command}")
 
     def close(self):
@@ -92,7 +97,7 @@ def main():
     scratch.mkdir(parents=True, exist_ok=True)
     with TemporaryDirectory(dir=scratch) as directory:
         with redirect_stdout(sys.stderr):
-            host = BoundaryHost(Path(directory))
+            host = BoundaryHost(Path(directory), fresh_profile="--fresh-profile" in sys.argv[1:])
         try:
             for line in sys.stdin:
                 request = json.loads(line)

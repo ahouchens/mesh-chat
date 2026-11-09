@@ -979,7 +979,7 @@ class ServiceWorkspaceAdmin:
             try:
                 outcome = self._service.create_workspace_admission_grant(
                     workspace_id, member_id, device_id, max_admissions,
-                    lifetime_days, v2_ready)
+                    lifetime_days, v2_ready, operation_id=operation_id)
             except ValidationError as error:
                 raise ApiFailure("invalid_request") from error
             if not isinstance(outcome, dict):
@@ -990,7 +990,8 @@ class ServiceWorkspaceAdmin:
         self._require_local(profile)
         with storage_errors():
             try:
-                self._service.accept_workspace_admission_grant(workspace_id, grant_id)
+                self._service.accept_workspace_admission_grant(workspace_id, grant_id,
+                                                               operation_id=operation_id)
             except ValidationError as error:
                 raise ApiFailure("invalid_request") from error
             return "accepted"
@@ -999,7 +1000,8 @@ class ServiceWorkspaceAdmin:
         self._require_local(profile)
         with storage_errors():
             try:
-                self._service.end_workspace_admission_grant(workspace_id, grant_id)
+                self._service.end_workspace_admission_grant(workspace_id, grant_id,
+                                                            operation_id=operation_id)
             except ValidationError as error:
                 raise ApiFailure("invalid_request") from error
             return "ended"
@@ -1023,7 +1025,7 @@ class ServiceWorkspaceAdmin:
                 if action == "create":
                     return dict(self._service.create_workspace_access_recommendation(
                         workspace_id, params.get("remote_profile_id"),
-                        params.get("lifetime_days", 7)))
+                        params.get("lifetime_days", 7), operation_id=operation_id))
                 if action == "send":
                     return dict(self._service.send_workspace_access_recommendation(
                         workspace_id, params["recommendation"], operation_id))
@@ -1101,7 +1103,7 @@ class ServiceWorkspaceAdmin:
                         params["prompt_id"], operation_id))
                 if action == "prompt_dismiss":
                     return dict(self._service.dismiss_workspace_invitation_prompt(
-                        params["prompt_id"]))
+                        params["prompt_id"], operation_id=operation_id))
                 if action == "device_link_preview":
                     return dict(self._service.preview_workspace_device_link(
                         params["device_link"]))
@@ -1163,24 +1165,25 @@ class ServiceWorkspaceAdmin:
             return "saved"
 
 
-    def remote_profile(self, profile, action, params):
+    def remote_profile(self, profile, action, params, operation_id):
         self._require_local(profile)
         with storage_errors():
             try:
                 if action == "create":
                     result = self._service.create_manual_remote_profile(
                         params["label"], params["endpoints"],
-                        params.get("propagation_node"), params.get("allow_private", False))
+                        params.get("propagation_node"), params.get("allow_private", False),
+                        operation_id=operation_id)
                 elif action == "test":
-                    result = self._service.test_remote_profile(params["remote_profile_id"])
+                    result = self._service.test_remote_profile(params["remote_profile_id"], operation_id=operation_id)
                 elif action == "retry":
-                    result = self._service.retry_remote_profile(params["remote_profile_id"])
+                    result = self._service.retry_remote_profile(params["remote_profile_id"], operation_id=operation_id)
                 elif action == "remove":
-                    result = self._service.remove_remote_profile(params["remote_profile_id"])
+                    result = self._service.remove_remote_profile(params["remote_profile_id"], operation_id=operation_id)
                 elif action == "remove_propagation":
-                    result = self._service.remove_remote_propagation(params["remote_profile_id"])
+                    result = self._service.remove_remote_propagation(params["remote_profile_id"], operation_id=operation_id)
                 elif action == "approve_propagation":
-                    result = self._service.approve_remote_propagation(params["remote_profile_id"])
+                    result = self._service.approve_remote_propagation(params["remote_profile_id"], operation_id=operation_id)
                 else:
                     raise ApiFailure("invalid_request")
             except ValidationError as error:

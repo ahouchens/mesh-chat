@@ -54,8 +54,9 @@ def test_android_typed_app_cases_are_required_by_the_artifact_bound_inventory():
         "typedErrorsPreserveConflictAndCallerAuthority",
         "typedSettingsMutationsReadBackFromTheRealDomain",
         "typedCallControlSignsQueuesAndEndsAnApprovedCall",
+        "typedFreshProfileBootstrapDoesNotSeedIdentity",
     }
-    assert len(cases) == len({case["id"] for case in cases}) == 9
+    assert len(cases) == len({case["id"] for case in cases}) == 10
 
 
 @pytest.mark.parametrize("body", [

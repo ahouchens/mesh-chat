@@ -95,8 +95,30 @@ network/resource effects need committed intent and recovery; a vault transaction
 cannot make those effects atomic. C's later lifecycle ownership excludes these
 files until explicitly transferred.
 
+Subsequent transfer: C exclusively owns `service/src/mesh_chat/remote_service.py`
+and the new `service/tests/connection/test_remote_profile_idempotency.py` for
+remote-profile keyed durability. A's worktree was verified clean before transfer.
+A retains the Core adapter in `service_workspace_admin.py`, and wires the optional
+domain `operation_id` argument supplied by C. Persisted runtime intent must use
+current consent/settings during reconciliation; replay cannot restore revoked
+approval or return cached connectivity as current state.
+
 B resumes bounded Wave 1 onboarding work: stable profile-create keys and retry
 handling. A supplies the trusted private bootstrap on an already-started empty
 service, without widening ordinary public-owner grants. B's Core-owned composer
 revision/CAS and atomic draft-bound enqueue proposal is the accepted Wave 2
 design direction; implementation remains gated on Wave 1.
+
+Further Wave 1 transfer: C exclusively owns
+`service/src/mesh_chat/reconnect_service.py` and the new
+`service/tests/connection/test_reconnect_prepared_mutations.py`, alongside its
+remote-profile files. C prepares remote approval and reconnect device/profile
+writes without storage or network effects. A retains `workspace_service.py`
+and `service.py`, composes parent records and operation receipts into the atomic
+commit, then reconciles current consent. D independently audits supported keyed
+mutations and required host inventories. General Wave 2 remains inactive.
+
+A additionally owns `service/src/mesh_chat/background_availability.py` for
+keyed runtime preference changes and post-commit reconciliation. D's independent
+signed-membership-removal replay regressions remain in its reserved
+`test_ui_core_boundary*.py` files; A repairs the production authority ordering.

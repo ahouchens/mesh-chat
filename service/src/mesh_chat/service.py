@@ -45,7 +45,7 @@ from .invitations import (
     readable_fingerprint,
     verify_invitation,
 )
-from .call_manager import CallManager
+from .call_manager import CallManager, CallOutcomeRequiresResync
 from .call_settings import CallSettings
 from .turn_credentials import fetch_ice_servers
 from .signal_mailbox import fetch as fetch_signal
@@ -512,6 +512,7 @@ class MeshChatService(
         self._identity: RNS.Identity | None = None
         self._shutdown = threading.Event()
         self._dispatch_lock = threading.RLock()
+        self._core_call_epoch = uuid.uuid4().hex
         self._retry_queue_lock = threading.Lock()
         self._direct_retry_ids: dict[str, None] = {}
         self._group_retry_ids: dict[str, None] = {}
@@ -1851,6 +1852,80 @@ class MeshChatService(
         self._changed()
         return result
 
+    def keyed_call_control(self, action, params, operation_id):
+        """Commit call state, redacted receipt and signaling outbox before I/O."""
+        with self._dispatch_lock:
+            identity = self._call_identity()
+            payload = {key: value for key, value in params.items() if key != "profile"}
+            operation_id, digest, replay = self._workspace_operation(
+                "core.call.control", operation_id, payload)
+            if action == "start":
+                contact_id = params["contact_id"]
+            elif replay is not None:
+                contact_id = replay["contact_id"]
+            else:
+                record = self.calls._get(params["call_id"])
+                if record is None:
+                    raise ValidationError("Call is unknown")
+                contact_id = record["contact_id"]
+            contact = self._require_call_peer(contact_id)
+            if contact.get("trust") not in {"approved", "verified", "workspace"}:
+                raise ContactNotApproved("Calls require an approved contact")
+            if replay is not None:
+                if (replay.get("runtime_epoch") != self._core_call_epoch
+                        or self.calls._get(replay["result"]["id"]) is None):
+                    raise CallOutcomeRequiresResync("Call command belongs to an earlier resource view")
+                return self.calls.get(replay["result"]["id"])
+            prepared = self.calls.prepare_control(identity, contact, action, params, operation_id)
+            records = [("call", record["id"], record) for record in prepared.records] if self.calls.persist else []
+            deletions = [("call", identifier) for identifier in prepared.deletions] if self.calls.persist else []
+            direct_messages = []
+            workspaces = set()
+            for index, (target, document) in enumerate(prepared.documents):
+                delivery_records, message_id, workspace = self._prepare_keyed_call_signal(
+                    target, document, operation_id, index)
+                records.extend(delivery_records)
+                if message_id is not None:
+                    direct_messages.append(message_id)
+                if workspace is not None:
+                    workspaces.add(workspace)
+            outcome = {"result": prepared.result, "contact_id": contact_id,
+                       "runtime_epoch": self._core_call_epoch}
+            self.store.commit_operation(operation_id, digest, outcome, records, deletions)
+            self.calls.apply_prepared(prepared)
+            for message_id in direct_messages:
+                self._queue_direct_retry(message_id)
+                self._attempt(message_id)
+            for workspace in workspaces:
+                self._workspace_changed(workspace, resource_kind="call")
+            self._changed()
+            return prepared.result
+
+    def _prepare_keyed_call_signal(self, contact_id, document, operation_id, index):
+        if not isinstance(document, str) or not 1 <= len(document.encode("utf-8")) <= MAX_TEXT_BYTES:
+            raise ValidationError("Call document is invalid")
+        if contact_id.startswith("workspace:"):
+            contact = self._workspace_reconnect_contact(contact_id)
+            workspace = self._require_workspace(contact["workspace_id"])
+            manifest = self._workspace_current_manifest(workspace)
+            member = next((item for item in manifest.members
+                           if item.member_id == contact["peer_member_id"]), None)
+            device = next((item for item in member.devices
+                           if item.device_id == contact["peer_device_id"]), None) if member else None
+            if member is None or device is None or member.status != "active":
+                raise ContactNotApproved("Workspace call peer is not active")
+            delivery = self._workspace_delivery_record(workspace_id=workspace["id"],
+                recipient_member_id=member.member_id, recipient_device=device,
+                kind="workspace_call_signal", document=document, priority=1)
+            return [("workspace_delivery", delivery["id"], delivery),
+                    *self._due_records(add=[delivery])], None, workspace["id"]
+        contact = self._require_contact(contact_id)
+        if contact.get("trust") not in {"approved", "verified"}:
+            raise ContactNotApproved("Calls require an approved contact")
+        message = self._outbound_record(contact, MessageKind.CALL_SIGNAL, document)
+        message["id"] = str(uuid.uuid5(uuid.UUID(operation_id), f"call-signal:{index}"))
+        return [("message", message["id"], message)], message["id"], None
+
     def answer_call(
         self,
         call_id: str,
@@ -3053,15 +3128,27 @@ class MeshChatService(
             )
         self._changed()
 
-    def dismiss_workspace_invitation_prompt(self, prompt_id: Any) -> dict[str, Any]:
+    def dismiss_workspace_invitation_prompt(
+        self, prompt_id: Any, *, operation_id: Any = None
+    ) -> dict[str, Any]:
         if not isinstance(prompt_id, str):
             raise ValidationError("Workspace invitation prompt ID is invalid")
         record = self.store.get("workspace_contact_invite", prompt_id)
         if record is None:
             raise ValidationError("Workspace invitation prompt is unavailable")
+        digest = None
+        if operation_id is not None:
+            operation_id, digest, replay = self._workspace_operation(
+                "dismiss_workspace_invitation_prompt", operation_id, {"prompt_id": prompt_id})
+            if replay is not None:
+                return replay
         record["state"] = "dismissed"
         record["dismissed_at"] = time.time()
-        self.store.put("workspace_contact_invite", prompt_id, record)
+        if operation_id is None:
+            self.store.put("workspace_contact_invite", prompt_id, record)
+        else:
+            self.store.commit_operation(operation_id, digest, {"dismissed": True},
+                                        [("workspace_contact_invite", prompt_id, record)])
         self._changed()
         return {"dismissed": True}
 

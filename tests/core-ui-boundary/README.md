@@ -5,6 +5,10 @@ the production `App` and executes the production `api.ts` serializers against a
 separate Python process running `FramedSession`, `CoreSession`, domain services
 and a fresh encrypted test vault. Network startup is disabled. It neither maps
 typed operations into legacy command mocks nor claims native transport evidence.
+The mandatory rendered onboarding case uses the explicit empty-vault host mode:
+neither its profile nor its identity is seeded. The form submits through the real
+serializer and private bootstrap port; a lost committed response is resolved by
+the production snapshot path, with exactly one identity and one creation request.
 
 The retained request vectors separately exercise every advertised component
 operation through JSON serialization, schema validation, the production parser
@@ -12,7 +16,9 @@ and permission admission. The permission-denied session must reject before any
 domain effect. Unsupported future operations are not advertised as implemented.
 The `native.command` vector uses the separate private-host schema and is rejected
 by the public schema. Only the explicit trusted UI fixture bootstrap attaches the
-private native port; ordinary public owner grants do not acquire it.
+private native port; ordinary public owner grants do not acquire it. The separate
+`bootstrap.preview` vector uses the private-bootstrap schema and is also rejected
+by the public schema.
 
 After committing source, run the exact-source fast gate:
 
@@ -41,14 +47,19 @@ case verifies one queued durable direct message without a forged delivery state.
 The Android counterpart is the separately owned
 `TypedCoreBridgeBoundaryTest.kt`. It calls the production typed app bridge and
 real Binder/dispatcher/mobile session, with private access only for isolated
-fixture setup and domain inspection. Its five cases are mandatory members of the existing
+fixture setup and domain inspection. Its six cases are mandatory members of the existing
 artifact-bound Android qualification inventory. They require C's typed bridge
 implementation and A's parser/session fixes. Mutation cases change and read back
 network/call settings, then start/end an approved audio call and verify the stored
 state and signed queued invite/hangup documents. These assertions qualify call
 signalling, not media execution or peer receipt delivery. The embedded Python
 fixture also executes through mobile Core framing in the fast Python suite.
-Compilation or emulator execution
+The fresh-profile case starts with no profile or identity, verifies a signed
+invitation through private preview without any vault write or network/event
+effect, then creates only through
+the keyed Core operation, rejects changed-payload key reuse and repeats after a
+service/vault reopen without changing the identity. This is not OS process-death
+evidence. Compilation or emulator execution
 has not been claimed locally; disk-constrained native builds run in GitHub CI.
 
 ## Timing evidence
@@ -70,10 +81,12 @@ the conservative full matrix. No required final evidence is removed.
 ## Windows application pipe
 
 `python scripts/check_core_windows_boundary.py --expected-source <HEAD SHA>`
-executes two mandatory cases through the production application sidecar pipe
+executes three mandatory cases through the production application sidecar pipe
 host, executable-image authentication, production pipe client and serialized
 Core client. They assert real settings write/readback and signed call start/end
-domain effects. The script fails when Windows is unavailable, clears stale
+domain effects. Its independent fresh-profile case starts an empty service,
+creates only through the keyed pipe request and verifies replay/conflict and one
+identity across vault reopen. The script fails when Windows is unavailable, clears stale
 success, checks the complete collected case inventory and writes exact-source
 JUnit/hash evidence. It runs in the Windows CI host job before native builds.
 It does not claim packaged, cross-process media, or physical qualification.

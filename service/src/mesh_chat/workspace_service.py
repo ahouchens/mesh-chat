@@ -5842,6 +5842,7 @@ class WorkspaceServiceMixin:
         max_admissions: Any = 5,
         lifetime_days: Any = 7,
         v2_ready: Any = False,
+        *, operation_id: Any = None,
     ) -> dict[str, Any]:
         if v2_ready is not True:
             raise ContactNotApproved(
@@ -5880,6 +5881,15 @@ class WorkspaceServiceMixin:
         identity = self._identity
         if identity is None:
             raise ValidationError("Local identity is unavailable")
+        digest = None
+        if operation_id is not None:
+            operation_id, digest, replay = self._workspace_operation(
+                "create_workspace_admission_grant", operation_id, {
+                    "workspace_id": workspace_id, "admin_member_id": admin_member_id,
+                    "admin_device_id": admin_device_id, "max_admissions": max_admissions,
+                    "lifetime_days": lifetime_days, "v2_ready": v2_ready})
+            if replay is not None:
+                return replay
         now = time.time()
         raw = create_admission_grant(
             identity,
@@ -5914,18 +5924,21 @@ class WorkspaceServiceMixin:
             document=raw,
             priority=0,
         )
-        self._workspace_store.put_many(
-            [
-                ("workspace_admission_grant", checked.digest, record),
-                ("workspace_delivery", delivery["id"], delivery),
-                *self._due_records(add=[delivery]),
-            ]
-        )
+        records = [
+            ("workspace_admission_grant", checked.digest, record),
+            ("workspace_delivery", delivery["id"], delivery),
+            *self._due_records(add=[delivery]),
+        ]
+        outcome = self._public_workspace_admission_grant(record, include_offer=True)
+        if operation_id is None:
+            self._workspace_store.put_many(records)
+        else:
+            self._workspace_store.commit_operation(operation_id, digest, outcome, records)
         self._workspace_changed(workspace["id"], resource_kind="admission_grant")
-        return self._public_workspace_admission_grant(record, include_offer=True)
+        return outcome
 
     def accept_workspace_admission_grant(
-        self, workspace_id: Any, grant_id: Any
+        self, workspace_id: Any, grant_id: Any, *, operation_id: Any = None
     ) -> dict[str, Any]:
         workspace = self._require_workspace(workspace_id)
         if workspace.get("state") != "active" or workspace.get("local_role") != "admin":
@@ -5948,6 +5961,13 @@ class WorkspaceServiceMixin:
             identity, "lxmf", "delivery"
         ).hex():
             raise IdentityMismatch("Admission grant is for another device")
+        digest = None
+        if operation_id is not None:
+            operation_id, digest, replay = self._workspace_operation(
+                "accept_workspace_admission_grant", operation_id,
+                {"workspace_id": workspace_id, "grant_id": grant_id})
+            if replay is not None:
+                return replay
         acceptance = create_admission_acceptance(identity, grant=offer)
         verify_admission_acceptance(acceptance, offer)
         record["acceptance"] = acceptance
@@ -5974,18 +5994,21 @@ class WorkspaceServiceMixin:
                 priority=0,
             )
             deliveries.append(delivery)
-        self._workspace_store.put_many(
-            [
+        records = [
                 ("workspace_admission_grant", grant_id, record),
                 *[
                     ("workspace_delivery", delivery["id"], delivery)
                     for delivery in deliveries
                 ],
                 *self._due_records(add=deliveries),
-            ]
-        )
+        ]
+        outcome = self._public_workspace_admission_grant(record, include_offer=True)
+        if operation_id is None:
+            self._workspace_store.put_many(records)
+        else:
+            self._workspace_store.commit_operation(operation_id, digest, outcome, records)
         self._workspace_changed(workspace["id"], resource_kind="admission_grant")
-        return self._public_workspace_admission_grant(record, include_offer=True)
+        return outcome
 
     def list_workspace_admission_grants(self, workspace_id: Any) -> list[dict[str, Any]]:
         workspace = self._require_workspace(workspace_id)
@@ -6002,7 +6025,7 @@ class WorkspaceServiceMixin:
         ]
 
     def end_workspace_admission_grant(
-        self, workspace_id: Any, grant_id: Any
+        self, workspace_id: Any, grant_id: Any, *, operation_id: Any = None
     ) -> dict[str, Any]:
         workspace = self._require_workspace(workspace_id)
         if (
@@ -6016,8 +6039,18 @@ class WorkspaceServiceMixin:
         record = self.store.get("workspace_admission_grant", grant_id)
         if record is None or record.get("workspace_id") != workspace["id"]:
             raise ValidationError("Admission grant is unavailable")
+        digest = None
+        if operation_id is not None:
+            operation_id, digest, replay = self._workspace_operation(
+                "end_workspace_admission_grant", operation_id,
+                {"workspace_id": workspace_id, "grant_id": grant_id})
+            if replay is not None:
+                return replay
         if record.get("state") == "revoked":
-            return self._public_workspace_admission_grant(record, include_offer=True)
+            outcome = self._public_workspace_admission_grant(record, include_offer=True)
+            if operation_id is not None:
+                return self._workspace_store.commit_operation(operation_id, digest, outcome, ())
+            return outcome
         identity = self._identity
         if identity is None:
             raise ValidationError("Local identity is unavailable")
@@ -6096,9 +6129,13 @@ class WorkspaceServiceMixin:
             [("workspace_delivery", delivery["id"], delivery) for delivery in deliveries]
         )
         records.extend(self._due_records(add=deliveries))
-        self._workspace_store.put_many(records)
+        outcome = self._public_workspace_admission_grant(record, include_offer=True)
+        if operation_id is None:
+            self._workspace_store.put_many(records)
+        else:
+            self._workspace_store.commit_operation(operation_id, digest, outcome, records)
         self._workspace_changed(workspace["id"], resource_kind="admission_grant")
-        return self._public_workspace_admission_grant(record, include_offer=True)
+        return outcome
 
     def _receive_workspace_admission_revocation(
         self, wire: WorkspaceWirePayload, source_hash: Any
@@ -20559,7 +20596,8 @@ class WorkspaceServiceMixin:
         )
 
     def create_workspace_access_recommendation(
-        self, workspace_id: Any, remote_profile_id: Any, lifetime_days: Any = 7
+        self, workspace_id: Any, remote_profile_id: Any, lifetime_days: Any = 7,
+        *, operation_id: Any = None
     ) -> dict[str, Any]:
         """Create an owner-signed, out-of-band workspace access recommendation."""
 
@@ -20587,6 +20625,15 @@ class WorkspaceServiceMixin:
         now = time.time()
         if float(profile.get("expires_at", 0)) <= now:
             raise ValidationError("Remote profile has expired")
+        digest = None
+        if operation_id is not None:
+            operation_id, digest, replay = self._workspace_operation(
+                "create_workspace_access_recommendation", operation_id,
+                {"workspace_id": workspace_id, "remote_profile_id": remote_profile_id,
+                 "lifetime_days": lifetime_days})
+            if replay is not None:
+                self.preview_workspace_access_recommendation(replay["recommendation"])
+                return replay
         lifetime_seconds = min(
             lifetime_days * 24 * 60 * 60, WORKSPACE_ACCESS_MAX_LIFETIME
         )
@@ -20599,7 +20646,7 @@ class WorkspaceServiceMixin:
             lifetime_seconds=lifetime_seconds,
         )
         checked = verify_workspace_access_recommendation(raw, now=int(now))
-        return {
+        outcome = {
             "workspace_id": workspace["id"],
             "workspace_name": workspace["name"],
             "profile_id": checked.profile["id"],
@@ -20609,6 +20656,10 @@ class WorkspaceServiceMixin:
             "recommendation": raw,
             "text": raw,
         }
+
+        if operation_id is not None:
+            return self._workspace_store.commit_operation(operation_id, digest, outcome, ())
+        return outcome
 
     def preview_workspace_access_recommendation(self, raw: Any) -> dict[str, Any]:
         """Verify a recommendation against the current workspace authority."""

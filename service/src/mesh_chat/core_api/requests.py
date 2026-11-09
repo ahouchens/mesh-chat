@@ -273,6 +273,17 @@ OPTIONAL_KEY_OPERATIONS = frozenset({
     "remote_profile.query", "connection.document", "peer.pairing_preview",
 })
 
+KEYED_ACTIONS = {
+    "workspace.connection": frozenset({"reconnect_consent", "invite_contact", "prompt_submit", "prompt_dismiss"}),
+    "workspace.history": frozenset({"prune", "hide_message", "hide_direct", "start", "cancel"}),
+    "workspace.access_recommendation": frozenset({"create", "send", "apply", "apply_by_id"}),
+}
+
+
+def requires_idempotency_key(operation, params):
+    return operation in KEYED_OPERATIONS - OPTIONAL_KEY_OPERATIONS or (
+        isinstance(params, dict) and params.get("action") in KEYED_ACTIONS.get(operation, ()))
+
 
 def parse_request(value, operations):
     try:
@@ -295,7 +306,7 @@ def _parse_request(value, operations):
     operation = value["operation"]
     if not isinstance(operation, str) or operation not in operations:
         raise ApiFailure("unsupported_operation")
-    if operation in KEYED_OPERATIONS - OPTIONAL_KEY_OPERATIONS or (
+    if requires_idempotency_key(operation, value["params"]) or (
             operation in OPTIONAL_KEY_OPERATIONS and "idempotency_key" in value):
         fields.add("idempotency_key")
     if set(value) != fields:
@@ -663,9 +674,9 @@ def _parse_request(value, operations):
                 raise ApiFailure("invalid_request")
         if operation == "workspace.admission_grant_create":
             if (type(params["max_admissions"]) is not int
-                    or not 1 <= params["max_admissions"] <= 50
+                    or not 1 <= params["max_admissions"] <= 5
                     or type(params["lifetime_days"]) is not int
-                    or not 1 <= params["lifetime_days"] <= 90
+                    or not 1 <= params["lifetime_days"] <= 7
                     or type(params["v2_ready"]) is not bool):
                 raise ApiFailure("invalid_request")
         return operation, params

@@ -51,6 +51,26 @@ not create an identity, accept or join, grant consent, write to the vault, or
 contact an endpoint. Existing profile-scoped preview operations retain their
 separate public contracts.
 
+Keyed `call.control` mutations (`start`, `answer`, `restart`, `answer_restart`,
+`candidate`, `end`) prepare domain changes without I/O, then commit the call
+write set, redacted operation receipt and signed durable outbox together. Only
+afterward do they publish memory and schedule transport. Duplicate keys converge
+on the same call and return its current public projection within that service
+incarnation, including current candidate counts and ring expiry; they never
+resurrect an earlier dialing state. Changed payloads conflict. After service restart
+the key remains consumed and returns `resync_required`, so an old dialing result
+cannot be mistaken for current media evidence or enqueue another call. The
+`store_call_signaling` preference still controls sealed call records; receipts
+contain no SDP, ICE candidates or signed documents. This does not qualify media
+transport or make external mailbox HTTP atomic with the vault.
+
+Composite workspace operations distinguish queries from mutations at action
+granularity. `keyed_actions` in the manifest, schema conditions and production
+parser require an envelope key for mutating connection, history and access
+actions; their read-only actions may omit it. Prompt dismissal commits its local
+tombstone and receipt together. Creating a signed access recommendation retains
+the exact artifact by key and rechecks current authority before replay.
+
 The trusted application host authenticates callers before constructing a facade
 session. The session holds its caller ID, operation permissions and allowed
 profile scopes; none of those facts come from request JSON. Windows bootstrap

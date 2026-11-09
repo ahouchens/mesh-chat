@@ -1,6 +1,7 @@
 """Real Windows application pipe -> framed Core -> call/settings domain evidence."""
 
 import base64
+from contextlib import contextmanager
 import ctypes
 from ctypes import wintypes
 import os
@@ -17,11 +18,12 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "service/src"))
 
 import RNS
-from mesh_chat.core_api.client import CoreClient
+from mesh_chat.core_api.client import CoreClient, CoreClientError
 from mesh_chat.core_api.pipe_client import connect
 from mesh_chat.core_api.pipe_endpoint import _bind, PROCESS_QUERY_LIMITED_INFORMATION
 from mesh_chat.core_api.sidecar_host import start
 from mesh_chat.reticulum_config import NetworkSettings
+from mesh_chat.invitations import create_invitation
 from mesh_chat.service import MeshChatService
 from mesh_chat.vault import VaultStore
 from mesh_chat.webrtc_signaling import verify_call_invite, verify_call_hangup
@@ -42,6 +44,21 @@ def current_image():
         kernel.CloseHandle(process)
 
 
+@contextmanager
+def trusted_application_client(service):
+    endpoint = duplex = None
+    try:
+        name = rf"\\.\pipe\mesh-chat-boundary-{uuid4().hex[:16]}"
+        endpoint = start(service, pipe_name=name, client_image=current_image())
+        duplex = connect(name)
+        yield CoreClient.open(duplex.readline, duplex.write)
+    finally:
+        if duplex is not None:
+            duplex.close()
+        if endpoint is not None:
+            endpoint.close()
+
+
 @pytest.fixture
 def application_pipe(tmp_path, monkeypatch):
     monkeypatch.setattr(MeshChatService, "_start_network", lambda *_: None)
@@ -49,7 +66,6 @@ def application_pipe(tmp_path, monkeypatch):
     store = VaultStore(tmp_path, os.urandom(32), allow_unprotected_for_tests=True)
     store.put("settings", "network", NetworkSettings(nearby_discovery=False, lan_fallback=False).to_dict())
     service = MeshChatService(store, tmp_path, lambda _: None)
-    endpoint = duplex = None
     try:
         service.create_profile("Windows boundary owner")
         peer = RNS.Identity()
@@ -58,16 +74,9 @@ def application_pipe(tmp_path, monkeypatch):
                    "identity_hash": peer.hash.hex(),
                    "public_identity": base64.b64encode(peer.get_public_key()).decode("ascii")}
         store.put("contact", contact["id"], contact)
-        name = rf"\\.\pipe\mesh-chat-boundary-{uuid4().hex[:16]}"
-        endpoint = start(service, pipe_name=name, client_image=current_image())
-        duplex = connect(name)
-        client = CoreClient.open(duplex.readline, duplex.write)
-        yield service, client, client.capabilities["profiles"][0], contact
+        with trusted_application_client(service) as client:
+            yield service, client, client.capabilities["profiles"][0], contact
     finally:
-        if duplex is not None:
-            duplex.close()
-        if endpoint is not None:
-            endpoint.close()
         service.close()
 
 
@@ -116,3 +125,50 @@ def test_windows_pipe_call_control_signs_and_retires_a_real_call(application_pip
                                  expected_signer_destination=service._require_profile()["destination_hash"])
     assert verified.reason == "completed"
     assert all(row["state"] != "delivered" for row in signals)
+
+
+def test_windows_pipe_creates_a_fresh_profile_with_one_durable_key(tmp_path, monkeypatch):
+    effects = []
+    monkeypatch.setattr(MeshChatService, "_start_network", lambda *_: effects.append("start_network"))
+    monkeypatch.setattr(MeshChatService, "_prepare_lan_fallback", lambda *_: effects.append("prepare_lan"))
+    vault_key = os.urandom(32)
+    original_identity = original_view = original_reply = None
+    for incarnation in range(2):
+        store = VaultStore(tmp_path, vault_key, allow_unprotected_for_tests=True)
+        service = MeshChatService(store, tmp_path, lambda _: None)
+        try:
+            if incarnation == 0:
+                assert store.get("profile", "local") is None
+                assert store.get("identity", "local") is None
+            with trusted_application_client(service) as client:
+                assert "profile.create" in client.capabilities["operations"]
+                if incarnation == 0:
+                    sponsor = RNS.Identity()
+                    invitation = create_invitation(sponsor, "Pre-profile sponsor")["file"]
+                    changes, previous_effects = store._db.total_changes, list(effects)
+                    preview = client.request("bootstrap.preview", {"kind": "personal", "document": invitation})
+                    assert preview["kind"] == "personal"
+                    assert preview["preview"]["display_name"] == "Pre-profile sponsor"
+                    assert preview["preview"]["destination_hash"] == RNS.Destination.hash(sponsor, "lxmf", "delivery").hex()
+                    assert store._db.total_changes == changes and effects == previous_effects
+                    assert store.get("profile", "local") is None and store.get("identity", "local") is None
+                    assert not store.list("contact") and not store.list("message")
+                reply = client.request("profile.create", {"display_name": "Fresh Windows owner"},
+                                       idempotency_key="windows-fresh-profile-key-0001")
+                view = client.profile()
+                assert view["display_name"] == "Fresh Windows owner"
+                assert len(store.list("profile")) == len(store.list("identity")) == 1
+                identity = store.get("identity", "local")
+                if incarnation == 0:
+                    original_identity, original_view, original_reply = identity, view, reply
+                else:
+                    assert (identity, view, reply) == (original_identity, original_view, original_reply)
+                assert client.request("profile.create", {"display_name": "Fresh Windows owner"},
+                    idempotency_key="windows-fresh-profile-key-0001") == reply
+                with pytest.raises(CoreClientError) as failure:
+                    client.request("profile.create", {"display_name": "Changed owner"},
+                                   idempotency_key="windows-fresh-profile-key-0001")
+                assert failure.value.code == "idempotency_conflict"
+                assert store.get("identity", "local") == original_identity
+        finally:
+            service.close()

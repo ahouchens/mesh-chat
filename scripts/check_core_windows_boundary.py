@@ -17,6 +17,7 @@ SELECTION = ("tests/core-ui-boundary/test_windows_pipe.py",)
 CASES = {SELECTION[0] + "::" + name for name in (
     "test_windows_pipe_settings_mutations_read_back_from_vault",
     "test_windows_pipe_call_control_signs_and_retires_a_real_call",
+    "test_windows_pipe_creates_a_fresh_profile_with_one_durable_key",
 )}
 
 
