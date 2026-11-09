@@ -666,6 +666,52 @@ def pairing_record(source="a" * 40, tree="b" * 40):
             "checks": dict(pairing.CHECKS), "run_id": "7" * 32, "bootstrap_report_sha256": "b" * 64}
 
 
+@pytest.mark.parametrize("mode", ["healthy", "unavailable", "null", "missing_network", "string", "array",
+    "boolean", "number", "startup_failure", "failure_with_object", "unknown_error", "object_error",
+    "array_error", "boolean_error", "missing_error"])
+@pytest.mark.parametrize("incarnation", [0, 1])
+def test_actual_bootstrap_producer_requires_network_construction_without_more_requests(tmp_path, mode, incarnation):
+    # Actual consumer control flow, synthetic SDK/host only; no native/network claim.
+    node, _ = staging.tools()
+    log = tmp_path / "events.jsonl"
+    completed = subprocess.run([node, "--import", (staging.ROOT /
+        "tests/core-ui-boundary/bootstrap_network_fixture.mjs").as_uri(),
+        str(staging.APPLICATION / "bootstrap-check.mjs"), "--runtime", "unused", "--data-directory", "unused"],
+        env={**os.environ, "BOOTSTRAP_NETWORK_MODE": mode, "BOOTSTRAP_NETWORK_INCARNATION": str(incarnation),
+             "BOOTSTRAP_NETWORK_LOG": str(log)}, capture_output=True, text=True, timeout=15)
+    passed = mode in {"healthy", "unavailable"}
+    assert completed.returncode == (0 if passed else 1), completed.stderr
+    observed = json.loads(completed.stdout)
+    if passed:
+        assert observed == {key: value for key, value in bootstrap.CHECKS.items() if not key.startswith("efs_")}
+        assert not completed.stderr
+    else:
+        assert observed == {"passed": False, "phase": "network_construction", "error_code": "unavailable"}
+        assert completed.stderr == "Independent application bootstrap check failed.\n"
+    assert "PRIVATE_" not in completed.stdout + completed.stderr
+    events = [json.loads(line) for line in log.read_text().splitlines()]
+    last = 1 if passed else incarnation
+    assert [(event["event"], event["incarnation"]) for event in events if event["event"] != "request"] == [
+        (event, index) for index in range(last + 1) for event in ("start", "open", "close", "stop")]
+    for index in range(last + 1):
+        assert [event["operation"] for event in events if event["event"] == "request"
+                and event["incarnation"] == index] == ["application.snapshot"] + (
+            ["profile.query"] if index == 0 else []) + ["profile.create"] * 3 + [
+            "runtime.capabilities", "profile.query", "application.snapshot"]
+
+
+@pytest.mark.parametrize("fault", ["missing", "zero", "one", "boolean", "float", "string", "object", "extra"])
+def test_bootstrap_evidence_requires_two_strict_network_construction_observations(fault):
+    record = bootstrap_record()
+    bootstrap.verify_report(record, "a" * 40, "b" * 40)
+    if fault == "missing": record["checks"].pop("post_profile_network_constructed")
+    elif fault == "extra": record["checks"]["network"] = {"address": "PRIVATE_ADDRESS"}
+    else:
+        record["checks"]["post_profile_network_constructed"] = {
+            "zero": 0, "one": 1, "boolean": True, "float": 2.0, "string": "2", "object": {"count": 2}}[fault]
+    with pytest.raises(ValueError): bootstrap.verify_report(record, "a" * 40, "b" * 40)
+
+
 @pytest.mark.parametrize("fault", ["bootstrap_scope", "SC21_scope", "implicit_approval", "missing_receipt",
     "duplicate_records", "missing_transfer", "missing_cancel", "unready", "efs", "receipt_boolean", "cleanup", "missing_bootstrap_binding",
     "direct_disclosure", "relay_not_requested", "broker_consent"])

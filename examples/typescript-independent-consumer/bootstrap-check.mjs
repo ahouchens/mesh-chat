@@ -51,6 +51,10 @@ async function check(executable, directory) {
       if (profile.display_name !== displayName || snapshot.profile.display_name !== displayName
           || typeof profile.destination !== "string"
           || snapshot.contacts.length || snapshot.messages.length) throw new Error();
+      phase = "network_construction";
+      if (snapshot.network === null || typeof snapshot.network !== "object" || Array.isArray(snapshot.network)
+          || (snapshot.service_error !== null && snapshot.service_error !== "network_interface_unavailable")) throw new Error();
+      phase = "observations";
       if (incarnation === 0) identity = profile.destination;
       else if (identity !== profile.destination) throw new Error();
     } finally {
@@ -65,7 +69,7 @@ async function check(executable, directory) {
   }
   return { fresh_without_profile: true, public_only_capabilities: true,
     explicit_profile_create_and_key_replay: true, changed_key_payload_rejected: true,
-    reopen_same_public_identity: true, clean_host_exits: 2 };
+    reopen_same_public_identity: true, post_profile_network_constructed: 2, clean_host_exits: 2 };
 }
 
 try {

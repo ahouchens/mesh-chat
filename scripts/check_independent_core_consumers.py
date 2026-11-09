@@ -16,7 +16,7 @@ LEVEL = "windows_installed_public_sdk_normal_runtime_bootstrap"
 SCOPE = "Outside-checkout TypeScript application and frozen normal Windows host with actual DPAPI/EFS; no pairing, peer receipts, Android, media or SC21 qualification"
 CHECKS = {"fresh_without_profile": True, "public_only_capabilities": True,
           "explicit_profile_create_and_key_replay": True, "changed_key_payload_rejected": True,
-          "reopen_same_public_identity": True, "clean_host_exits": 2,
+          "reopen_same_public_identity": True, "post_profile_network_constructed": 2, "clean_host_exits": 2,
           "efs_profile_directory": True, "efs_vault_file": True}
 SDK_ARTIFACT = "windows-independent-sdk/" + ARTIFACTS["typescript"]
 
@@ -108,7 +108,7 @@ def main():
             import re
             if (isinstance(observed, dict) and observed.get("passed") is False
                     and observed.get("phase") in {"arguments", "runtime_start", "capabilities", "fresh_state", "profile_create",
-                        "key_replay", "changed_payload", "observations", "retirement"}
+                        "key_replay", "changed_payload", "observations", "network_construction", "retirement"}
                     and isinstance(observed.get("error_code"), str)
                     and re.fullmatch(r"[a-z_]{1,64}", observed["error_code"])):
                 result.update(application_phase=observed["phase"], error_code=observed["error_code"])
