@@ -305,6 +305,18 @@ def _unb64(value: str) -> bytes:
         raise ValidationError("Workspace public identity is invalid") from exc
 
 
+CURRENT_WORKSPACE_ACCESS_OPERATIONS = frozenset({
+    "send_workspace_message", "send_workspace_direct_message", "send_workspace_thread_reply",
+    "edit_workspace_message", "delete_workspace_message", "set_workspace_reaction",
+    "mark_workspace_read", "mark_workspace_thread_read", "mark_workspace_mentions_read",
+    "set_workspace_notification_preference", "set_workspace_read_hint_sync",
+    "save_workspace_draft", "save_workspace_thread_draft", "start_workspace_history",
+})
+WORKSPACE_POSTING_OPERATIONS = frozenset({
+    "send_workspace_message", "send_workspace_direct_message", "send_workspace_thread_reply",
+})
+
+
 def _canonical_digest(command: str, value: dict[str, Any]) -> str:
     return hashlib.sha256(
         canonical_bytes({"command": command, "payload": value})
@@ -470,6 +482,8 @@ class WorkspaceServiceMixin:
                 raise ValueError
         except (ValueError, AttributeError) as exc:
             raise ValidationError("Operation ID is invalid") from exc
+        if command in CURRENT_WORKSPACE_ACCESS_OPERATIONS:
+            self._require_current_workspace_access(command, payload)
         digest = _canonical_digest(command, payload)
         replay = self.store.operation_result(operation_id, digest)
         workspace_id = payload.get("workspace_id")
@@ -486,6 +500,46 @@ class WorkspaceServiceMixin:
                     "Authority-dependent administration is permanently frozen"
                 )
         return operation_id, digest, replay
+
+    def _require_current_workspace_access(self, command, payload):
+        """An old operation receipt never grants present workspace disclosure."""
+        workspace = self._require_workspace(payload.get("workspace_id"))
+        if workspace.get("state") not in {"active", "incomplete_sync"} or self._identity is None:
+            raise ContactNotApproved("Workspace membership is no longer active")
+        manifest = self._workspace_current_manifest(workspace)
+        member = find_member(manifest, workspace.get("local_member_id"))
+        device = find_device(manifest, workspace.get("local_device_id"))
+        if (member is None or member.status != "active" or device is None
+                or device[0].member_id != member.member_id
+                or device[1].public_identity != self._identity.get_public_key()):
+            raise ContactNotApproved("This device is not an active workspace member")
+        conversation = payload.get("channel_id") or payload.get("conversation_id")
+        root = payload.get("thread_root_id") or payload.get("thread_root")
+        if root is not None:
+            _, _, record = self._workspace_thread_context(workspace, root,
+                require_writable=command in WORKSPACE_POSTING_OPERATIONS or command == "save_workspace_thread_draft")
+            conversation = conversation or record.get("id")
+        if conversation is None:
+            target = payload.get("target_event_id") or payload.get("event_id")
+            if isinstance(target, str):
+                state = self.store.get("workspace_message_state", self._workspace_message_record_id(target))
+                if state is not None:
+                    conversation = state.get("conversation_id")
+        if conversation is None:
+            return
+        scope, channel = self._workspace_history_scope(workspace, conversation)
+        if command not in WORKSPACE_POSTING_OPERATIONS:
+            return
+        if channel is not None:
+            record = self._require_workspace_channel(workspace["id"], conversation)
+            if record.get("state") != "active":
+                raise ContactNotApproved("Workspace channel is not active")
+            if not self._posting_allowed(manifest, member, channel):
+                raise ContactNotApproved("Workspace posting requires owner or admin authority")
+        elif any(find_member(manifest, identifier) is None
+                 or find_member(manifest, identifier).status != "active"
+                 for identifier in scope["participant_member_ids"]):
+            raise ContactNotApproved("Workspace direct-message authority changed")
 
     def _workspace_record_id(self, workspace_id: str) -> str:
         return self.store.opaque_id("workspace", workspace_id)

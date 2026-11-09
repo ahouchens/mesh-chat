@@ -1,8 +1,11 @@
 """Keyed local tombstones and signed artifacts through the actual facade."""
 
 import uuid
+import json
+from pathlib import Path
 
 import pytest
+from jsonschema import Draft202012Validator
 
 from mesh_chat.remote import create_profile_document, new_profile_record
 from test_core_messages import host
@@ -86,3 +89,17 @@ def test_prompt_dismissal_is_atomic_and_conflicts_on_changed_target(host, monkey
                                  **{**params, "prompt_id": "b" * 64})
     assert changed["error"]["code"] == "idempotency_conflict", changed
     assert service.store.get("workspace_contact_invite", "b" * 64)["state"] == "pending"
+
+
+def test_closed_workspace_remains_a_truthful_read_only_projection(host):
+    service = host()
+    service.create_workspace(str(uuid.uuid4()), "Closed Team", "")
+    client, profile = open_client(service)
+    workspace = component_request(client, "workspace.query", profile=profile)["result"]["workspaces"][0]["workspace"]
+    closed = component_request(client, "workspace.close", "close-workspace-key", profile=profile, workspace=workspace)
+    assert closed["ok"], closed
+    listing = component_request(client, "workspace.query", profile=profile)
+    assert listing["ok"], listing
+    assert listing["result"]["workspaces"][0]["state"] == "closed"
+    root = Path(__file__).resolve().parents[3] / "contracts/core-api"
+    Draft202012Validator(json.loads((root / "workspace-list-result-v1.schema.json").read_text())).validate(listing)

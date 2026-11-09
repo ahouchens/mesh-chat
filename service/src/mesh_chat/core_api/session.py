@@ -219,6 +219,14 @@ PERMISSION_BY_OPERATION = {
 }
 
 
+ADDITIONAL_PERMISSION_BY_ACTION = {
+    "remote_profile.mutate": {action: "approve" for action in
+                               ("create", "approve_propagation", "remove", "remove_propagation")},
+    "workspace.access_recommendation": {"apply": "approve", "apply_by_id": "approve"},
+    "workspace.connection": {"reconnect_consent": "approve"},
+}
+
+
 @dataclass(frozen=True)
 class Grant:
     caller: str
@@ -412,6 +420,9 @@ class CoreSession:
                 if permission is None:
                     raise ApiFailure("forbidden")
                 if permission not in grant.permissions:
+                    raise ApiFailure("forbidden")
+                extra = ADDITIONAL_PERMISSION_BY_ACTION.get(operation, {}).get(params.get("action"))
+                if extra is not None and extra not in grant.permissions:
                     raise ApiFailure("forbidden")
                 result = self._execute(grant, operation, params, key)
                 return {"api_version": 1, "request_id": request_id, "ok": True, "result": result}

@@ -1581,7 +1581,7 @@ _COMPONENT_STRING_LIMITS = {
     "workspace.join_prompt": {"prompt": 160},
     "call.control": {"contact_id": 160, "call_id": 160, "sdp": 65536,
         "dtls_fingerprint": 256, "reason": 64, "candidate": 4096,
-        "document": 65536, "session": 256, "session_id": 256,
+        "document": 65536, "session": 2048, "session_id": 256,
         "mailbox_token": 4096},
 }
 
