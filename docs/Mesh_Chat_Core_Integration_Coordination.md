@@ -17,6 +17,16 @@ earlier full policy gate passed 2,630 cases at `6e97db5`. Composer storage,
 migration fences, retained deferred cleanup and selected-path inspector code
 are integrated. Full combined packaged qualification remains pending.
 
+The next integrated checkpoint is `cabf71f`: standalone SDK staging (`7bc9fea`),
+frozen runtime archive/material verification (`9844419`, `27f1236`), and trusted
+profile lifecycle transitions (`da18ef3`). The lead's 154 combined lifecycle,
+path, package-evidence and call-replay checks pass without skips. Python SDK
+staging needs the pending temporary-source build correction before installed
+consumer verification; the TypeScript isolated package check passed. B's retained
+call-operation ticket is under review, including the incoming-call cleanup guard.
+Private host bindings, key release after worker drain, pairing policy, upgrade
+checks and actual cross-platform topology qualification remain active work.
+
 ## Active Wave 2 handoff
 
 All workers merge the current lead branch before edits. Source `174728e` is the
