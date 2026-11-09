@@ -28,6 +28,8 @@ def verify(path):
             jar_entries = entries(jar)
             if "META-INF/LICENSE" not in jar_entries:
                 raise ValueError("Client distribution omits license")
+            if jar.read("META-INF/LICENSE") != (Path(__file__).resolve().parents[1] / "LICENSE").read_bytes():
+                raise ValueError("Client distribution license differs from the project license")
             classes = {name for name in jar_entries if name.endswith(".class")}
             if not {"com/meshchat/runtime/core/CoreClient.class", "com/meshchat/runtime/IMeshCoreApi.class"} <= classes:
                 raise ValueError("Distribution lacks the public client or Binder interface")

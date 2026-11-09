@@ -58,6 +58,31 @@ test("all repaired keyed helpers preserve an explicit caller key", async () => {
   assert.ok(transport.written.slice(1).every(line => JSON.parse(line).idempotency_key === key));
 });
 
+test("call recovery gates every helper before I/O and preserves the abandon key", async () => {
+  const caps = { ...CAPABILITIES, api_minor: 1,
+    operations: ["call.operation_list", "call.operation_query", "call.operation_abandon"],
+    limits: { call_operations_per_caller_profile: 256, call_operations_per_vault: 4096,
+      call_operation_retention_seconds: 604800, call_operation_keys_per_caller_profile: 4096, call_operation_keys_per_vault: 65536 } };
+  for (const broken of [{ ...caps, api_minor: 0 }, { ...caps, api_minor: 1.5 },
+      { ...caps, operations: caps.operations.slice(0, 2) }, { ...caps, limits: {} },
+      { ...caps, limits: { ...caps.limits, call_operations_per_vault: true } }]) {
+    const transport = new Scripted(success("client:1", broken));
+    const client = await CoreClient.open(transport);
+    for (const invoke of [() => client.callOperationList(PROFILE), () => client.callOperationQuery(PROFILE, MESSAGE),
+        () => client.callOperationAbandon(PROFILE, MESSAGE, "explicit-abandon-key00")]) {
+      await assert.rejects(invoke(), (error: unknown) => error instanceof CoreError && error.code === "unsupported_operation");
+    }
+    assert.equal(transport.written.length, 1);
+  }
+  const transport = new Scripted(success("client:1", caps), success("client:2", {}));
+  const client = await CoreClient.open(transport);
+  await assert.rejects(client.callOperationAbandon(PROFILE, MESSAGE, "bad"), ProtocolError);
+  assert.equal(transport.written.length, 1);
+  await client.callOperationAbandon(PROFILE, MESSAGE, "explicit-abandon-key00");
+  assert.deepEqual(JSON.parse(transport.written[1]!).params, { profile: PROFILE, operation: MESSAGE });
+  assert.equal(JSON.parse(transport.written[1]!).idempotency_key, "explicit-abandon-key00");
+});
+
 test("optional keyed group calls require coherent capability and a valid explicit key", async () => {
   const limits = { optional_key_idempotency_seconds: 604800, optional_keys_per_caller_profile: 4096, optional_keys_per_vault: 65536 };
   const caps = { ...CAPABILITIES, api_minor: 1, operations: [...CAPABILITIES.operations, "group.create"],

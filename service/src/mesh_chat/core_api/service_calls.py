@@ -1,15 +1,57 @@
 """Private adapter for typed call settings through the existing domain rules."""
+import re
 
 from ..errors import MailboxRateLimited, MailboxUnauthorized, NetworkUnavailable, ValidationError
 from ..call_manager import CallOutcomeRequiresResync, CallOperationCapacityExceeded
 from .calls import CallIceObservation, CallMediaObservation, CallSettingsObservation
 from .errors import ApiFailure
 from .service_messages import storage_errors
+from .call_operations import CallOperationJournal, CALL_RECOVERY_OPERATIONS
 
 
 class ServiceCallSettings:
-    def __init__(self, service):
+    def __init__(self, service, retirement=None):
         self._service = service
+        owner = getattr(retirement, "owner_incarnation", None)
+        if retirement is not None and (not callable(getattr(retirement, "request_retirement", None))
+                or not isinstance(owner, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", owner) is None):
+            raise ValueError("Call retirement requires a trusted bound media owner")
+        self._operations = (CallOperationJournal(service, retirement)
+                            if all(callable(getattr(service.store, name, None)) for name in
+                                   ("conditional_put_and_delete", "items", "read_snapshot"))
+                            and hasattr(service, "calls") and retirement is not None else None)
+        self.recovery_operations = CALL_RECOVERY_OPERATIONS if self._operations is not None else ()
+
+    def operation_rows(self, scope):
+        self._require_local(scope.profile)
+        return self._operations.rows(scope)
+
+    def operation_query(self, scope, operation_id):
+        self._require_local(scope.profile)
+        return self._operations.observe(scope, operation_id)
+
+    def operation_abandon(self, scope, target_id, operation_id):
+        self._require_local(scope.profile)
+        return self._operations.abandon(scope, target_id, operation_id)
+
+    def control_scoped(self, scope, action, params, operation_id):
+        self._require_local(scope.profile)
+        if self._operations is None:
+            # Once a vault has accepted protected media ownership, losing the
+            # host port cannot reopen the legacy mutation route around its fence.
+            with storage_errors():
+                if callable(getattr(self._service.store, "record_count", None)) and self._service.store.record_count("api_call_operation"):
+                    raise ApiFailure("resync_required")
+            return self.control(scope.profile, action, params, operation_id)
+        if action not in {"start", "answer", "restart", "answer_restart", "end", "candidate"}:
+            return self.control(scope.profile, action, params, operation_id)
+        with storage_errors():
+            try:
+                return self._operations.control(scope, action, params, operation_id)
+            except CallOutcomeRequiresResync as error:
+                raise ApiFailure("resync_required") from error
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
 
     def _require_local(self, profile):
         if profile != "local":

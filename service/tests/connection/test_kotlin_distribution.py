@@ -9,10 +9,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 from verify_kotlin_distribution import verify
 
 
-def artifact(tmp_path, extra=None):
+def artifact(tmp_path, extra=None, *, include_license=True, license_content=None):
     classes = io.BytesIO()
     with zipfile.ZipFile(classes, "w") as jar:
-        jar.writestr("META-INF/LICENSE", (Path(__file__).resolve().parents[3] / "LICENSE").read_bytes())
+        if include_license:
+            jar.writestr("META-INF/LICENSE", (Path(__file__).resolve().parents[3] / "LICENSE").read_bytes()
+                         if license_content is None else license_content)
         for name in ("com/meshchat/runtime/core/CoreClient.class", "com/meshchat/runtime/IMeshCoreApi.class"):
             jar.writestr(name, b"fixture")
         if extra: jar.writestr(extra, b"fixture")
@@ -40,3 +42,10 @@ def test_missing_client_and_native_payloads_fail_distribution_validation(tmp_pat
     with pytest.raises(ValueError): verify(path)
     with zipfile.ZipFile(path, "w") as aar: aar.writestr("AndroidManifest.xml", b"fixture")
     with pytest.raises(ValueError): verify(path)
+
+
+@pytest.mark.parametrize("content", [None, b"", b"fixture license"])
+def test_missing_empty_or_substituted_license_fails_distribution_validation(tmp_path, content):
+    path = artifact(tmp_path, include_license=content is not None, license_content=content)
+    with pytest.raises(ValueError, match="license"):
+        verify(path)
