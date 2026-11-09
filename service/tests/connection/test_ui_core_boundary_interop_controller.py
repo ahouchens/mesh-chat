@@ -12,9 +12,10 @@ import native_interop_evidence as evidence
 from native_interop_rendezvous import APPROVAL_PHASES, OFFER_PHASES, checked_payload
 
 
-def interop_reports(source="a" * 40, tree="b" * 40, android_artifacts=None):
+def interop_reports(source="a" * 40, tree="b" * 40, android_artifacts=None, *, workload="full"):
     """Complete fake runs for rejection tests only; no dist report is written."""
     from android_qualification import APKS, CORE_APKS, CONSUMER_ARTIFACTS, ROOT
+    plan = evidence.required_workload(workload)
     if android_artifacts is None:
         android_artifacts = {path.relative_to(ROOT).as_posix(): "e" * 64 for path in (*APKS, *CORE_APKS, *CONSUMER_ARTIFACTS)}
     def message(name, role):
@@ -37,7 +38,7 @@ def interop_reports(source="a" * 40, tree="b" * 40, android_artifacts=None):
     for role in ("windows", "android"):
         cases, iterations = [], []
         identity = evidence.digest([role, "identity"])
-        for name, initiator in evidence.PATH_CASES:
+        for name, initiator in plan["paths"]:
             case_id = name + ":" + initiator
             before = selection(case_id, role, role + "initial", name, 0, 1)
             after = selection(case_id, role, role + "initial", name, 1, 2)
@@ -59,7 +60,7 @@ def interop_reports(source="a" * 40, tree="b" * 40, android_artifacts=None):
                 "native_delta": {name: 1 for name in evidence.APPLICATION},
                 "messages": [message(f"{case_id}:{index}", role) for index in range(20 if name == "impaired" else 1)],
                 "impairment": impairment, "negative": negative, "retired_host_accounting": counts()})
-        for index in range(100):
+        for index in range(plan["iterations"]):
             generation = index // 10 + 1
             service = role + str(generation)
             previous = role + ("initial" if generation == 1 else str(generation - 1)) if index % 10 == 0 else service
@@ -69,7 +70,7 @@ def interop_reports(source="a" * 40, tree="b" * 40, android_artifacts=None):
                 "warm_baseline_resources": 1, "previous_service": evidence.digest(previous), "current_service": evidence.digest(service),
                 "identity": identity, "before": before, "after": after, "native_delta": {name: 1 for name in evidence.APPLICATION},
                 "host_accounting": counts(1), "warm_baseline_host_accounting": counts(1), "message": message(f"soak:{index}", role)})
-        result.append({"v": 1, "passed": True, "evidence_level": evidence.LEVEL, "role": role, "scope": evidence.SCOPE,
+        result.append({"v": 1, "passed": True, "evidence_level": plan["level"], "role": role, "scope": plan["scope"], "workload": workload,
             "context": {"repository": "example/mesh", "repository_id": 1, "run_id": 2, "run_attempt": 1, "source_commit": source},
             "source_commit": source, "source_tree": tree,
             "platform": {"windows": True} if role == "windows" else {"emulated": True, "abi": "x86_64", "kvm": True},
@@ -77,7 +78,8 @@ def interop_reports(source="a" * 40, tree="b" * 40, android_artifacts=None):
                           "scope": "outbound health and advertisement only; no allocation or selected path"},
             "artifacts": {"sidecar_sha256": "d" * 64, "build_input_sha256": "e" * 64, "build_manifest_sha256": "f" * 64} if role == "windows" else dict(android_artifacts),
             "execution": {"identity": identity, "scenarios": cases, "receipt_iterations": iterations,
-                "processes_started": 11, "forced_exits": 10, "clean_exits": 1, "webview_processes": 0, "cleanup": "passed"}})
+                "processes_started": (plan["iterations"] - 1) // 10 + 2, "forced_exits": (plan["iterations"] - 1) // 10 + 1,
+                "clean_exits": 1, "webview_processes": 0, "cleanup": "passed"}})
         result[-1]["execution"]["final_host_accounting"] = counts()
     return tuple(result)
 
@@ -165,7 +167,7 @@ def test_transport_filtering_uses_one_broker_url_and_never_counts_configuration_
 def test_fixed_plan_and_phase_inventory_fit_ten_artifacts_per_job_including_final_report():
     assert checked_payload("control", {"scenarios": list(evidence.SCENARIOS), "iterations": 100, "cold_start_every": 10})
     windows = {"key", *OFFER_PHASES, *("negative_checked_" + name for name in ("turn_tcp", "turn_tls", "impaired"))}
-    android = {"key", "approved", "impaired_ready", *("negative_ready_" + name for name in ("turn_tcp", "turn_tls", "impaired"))}
+    android = {"key", "offer", "approved", "impaired_ready", *("negative_ready_" + name for name in ("turn_tcp", "turn_tls", "impaired"))}
     assert len(windows) + 1 == 10 and len(android) + 1 <= 10
     assert all(name in APPROVAL_PHASES for name in windows | android if name.startswith("negative"))
 
@@ -180,6 +182,8 @@ def test_workflow_keeps_two_actual_concurrent_platform_jobs_and_owned_emulator_l
     for role, job in (("windows", windows), ("android", android)):
         action = next(step for step in job["steps"] if step.get("uses") == "./scripts/native-interop-artifact")
         assert action["with"]["role"] == role and action["env"]["GITHUB_TOKEN"] == "${{ github.token }}"
+        assert action["with"]["workload"] == "${{ inputs.workload }}"
+        assert next(step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@"))["with"]["fetch-depth"] == 0
         assert any(step.get("if") == "always()" and step.get("uses", "").startswith("actions/upload-artifact@") for step in job["steps"])
     assert not any(step.get("uses", "").startswith("reactivecircus/") for step in android["steps"])
     assert any("system-images;android-35;google_apis;x86_64" in step.get("run", "") for step in android["steps"])
@@ -192,3 +196,18 @@ def test_controller_uses_supervisor_pairing_and_both_direct_initiators():
         "native_webrtc_bind_onboarding", "native_webrtc_apply_answer", "signal_publish", "signal_fetch"))
     assert [(name, role) for name, role in evidence.PATH_CASES if name == "direct"] == [
         ("direct", "windows"), ("direct", "android")]
+
+
+@pytest.mark.parametrize("mode", ["quick", "full"])
+def test_workload_cannot_be_relabelled_or_substituted_for_the_other_matrix(mode):
+    reports = interop_reports(workload=mode)
+    evidence.verify_pair(*reports, "a" * 40, "b" * 40, workload=mode)
+    other = "full" if mode == "quick" else "quick"
+    with pytest.raises(ValueError):
+        evidence.verify_pair(*reports, "a" * 40, "b" * 40, workload=other)
+    # Changing labels alone cannot bypass the actual fixed native inventory.
+    for report in reports:
+        report.update(workload=other, scope=evidence.required_workload(other)["scope"],
+                      evidence_level=evidence.required_workload(other)["level"])
+    with pytest.raises(ValueError):
+        evidence.verify_pair(*reports, "a" * 40, "b" * 40, workload=other)

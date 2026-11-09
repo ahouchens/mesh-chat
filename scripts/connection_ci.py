@@ -6,6 +6,7 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import subprocess
+from native_interop_workload import selected_workload
 
 
 SUITES = ("policy", "verification", "android", "direct", "layout", "native_interop")
@@ -157,6 +158,7 @@ def select(paths, *, event="pull_request"):
     return {
         "version": 1, "event": event, "paths": paths,
         "required": required, "reason": reason,
+        "native_workload": selected_workload(event, paths) if "native_interop" in required else "full",
     }
 
 
@@ -244,7 +246,8 @@ def main():
         if args.evidence_dir is None:
             raise ValueError("Required component evidence directory is missing")
         from connection_matrix import collect
-        collected = collect(args.evidence_dir, plan["source_commit"], plan["source_tree"], plan["required"])
+        collected = collect(args.evidence_dir, plan["source_commit"], plan["source_tree"], plan["required"],
+                            native_workload=plan["native_workload"])
         result = manifest(plan, collected,
                           {name: value["result"] for name, value in jobs.items()})
     else:
@@ -252,6 +255,7 @@ def main():
         with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
             for suite in SUITES:
                 output.write(f"{suite}={str(suite in plan['required']).lower()}\n")
+            output.write(f"native_workload={plan['native_workload']}\n")
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(result))

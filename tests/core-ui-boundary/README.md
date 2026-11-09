@@ -112,8 +112,13 @@ signing, mailbox polling and custody transfer to the production supervisor.
 Controllers supply explicit Core contact decisions and disclosure consent.
 Direct paths run with both Windows and Android initiating; TURN UDP/TCP/TLS and
 impairment paths run with Windows initiating. Both platforms exchange messages
-and receipts in every case, then run 100 receipt iterations with a same-vault process
-restart every ten iterations. Native allocation accounting must be complete;
+and receipts in every case. Full runs execute 100 receipt iterations with a
+same-vault process restart every ten iterations. Known affected pull requests
+retain an actual native quick smoke: both direct initiators, TURN UDP, five
+receipt iterations and one cold restart. Manual, scheduled, release, merge-queue,
+push and unknown-diff selection stays full. Each host and the final gate recompute
+selection from the source and event; quick reports have a distinct evidence
+level and cannot satisfy full requirements. Native allocation accounting must be complete;
 unavailable disposal counts cannot stand in for zero leases. Every path retires
 its exact native reservations, and the soak compares actual allocations with
 its quiescent warm baseline.
