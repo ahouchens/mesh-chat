@@ -44,6 +44,9 @@ jobs:
       - name: Install Python dependencies
         run: python -m pip install --disable-pip-version-check -r service/requirements-dev.lock
 
+      - name: Prove UI serialization and uncertain enqueue through the production Core
+        run: python scripts/check_core_ui_boundary.py --expected-source "${{ github.sha }}"
+
       - name: Build and test the experimental core client
         run: |
           node node_modules/typescript/bin/tsc -p sdk/typescript

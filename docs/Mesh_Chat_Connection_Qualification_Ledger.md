@@ -1,5 +1,68 @@
 # Connection runtime qualification ledger
 
+## Integration revalidation (2026-11-09)
+
+### First combined implementation checkpoint
+
+The lead merged A `947e338`, C `1141e25`, B `8f1ceab`, then D `28752d5`
+(including `e2cf2ca` and `136cb07`) with merge commits, reaching
+`2e7536847a351387a5d7fcf5d22b9d3d8c21cd5b`. No feature-branch push or full CI
+qualification is claimed for this checkpoint.
+
+| Executed by lead | Exact source | Result and scope |
+| --- | --- | --- |
+| Existing Core and contract tests | `00d06525d05d033cb8396a532b0b4419354de59a` | 552 passed, zero skips, 20.29 s; production parsing, session and local service coverage. |
+| `check_core_ui_boundary.py` | `2e7536847a351387a5d7fcf5d22b9d3d8c21cd5b`, tree `8e9137c91b0108b4eb2e275788a40b8ef3684c2d` | 267 Python cases and five rendered-App cases passed, zero failures/skips, 24.24 s total. Real serializer/framing/parser/session/vault; Tauri invocation is substituted. This is not native-host or packaged evidence. |
+| Application and boundary TypeScript checks | `2e75368` | Both passed. |
+| Android-host, contract and workspace-admin tests after A `3feb24f` | `963538c408f3cfd8f6397462b27137a5e56f5132` | 197 passed, zero skips, 10.79 s. Service incarnation changes fence cached sessions; nullable workspace notifications and history actions align with UI/domain behavior. |
+
+The first boundary attempt failed because sandboxed esbuild could not traverse
+the workspace parent. The complete rerun outside that sandbox passed; a local
+pytest cache ACL warning remained, with no skipped test. Test outputs and vaults
+were worktree-local. Disk exhaustion interrupted worker native builds; those
+builds are not passing evidence. Heavy native/emulator work is assigned to CI.
+
+Review found a blocking defect in C `1141e25`: Android's `sendMessage` convenience
+omits the required `kind: "text"` field. The owner has an explicit correction in
+the coordination plan; the added Binder instrumentation must execute it against
+the production parser. Public-owner access to private native commands, remaining
+keyed-operation durability, full settings/call-control mutation coverage, and
+full exact-source CI remain open. B's pending-send identity and accepted-draft
+suppression are limited to the mounted renderer; restart-safe pending UI work
+remains a separate implementation requirement. Wave 1 is not accepted yet.
+
+### Baseline findings
+
+The current integration baseline is
+`435b497150e5f0d12cb1c5dc7b4602da7a66ec4c`. All runs below retain their
+historical source/artifact scope; none is automatically evidence for this head.
+The supplied baseline audit reports schema/production-parser disagreement,
+mutation idempotency rejection, mobile Core stubs and UI serialization/retry
+defects. These findings are repair inputs, not passing evidence. The lead has
+verified the clean baseline and presence of the native Windows implementation;
+combined Wave 1 execution and full CI qualification are pending.
+
+Lead verification at documentation-only descendant `623a7d0` (production code
+unchanged from the baseline): `pytest service/tests/connection/test_contracts.py`
+passed **25 tests, zero skips**, in 10.62 seconds. A task-local audit executed
+the existing vector-generating test, retained requests listed in the manifest's
+`experimental_component_operations`, serialized them through JSON, and called
+production `parse_request`: **81 accepted, 40 rejected/errored, 121 vectors**.
+This count uses that explicit manifest intersection; it is not the supplied
+audit's 124-vector selection. The failures confirm the schema suite does not
+establish production request acceptance. D owns the committed regression suite.
+
+The GitHub API reports baseline CI run
+[42598859239](https://github.com/ahouchens/mesh-chat/actions/runs/42598859239)
+successful at `435b497`; it contains the Windows desktop host and generic verify
+jobs. This observation is not a new full qualification run or artifact review.
+
+The [coordination inventory](Mesh_Chat_Core_Integration_Coordination.md) records
+owners, cross-boundary requirements and remaining specification obligations.
+Physical qualification remains unavailable and publication is outside scope.
+
+## Historical evidence
+
 This ledger records the automated evidence behind the connection-runtime refactor at
 commit `3517e3d` (2026-11-02). The transport and packaged-Windows evidence below
 was captured at
@@ -165,11 +228,13 @@ condition is recorded with its actual status:
 | M2: required coverage intact with explicit skip reporting | met | Gate fails
   missing, skipped, canceled or stale evidence; inventory has zero skips. |
 | M4: production Windows and Android transports no longer require a WebView |
-  **partially met** | Android native transport exists; Windows uses packaged
-  WebView2, and the production native Windows DataChannel is not implemented. |
+  **partially met** | Android native transport and a native Windows DataChannel
+  implementation exist. Native Windows component evidence uses legacy bridge
+  policy; production supervisor promotion and cross-platform parity remain open. |
 | M4: scenario runner on those exact transports, fault and 100-iteration
-  matrices | **not met** | Packaged WebView2 scenarios pass; the native Windows
-  fault/receipt soak does not exist. |
+  matrices | **not met** | Historical native Windows component fault and receipt
+  soaks are recorded above; the complete shared-policy, impaired, cross-platform
+  matrix and exact integrated-source qualification remain open. |
 | M4: defined physical qualification checklist on a release candidate |
   unavailable | No physical devices or isolated network. |
 | M5: INV21–INV26 and SC21–SC26 pass | **not met** | INV21/22/25/26 and
@@ -195,7 +260,7 @@ condition is recorded with its actual status:
 
 **Conclusion.** The specification's M2–M5 definition of done is not met. The
 facade and clients cover the implemented operation inventory, which is not proof
-that all specification requirements are implemented. Native Windows transport,
+that all specification requirements are implemented. Native Windows promotion,
 packaged consumers, UI migration, profile lifecycle, legacy-loop removal and the
 remaining automated scenarios are implementation/qualification work. Only the
 physical checklist requires the unavailable physical test environment. Release
@@ -214,7 +279,9 @@ These were **not** executed and are not claimed anywhere in this ledger:
 - published SDK/package artifacts and a supported version-pair matrix;
 - a **tagged** release qualification and any publication; a branch-build release
   qualification was executed and passed but is not a release;
-- a native Windows DataChannel implementation.
+- full supervisor-owned native Windows production promotion and its complete
+  cross-platform impairment qualification (the native implementation and
+  historical component tests do exist).
 
 The corresponding acceptance rows (INV21, INV22, INV25, INV26, SC01, SC21, SC25)
 remain partial or open for exactly these reasons.

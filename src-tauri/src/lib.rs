@@ -53,7 +53,7 @@ use tokio::sync::{oneshot, Mutex as AsyncMutex};
 
 #[cfg(mobile)]
 use tauri_plugin_mesh_runtime::{
-    CommandRequest, InitializeRequest, MeshRuntimeExt, NativeResponse, ThemeRequest,
+    CommandRequest, CoreCommandRequest, InitializeRequest, MeshRuntimeExt, NativeResponse, ThemeRequest,
 };
 
 #[cfg(desktop)]
@@ -1220,8 +1220,8 @@ fn core_api_capabilities(state: State<'_, ServiceState>) -> Result<Value, String
 
 #[cfg(mobile)]
 #[tauri::command]
-fn core_api_capabilities() -> Result<Value, String> {
-    Err("core_api_unavailable".into())
+async fn core_api_capabilities(app: AppHandle) -> Result<Value, String> {
+    mobile_core_command(&app, "capabilities", serde_json::json!({}))
 }
 
 #[cfg(desktop)]
@@ -1254,18 +1254,21 @@ fn core_api_profile(state: State<'_, ServiceState>) -> Result<Value, String> {
 
 #[cfg(mobile)]
 #[tauri::command]
-fn core_api_profile() -> Result<Value, String> {
-    Err("core_api_unavailable".into())
+async fn core_api_profile(app: AppHandle) -> Result<Value, String> {
+    mobile_core_command(&app, "profile", serde_json::json!({}))
 }
 
 #[cfg(mobile)]
 #[tauri::command]
-fn core_api_send_message(
-    _destination: String,
-    _text: String,
-    _idempotency_key: String,
+async fn core_api_send_message(
+    app: AppHandle,
+    destination: String,
+    text: String,
+    idempotency_key: String,
 ) -> Result<Value, String> {
-    Err("core_api_unavailable".into())
+    mobile_core_command(&app, "sendMessage", serde_json::json!({
+        "destination": destination, "text": text, "idempotencyKey": idempotency_key,
+    }))
 }
 
 #[cfg(desktop)]
@@ -1292,7 +1295,7 @@ fn core_api_request(
             .map(|items| items.iter().any(|item| item.as_str() == Some(operation.as_str())))
             .unwrap_or(false);
         if !advertised {
-            return Err("core_api_operation_unavailable".into());
+            return Err(json!({"code":"unsupported_operation", "retry_after_ms":null}).to_string());
         }
         return match idempotency_key.as_deref() {
             Some(key) => client.request_with_key(&operation, params, key),
@@ -1308,12 +1311,15 @@ fn core_api_request(
 
 #[cfg(mobile)]
 #[tauri::command]
-fn core_api_request(
-    _operation: String,
-    _params: Value,
-    _idempotency_key: Option<String>,
+async fn core_api_request(
+    app: AppHandle,
+    operation: String,
+    params: Value,
+    idempotency_key: Option<String>,
 ) -> Result<Value, String> {
-    Err("core_api_unavailable".into())
+    mobile_core_command(&app, "request", serde_json::json!({
+        "operation": operation, "params": params, "idempotencyKey": idempotency_key,
+    }))
 }
 
 #[cfg(windows)]
@@ -1375,8 +1381,8 @@ fn core_api_peer_for_destination(
 
 #[cfg(mobile)]
 #[tauri::command]
-fn core_api_peer_for_destination(_destination: String) -> Result<Value, String> {
-    Err("core_api_unavailable".into())
+async fn core_api_peer_for_destination(app: AppHandle, destination: String) -> Result<Value, String> {
+    mobile_core_command(&app, "peer", serde_json::json!({ "destination": destination }))
 }
 
 #[cfg(desktop)]
@@ -1413,8 +1419,8 @@ fn core_api_draft_get(state: State<'_, ServiceState>, destination: String) -> Re
 
 #[cfg(mobile)]
 #[tauri::command]
-fn core_api_draft_get(_destination: String) -> Result<Value, String> {
-    Err("core_api_unavailable".into())
+async fn core_api_draft_get(app: AppHandle, destination: String) -> Result<Value, String> {
+    mobile_core_command(&app, "draftGet", serde_json::json!({ "destination": destination }))
 }
 
 #[cfg(desktop)]
@@ -1455,8 +1461,27 @@ fn core_api_draft_set(
 
 #[cfg(mobile)]
 #[tauri::command]
-fn core_api_draft_set(_destination: String, _text: String) -> Result<Value, String> {
-    Err("core_api_unavailable".into())
+async fn core_api_draft_set(app: AppHandle, destination: String, text: String) -> Result<Value, String> {
+    mobile_core_command(&app, "draftSet", serde_json::json!({ "destination": destination, "text": text }))
+}
+
+#[cfg(mobile)]
+fn mobile_core_command(app: &AppHandle, action: &str, payload: Value) -> PendingResult {
+    let response = app.mesh_runtime().core_command(CoreCommandRequest {
+        action: action.into(), payload,
+    }).map_err(|_| serde_json::json!({"code":"unavailable", "retry_after_ms":null}).to_string())?;
+    let value: Value = serde_json::from_str(&response.json)
+        .map_err(|_| "core_api_protocol".to_string())?;
+    match value.get("ok").and_then(Value::as_bool) {
+        Some(true) => value.get("result").cloned().ok_or_else(|| "core_api_protocol".into()),
+        Some(false) => {
+            let error = value.get("error").filter(|error|
+                error.get("code").and_then(Value::as_str).is_some())
+                .ok_or_else(|| "core_api_protocol".to_string())?;
+            Err(error.to_string())
+        }
+        None => Err("core_api_protocol".into()),
+    }
 }
 
 #[cfg(desktop)]

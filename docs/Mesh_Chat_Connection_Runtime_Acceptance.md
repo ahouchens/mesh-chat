@@ -10,6 +10,23 @@ with executed evidence. It is deliberately conservative: a requirement is only
 marked at the level the evidence actually reaches, and physical-only acceptance
 is marked unavailable rather than inferred from emulation or CI.
 
+## Revalidation at the 2026-11-09 integration baseline
+
+The rows below summarize historical evidence, not qualification of baseline
+`435b497150e5f0d12cb1c5dc7b4602da7a66ec4c` or subsequent integration commits.
+The baseline audit supplied to this integration found 25 passing schema tests
+but only 84 accepted component examples and 40 rejections/errors through the
+production request parser. Parser parameter access, mutation idempotency
+admission, UI workspace field translation, mobile Core stubs and direct-send
+retry/refresh handling require repair and combined revalidation.
+
+Consequently the checked UI/Core migration items in the roadmap establish
+implementation intent, not application acceptance. Wave 1 must exercise the
+actual Windows and Android routes through serialization and production Core,
+including workspace state, messaging, settings and call control. See the
+[ownership and gate inventory](Mesh_Chat_Core_Integration_Coordination.md).
+No historical `local`, `component` or `workflow` label below closes that gate.
+
 ## Environment limits
 
 These constraints cap the evidence above and are recorded again in the
@@ -114,7 +131,7 @@ never described as physical-device qualification.
 | Boundary | Status | Note |
 | --- | --- | --- |
 | Shared policy complete | `partial` | One owner drives the experimental Android and desktop compositions, but manual-pairing parity, Windows-and-Android interoperability and legacy-loop removal are open. |
-| Headless messaging complete | `partial` | Android native transport and packaged Windows WebView2 scenarios qualify components; the production native Windows DataChannel adapter does not exist. |
+| Headless messaging complete | `partial` | Android native transport and native Windows DataChannel implementation exist. Historical native Windows durable-message and fault components use legacy bridge policy; shared-supervisor promotion, cross-platform interoperability, the complete impaired fault/receipt matrix and physical acceptance remain open. |
 | External integration complete (M5) | `partial` | Authenticated host components and experimental clients exist. Supported packages, complete independent messaging consumers, UI migration and compatibility/upgrade qualification remain open. |
 | Release gating complete | `partial` | Publication already requires exact-artifact aggregation. Branch-build qualification passed; tagged publication and the supported-pair matrix remain open. |
 

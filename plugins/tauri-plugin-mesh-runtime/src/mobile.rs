@@ -37,6 +37,10 @@ impl<R: Runtime> MeshRuntime<R> {
         Ok(self.0.run_mobile_plugin("command", payload)?)
     }
 
+    pub fn core_command(&self, payload: CoreCommandRequest) -> Result<NativeResponse> {
+        Ok(self.0.run_mobile_plugin("coreCommand", payload)?)
+    }
+
     pub fn drain_events(&self) -> Result<NativeResponse> {
         Ok(self.0.run_mobile_plugin("drainEvents", ())?)
     }

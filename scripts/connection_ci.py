@@ -22,6 +22,7 @@ COMPONENTS = {
 }
 PROTECTED_DOCS = {"AGENTS.md", "SKILL.md", "Mesh_Chat_Connection_Runtime_Spec.md"}
 CONNECTION_TESTS = "service/tests/connection/"
+UI_CORE_BOUNDARY_TESTS = "tests/core-ui-boundary/"
 TYPESCRIPT_SDK = "sdk/typescript/"
 PIPE_PRODUCTION = frozenset({
     "service/src/mesh_chat/core_api/pipe_endpoint.py",
@@ -70,6 +71,15 @@ def typescript_sdk(path):
     return path.startswith(TYPESCRIPT_SDK)
 
 
+def ui_core_boundary_test(path):
+    if not isinstance(path, str) or not path or "\\" in path:
+        return False
+    value = PurePosixPath(path)
+    if value.is_absolute() or ".." in value.parts:
+        return False
+    return path.startswith(UI_CORE_BOUNDARY_TESTS) and value.suffix in {".py", ".ts", ".tsx", ".json", ".md"}
+
+
 def pipe_production(path):
     if not isinstance(path, str) or not path or "\\" in path:
         return False
@@ -114,10 +124,16 @@ def select(paths, *, event="pull_request"):
                            and not pipe_only and not cli_only
                            and all(native_windows_production(path) for path in paths))
     kotlin_only = eligible and all(isinstance(path, str) and path in KOTLIN_CLIENT_PRODUCTION for path in paths)
+    ui_boundary_only = (eligible and any(ui_core_boundary_test(path) for path in paths)
+                        and all(ui_core_boundary_test(path) or connection_test(path) for path in paths))
     if documentation_only:
         required, reason = ["policy", "verification"], "isolated_documentation"
     elif connection_tests_only:
         required, reason = ["policy", "verification"], "isolated_connection_tests"
+    elif ui_boundary_only:
+        # The verification workflow executes these rendered UI/Python tests.
+        # Neither Android/native production nor packaged consumers import them.
+        required, reason = ["policy", "verification"], "isolated_ui_core_boundary_tests"
     elif sdk_only:
         required, reason = ["policy", "verification"], "isolated_typescript_sdk"
     elif pipe_only:

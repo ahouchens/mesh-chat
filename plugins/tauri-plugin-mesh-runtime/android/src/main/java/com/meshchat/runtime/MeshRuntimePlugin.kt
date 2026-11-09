@@ -52,6 +52,9 @@ import javax.crypto.spec.GCMParameterSpec
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.SynchronousQueue
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.RejectedExecutionException
 
 @InvokeArg
 class InitializeArgs {
@@ -133,6 +136,10 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
     }
     init { BootstrapClient.configure(activity.applicationContext) }
     companion object {
+        // Process-owned admission survives activity/plugin recreation. No queued
+        // mutation can run after a timeout or a new UI attaches.
+        private val coreExecutor = ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS,
+            SynchronousQueue(), { task -> Thread(task, "mesh-chat-core-ui").apply { isDaemon = true } })
         private const val TAG = "MeshChatRuntime"
         private const val MESSAGE_CHANNEL = "mesh_chat_messages_v1"
         private const val MENTION_CHANNEL = "mesh_chat_mentions_v1"
@@ -565,6 +572,25 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
             } catch (error: Throwable) {
                 reject(invoke, "initialize", error)
             }
+        }
+    }
+
+    @Command
+    fun coreCommand(invoke: Invoke) {
+        val raw = invoke.getRawArgs()
+        try {
+            coreExecutor.execute {
+                try {
+                    resolve(invoke, CoreApiBridge.typedCommand(activity.applicationContext, raw))
+                } catch (error: Throwable) {
+                    Log.e(TAG, "core_command failed (${error.javaClass.simpleName})")
+                    resolve(invoke, JSONObject().put("ok", false).put("error",
+                        CoreHostFailure("unavailable").error).toString())
+                }
+            }
+        } catch (_: RejectedExecutionException) {
+            resolve(invoke, JSONObject().put("ok", false).put("error",
+                CoreHostFailure("resource_exhausted").error).toString())
         }
     }
 

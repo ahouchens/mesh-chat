@@ -1,0 +1,64 @@
+# Core integration coordination — 2026-11-09
+
+Baseline: `435b497150e5f0d12cb1c5dc7b4602da7a66ec4c`.
+Lead branch: `codex/mesh-core-integration-lead`.
+This file records assignments and integration decisions, not passing evidence.
+
+## Wave 1 ownership and gate
+
+| Owner | Exclusive changes | Required outcome |
+| --- | --- | --- |
+| A | `contracts/core-api/`, `service/src/mesh_chat/core_api/`, existing Core contract/parser/session tests | Serialized requests agree with production parsing and session validation; mutation idempotency is durable and caller-scoped. |
+| B | Application `src/` and its tests | Core parameter names survive serialization; ambiguous sends reuse their key; accepted sends cannot be restored after a refresh error; media remains in WebView2. |
+| C | `src-tauri/src/`, runtime-plugin Rust, Android runtime/Binder implementation and host tests | Windows and Android expose working snapshot, profile, request and send routes with caller authority and correlated typed errors. Public Kotlin SDK files remain frozen. |
+| D | Workflows, qualification scripts, new cross-boundary tests | Tests exercise serialized frontend/host traffic through the production parser/session or actual host, and required evidence cannot silently skip. |
+| Lead | Roadmap, acceptance, ledger and this coordination file | Review and merge A, C, B, D in order; run combined checks; inspect exact-source CI artifacts. |
+
+No owner edits another owner's file. Cross-owner requirements belong in worker
+reports until assigned. Worktrees and their build caches stay separate. D owns
+coordination of emulator/packaged verification resources; no concurrent local
+emulator reservation is granted during bootstrap.
+
+Wave 1 passes only when actual Windows and Android app paths load application
+and workspace state and execute representative messaging, settings and call
+control through Core. Native Windows transport replaces messaging only. WebView2
+audio/video remains supported. Schema validation, simulated service ports and
+legacy command mocks cannot alone satisfy this gate.
+
+## Cross-owner interface requirements
+
+1. A/B/D: `conversation` and `thread_root` remain Core contract fields. Conversion
+   to legacy domain IDs occurs inside the protected adapter, never before a typed
+   Core request reaches the production parser.
+2. A/B/C/D: request idempotency keys must survive the host route unchanged. The
+   parser and session must agree on accepted keys for all mutation operations.
+3. B/D: distinguish uncertain enqueue outcomes from confirmed acceptance and
+   subsequent snapshot failure. Retry the former with the same key and payload;
+   the latter must not reinsert text into the composer or send again.
+4. C/D: test the mobile entry points rather than passing Android via desktop-only
+   mocks. Preserve Binder caller identity across executor dispatch.
+5. D: full qualification must be explicitly dispatched for the integration head.
+   The baseline workflow push filter does not include this feature branch;
+   a successful push by itself does not establish a CI run.
+
+## Remaining specification ownership inventory
+
+Wave 2 assignments below are reserved scope, activated after Wave 1 integration
+and qualification. Exact additional files and Kotlin ownership transfer will be
+recorded before edits; the public SDK freeze is still in effect.
+
+| Owner | Remaining acceptance obligations |
+| --- | --- |
+| A | SDKs and independent distribution-only consumers; install/upgrade and preserved data; API/package compatibility and rejection; event replay/gap recovery; runtime ownership and multi-client consumer semantics (INV21–26, SC21–26, sections 6.5–6.7). |
+| B | Remove UI compatibility/policy paths after qualified replacement; media teardown and pairing closure coexistence; supported UI through the same facade (INV17/22, SC17, section 3.3). |
+| C | Supervisor promotion, native contact/workspace pairing, profile create/select/unlock/lock host lifecycle, exclusive runtime ownership, legacy policy retirement, all-mode foreground/background parity and exact-resource cleanup (INV01–19/22, SC01–19/26). |
+| D | Packaged Windows/Android and WebView interoperability; selected ICE path with negative control; forced relay, UDP denial and rebinding; 150 ms RTT fault budgets; saturation and 100-iteration receipt/cold-start matrix; baseline timing and wire fixtures; mandatory exact-source CI evidence (SC01–26, INV20). |
+| Lead | Reconcile all 26 invariants, all 26 scenarios and section 13 boundaries; document storage/export/uninstall, support windows and redistribution obligations with implementation owners; keep publication and physical evidence separate. |
+
+## Evidence rules
+
+Each integration batch records base/result SHA, changed files, command and test
+counts, dependencies and limits. Historical manifests qualify only their named
+source/artifacts. Unit/local, native component, emulator, packaged and workflow
+evidence are distinct. No physical qualification is available. No release, tag,
+publication, force push or main merge is authorized.
