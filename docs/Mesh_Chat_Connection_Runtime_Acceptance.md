@@ -30,6 +30,12 @@ EFS and frozen execution; its wiring and component tests are not that evidence.
 CI `42683615511` finishes failed at the older source because both native interop
 jobs fail initialization. The pipe-name repair requires a fresh full run.
 
+The repaired combined source `5ea2949` passes all 3,379 required policy cases,
+664 Python plus ten rendered-App boundary cases, and nine Windows host components,
+with zero failures/skips. Full CI `42693457737` is newly dispatched at this exact
+source. These passes supersede the nine local inventory failures above; packaged,
+device authentication, independent cross-platform and media obligations remain.
+
 Wave 2 now has a complete local policy pass at `538ba226` (2,815 cases, no skips),
 exact rendered-App/Core recovery evidence, installed SDK consumer checks and
 pinned component upgrade/downgrade fixtures. These strengthen the local boundary

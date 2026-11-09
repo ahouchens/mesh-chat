@@ -2,6 +2,34 @@
 
 ## Integration revalidation (2026-11-09)
 
+### Current combined checkpoint and full CI dispatch
+
+Source `5ea29493d0420896a8801169c78145e640fdc5dd`, tree
+`d1a963ce25ff98dc9ce93a692f7b497a06c6986d`, integrates both inventory repairs
+and B's native profile controls, including pending-host replacement regressions.
+The lead's exact SDK staging passes, then:
+
+- Complete policy: **3,379 passes, zero failures/skips**, 356.92s wall time,
+  347.422s summed test duration, qualification `c91d7315479947e3af2ac9e713c0120f`.
+  Reports: `dist/reports/profile-policy.{json,xml,inventory.json}`.
+- Exact App/Core boundary: **664 Python and ten rendered-App cases**, no failures
+  or skips, 47.88s. Python XML SHA-256
+  `b7b18ae8ad8b776a238acace3d5a1e02679ff4a7f566366294d48b7857ffd428`;
+  rendered XML `c1e3906ade4ecb227966b18633449391f96a5457aab006d674d205db37a66520`.
+- Exact Windows host components: **nine passes, zero failures/skips**, 4.11s.
+  XML SHA-256 `c6fbc6bb985540b6019a9794c29716d8df6013b27a5edf32a875b3608c96b1b6`;
+  inventory `01120350612b18ebafd6873465d2856ca8d2a58ad63ecd558cce61815430c2d1`.
+  These use explicit test-only Vault storage and do not prove EFS or packaging.
+- Integrated profile UI/effect controls: 34 passes, 15.70s. Worker B separately
+  reports all 777 frontend tests and TypeScript checks passing.
+
+The checkpoint is pushed to the shared feature branch. Full manual CI
+[42693457737](https://github.com/ahouchens/mesh-chat/actions/runs/42693457737)
+is dispatched; duplicate PR run `42693436511` is canceled. The lead pinned 137
+validator/source files under `.test-tmp/ci-evidence-5ea2949`. CI outcomes remain
+pending. None of these local passes establish OS credential UI, native
+cross-platform receipts, physical behavior or trusted browser-media retirement.
+
 ### Integrated public pairing and native cleanup review
 
 Source `787b6aa4f9fff789a251668cf82b3da3b5fbc8f9`, tree

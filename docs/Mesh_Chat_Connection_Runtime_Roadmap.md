@@ -21,6 +21,13 @@ Completed CI `42683615511` at older `21bb99c` fails native interoperability;
 the invalid controller pipe namespace is repaired locally, awaiting a fresh run.
 No default selector or scenario promotion follows from these component passes.
 
+Both inventory repairs and native profile controls are integrated at `5ea2949`.
+Complete policy now passes 3,379 tests; exact boundary passes 664 Python plus ten
+rendered-App cases, and all nine Windows host components pass without skips.
+The shared feature checkpoint is under full CI `42693457737`. Standalone Android
+runtime packaging, ordinary installed-SDK pairing traffic, protected action-key
+recovery across renderer restart and trusted browser-media ownership remain work.
+
 Wave 2 local source `538ba226` passes 2,815 required policy cases and strict
 model/reducer typing. Composer recovery, retained call-operation tickets,
 private inspector bindings, profile retirement and standalone SDK staging are

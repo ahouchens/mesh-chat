@@ -11,7 +11,7 @@ reports. Exact evidence and limits are in the ledger. Wave 2 is activated below.
 Existing human authorization covers continued implementation, integration and
 worker follow-ups without another permission request.
 
-Current pairing integration is `787b6aa`, including C's reviewed Android provider correction
+Current shared integration is `5ea2949`, including C's reviewed Android provider correction
 `0bfb95d`. Separate protected catalog authority avoids reading the profile key
 at locked startup; each OS credential confirmation uses its own AndroidX result
 registration. The lead's exact SDK staging and 115 lifecycle/mobile-host checks
@@ -43,6 +43,17 @@ path failures and one missing pairing-vector inventory. D's pairing vectors
 are integrated; the inventory-root repair and complete rerun remain required.
 B continues native profile UI and C the standalone Android host. The older
 checkpoints below retain their chronology.
+
+The inventory repairs and B's native profile controls are now integrated at
+`5ea29493d0420896a8801169c78145e640fdc5dd`. Its exact SDK stage, complete policy
+(3,379 passes, zero skips), App/Core boundary (664 Python plus ten rendered cases)
+and nine Windows host components all pass. The lead pushed this checkpoint and
+dispatched full CI `42693457737`; duplicate PR run `42693436511` was canceled.
+Native profile UI retains explicit keys and rejects late credentials/results
+after host replacement. Device credential execution, renderer-restart key
+recovery and actual browser-media retirement remain unqualified. A/B review the
+next bounded storage/ownership contracts; C continues the standalone Android host
+and D the normal Windows installed-SDK pairing producer in separate checkpoints.
 
 Current Wave 2 CI `42676194199` at `da81565` fails two synthetic run-context
 fixtures and Windows first-time pairing (`approved_path`, both carriers absent).
