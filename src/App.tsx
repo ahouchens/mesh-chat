@@ -347,19 +347,6 @@ function groupDeliveryLabel(message: GroupMessage): string {
   return `Sending to ${total}`;
 }
 
-function legacyWorkspaceParams(params: Record<string, unknown>): Record<string, unknown> {
-  const legacy = { ...params };
-  if ("thread_root" in legacy) {
-    legacy.thread_root_id = legacy.thread_root;
-    delete legacy.thread_root;
-  }
-  if ("conversation" in legacy) {
-    legacy.conversation_id = legacy.conversation;
-    delete legacy.conversation;
-  }
-  return legacy;
-}
-
 async function callControl(
   action: string,
   params: Record<string, unknown>,
@@ -389,7 +376,7 @@ async function fetchWorkspaceTimeline(
   params: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
   return await coreApiTimelineQuery(
-    workspace.core_handle ?? "", view, legacyWorkspaceParams(params));
+    workspace.core_handle ?? "", view, params);
 }
 
 async function mutateWorkspaceTimeline(
@@ -400,7 +387,7 @@ async function mutateWorkspaceTimeline(
   operationId?: string,
 ): Promise<Record<string, unknown>> {
   return await coreApiTimelineMutation(
-    workspace.core_handle ?? "", action, legacyWorkspaceParams(params),
+    workspace.core_handle ?? "", action, params,
     operationId ?? newOperationId());
 }
 
@@ -416,7 +403,7 @@ async function fetchWorkspaceAccessRecommendation(
   key?: string,
 ): Promise<Record<string, unknown>> {
   return await coreApiWorkspaceAccessRecommendation(
-    workspace.core_handle ?? "", action as never, legacyWorkspaceParams(params), key);
+    workspace.core_handle ?? "", action as never, params, key);
 }
 
 async function fetchWorkspaceHistory(
@@ -427,7 +414,7 @@ async function fetchWorkspaceHistory(
   key?: string,
 ): Promise<Record<string, unknown>> {
   return await coreApiWorkspaceHistory(
-    workspace.core_handle ?? "", action as never, legacyWorkspaceParams(params), key);
+    workspace.core_handle ?? "", action as never, params, key);
 }
 
 async function fetchWorkspaceConnection(
@@ -438,7 +425,7 @@ async function fetchWorkspaceConnection(
   key?: string,
 ): Promise<Record<string, unknown>> {
   return await coreApiWorkspaceConnection(
-    workspace?.core_handle ?? null, action, legacyWorkspaceParams(params), key);
+    workspace?.core_handle ?? null, action, params, key);
 }
 
 async function fetchBackgroundStatus(): Promise<BackgroundAvailability> {
@@ -5157,6 +5144,8 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
   const [directSendBusy, setDirectSendBusy] = useState(false);
   const [groupSendBusy, setGroupSendBusy] = useState(false);
   const directSendInFlight = useRef(false);
+  const pendingDirectSends = useRef(new Map<string, string>());
+  const acceptedDirectDrafts = useRef(new Map<string, string>());
   const groupSendInFlight = useRef(false);
   const reactionInFlight = useRef(false);
   const reactionInteractionGeneration = useRef(0);
@@ -5250,7 +5239,8 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     void (async () => {
       try {
         const saved = await coreApiDraftGet(contact.destination_hash) as { text?: unknown };
-        if (active && typeof saved.text === "string") {
+        if (active && typeof saved.text === "string"
+          && acceptedDirectDrafts.current.get(contact.id) !== saved.text) {
           setDrafts((current) => current[contact.id] ? current : { ...current, [contact.id]: saved.text as string });
         }
       } catch { /* Snapshot drafts remain available when Core is unavailable. */ }
@@ -5753,6 +5743,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     }
   };
   const saveDraft = (contactId: string, text: string) => {
+    acceptedDirectDrafts.current.delete(contactId);
     setDrafts((current) => ({ ...current, [contactId]: text }));
     scheduleDraftWrite(`contact:${contactId}`, {
       command: "save_draft",
@@ -5793,7 +5784,12 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     const text = drafts[selectedContact.id] ?? "";
     if (!text.trim()) return;
     const contactId = selectedContact.id;
+    const destination = selectedContact.destination_hash;
+    const priorMessageIds = new Set(snapshot.messages.map((message) => message.id));
     const draftKey = `contact:${contactId}`;
+    const pendingKey = JSON.stringify([destination, text]);
+    const operationId = pendingDirectSends.current.get(pendingKey) ?? newOperationId();
+    pendingDirectSends.current.set(pendingKey, operationId);
     directSendInFlight.current = true;
     setDirectSendBusy(true);
     setSendError("");
@@ -5801,33 +5797,26 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     // Drop every not-yet-started keystroke save and wait for the sole active
     // save, if any. The send and final empty-draft write then have a strict
     // order even on Android's single native Python worker.
-    await cancelPendingDraftWrite(draftKey);
-    let saved: ChatMessage | null = null;
+    let accepted: Partial<ChatMessage>;
     try {
-      const accepted = await coreApiSendMessage(
-        selectedContact.destination_hash, text, newOperationId()) as Partial<ChatMessage>;
-      const refreshed = await refresh(true);
-      saved = refreshed.messages
-        .filter((message) => message.contact_id === contactId
-          && message.direction === "outbound" && message.text === text)
-        .sort((left, right) => right.created_at - left.created_at)[0]
-        ?? (accepted.direction === "outbound" ? accepted as ChatMessage : null);
+      await cancelPendingDraftWrite(draftKey);
+      accepted = await coreApiSendMessage(destination, text, operationId) as Partial<ChatMessage>;
     } catch (reason) {
       setDrafts((current) => current[contactId] ? current : { ...current, [contactId]: text });
       scheduleDraftWrite(draftKey, {
         command: "save_draft",
         payload: { contact_id: contactId, text },
       });
-      setSendError(`${errorMessage(reason)} Your text is still in the composer. Check the conversation before sending it again.`);
+      setSendError(`${errorMessage(reason)} Your text is still in the composer. Retrying unchanged text will check the same send without creating another message.`);
       directSendInFlight.current = false;
       setDirectSendBusy(false);
       return;
     }
-    if (saved) {
-      const confirmed = saved;
+    pendingDirectSends.current.delete(pendingKey);
+    acceptedDirectDrafts.current.set(contactId, text);
+    if (accepted.direction === "outbound" && accepted.id) {
+      const confirmed = accepted as ChatMessage;
       setLocallySavedMessages((current) => ({ ...current, [confirmed.id]: confirmed }));
-    } else {
-      setSendError("Your message was accepted by the Core API, but the conversation has not refreshed it yet.");
     }
     try {
       await writeDraftNow(draftKey, {
@@ -5842,9 +5831,13 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     try {
       // A state-change event may already have started a snapshot before the
       // send committed. Queue a new snapshot behind it instead of reusing it.
-      await refresh(true);
+      const refreshed = await refresh(true);
+      if (!accepted.id && !refreshed.messages.some((message) => !priorMessageIds.has(message.id)
+        && message.contact_id === contactId && message.direction === "outbound" && message.text === text)) {
+        setSendError((current) => `${current || "Your message was saved. The conversation has not updated yet."} Saved text: ${text}`);
+      }
     } catch {
-      setSendError((current) => current || "Your message was saved. The conversation could not refresh yet, but it will appear when Mesh Chat updates.");
+      setSendError((current) => `${current || "Your message was saved. The conversation could not refresh yet, but it will appear when Mesh Chat updates."} Saved text: ${text}`);
     } finally {
       directSendInFlight.current = false;
       setDirectSendBusy(false);
@@ -6803,7 +6796,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
         conversation: durable.conversationId,
         thread_root: durable.threadRootId,
         text: durable.text,
-      }, "send_workspace_thread_reply") as unknown as WorkspaceMessage;
+      }, "send_workspace_thread_reply", durable.operationId) as unknown as WorkspaceMessage;
     } catch (reason) {
       setWorkspaceError(`${errorMessage(reason)} Your reply is still in the composer; retrying will reuse the same durable message ID.`);
       workspaceSendInFlight.current = false;

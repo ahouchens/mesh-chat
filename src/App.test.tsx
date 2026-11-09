@@ -6,6 +6,13 @@ import type { ChatMessage, Contact, Group, GroupInvitation, GroupMessage, Snapsh
 
 const api = vi.hoisted(() => {
   const serviceCommand = vi.fn();
+  // Older presentation fixtures use service command names. Translate only in
+  // this test adapter; App.core.test.tsx asserts the production Core envelopes.
+  const fixtureParams = ({ conversation, thread_root, ...params }: Record<string, unknown>) => ({
+    ...params,
+    ...(conversation !== undefined ? { conversation_id: conversation } : {}),
+    ...(thread_root !== undefined ? { thread_root_id: thread_root } : {}),
+  });
   return {
   beginCallAudio: vi.fn(async () => ({ granted: true })),
   coreApiAcceptInvitation: vi.fn(async (invitation: string, i2pConsent = false): Promise<unknown> => serviceCommand("accept_invitation", { invitation, ...(i2pConsent ? { i2p_consent: true } : {}) })),
@@ -41,7 +48,7 @@ const api = vi.hoisted(() => {
       const direct = view === "direct_messages";
       return serviceCommand(direct ? "list_workspace_direct_messages" : "list_workspace_messages", {
         workspace_id: workspace.id,
-        ...(direct ? { conversation_id: params.conversation_id ?? params.conversation }
+        ...(direct ? { conversation_id: params.conversation }
                    : { channel_id: params.channel }),
         cursor: params.cursor, limit: params.limit,
       });
@@ -49,7 +56,7 @@ const api = vi.hoisted(() => {
     const command = view === "threads" ? "list_workspace_threads"
       : view === "thread_messages" ? "list_workspace_thread_messages"
       : view === "mentions" ? "list_workspace_mentions" : "search_workspace";
-    return serviceCommand(command, { workspace_id: workspace.id, ...params });
+    return serviceCommand(command, { workspace_id: workspace.id, ...fixtureParams(params) });
   }),
   coreApiTimelineMutation: vi.fn(async (_handle: string, action: string, params: Record<string, unknown>, key: string): Promise<unknown> => {
     if (action === "message_edit" || action === "message_delete" || action === "reaction_set") {
@@ -64,7 +71,7 @@ const api = vi.hoisted(() => {
     }
     if (action === "channel_message" || action === "direct_message") {
       const direct = action === "direct_message";
-      const conversation = params.conversation_id ?? params.conversation;
+      const conversation = params.conversation;
       return serviceCommand(direct ? "send_workspace_direct_message" : "send_workspace_message", {
         workspace_id: workspace.id, operation_id: key, event_id: params.event_id,
         text: params.text, mention_member_ids: params.mention_member_ids,
@@ -77,7 +84,7 @@ const api = vi.hoisted(() => {
       : action === "workspace_read" ? "mark_workspace_read"
       : action === "direct_read" ? "mark_workspace_direct_read"
       : "set_workspace_notification_preference";
-    return serviceCommand(command, { workspace_id: workspace.id, operation_id: key, ...params });
+    return serviceCommand(command, { workspace_id: workspace.id, operation_id: key, ...fixtureParams(params) });
   }),
   coreApiWorkspaceSnapshot: vi.fn(async (): Promise<unknown> => serviceCommand("workspace_snapshot")),
   coreApiWorkspaceAccessRecommendation: vi.fn(async (_handle: string, action: string, params: Record<string, unknown>, key?: string): Promise<unknown> => {
@@ -97,7 +104,7 @@ const api = vi.hoisted(() => {
       : action === "revisions" ? "list_workspace_message_revisions"
       : action === "tombstones" ? "list_workspace_tombstones"
       : "hide_workspace_direct";
-    return serviceCommand(command, { workspace_id: workspace.id, ...params, ...(key ? { operation_id: key } : {}) });
+    return serviceCommand(command, { workspace_id: workspace.id, ...fixtureParams(params), ...(key ? { operation_id: key } : {}) });
   }),
   coreApiWorkspaceConnection: vi.fn(async (handle: string | null, action: string, params: Record<string, unknown>, key?: string): Promise<unknown> => {
     const command = action === "reconnect_status" ? "workspace_reconnect_status"
@@ -4166,7 +4173,7 @@ describe("connected conversation", () => {
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("Your text is still in the composer.");
-    expect(alert.textContent).toContain("Check the conversation before sending it again.");
+    expect(alert.textContent).toContain("Retrying unchanged text will check the same send without creating another message.");
     expect((composer as HTMLTextAreaElement).value).toBe("Please keep this draft");
   });
 
@@ -4194,7 +4201,7 @@ describe("connected conversation", () => {
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain(guidance);
     expect(alert.textContent).toContain("Your text is still in the composer.");
-    expect(alert.textContent).toContain("Check the conversation before sending it again.");
+    expect(alert.textContent).toContain("Retrying unchanged text will check the same send without creating another message.");
     expect((composer as HTMLTextAreaElement).value).toBe("Keep this exact reply");
   });
 
@@ -4248,7 +4255,7 @@ describe("connected conversation", () => {
     const conversation = screen.getByLabelText("Conversation with Taylor");
     expect(await within(conversation).findByText(outbound.text)).toBeTruthy();
     expect(screen.getByText("Saved on this device")).toBeTruthy();
-    expect(snapshotCalls).toBe(3);
+    expect(snapshotCalls).toBe(2);
   });
 
   it("uses the facade send path and refreshes the authoritative message", async () => {
@@ -4270,7 +4277,7 @@ describe("connected conversation", () => {
     api.serviceCommand.mockImplementation(async (command: string) => {
       if (command === "snapshot") {
         snapshots += 1;
-        return snapshots === 1 ? before : { ...before, messages: [outbound] };
+        return { ...before, messages: [outbound] };
       }
       return {};
     });
@@ -4321,7 +4328,7 @@ describe("connected conversation", () => {
     const conversation = screen.getByLabelText("Conversation with Taylor");
     expect(await within(conversation).findByText(outbound.text)).toBeTruthy();
     expect(within(conversation).getByText("Sending…")).toBeTruthy();
-    expect(snapshotCalls).toBe(1);
+    expect(snapshotCalls).toBe(0);
 
     await act(async () => draftCleanup.resolve({}));
   });

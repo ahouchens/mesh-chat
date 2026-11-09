@@ -15,7 +15,7 @@ vi.mock("@tauri-apps/plugin-deep-link", () => ({
 }));
 vi.mock("@tauri-apps/api/app", () => ({ onBackButtonPress: vi.fn() }));
 
-import { beginCallAudio, lockService, onInvitation, pickInvitationFile, requestMediaPermission, serviceCommand, type ServiceEvent } from "./api";
+import { beginCallAudio, coreApiRequest, coreApiSendMessage, lockService, onInvitation, pickInvitationFile, requestMediaPermission, serviceCommand, type ServiceEvent } from "./api";
 import { loadPairingResume, savePairingResume } from "./pairing-resume";
 
 it("forgets encrypted pairing secrets when locking the service", async () => {
@@ -30,6 +30,47 @@ afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   vi.clearAllMocks();
+});
+
+it.each(["request", "send"] as const)("preserves typed %s errors and retry metadata without a legacy resend", async (kind) => {
+  tauri.invoke.mockRejectedValue(JSON.stringify({ code: "rate_limited", retry_after_ms: 250 }));
+  const request = kind === "send"
+    ? coreApiSendMessage("destination", "text", "operation")
+    : coreApiRequest("workspace.timeline_mutation", {}, "operation");
+  await expect(request).rejects.toMatchObject({ name: "ServiceCommandError", code: "rate_limited", retry_after_ms: 250 });
+  expect(tauri.invoke).toHaveBeenCalledTimes(1);
+  expect(tauri.invoke).not.toHaveBeenCalledWith("service_command", expect.anything());
+});
+
+it("preserves unavailable as a Core outcome without treating it as a missing host", async () => {
+  tauri.invoke.mockRejectedValue(JSON.stringify({ code: "unavailable", retry_after_ms: null }));
+  await expect(serviceCommand("native_status")).rejects.toMatchObject({ code: "unavailable", retry_after_ms: null });
+  expect(tauri.invoke).toHaveBeenCalledTimes(1);
+});
+
+describe("workspace composite operation envelopes", () => {
+  it.each([
+    ["coreApiWorkspaceHistory", "workspace.history", "status", { conversation: "conversation-uuid" }],
+    ["coreApiWorkspaceHistory", "workspace.history", "start", { conversation: "conversation-uuid" }],
+    ["coreApiWorkspaceHistory", "workspace.history", "cancel", { conversation: "conversation-uuid" }],
+    ["coreApiWorkspaceHistory", "workspace.history", "tombstones", { conversation: "conversation-uuid", cursor: null, limit: 50 }],
+    ["coreApiWorkspaceConnection", "workspace.connection", "reconnect_status", {}],
+    ["coreApiWorkspaceAccessRecommendation", "workspace.access_recommendation", "list", {}],
+  ] as const)("serializes %s %s %s with its required key", async (method, operation, action, params) => {
+    const api = await import("./api");
+    tauri.invoke.mockImplementation(async (command: string) => command === "core_api_profile"
+      ? { profile: "profile-handle" } : { result: {} });
+    const request = api[method] as (workspace: string, action: string, params: Record<string, unknown>, key?: string) => Promise<unknown>;
+    await request("workspace-handle", action, params);
+    expect(tauri.invoke).toHaveBeenLastCalledWith("core_api_request", {
+      operation, params: { profile: "profile-handle", workspace: "workspace-handle", action, ...params },
+      idempotencyKey: expect.any(String),
+    });
+    const generated = tauri.invoke.mock.calls.at(-1)![1].idempotencyKey;
+    expect(generated).toMatch(/^[0-9a-f-]{36}$/);
+    await request("workspace-handle", action, params, "retained-operation-key");
+    expect(tauri.invoke.mock.calls.at(-1)![1].idempotencyKey).toBe("retained-operation-key");
+  });
 });
 
 it("routes snapshot reads through the application facade", async () => {

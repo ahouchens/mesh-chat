@@ -4,6 +4,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
 import type { AdmissionGrant, NotificationCapability, Snapshot } from "./types";
 import { clearPairingResume } from "./pairing-resume";
+import { newOperationId } from "./operationId";
 
 export interface ServiceEvent {
   type: "event";
@@ -77,31 +78,45 @@ function subscribeMobileServiceEvents(callback: (event: ServiceEvent) => void): 
 export class ServiceCommandError extends Error {
   code: string;
   details?: Record<string, string>;
+  retry_after_ms: number | null;
 
-  constructor(code: string, details?: Record<string, string>) {
+  constructor(code: string, details?: Record<string, string>, retryAfterMs: number | null = null) {
     super(code);
     this.name = "ServiceCommandError";
     this.code = code;
     this.details = details;
+    this.retry_after_ms = retryAfterMs;
   }
 }
 
 function normalizedServiceError(reason: unknown): ServiceCommandError {
-  const text = String(reason);
+  if (reason instanceof ServiceCommandError) return reason;
+  const text = reason instanceof Error ? reason.message : String(reason);
   try {
-    const parsed = JSON.parse(text) as { code?: unknown; details?: unknown };
+    const parsed = JSON.parse(text) as { code?: unknown; details?: unknown; retry_after_ms?: unknown };
     if (typeof parsed.code === "string") {
       const details = parsed.details && typeof parsed.details === "object"
         ? Object.fromEntries(Object.entries(parsed.details).filter(
           (entry): entry is [string, string] => typeof entry[1] === "string",
         ))
         : undefined;
-      return new ServiceCommandError(parsed.code, details);
+      const retryAfterMs = typeof parsed.retry_after_ms === "number"
+        && Number.isInteger(parsed.retry_after_ms) && parsed.retry_after_ms >= 0
+        ? parsed.retry_after_ms : null;
+      return new ServiceCommandError(parsed.code, details, retryAfterMs);
     }
   } catch {
     // Existing sidecars return a plain allowlisted error code.
   }
   return new ServiceCommandError(text);
+}
+
+async function invokeCoreCommand<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  try {
+    return await invoke<T>(command, args);
+  } catch (reason) {
+    throw normalizedServiceError(reason);
+  }
 }
 
 export function runtimePlatform(): Promise<"desktop" | "android" | "ios"> {
@@ -147,7 +162,7 @@ export async function coreApiCapabilities(): Promise<{
   operations: string[];
   profiles: string[];
 }> {
-  return invoke("core_api_capabilities");
+  return invokeCoreCommand("core_api_capabilities");
 }
 
 export async function coreApiProfile(): Promise<{
@@ -157,7 +172,7 @@ export async function coreApiProfile(): Promise<{
   connections: string[];
   peers: string[];
 }> {
-  return invoke("core_api_profile");
+  return invokeCoreCommand("core_api_profile");
 }
 
 export async function coreApiSendMessage(
@@ -165,11 +180,7 @@ export async function coreApiSendMessage(
   text: string,
   idempotencyKey: string,
 ): Promise<unknown> {
-  return invoke("core_api_send_message", {
-    destination,
-    text,
-    idempotencyKey,
-  });
+  return invokeCoreCommand("core_api_send_message", { destination, text, idempotencyKey });
 }
 
 export async function coreApiRequest<T>(
@@ -177,7 +188,7 @@ export async function coreApiRequest<T>(
   params: Record<string, unknown> = {},
   idempotencyKey?: string,
 ): Promise<T> {
-  return invoke("core_api_request", { operation, params, idempotencyKey: idempotencyKey ?? null });
+  return invokeCoreCommand("core_api_request", { operation, params, idempotencyKey: idempotencyKey ?? null });
 }
 
 export async function coreApiPeerForDestination(destination: string): Promise<{
@@ -185,7 +196,7 @@ export async function coreApiPeerForDestination(destination: string): Promise<{
   peer: string;
   destination: string;
 }> {
-  return invoke("core_api_peer_for_destination", { destination });
+  return invokeCoreCommand("core_api_peer_for_destination", { destination });
 }
 
 export async function coreApiCreateInvitation(
@@ -239,11 +250,11 @@ export async function coreApiAcceptInvitation(
 }
 
 export async function coreApiDraftSet(destination: string, text: string): Promise<unknown> {
-  return invoke("core_api_draft_set", { destination, text });
+  return invokeCoreCommand("core_api_draft_set", { destination, text });
 }
 
 export async function coreApiDraftGet(destination: string): Promise<unknown> {
-  return invoke("core_api_draft_get", { destination });
+  return invokeCoreCommand("core_api_draft_get", { destination });
 }
 
 export async function coreApiCallSettings(): Promise<Record<string, unknown>> {
@@ -484,7 +495,7 @@ export async function coreApiWorkspaceConnection(
   workspace: string | null,
   action: string,
   params: Record<string, unknown>,
-  idempotencyKey?: string,
+  idempotencyKey: string = newOperationId(),
 ): Promise<Record<string, unknown>> {
   const profile = await coreApiProfile();
   const payload: Record<string, unknown> = { profile: profile.profile, action, ...params };
@@ -496,9 +507,9 @@ export async function coreApiWorkspaceConnection(
 
 export async function coreApiWorkspaceHistory(
   workspace: string,
-  action: "status" | "prune" | "revisions" | "tombstones" | "hide_message" | "hide_direct",
+  action: "status" | "start" | "cancel" | "prune" | "revisions" | "tombstones" | "hide_message" | "hide_direct",
   params: Record<string, unknown>,
-  idempotencyKey?: string,
+  idempotencyKey: string = newOperationId(),
 ): Promise<Record<string, unknown>> {
   const profile = await coreApiProfile();
   const result = await coreApiRequest("workspace.history",
@@ -511,7 +522,7 @@ export async function coreApiWorkspaceAccessRecommendation(
   workspace: string,
   action: "list" | "create" | "send" | "preview" | "preview_by_id" | "apply" | "apply_by_id",
   params: Record<string, unknown>,
-  idempotencyKey?: string,
+  idempotencyKey: string = newOperationId(),
 ): Promise<Record<string, unknown>> {
   const profile = await coreApiProfile();
   const result = await coreApiRequest("workspace.access_recommendation",
