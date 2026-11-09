@@ -41,6 +41,8 @@ from .views import (call_ice_view, call_media_view, call_settings_view, device_r
 )
 from .errors import ApiFailure, failure_code
 from .limits import MAX_FRAME_BYTES, MAX_REQUEST_JSON_DEPTH, MAX_REQUEST_JSON_TOKENS
+from .composer import Composer, COMPOSER_LIMITS
+from .requests import COMPOSER_OPERATIONS
 from .diagnostics import Diagnostics, MAX_DIAGNOSTICS, MAX_DIAGNOSTIC_BYTES
 from .diagnostic_views import diagnostics_view
 from .requests import (
@@ -93,6 +95,9 @@ MAX_CONNECTIONS = 256
 
 
 PERMISSION_BY_OPERATION = {
+    "peer.composer_query": "read",
+    "peer.composer_update": "send",
+    "message.enqueue_draft": "send",
     "connection.snapshot": "observe",
     "connection.start": "connect",
     "connection.stop": "connect",
@@ -257,6 +262,7 @@ class Ports:
     """Optional capability ports bound by the trusted composition."""
 
     messages: Messages | None = None
+    composer: Composer | None = None
     recovery: Recovery | None = None
     diagnostics: Diagnostics | None = None
     received: ReceivedLog | None = None
@@ -288,6 +294,7 @@ class CoreSession:
         self._authorize = authorize
         self._observations = observations
         self._messages = ports.messages
+        self._composer = ports.composer
         self._recovery = ports.recovery
         self._diagnostics = ports.diagnostics
         self._received = ports.received
@@ -312,6 +319,7 @@ class CoreSession:
         bound = set(OPERATIONS)
         for operations, port in (
             (MESSAGE_OPERATIONS, self._messages),
+            (COMPOSER_OPERATIONS, self._composer),
             (RECOVERY_OPERATIONS, self._recovery),
             (RECOVERY_TRANSFER_OPERATIONS, self._recovery),
             (RECEIVED_OPERATIONS, self._received),
@@ -1379,7 +1387,9 @@ class CoreSession:
             limits.update(received_scan_count=MAX_BATCH, received_batch_bytes=MAX_BATCH_BYTES)
         if self._diagnostics is not None:
             limits.update(diagnostic_count=MAX_DIAGNOSTICS, diagnostic_bytes=MAX_DIAGNOSTIC_BYTES)
-        return {"api_major": 1, "api_minor": 0, "stability": "experimental",
+        if self._composer is not None:
+            limits.update(COMPOSER_LIMITS)
+        return {"api_major": 1, "api_minor": 1, "stability": "experimental",
                 "operations": list(self._operations), "profiles": list(profiles), "limits": limits}
 
     def _observe(self, grant, profile, operation, params):
