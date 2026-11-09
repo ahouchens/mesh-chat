@@ -6,6 +6,7 @@ wiring from disappearing.
 """
 
 from pathlib import Path
+import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[3]
 PLUGIN = ROOT / "plugins" / "tauri-plugin-mesh-runtime" / "android"
@@ -28,7 +29,10 @@ def test_the_interface_and_caller_derivation_stay_bounded():
     service = (PLUGIN / "src" / "main" / "java" / "com" / "meshchat" / "runtime" /
                "MeshCoreApiService.kt").read_text(encoding="utf-8")
     assert "Binder.getCallingUid()" in service
-    assert "checkCallingPermission(PERMISSION)" in service
+    assert 'val permission = if (MeshCoreRuntime.isInstalled()) "$packageName.permission.MESH_CORE_API" else PERMISSION' in service
+    assert "checkCallingPermission(permission) != PackageManager.PERMISSION_GRANTED" in service
+    assert 'const val PERMISSION = "com.meshchat.runtime.permission.CORE_API"' in service
+    assert "uid != hostUid &&" in service
     assert "Process.myUid()" in service
     dispatch = (PLUGIN / "src/main/java/com/meshchat/runtime/CoreDispatch.kt").read_text(encoding="utf-8")
     assert "MAX_FRAME_BYTES = 256 * 1024" in dispatch
@@ -37,6 +41,22 @@ def test_the_interface_and_caller_derivation_stay_bounded():
     assert '"core_exchange"' in service
     build = (SDK / "build.gradle.kts").read_text(encoding="utf-8")
     assert "aidl = true" in build
+
+
+def test_standalone_host_uses_its_installing_app_signature_permission():
+    manifest = ET.parse(PLUGIN / "runtime-host/src/main/AndroidManifest.xml").getroot()
+    android = "{http://schemas.android.com/apk/res/android}"
+    permission = "${applicationId}.permission.MESH_CORE_API"
+    declared = manifest.find("permission")
+    assert declared.get(android + "name") == permission
+    assert declared.get(android + "protectionLevel") == "signature"
+    services = {item.get(android + "name"): item for item in manifest.find("application").findall("service")}
+    service = services["com.meshchat.runtime.MeshCoreApiService"]
+    assert service.get(android + "exported") == "true"
+    assert service.get(android + "permission") == permission
+    bootstrap = services["com.meshchat.runtime.BootstrapService"]
+    assert bootstrap.get(android + "exported") == "false"
+    assert bootstrap.get(android + "process") == ":mesh_bootstrap"
 
 
 def test_smoke_instrumentation_declares_its_own_extracted_aidl_compile_dependency():
