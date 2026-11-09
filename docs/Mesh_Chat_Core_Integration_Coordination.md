@@ -11,6 +11,30 @@ reports. Exact evidence and limits are in the ledger. Wave 2 is activated below.
 Existing human authorization covers continued implementation, integration and
 worker follow-ups without another permission request.
 
+The lead has integrated C's startup repair `a62ad39` and Android generated-source
+repair `44e74a3`, plus D's bootstrap regression gate `62ceee0`. C and A independently
+reproduce the real source failure: fresh public profile creation runs on a worker
+thread, where RNS and LXMF each attempt forbidden process signal registration.
+The repair scopes adapters to those two upstream modules, preserves Python's
+global signal API and main-thread behavior, and does not swallow other startup
+exceptions. The lead passes **65 focused startup/network/bootstrap/config cases**
+with zero skips in 13.54s; A's six fenced offline controls independently confirm
+the failure and repair. Repaired frozen execution remains unqualified.
+
+Android now registers a tracked generated-directory property through the Variant
+API. Actual cached AGP/Gradle checks cover debug/release registration, producer
+dependencies, all 14 selected Kotlin inputs and the sources-jar archive. D's
+independent review finds no blocker; 26 focused distribution checks pass. This
+does not replace the actual Maven/AAR/APK build and two new installed cases.
+
+Normal Windows bootstrap now requires network construction in both already-read
+post-profile snapshots, with a strict count of two in retained evidence. It allows
+the expected `network_interface_unavailable` status, rejects missing/invalid
+networks and startup errors, and adds no RPC. D passes 187 focused consumer checks,
+including producer privacy/request/cleanup controls and strict evidence rejection.
+The lead will run exact-source required local gates, then full combined CI.
+No release, default or scenario promotion follows from these component results.
+
 The shared feature branch now contains `d411eb5e8a2bd72e36254011f26c4cbc992ce4a9`
 (tree `830d3af24ffb5299a8d76dd48c34d069c338249f`). Its only implementation delta
 is D's selected network health diagnostics: `network_present` and a fixed
@@ -18,7 +42,8 @@ is D's selected network health diagnostics: `network_present` and a fixed
 No requests, request order, deadlines or public APIs change. The lead passes
 **367 focused cases**, zero skips, in 18.02s. Existing broad/Windows CI
 [42720210733](https://github.com/ahouchens/mesh-chat/actions/runs/42720210733)
-has failed its Windows pairing job; broad verification remains pending.
+completed failed at **23:35:00 UTC**. Broad verification passes, and its exact
+670 Python plus 12 rendered boundary cases independently pass with zero skips.
 Duplicate PR run `42720186216` was canceled. This is not full combined qualification.
 
 The independently validated existing snapshots show **both hosts have no network
@@ -28,9 +53,9 @@ Acceptance returns in ten milliseconds (27,674–27,684 ms), followed by 1,947
 completed offerer snapshot reads before failure at 240,071 ms. The missing
 network causes contact bootstrap to skip initialization. Its caught exception
 is still under investigation; this evidence does not yet establish the precise
-startup defect. The lead found unconditional upstream signal-handler registration
-in both RNS and LXMF constructors, while fresh Core profile creation runs on a
-pipe worker thread. A is checking that hypothesis offline before a production fix.
+startup defect by itself. The source-level signal-registration cause and repair
+are now independently established above; exact repaired frozen execution remains
+the next platform gate.
 
 The preceding full-qualification checkpoint is `677b6bf9e9ea0f50d4465e04cca9f79038632187`
 (tree `0e2516336d33d0febd5b152a25ab9b6972f7212b`). Full manual qualification
