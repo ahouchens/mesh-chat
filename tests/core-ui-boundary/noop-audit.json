@@ -1,0 +1,722 @@
+{
+  "v": 1,
+  "audited_source_commit": "f07575bcc5cb9e35efdd781340b6e21d1aead882",
+  "audited_source_tree": "9d33134cd39b07fb835f3b20d8b8137013cc9e20",
+  "scope": "Finite supported keyed adapter no-op audit. Static inspection plus five targeted framed reproductions, not full runtime qualification or a proof of all durability/authority properties.",
+  "method": "Enumerated every supported keyed operation and mutating composite action. Inspected all 63 concrete adapter/helper methods accepting operation_id or key, including branch returns before domain dispatch. Traced receipt lookup/commit delegates and domain success returns. Audited queries separately without imposing mutation-key consumption.",
+  "audited_mutation_count": 92,
+  "audited_mutations": [
+    "call.control.answer",
+    "call.control.answer_restart",
+    "call.control.candidate",
+    "call.control.end",
+    "call.control.restart",
+    "call.control.signal_publish",
+    "call.control.start",
+    "events.ack",
+    "message.enqueue",
+    "profile.create",
+    "remote_profile.mutate.approve_propagation",
+    "remote_profile.mutate.create",
+    "remote_profile.mutate.remove",
+    "remote_profile.mutate.remove_propagation",
+    "remote_profile.mutate.retry",
+    "remote_profile.mutate.test",
+    "route.update.apply",
+    "route.update.create",
+    "runtime.mutate.background_set",
+    "runtime.mutate.notification_previews",
+    "workspace.access_recommendation.apply",
+    "workspace.access_recommendation.apply_by_id",
+    "workspace.access_recommendation.create",
+    "workspace.access_recommendation.send",
+    "workspace.admin_request_approve",
+    "workspace.admin_request_cancel",
+    "workspace.admin_request_decline",
+    "workspace.admin_request_dismiss",
+    "workspace.admin_request_submit",
+    "workspace.admission_grant_accept",
+    "workspace.admission_grant_create",
+    "workspace.admission_grant_end",
+    "workspace.authority_accept",
+    "workspace.authority_finalize",
+    "workspace.authority_loss_report",
+    "workspace.authority_offer",
+    "workspace.channel_archive",
+    "workspace.channel_create",
+    "workspace.channel_members_update",
+    "workspace.channel_recover",
+    "workspace.channel_state.leave",
+    "workspace.channel_state.mute",
+    "workspace.channel_state.subscribe",
+    "workspace.channel_state.sync",
+    "workspace.channel_transfer_accept",
+    "workspace.channel_transfer_offer",
+    "workspace.channel_update",
+    "workspace.close",
+    "workspace.connection.invite_contact",
+    "workspace.connection.prompt_dismiss",
+    "workspace.connection.prompt_submit",
+    "workspace.connection.reconnect_consent",
+    "workspace.create",
+    "workspace.device_link_approve",
+    "workspace.device_link_create",
+    "workspace.device_link_decline",
+    "workspace.device_link_submit",
+    "workspace.device_remove",
+    "workspace.direct_open",
+    "workspace.display_name_decide",
+    "workspace.display_name_request",
+    "workspace.draft_set",
+    "workspace.history.cancel",
+    "workspace.history.hide_direct",
+    "workspace.history.hide_message",
+    "workspace.history.prune",
+    "workspace.history.start",
+    "workspace.invitation_create",
+    "workspace.invitation_revoke",
+    "workspace.join",
+    "workspace.join_approve",
+    "workspace.join_decline",
+    "workspace.join_prompt",
+    "workspace.leave",
+    "workspace.member_remove",
+    "workspace.member_role",
+    "workspace.metadata_update",
+    "workspace.policy_update",
+    "workspace.read_hint_sync",
+    "workspace.remove_data",
+    "workspace.retention_update",
+    "workspace.timeline_mutation.channel_message",
+    "workspace.timeline_mutation.direct_message",
+    "workspace.timeline_mutation.direct_read",
+    "workspace.timeline_mutation.mentions_read",
+    "workspace.timeline_mutation.message_delete",
+    "workspace.timeline_mutation.message_edit",
+    "workspace.timeline_mutation.notification_preference",
+    "workspace.timeline_mutation.reaction_set",
+    "workspace.timeline_mutation.thread_read",
+    "workspace.timeline_mutation.thread_reply",
+    "workspace.timeline_mutation.workspace_read"
+  ],
+  "audited_adapter_methods": [
+    {
+      "file": "service/src/mesh_chat/core_api/profile_bootstrap.py",
+      "method": "create",
+      "line": 25,
+      "domain_targets": [
+        "create_profile"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_application_runtime.py",
+      "method": "mutate",
+      "line": 18,
+      "domain_targets": []
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_application_runtime.py",
+      "method": "mutate",
+      "line": 33,
+      "domain_targets": [
+        "open_notification_target",
+        "set_background_availability",
+        "set_hide_notification_previews"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_calls.py",
+      "method": "control",
+      "line": 69,
+      "domain_targets": [
+        "keyed_call_control",
+        "keyed_signal_publish",
+        "signal_fetch"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_consumer_progress.py",
+      "method": "acknowledge",
+      "line": 28,
+      "domain_targets": []
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_messages.py",
+      "method": "enqueue",
+      "line": 70,
+      "domain_targets": []
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_recovery.py",
+      "method": "acknowledge",
+      "line": 71,
+      "domain_targets": []
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace.py",
+      "method": "join",
+      "line": 45,
+      "domain_targets": [
+        "submit_workspace_join"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace.py",
+      "method": "submit_prompt",
+      "line": 62,
+      "domain_targets": [
+        "submit_workspace_invitation_prompt"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "create_invitation",
+      "line": 92,
+      "domain_targets": [
+        "create_workspace_invitation_command"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "approve",
+      "line": 136,
+      "domain_targets": [
+        "approve_workspace_join"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "decline",
+      "line": 159,
+      "domain_targets": [
+        "decline_workspace_join"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "change_role",
+      "line": 201,
+      "domain_targets": [
+        "change_workspace_role"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "update_channel_members",
+      "line": 264,
+      "domain_targets": [
+        "update_workspace_private_channel_members"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "update_channel",
+      "line": 290,
+      "domain_targets": [
+        "update_workspace_channel"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "create_channel",
+      "line": 315,
+      "domain_targets": [
+        "create_workspace_channel"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "archive_channel",
+      "line": 349,
+      "domain_targets": [
+        "update_workspace_channel"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "recover_channel",
+      "line": 372,
+      "domain_targets": [
+        "recover_workspace_channel"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "device_link_create",
+      "line": 382,
+      "domain_targets": [
+        "create_workspace_device_link"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "device_link_submit",
+      "line": 421,
+      "domain_targets": [
+        "submit_workspace_device_link"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "_decide_device_link",
+      "line": 470,
+      "domain_targets": [
+        "approve_workspace_device_link",
+        "decline_workspace_device_link"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "approve_device_link",
+      "line": 501,
+      "domain_targets": []
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "decline_device_link",
+      "line": 504,
+      "domain_targets": []
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "offer_channel_transfer",
+      "line": 507,
+      "domain_targets": [
+        "offer_workspace_channel_transfer"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "accept_channel_transfer",
+      "line": 527,
+      "domain_targets": [
+        "accept_workspace_channel_transfer"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "update_policies",
+      "line": 556,
+      "domain_targets": [
+        "update_workspace_policies"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "remove_device",
+      "line": 634,
+      "domain_targets": [
+        "approve_workspace_device_removal",
+        "request_workspace_device_removal"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "request_device_removal",
+      "line": 678,
+      "domain_targets": [
+        "request_workspace_device_removal"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "_decide_device_removal",
+      "line": 708,
+      "domain_targets": [
+        "approve_workspace_device_removal",
+        "decline_workspace_device_removal"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "approve_device_removal",
+      "line": 728,
+      "domain_targets": []
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "decline_device_removal",
+      "line": 731,
+      "domain_targets": []
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "update_metadata",
+      "line": 735,
+      "domain_targets": [
+        "update_workspace_metadata"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "update_retention",
+      "line": 751,
+      "domain_targets": [
+        "update_workspace_retention"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "decide_admin_request",
+      "line": 775,
+      "domain_targets": [
+        "decide_workspace_admin_request"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "cancel_admin_request",
+      "line": 790,
+      "domain_targets": [
+        "cancel_workspace_admin_request"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "dismiss_admin_request",
+      "line": 802,
+      "domain_targets": [
+        "dismiss_workspace_admin_request"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "close_workspace",
+      "line": 815,
+      "domain_targets": [
+        "close_workspace"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "leave_workspace",
+      "line": 827,
+      "domain_targets": [
+        "leave_workspace"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "remove_workspace_data",
+      "line": 836,
+      "domain_targets": [
+        "remove_workspace_data"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "report_authority_loss",
+      "line": 848,
+      "domain_targets": [
+        "report_workspace_authority_loss"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "accept_authority_transition",
+      "line": 866,
+      "domain_targets": [
+        "accept_workspace_authority_transition"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "finalize_authority_transition",
+      "line": 876,
+      "domain_targets": [
+        "finalize_workspace_authority_transition"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "offer_authority_transition",
+      "line": 887,
+      "domain_targets": [
+        "offer_workspace_authority_transition"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "submit_admin_request",
+      "line": 902,
+      "domain_targets": [
+        "submit_workspace_admin_request"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "request_display_name",
+      "line": 916,
+      "domain_targets": [
+        "request_workspace_display_name"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "set_read_hint_sync",
+      "line": 928,
+      "domain_targets": [
+        "set_workspace_read_hint_sync"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "revoke_invitation",
+      "line": 949,
+      "domain_targets": [
+        "revoke_workspace_invitation"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "create_admission_grant",
+      "line": 975,
+      "domain_targets": [
+        "create_workspace_admission_grant"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "accept_admission_grant",
+      "line": 989,
+      "domain_targets": [
+        "accept_workspace_admission_grant"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "end_admission_grant",
+      "line": 999,
+      "domain_targets": [
+        "end_workspace_admission_grant"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "access_recommendation",
+      "line": 1019,
+      "domain_targets": [
+        "apply_workspace_access_recommendation",
+        "apply_workspace_access_recommendation_by_id",
+        "create_workspace_access_recommendation",
+        "list_workspace_access_recommendations",
+        "preview_workspace_access_recommendation",
+        "preview_workspace_access_recommendation_by_id",
+        "send_workspace_access_recommendation"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "history",
+      "line": 1049,
+      "domain_targets": [
+        "cancel_workspace_history",
+        "get_workspace_history_status",
+        "hide_workspace_direct",
+        "hide_workspace_message",
+        "list_workspace_message_revisions",
+        "list_workspace_tombstones",
+        "prune_workspace_history",
+        "start_workspace_history"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "connection",
+      "line": 1084,
+      "domain_targets": [
+        "dismiss_workspace_invitation_prompt",
+        "invite_contact_to_workspace",
+        "preview_workspace_device_link",
+        "preview_workspace_invitation_prompt",
+        "submit_workspace_invitation_prompt",
+        "workspace_reconnect_consent_set",
+        "workspace_reconnect_status"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "channel_state",
+      "line": 1115,
+      "domain_targets": [
+        "leave_workspace_private_channel",
+        "set_workspace_channel_mentions_muted",
+        "set_workspace_channel_subscription",
+        "sync_workspace_channels"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "remove_member",
+      "line": 1139,
+      "domain_targets": [
+        "remove_workspace_member"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "save_draft",
+      "line": 1150,
+      "domain_targets": [
+        "save_workspace_draft",
+        "save_workspace_thread_draft"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "remote_profile",
+      "line": 1168,
+      "domain_targets": [
+        "approve_remote_propagation",
+        "create_manual_remote_profile",
+        "remove_remote_profile",
+        "remove_remote_propagation",
+        "retry_remote_profile",
+        "test_remote_profile"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "decide_display_name",
+      "line": 1194,
+      "domain_targets": [
+        "decide_workspace_display_name"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "open_direct",
+      "line": 1205,
+      "domain_targets": [
+        "open_workspace_direct"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "route_update",
+      "line": 1218,
+      "domain_targets": [
+        "apply_route_update",
+        "create_route_update_command",
+        "preview_route_update"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_admin.py",
+      "method": "create_workspace",
+      "line": 1300,
+      "domain_targets": [
+        "create_workspace"
+      ]
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_timeline.py",
+      "method": "mutate",
+      "line": 16,
+      "domain_targets": []
+    },
+    {
+      "file": "service/src/mesh_chat/core_api/service_workspace_timeline.py",
+      "method": "mutate",
+      "line": 50,
+      "domain_targets": [
+        "delete_workspace_message",
+        "edit_workspace_message",
+        "mark_workspace_mentions_read",
+        "mark_workspace_read",
+        "mark_workspace_thread_read",
+        "send_workspace_direct_message",
+        "send_workspace_message",
+        "send_workspace_thread_reply",
+        "set_workspace_notification_preference",
+        "set_workspace_reaction"
+      ]
+    }
+  ],
+  "documented_queries_excluded_from_mutation_requirement": [
+    "call.control.signal_fetch",
+    "route.update.preview",
+    "runtime.mutate.notification_open",
+    "workspace.admission_grant_list"
+  ],
+  "other_composite_queries_excluded": [
+    "workspace.connection.reconnect_status",
+    "workspace.connection.prompt_preview",
+    "workspace.connection.device_link_preview",
+    "workspace.history.status",
+    "workspace.history.revisions",
+    "workspace.history.tombstones",
+    "workspace.access_recommendation.list",
+    "workspace.access_recommendation.preview",
+    "workspace.access_recommendation.preview_by_id"
+  ],
+  "concrete_noop_exceptions": [
+    {
+      "actions": [
+        "workspace.member_role"
+      ],
+      "adapter": "ServiceWorkspaceAdmin.change_role",
+      "condition": "current.role == requested role",
+      "line": 217,
+      "regression": "test_member_role_noop_binds_key_before_changed_payload_retry",
+      "outcome": "Actual framed first no-op and identical replay succeed; changed payload under the same operation/key incorrectly succeeds. Five regression cases fail precisely at expected idempotency_conflict, without setup errors or skips.",
+      "owner": "A",
+      "status": "open_on_audited_source"
+    },
+    {
+      "actions": [
+        "workspace.device_link_approve",
+        "workspace.device_link_decline"
+      ],
+      "adapter": "ServiceWorkspaceAdmin._decide_device_link",
+      "condition": "transition state already equals requested terminal decision",
+      "line": 483,
+      "regression": "test_settled_device_noop_binds_key_to_selected_target[device_link_approve/device_link_decline]",
+      "outcome": "Actual framed first no-op and identical replay succeed; changed payload under the same operation/key incorrectly succeeds. Five regression cases fail precisely at expected idempotency_conflict, without setup errors or skips.",
+      "owner": "A",
+      "status": "open_on_audited_source"
+    },
+    {
+      "actions": [
+        "workspace.channel_transfer_accept"
+      ],
+      "adapter": "ServiceWorkspaceAdmin.accept_channel_transfer",
+      "condition": "no offered transfer and current manager is local member",
+      "line": 545,
+      "regression": "test_current_channel_manager_accept_noop_binds_key_to_selected_channel",
+      "outcome": "Actual framed first no-op and identical replay succeed; changed payload under the same operation/key incorrectly succeeds. Five regression cases fail precisely at expected idempotency_conflict, without setup errors or skips.",
+      "owner": "A",
+      "status": "open_on_audited_source"
+    },
+    {
+      "actions": [
+        "workspace.device_remove"
+      ],
+      "adapter": "ServiceWorkspaceAdmin.remove_device",
+      "condition": "device absent and approved removal transition exists",
+      "line": 654,
+      "regression": "test_settled_device_noop_binds_key_to_selected_target[device_remove]",
+      "outcome": "Actual framed first no-op and identical replay succeed; changed payload under the same operation/key incorrectly succeeds. Five regression cases fail precisely at expected idempotency_conflict, without setup errors or skips.",
+      "owner": "A",
+      "status": "open_on_audited_source"
+    }
+  ],
+  "checked_receipt_paths": [
+    "message.enqueue: _approved_contact and payload digest before existing api_enqueue; otherwise _commit writes message/outbox/receipt together.",
+    "events.ack: decoded position/digest validates existing api_event_ack; a new accepted checkpoint always writes progress and receipt, even for repeated current position.",
+    "profile.create, six in-memory call mutations, signal_publish, six remote mutations, background preference and notification preference delegate before success; their helpers bind the accepted operation before returning.",
+    "Workspace domain methods taking operation_id check _workspace_operation before cached replay and commit accepted writes. Rejoined/saved joins delegate to _resume_workspace_join, which commits a fresh receipt with an empty domain write set.",
+    "Adapters returning constant public states after the domain call are not early-return exceptions. Unchanged-policy/invalid-state failures do not accept a key and are outside accepted-no-op consumption.",
+    "Terminal/current authority replay concerns are tracked separately by A; this audit does not treat a stored old result as a present authority grant."
+  ],
+  "existing_owner_tracked_parent_durability": [
+    "workspace.connection.reconnect_consent",
+    "workspace.connection.invite_contact",
+    "workspace.connection.prompt_submit cleanup",
+    "workspace.access_recommendation.apply",
+    "workspace.access_recommendation.apply_by_id",
+    "route.update.create",
+    "route.update.apply"
+  ],
+  "conclusion": "Exactly four adapter early-success sites cover five actions with proven key/payload binding gaps. No additional accepted-no-op bypass found in the finite pass. Existing A/C parent durability work is not promoted to passing by this audit."
+}
