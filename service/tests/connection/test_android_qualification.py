@@ -248,3 +248,69 @@ bash scripts/test_android_webrtc.sh'''
     evidence = gate.verify_suite(reports, "webrtc", {key: inventory[key] for key in ("source_commit", "source_tree")},
                                  inventory["artifacts"])
     assert evidence["tests_executed"] == 21
+
+
+def test_independent_runner_launches_both_cases_when_every_adb_call_consumes_stdin(tmp_path):
+    """Real Bash control flow with fake platform tools; no Android execution claim."""
+    bash = "C:/Program Files/Git/bin/bash.exe" if os.name == "nt" else shutil.which("bash")
+    assert bash and Path(bash).is_file(), "The required runner regression needs Bash"
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    (scripts / "test_android_independent_consumer.sh").write_text(
+        (SCRIPT.parent / "test_android_independent_consumer.sh").read_text(), encoding="utf-8", newline="\n")
+    wrapper = tmp_path / "src-tauri/gen/android/gradlew"
+    wrapper.parent.mkdir(parents=True)
+    wrapper.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8", newline="\n")
+    commands = tmp_path / "commands"
+    commands.mkdir()
+    # Packaging is outside this control-flow regression. The ordinary runner's
+    # mandatory inventory still supplies the exact two case identities.
+    listing = "\\n".join("\\t".join(case[key] for key in ("method", "class", "phase"))
+                           for case in gate.cases("core_independent")) + "\\n"
+    (commands / "python").write_text("""#!/usr/bin/env bash
+case "$*" in
+  *'prepare --suite core_independent'*) echo eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee;;
+  *'list --suite core_independent'*) printf '""" + listing + """';;
+esac
+""", encoding="utf-8", newline="\n")
+    (commands / "timeout").write_text(
+        '#!/usr/bin/env bash\nwhile [[ "$1" == --* ]]; do shift; done\nshift\nexec "$@"\n',
+        encoding="utf-8", newline="\n")
+    (commands / "adb").write_text('''#!/usr/bin/env bash
+cat >/dev/null
+printf '%s\\n' "$*" >> adb-calls.txt
+if [[ "$*" == 'shell ps -A' ]]; then printf 'USER PID NAME\\nroot 1 init\\n'; fi
+for argument in "$@"; do
+  if [[ "$argument" == com.meshchat.runtime.*#* ]]; then
+    class="${argument%#*}"
+    method="${argument#*#}"
+    for code in 1 0; do
+      printf 'INSTRUMENTATION_STATUS: class=%s\\n' "$class"
+      printf 'INSTRUMENTATION_STATUS: test=%s\\n' "$method"
+      printf 'INSTRUMENTATION_STATUS: numtests=1\\nINSTRUMENTATION_STATUS_CODE: %s\\n' "$code"
+    done
+    printf 'OK (1 test)\\nINSTRUMENTATION_CODE: -1\\n'
+  fi
+done
+''', encoding="utf-8", newline="\n")
+    for executable in (*commands.iterdir(), wrapper): executable.chmod(0o755)
+    environment = {**os.environ, "FIXTURE_COMMANDS": commands.as_posix()}
+    setup = '''if command -v cygpath >/dev/null; then
+FIXTURE_COMMANDS=$(cygpath -u "$FIXTURE_COMMANDS")
+fi
+export PATH="$FIXTURE_COMMANDS:$PATH"
+bash scripts/test_android_independent_consumer.sh'''
+    completed = subprocess.run([bash, "-c", setup], cwd=tmp_path, env=environment,
+        stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30)
+    assert completed.returncode == 0, completed.stderr[-2000:]
+    directory = tmp_path / "dist/reports/android-core_independent"
+    required = gate.cases("core_independent")
+    assert sorted(path.name for path in directory.glob("*.txt")) == sorted(case["report"] for case in required)
+    calls = (tmp_path / "adb-calls.txt").read_text().splitlines()
+    launches = [line for line in calls if "shell am instrument" in line]
+    assert len(launches) == 2
+    for case, launch in zip(required, launches):
+        assert "com.meshchat.runtime." + case["class"] + "#" + case["method"] in launch
+        position = calls.index(launch)
+        assert calls[position - 2:position] == ["shell am force-stop com.meshchat.core.independent", "shell ps -A"]
+        gate.verify_case((directory / case["report"]).read_text(), "e" * 32, case["class"], case["method"])

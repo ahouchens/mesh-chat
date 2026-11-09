@@ -26,10 +26,12 @@ for apk in consumer consumer-test; do timeout 120s adb install -r "$output/$apk.
 run_id="$(python scripts/android_qualification.py prepare --suite core_independent)"
 python scripts/android_qualification.py list --suite core_independent > "$reports/cases.tsv"
 result=0
-while IFS=$'\t' read -r method test_class phase; do
+mapfile -t case_lines < "$reports/cases.tsv"
+for line in "${case_lines[@]}"; do
+  IFS=$'\t' read -r method test_class phase <<< "$line"
   # Prove there are no surviving main or bootstrap processes before each case.
-  timeout 15s adb shell am force-stop com.meshchat.core.independent
-  processes="$(timeout 15s adb shell ps -A)"
+  timeout 15s adb shell am force-stop com.meshchat.core.independent </dev/null
+  processes="$(timeout 15s adb shell ps -A </dev/null)"
   header="${processes%%$'\n'*}"
   if [[ ! "$header" =~ NAME|CMD ]]; then exit 1; fi
   if grep -Eq '[[:space:]]com\.meshchat\.core\.independent(:[^[:space:]]*)?$' <<< "$processes"; then exit 1; fi
@@ -40,5 +42,5 @@ while IFS=$'\t' read -r method test_class phase; do
     result=1
   fi
   if ! grep -Fq 'OK (1 test)' "$reports/$method.txt"; then result=1; fi
-done < "$reports/cases.tsv"
+done
 exit "$result"
