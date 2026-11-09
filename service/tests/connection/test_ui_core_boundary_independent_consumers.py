@@ -1,11 +1,13 @@
 """Outside-checkout application staging is component evidence, not SC21 traffic."""
 
 import json
+import io
 import os
 from pathlib import Path
 import sys
 import tempfile
 import subprocess
+import zipfile
 
 import pytest
 
@@ -18,6 +20,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 import stage_independent_core_consumers as staging
 import check_independent_core_consumers as bootstrap
 import check_independent_core_pairing as pairing
+import verify_android_independent_consumer as android_distribution
+import stage_android_independent_consumer as android_staging
 
 
 def test_pairing_relay_settings_serialize_real_public_query_into_accepted_core_update(host):
@@ -71,6 +75,122 @@ def test_application_owned_runtime_framing_and_retirement_use_real_subprocesses(
     assert result.returncode == 0, result.stdout[-4000:] + result.stderr[-1000:]
     assert "# tests 11" in result.stdout
     assert "# pass 11" in result.stdout and "# fail 0" in result.stdout and "# skipped 0" in result.stdout
+
+
+@pytest.mark.parametrize("fault", ["source", "tree", "failed", "scope", "inside_checkout", "integer_check",
+    "application_missing", "application_hash", "host_pom_missing", "host_aar_changed", "sdk_module_missing", "apk_missing"])
+def test_android_distribution_requires_both_publications_apks_and_exact_scope(fault):
+    identity = {"source_commit": "a" * 40, "source_tree": "b" * 40}
+    artifacts = {path.relative_to(staging.ROOT).as_posix(): "c" * 64 for path in android_distribution.ARTIFACTS}
+    record = {"v": 1, "passed": True, **identity, "checks": dict(android_distribution.CHECKS),
+        "scope": android_distribution.SCOPE, "artifacts": dict(artifacts),
+        "application_files": {name: "d" * 64 for name in android_distribution.APPLICATION_FILES}}
+    android_distribution.verify_record(record, identity, artifacts)
+    if fault == "source": record["source_commit"] = "e" * 40
+    elif fault == "tree": record["source_tree"] = "e" * 40
+    elif fault == "failed": record["passed"] = False
+    elif fault == "scope": record["scope"] = "Successful OS confirmation and peer receipts"
+    elif fault == "inside_checkout": record["checks"]["outside_checkout"] = False
+    elif fault == "integer_check": record["checks"]["outside_checkout"] = 1
+    elif fault == "application_missing": record["application_files"].pop("app/build.gradle.kts")
+    elif fault == "application_hash": record["application_files"]["app/build.gradle.kts"] = "missing"
+    else:
+        name = next(name for name in artifacts if
+            (fault == "host_pom_missing" and "core-runtime-host" in name and name.endswith(".pom")) or
+            (fault == "host_aar_changed" and "core-runtime-host" in name and name.endswith(".aar")) or
+            (fault == "sdk_module_missing" and "core-client" in name and name.endswith(".module")) or
+            (fault == "apk_missing" and name.endswith("consumer.apk")))
+        if fault == "host_aar_changed": record["artifacts"][name] = "e" * 64
+        else: record["artifacts"].pop(name)
+    with pytest.raises(ValueError): android_distribution.verify_record(record, identity, artifacts)
+
+
+def test_android_staging_cannot_resolve_producer_checkout_as_application():
+    with pytest.raises(ValueError, match="outside checkout"):
+        android_staging.stage(staging.ROOT)
+
+
+def android_publication_fixture(directory):
+    """Synthetic archives test packaging admission only, never Android execution."""
+    for artifact in ("core-client", "core-runtime-host"):
+        aar = android_distribution.publication_path(directory, artifact, "aar")
+        aar.parent.mkdir(parents=True)
+        classes = io.BytesIO()
+        with zipfile.ZipFile(classes, "w") as jar:
+            jar.writestr("META-INF/LICENSE", (staging.ROOT / "LICENSE").read_bytes())
+            names = ("core/CoreClient", "IMeshCoreApi") if artifact == "core-client" else (
+                "MeshCoreRuntime", "MeshCoreApiService", "BootstrapService", "NativeWebRtcBridge")
+            for name in names: jar.writestr("com/meshchat/runtime/" + name + ".class", b"fixture class name only")
+        python = io.BytesIO()
+        with zipfile.ZipFile(python, "w") as package:
+            package.writestr("mesh_chat/mobile_bridge.pyc", b"fixture source name only")
+        with zipfile.ZipFile(aar, "w") as archive:
+            archive.writestr("AndroidManifest.xml", b"fixture manifest")
+            archive.writestr("classes.jar", classes.getvalue())
+            if artifact == "core-runtime-host": archive.writestr("assets/chaquopy/app.imy", python.getvalue())
+        dependencies = [] if artifact == "core-client" else [
+            ("com.meshchat", "core-client", android_distribution.VERSION, "compile"),
+            ("androidx.activity", "activity-ktx", "1.10.1", "compile"),
+            ("io.github.webrtc-sdk", "android", "150.7871.01", "runtime")]
+        pom = '<project xmlns="http://maven.apache.org/POM/4.0.0"><groupId>com.meshchat</groupId>' + \
+            f'<artifactId>{artifact}</artifactId><version>{android_distribution.VERSION}</version><dependencies>'
+        pom += "".join("<dependency>" + "".join(f"<{key}>{value}</{key}>" for key, value in
+            zip(("groupId", "artifactId", "version", "scope"), dependency)) + "</dependency>" for dependency in dependencies)
+        android_distribution.publication_path(directory, artifact, "pom").write_text(pom + "</dependencies></project>")
+        sources = aar.with_name(f"{artifact}-{android_distribution.VERSION}-sources.jar")
+        with zipfile.ZipFile(sources, "w") as archive:
+            archive.writestr("CoreClient.kt" if artifact == "core-client" else "MeshCoreRuntime.kt", b"fixture source only")
+        android_distribution.publication_path(directory, artifact, "module").write_text(json.dumps({
+            "component": {"group": "com.meshchat", "module": artifact, "version": android_distribution.VERSION},
+            "variants": [{"attributes": {"org.gradle.usage": usage, "org.gradle.category": "library",
+                                        "org.gradle.libraryelements": "aar"},
+                "dependencies": [{"group": group, "module": name, "version": {"requires": version}}
+                    for group, name, version, scope in dependencies if usage == "java-runtime" or scope == "compile"],
+                "files": [{"name": aar.name, "url": aar.name, "sha256": staging.digest(aar),
+                           "size": aar.stat().st_size}]} for usage in ("java-api", "java-runtime")] +
+                [{"attributes": {"org.gradle.usage": "java-runtime", "org.gradle.category": "documentation",
+                                  "org.gradle.docstype": "sources"},
+                  "files": [{"name": sources.name, "url": sources.name, "sha256": staging.digest(sources),
+                              "size": sources.stat().st_size}]}]}))
+
+
+@pytest.mark.parametrize("fault", ["none", "old_version", "activity_not_exported", "sdk_not_exported",
+    "module_aar_hash", "module_aar_size", "module_absolute_url", "runtime_missing",
+    "variant_sdk_missing", "variant_runtime_missing", "variant_redirect", "sources_changed", "sources_missing"])
+def test_android_maven_metadata_binds_exact_runtime_and_public_api(tmp_path, fault):
+    android_publication_fixture(tmp_path)
+    android_distribution.verify_publications(tmp_path)
+    pom = android_distribution.publication_path(tmp_path, "core-runtime-host", "pom")
+    module = android_distribution.publication_path(tmp_path, "core-runtime-host", "module")
+    if fault == "old_version": pom.write_text(pom.read_text().replace(android_distribution.VERSION, "0.2.0"))
+    elif fault in {"activity_not_exported", "sdk_not_exported"}:
+        needle = "activity-ktx" if fault == "activity_not_exported" else "core-client"
+        pom.write_text(pom.read_text().replace(f"<artifactId>{needle}</artifactId><version>" +
+            ("1.10.1" if fault == "activity_not_exported" else android_distribution.VERSION) +
+            "</version><scope>compile</scope>", f"<artifactId>{needle}</artifactId><version>0.0.0</version><scope>runtime</scope>"))
+    elif fault.startswith("module_"):
+        value = json.loads(module.read_text())
+        item = value["variants"][0]["files"][0]
+        item[{"module_aar_hash": "sha256", "module_aar_size": "size", "module_absolute_url": "url"}[fault]] = {
+            "module_aar_hash": "e" * 64, "module_aar_size": 1, "module_absolute_url": "https://unqualified.invalid/runtime.aar"}[fault]
+        module.write_text(json.dumps(value))
+    elif fault == "runtime_missing":
+        pom.write_text(pom.read_text().replace("150.7871.01", "0.0.0"))
+    elif fault.startswith("variant_"):
+        value = json.loads(module.read_text())
+        if fault == "variant_redirect": value["variants"][0]["available-at"] = {"url": "other.module"}
+        else:
+            variant = value["variants"][1 if fault == "variant_runtime_missing" else 0]
+            missing = "android" if fault == "variant_runtime_missing" else "core-client"
+            variant["dependencies"] = [item for item in variant["dependencies"] if item["module"] != missing]
+        module.write_text(json.dumps(value))
+    elif fault.startswith("sources_"):
+        sources = android_distribution.publication_path(tmp_path, "core-runtime-host", "aar").with_name(
+            f"core-runtime-host-{android_distribution.VERSION}-sources.jar")
+        if fault == "sources_missing": sources.unlink()
+        else: sources.write_bytes(sources.read_bytes() + b"changed")
+    if fault != "none":
+        with pytest.raises((ValueError, FileNotFoundError)): android_distribution.verify_publications(tmp_path)
 
 
 def staged_input(tmp_path):

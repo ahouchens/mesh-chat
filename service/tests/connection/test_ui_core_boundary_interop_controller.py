@@ -14,10 +14,10 @@ from native_interop_rendezvous import APPROVAL_PHASES, OFFER_PHASES, checked_pay
 
 def interop_reports(source="a" * 40, tree="b" * 40, android_artifacts=None, *, workload="full"):
     """Complete fake runs for rejection tests only; no dist report is written."""
-    from android_qualification import APKS, CORE_APKS, CONSUMER_ARTIFACTS, ROOT
+    from android_qualification import APKS, CORE_APKS, CONSUMER_ARTIFACTS, INDEPENDENT_ARTIFACTS, ROOT
     plan = evidence.required_workload(workload)
     if android_artifacts is None:
-        android_artifacts = {path.relative_to(ROOT).as_posix(): "e" * 64 for path in (*APKS, *CORE_APKS, *CONSUMER_ARTIFACTS)}
+        android_artifacts = {path.relative_to(ROOT).as_posix(): "e" * 64 for path in (*APKS, *CORE_APKS, *CONSUMER_ARTIFACTS, *INDEPENDENT_ARTIFACTS)}
     def message(name, role):
         other = "android" if role == "windows" else "windows"
         return {"outbound": evidence.digest([name, role]), "inbound": evidence.digest([name, other]),

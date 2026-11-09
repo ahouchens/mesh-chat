@@ -54,11 +54,11 @@ def binding(role, source, tree):
             if any(record[field] != value[field] for field in ("sidecar_sha256", "build_input_sha256", "build_manifest_sha256")):
                 raise ValueError("Retained Windows executable differs from the previously tested native artifact")
         return binary, {field: value[field] for field in ("sidecar_sha256", "build_input_sha256", "build_manifest_sha256")}
-    from android_qualification import APKS, CORE_APKS, CONSUMER_ARTIFACTS
+    from android_qualification import APKS, CORE_APKS, CONSUMER_ARTIFACTS, INDEPENDENT_ARTIFACTS
     from connection_matrix import android_evidence
     record = json.loads((ROOT / "dist/reports/android-qualification.json").read_text())
     android_evidence(record, source, tree)
-    for path in (*APKS, *CORE_APKS, *CONSUMER_ARTIFACTS):
+    for path in (*APKS, *CORE_APKS, *CONSUMER_ARTIFACTS, *INDEPENDENT_ARTIFACTS):
         name = path.relative_to(ROOT).as_posix()
         if hashlib.sha256(path.read_bytes()).hexdigest() != record["artifacts"][name]:
             raise ValueError("Retained Android artifact differs from its executed qualification report")
