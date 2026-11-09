@@ -152,3 +152,45 @@ Unavailable in this environment: Wi-Fi/cellular switching, screen-off/Doze,
 real process death by OS policy, Stop/lock on physical devices and end-to-end
 receipts on physical hardware. No emulator, packaged or CI result on this branch
 is presented as that evidence.
+
+## Storage and distribution boundary during Wave 2
+
+The runtime owns the vault and its lifetime profile lock. Public SDK clients
+attach through the host and do not open the database or receive the vault key.
+Desktop resolves Tauri's application-data directory for `com.meshchat.desktop`
+and appends `profile-v1`; its key uses the OS keyring entry
+`com.meshchat.desktop` / `vault-key-v1`. Android resolves the application's
+private `filesDir/mesh-chat/profile-v1`; its vault key is wrapped using the
+Android Keystore alias `mesh-chat-vault-key-v1`. These are implementation paths,
+not a portable backup format or permission to copy a live database.
+
+Composer use raises the vault format floor from 1 to 2 in the same transaction
+as its first mutation. A format-1-only host must refuse that profile before
+starting workers. The current migration tests prove local atomicity and refusal;
+the staged old/new package upgrade matrix remains required. Ordinary client
+detach does not authorize stopping the owner or removing its data.
+
+No whole-profile export/import or portable private-key backup is qualified.
+An exported invitation, reconnect document or redacted diagnostic report does
+not back up the profile. Uninstall/data-clear preservation and removal have not
+been qualified for these combined packages. In-place upgrade fixtures must keep
+the original profile and key material, then verify identity, history, outbox,
+drafts and receipts after restart. Destructive uninstall is a separate fixture
+with disposable synthetic data, not an upgrade step.
+
+API major/minor, SDK package, internal IPC and signed peer-wire versions remain
+separate. Wave 2 stages experimental SDK 0.3 against API 1.1; API 1.0 consumers
+must retain their established behavior, while new composer methods require the
+advertised minor, operations and limits before sending a mutation. The exact
+tested artifact pairs, OS/architecture, permissions, hashes and migration
+direction belong in the staged matrix. No historical compatibility window or
+published support promise is inferred from these experimental checks.
+
+The repository records its license in `LICENSE` and bundled attribution in
+`THIRD_PARTY_NOTICES.md` (Unicode, Twemoji, i2pd and Android WebRTC). This is an
+inventory of existing files, not a completed dependency audit. Qualification
+must inspect the actual staged SDK/runtime archives for their applicable
+notices, native dependency versions and license materials, and ensure fixture
+identities and private fault controls are absent. Windows native dependency
+coverage and complete staged notice inclusion remain open until that inventory
+is checked. No publication is part of this integration.
