@@ -17,8 +17,19 @@ is D's selected network health diagnostics: `network_present` and a fixed
 No requests, request order, deadlines or public APIs change. The lead passes
 **367 focused cases**, zero skips, in 18.02s. Existing broad/Windows CI
 [42720210733](https://github.com/ahouchens/mesh-chat/actions/runs/42720210733)
-is running to observe frozen startup; duplicate PR run `42720186216` was canceled.
-This diagnostic run is not full combined qualification.
+has failed its Windows pairing job; broad verification remains pending.
+Duplicate PR run `42720186216` was canceled. This is not full combined qualification.
+
+The independently validated existing snapshots show **both hosts have no network
+object and report `network_start_failed`**. The offerer observation is from
+`pending_request_wait`; the answerer observation is from `invitation_guard`.
+Acceptance returns in ten milliseconds (27,674–27,684 ms), followed by 1,947
+completed offerer snapshot reads before failure at 240,071 ms. The missing
+network causes contact bootstrap to skip initialization. Its caught exception
+is still under investigation; this evidence does not yet establish the precise
+startup defect. The lead found unconditional upstream signal-handler registration
+in both RNS and LXMF constructors, while fresh Core profile creation runs on a
+pipe worker thread. A is checking that hypothesis offline before a production fix.
 
 The preceding full-qualification checkpoint is `677b6bf9e9ea0f50d4465e04cca9f79038632187`
 (tree `0e2516336d33d0febd5b152a25ab9b6972f7212b`). Full manual qualification
