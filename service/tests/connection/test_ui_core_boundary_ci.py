@@ -2,6 +2,7 @@
 
 import importlib.util
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -51,8 +52,10 @@ def test_android_typed_app_cases_are_required_by_the_artifact_bound_inventory():
         "typedProfileWorkspaceAndSettingsReachProductionCore",
         "typedDraftAndLostReplyRetryKeepOneDurableMessage",
         "typedErrorsPreserveConflictAndCallerAuthority",
+        "typedSettingsMutationsReadBackFromTheRealDomain",
+        "typedCallControlSignsQueuesAndEndsAnApprovedCall",
     }
-    assert len(cases) == len({case["id"] for case in cases}) == 7
+    assert len(cases) == len({case["id"] for case in cases}) == 9
 
 
 @pytest.mark.parametrize("body", [
@@ -68,3 +71,19 @@ def test_fast_gate_rejects_empty_skipped_failed_and_collection_error_results(tmp
     junit = tmp_path / "result.xml"
     junit.write_text(body, encoding="utf-8")
     assert gate.junit_summary(junit)["passed"] is False
+
+
+def test_windows_gate_rejects_missing_environment_and_removes_stale_success(tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(ROOT / "scripts"))
+    spec = importlib.util.spec_from_file_location("boundary_windows_gate", ROOT / "scripts/check_core_windows_boundary.py")
+    gate = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gate)
+    monkeypatch.setattr(gate, "ROOT", tmp_path)
+    monkeypatch.setattr(gate, "os", SimpleNamespace(name="posix"))
+    monkeypatch.setattr("sys.argv", ["check_core_windows_boundary.py", "--expected-source", "a" * 40])
+    report = tmp_path / "dist/reports/core-windows-boundary.json"
+    report.parent.mkdir(parents=True)
+    report.write_text('{"passed":true}', encoding="utf-8")
+    with pytest.raises(RuntimeError, match="environment is unavailable"):
+        gate.main()
+    assert not report.exists()

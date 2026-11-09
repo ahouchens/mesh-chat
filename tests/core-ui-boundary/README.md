@@ -24,7 +24,7 @@ JUnit hashes, runtime version and wall time under `dist/reports/`. CI executes i
 immediately after dependency installation, before distribution package checks.
 The full qualification matrix remains a separate required integration gate.
 
-For development, run `pytest service/tests/connection/test_ui_core_boundary*.py`
+For development, run `python tests/core-ui-boundary/run_python.py --source <HEAD SHA> --junit .test-tmp/boundary.xml`
 or `vitest run --config tests/core-ui-boundary/vitest.config.ts` directly.
 `MESH_BOUNDARY_PYTHON` selects the Python interpreter; the default is the local
 `.venv` on Windows and `python` on other platforms. Tests create and remove their
@@ -38,9 +38,14 @@ case verifies one queued durable direct message without a forged delivery state.
 The Android counterpart is the separately owned
 `TypedCoreBridgeBoundaryTest.kt`. It calls the production typed app bridge and
 real Binder/dispatcher/mobile session, with private access only for isolated
-fixture setup. Its three cases are mandatory members of the existing
+fixture setup and domain inspection. Its five cases are mandatory members of the existing
 artifact-bound Android qualification inventory. They require C's typed bridge
-implementation and A's parser/session fixes. Compilation or emulator execution
+implementation and A's parser/session fixes. Mutation cases change and read back
+network/call settings, then start/end an approved audio call and verify the stored
+state and signed queued invite/hangup documents. These assertions qualify call
+signalling, not media execution or peer receipt delivery. The embedded Python
+fixture also executes through mobile Core framing in the fast Python suite.
+Compilation or emulator execution
 has not been claimed locally; disk-constrained native builds run in GitHub CI.
 
 ## Timing evidence
@@ -58,3 +63,14 @@ time so integrated CI can quantify the change. Dependency selection narrows only
 isolated boundary/test changes to their actual policy and verification consumers.
 Production, Android, workflow, tooling, mixed, manual and release changes retain
 the conservative full matrix. No required final evidence is removed.
+
+## Windows application pipe
+
+`python scripts/check_core_windows_boundary.py --expected-source <HEAD SHA>`
+executes two mandatory cases through the production application sidecar pipe
+host, executable-image authentication, production pipe client and serialized
+Core client. They assert real settings write/readback and signed call start/end
+domain effects. The script fails when Windows is unavailable, clears stale
+success, checks the complete collected case inventory and writes exact-source
+JUnit/hash evidence. It runs in the Windows CI host job before native builds.
+It does not claim packaged, cross-process media, or physical qualification.
