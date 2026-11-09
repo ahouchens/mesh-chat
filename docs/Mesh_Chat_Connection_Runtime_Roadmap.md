@@ -40,6 +40,12 @@ at `5556cc0` passes 248 focused checks while remaining disabled without a comple
 trusted media owner. Android fixture/Kotlin package repairs await a fresh CI run;
 actual profile-provider wiring remains held for cold catalog key separation.
 
+The first-contact runtime fault is repaired narrowly at `e7f6497`, with 31
+passing real-native pairing/runtime checks. Prior combined policy `6875b00`
+passes 3,251 cases; current `efbddfa` passes 649 Python and ten rendered-App
+boundary cases. Full packaged requalification follows. Provider acceptance still
+requires separate catalog-key authority and dedicated native auth-result routing.
+
 Integration begins at `435b497150e5f0d12cb1c5dc7b4602da7a66ec4c` on a
 separate lead branch. The [coordination inventory](Mesh_Chat_Core_Integration_Coordination.md)
 assigns exclusive ownership and defines the two-wave implementation gates.

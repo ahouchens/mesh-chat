@@ -2,6 +2,42 @@
 
 ## Integration revalidation (2026-11-09)
 
+### Corrected pairing and combined qualification checkpoint
+
+Source `6875b00d7a3502ce662b33acdfdc6bc84c0b4ab7`, tree
+`b9e02254cf654040c47ecc6e5223153e0d993575`, passes the complete 3,251-case
+required policy inventory, zero failures/skips, in 336.65s. Qualification ID:
+`a666ed1903c74a8889fde787d9df5d59`; reports are
+`dist/reports/policy-recovery-group.{xml,json,inventory.json}`. Exact SDK staging
+also passes. Its exact boundary passes 649 Python plus eight rendered-App cases
+in 47.54s without skips. Completed policy scratch was removed; reports remain.
+
+C reproduced first-time pairing with real native DataChannels and isolated
+Reticulum processes. The carrier and explicit approval were intact, but the new
+pairing projection called an approval-requiring lookup for a pending contact,
+faulting the entire connection runtime. Narrow repair `0af2687` uses the
+host-derived destination only for that denial projection; actual authority
+checks remain in the grant/adoption paths. It was cherry-picked with attribution
+as `e7f6497`, excluding the still-held Android provider ancestor `0b012c3`.
+The lead's real first-contact/receipt and pairing-runtime regressions pass 31
+cases, zero skips, in 21.78s. This is source execution, not frozen-package proof.
+
+Source `efbddfa2ed35bfbdda85ff220a83c925abd3bf3e`, tree
+`0bd10b8c6a73e5d4a7d4f37d134a2accbda22361`, adds D's two rendered group replay
+cases and B's final reconnect-factory admission guard. Its exact boundary passes
+649 Python plus **ten** rendered-App cases, zero failures/skips, in 41.42s.
+The group cases lose real committed replies, replay the exact caller key and
+payload after modal reopening, and preserve a newer draft without another
+durable group/message/outbox/receipt. Group membership uses real signed domain
+messages over an explicitly in-process fixture. The lead's 27 focused reconnect
+admission/runtime checks pass. None establishes full renderer-restart group-key
+durability, physical media retirement, native interoperability or SC21 traffic.
+
+The corrected source is ready for a new full packaged qualification run. Android
+profile-provider wiring remains held for separate protected catalog-key storage
+and dedicated native credential-result routing; the shared Tauri activity-result
+callback cannot establish which activity supplied a successful result.
+
 ### Current full CI failure and local repairs
 
 Full run `42676194199` targets `da815655792241629f19f0e7ac02b8402a744790`,

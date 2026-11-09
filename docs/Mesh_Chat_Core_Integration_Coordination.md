@@ -32,6 +32,15 @@ failed-run reporting. C's Android provider batch `0b012c3` remains under review:
 cold catalog initialization must not read the profile vault key before native
 authentication. Windows first-time pairing diagnosis remains the CI priority.
 
+Corrected checkpoint: complete policy at `6875b00` passes 3,251 cases without
+skips; exact `efbddfa` boundary passes 649 Python plus ten rendered-App cases.
+C's isolated pending-contact projection fix `0af2687` was cherry-picked as
+`e7f6497` with attribution, leaving held provider ancestor `0b012c3` out. The lead
+passes 31 actual native pairing/runtime checks, including two authenticated
+receipts over the original carrier. Full packaged CI is next. A continues public
+pairing, C fixes catalog-key/auth-result isolation and app-owned host composition,
+B continues lifecycle/effect admission, and D continues independent consumers.
+
 Wave 2 local checkpoint: `8950053` passes 420 Python and all eight rendered
 boundary cases, including same-vault reopen and uncertain-send recovery. The
 earlier full policy gate passed 2,630 cases at `6e97db5`. Composer storage,
