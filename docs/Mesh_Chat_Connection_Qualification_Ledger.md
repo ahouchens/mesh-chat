@@ -2,6 +2,60 @@
 
 ## Integration revalidation (2026-11-09)
 
+### Current full run and Android provider integration
+
+Full CI [42683615511](https://github.com/ahouchens/mesh-chat/actions/runs/42683615511)
+targets `21bb99ca338e5c1d16059cbdc5d529d114ba6ede`, tree
+`1a98f05242f29b0950da9ac841861b4d1ef91358`. Selection artifact `13702709168`
+requires all six families and the full native workload; duplicate PR run
+`42683596152` is canceled. The lead pinned 134 validator/source files.
+
+Policy artifact `13703528817` independently validates **3,256 passes, zero
+failures/skips**, duration 187.282s, qualification ID
+`238472989f5b47f390b2a0ba47c1af3e`. ZIP SHA-256:
+`a9cad6ea98d10d74a664f2b532b4010fc3ccb9589f39db8d8b24435e81f1c616`.
+
+Windows packaged first-time pairing now passes all five required checks,
+including explicit approval, cancellation, pending-invitation restart, carrier
+transfer and two authenticated receipts. Preapproved transport also passes its
+three receipts; native lifecycle passes 100 pairs/controls and three cold starts.
+All three required production pipe cases execute without failure or skip.
+The lead validated report schemas/inventories with pinned validators and bound
+six packaged reports to the retained sidecar/build manifest. Every archive entry
+was hashed in memory; no executable extraction was needed:
+
+- Desktop artifact `13704560441`, ZIP SHA-256
+  `4a2e7390b59cf996cee0d617f7cfbdb3dfc558de0479a2b1972850a3f48cadce`.
+- Native artifact `13702964768`, ZIP SHA-256
+  `11a166f38ad63e9b999f72d27a7db03dc62a834c11c44735f79445a1e18226af`.
+- Sidecar: 54,532,753 bytes, SHA-256
+  `fd22f032b8c3f2d78ffc093017cdf864c0fbcb594d9fbeee2859812ba0e27b5b`.
+- Build manifest SHA-256
+  `cfb6f840edc13c15bf822402cabca112bd2e3dbf8cf174cf98ec29eb42be5b0b`;
+  build input SHA-256
+  `44f3ff3467c26d150177b524b09b2d1e17356eb0ebc5a0d3edb4bc8068170b0a`.
+
+Evidence and lead validations are under `.test-tmp/ci-evidence-21bb99c`.
+The seven Python WebView probe source hashes match exact source with Windows
+CRLF checkout bytes. The WebView executable hash remains runner-reported because
+that executable is not in these archives; embedded materials were not locally
+re-extracted. Broader verification, Android, direct and native interoperability
+jobs remain pending; these Windows passes do not establish SC21 or physical/media
+qualification.
+
+Subsequent local integration `9cfc3363fb55b8a22a2961fdccf358b65bb2185e`, tree
+`c6018a370cb09f3e24c6afda417846eede62aa45`, includes provider fix `0bfb95d`.
+Its catalog uses separate protected metadata key authority without loading the
+original profile key. Dedicated per-confirmation AndroidX registrations replace
+Tauri's shared activity-result callback. Exact SDK staging passes, followed by
+115 mobile bridge/profile lifecycle/runtime-host checks, zero failures/skips,
+14.14s (`dist/reports/provider-ready.xml`). The first invocation had 109 passes
+and six setup errors from omitted SDK/Node environment; the complete rerun uses
+staged exact-source artifacts and Node 24. C reports 13 JVM passes and production
+plugin compilation; three real AndroidX routing tests only compile so far.
+D is wiring required Android execution. Successful OS credential interaction
+still needs platform evidence. The running `21bb99c` CI excludes this provider.
+
 ### Corrected pairing and combined qualification checkpoint
 
 Source `6875b00d7a3502ce662b33acdfdc6bc84c0b4ab7`, tree

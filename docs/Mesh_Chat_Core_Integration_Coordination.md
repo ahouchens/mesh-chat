@@ -11,6 +11,24 @@ reports. Exact evidence and limits are in the ledger. Wave 2 is activated below.
 Existing human authorization covers continued implementation, integration and
 worker follow-ups without another permission request.
 
+Current integration is `9cfc336`, with C's reviewed Android provider correction
+`0bfb95d`. Separate protected catalog authority avoids reading the profile key
+at locked startup; each OS credential confirmation uses its own AndroidX result
+registration. The lead's exact SDK staging and 115 lifecycle/mobile-host checks
+pass, including installed consumers. B may bind the actual Android credential
+facade; Windows remains unsupported until its native provider exists. D adds the
+three registry cases to required Android execution. Compilation and JVM checks
+do not qualify successful OS credential interaction on a device.
+
+Full CI `42683615511` remains pinned to the earlier `21bb99c` checkpoint. Its
+3,256-case policy inventory and Windows packaged first-contact pairing reports
+have been independently validated against retained evidence. Broader, Android,
+direct and native interoperability qualification remain pending. This run cannot
+qualify the subsequently integrated provider. A's public pairing remains gated
+on C's durable cancellation/terminal hooks; C also supplies normal app-owned
+startup, while D prepares independent consumer traffic. Plan version 54 records
+these current assignments; the older checkpoints below retain their chronology.
+
 Current Wave 2 CI `42676194199` at `da81565` fails two synthetic run-context
 fixtures and Windows first-time pairing (`approved_path`, both carriers absent).
 The fixture repair is integrated and passes all 94 matrix checks under CI-like
