@@ -3128,15 +3128,27 @@ class MeshChatService(
             )
         self._changed()
 
-    def dismiss_workspace_invitation_prompt(self, prompt_id: Any) -> dict[str, Any]:
+    def dismiss_workspace_invitation_prompt(
+        self, prompt_id: Any, *, operation_id: Any = None
+    ) -> dict[str, Any]:
         if not isinstance(prompt_id, str):
             raise ValidationError("Workspace invitation prompt ID is invalid")
         record = self.store.get("workspace_contact_invite", prompt_id)
         if record is None:
             raise ValidationError("Workspace invitation prompt is unavailable")
+        digest = None
+        if operation_id is not None:
+            operation_id, digest, replay = self._workspace_operation(
+                "dismiss_workspace_invitation_prompt", operation_id, {"prompt_id": prompt_id})
+            if replay is not None:
+                return replay
         record["state"] = "dismissed"
         record["dismissed_at"] = time.time()
-        self.store.put("workspace_contact_invite", prompt_id, record)
+        if operation_id is None:
+            self.store.put("workspace_contact_invite", prompt_id, record)
+        else:
+            self.store.commit_operation(operation_id, digest, {"dismissed": True},
+                                        [("workspace_contact_invite", prompt_id, record)])
         self._changed()
         return {"dismissed": True}
 
