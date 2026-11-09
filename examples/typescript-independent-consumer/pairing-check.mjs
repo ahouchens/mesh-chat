@@ -7,6 +7,7 @@ import { setTimeout as pause } from "node:timers/promises";
 import { launchRuntime } from "./runtime.mjs";
 import { freshRelaySettings } from "./relay-settings.mjs";
 import { ERROR_CODES, pairingDiagnostics } from "./pairing-diagnostics.mjs";
+import { connectionMessagingReady } from "./connection-readiness.mjs";
 
 let phase = "arguments";
 const diagnostics = pairingDiagnostics();
@@ -79,8 +80,7 @@ async function messagingReady(peer) {
     diagnostics.connections(peer.role, profile.connections.length, checked, ready);
     for (const connection of profile.connections) {
       if (Date.now() >= deadline) throw new Error("public_pairing_deadline");
-      const value = await peer.client.request("connection.query", { profile: peer.profile, connection });
-      if (value.observation.messaging_ready === true) ready++;
+      if (await connectionMessagingReady(peer.client, peer.profile, connection)) ready++;
       diagnostics.connections(peer.role, profile.connections.length, ++checked, ready);
     }
     if (ready > 1) throw new Error("unexpected_ready_connections");
