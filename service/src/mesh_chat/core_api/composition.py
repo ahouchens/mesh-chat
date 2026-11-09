@@ -24,6 +24,7 @@ from .service_groups import ServiceGroups
 from .service_reactions import ServiceReactions
 from .service_settings import ServiceNetworkSettings
 from .service_drafts import ServiceDrafts
+from .service_composer import ServiceComposer
 from .service_relationship import ServiceRelationship
 from .wire import FramedSession
 
@@ -45,18 +46,22 @@ class ServiceObservations:
 
 
 def bind_service_session(service, authenticated_grant, *, private_native=False,
-                         private_profile_bootstrap=False):
+                         private_profile_bootstrap=False, private_composer_legacy=False):
     """Trusted host entry point, never a client-supplied identity or grant."""
     if type(private_native) is not bool:
         raise ValueError("Private native binding must be a host boolean")
     if type(private_profile_bootstrap) is not bool:
         raise ValueError("Private profile bootstrap must be a host boolean")
+    if type(private_composer_legacy) is not bool:
+        raise ValueError("Private composer migration must be a host boolean")
     def current_grant():
         return None if service._shutdown.is_set() else authenticated_grant()
 
     with service._dispatch_lock:
         handle_key = bytes.fromhex(service.store.opaque_id("core-api-handle-key", "v1"))
         messages = ServiceMessages(service)
+        composer = (ServiceComposer(service, messages, legacy=private_composer_legacy)
+                    if hasattr(service.store, "conditional_put_and_delete") else None)
         recovery = ServiceRecovery(service, messages) if hasattr(service, "_message_journal") else None
         received = recovery if hasattr(service, "_received_messages") else None
         intent = ServiceIntent(service) if hasattr(service, "reconnect_start") else None
@@ -73,7 +78,7 @@ def bind_service_session(service, authenticated_grant, *, private_native=False,
                               if hasattr(service, "list_workspace_threads") else None)
         runtime = (ServiceApplicationRuntime(service)
                    if hasattr(service, "background_availability_status") else None)
-        ports = Ports(messages=messages, recovery=recovery,
+        ports = Ports(messages=messages, composer=composer, recovery=recovery,
                       diagnostics=ServiceDiagnostics(service, messages), received=received,
                       intent=intent, relationship=relationship, pairing=pairing,
                       invitations=invitations, lifecycle=lifecycle, workspace=workspace,
@@ -83,7 +88,7 @@ def bind_service_session(service, authenticated_grant, *, private_native=False,
                       application=ServiceApplication(service),
                       native_commands=ServiceNativeCommands(service) if private_native else None,
                       profile_bootstrap=ServiceProfileBootstrap(service) if private_profile_bootstrap else None,
-                      drafts=ServiceDrafts(service),
+                      drafts=ServiceDrafts(service, legacy=private_composer_legacy),
                       calls=ServiceCallSettings(service),
                       settings=ServiceNetworkSettings(service),
                       reactions=ServiceReactions(service),
@@ -93,8 +98,9 @@ def bind_service_session(service, authenticated_grant, *, private_native=False,
 
 
 def bind_service_stream(service, authenticated_grant, *, private_native=False,
-                        private_profile_bootstrap=False):
+                        private_profile_bootstrap=False, private_composer_legacy=False):
     """Private host binding; raw frames can never select the grant callback."""
     return FramedSession(bind_service_session(service, authenticated_grant,
                                               private_native=private_native,
-                                              private_profile_bootstrap=private_profile_bootstrap))
+                                              private_profile_bootstrap=private_profile_bootstrap,
+                                              private_composer_legacy=private_composer_legacy))

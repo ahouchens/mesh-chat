@@ -92,8 +92,16 @@ class ServiceMessages:
         return Acceptance(previous["handle"], previous["accepted_at"], previous["expires_at"])
 
     def _commit(self, scope, contact, identifier, digest, text):
+        message, receipt, records, deletions, _ = self.prepare_enqueue(scope, contact, identifier, digest, text)
+        self._store.put_and_delete(records, deletions)
+        self._wake_outbox(message)
+        return Acceptance(receipt["handle"], receipt["accepted_at"], receipt["expires_at"])
+
+    def prepare_enqueue(self, scope, contact, identifier, digest, text):
+        """Assemble the existing durable enqueue for an atomic parent use case."""
         quota_id = self._identifier("core-api-enqueue-quota:v1", scope.caller, scope.profile)
-        count = (self._store.get("api_enqueue_quota", quota_id) or {"count": 0})["count"]
+        quota = self._store.get("api_enqueue_quota", quota_id)
+        count = (quota or {"count": 0})["count"]
         if count >= MAX_CALLER_ENQUEUES or self._store.record_count("api_enqueue") >= MAX_VAULT_ENQUEUES:
             raise ApiFailure("resource_exhausted")
         message = self._service._outbound_record(contact, MessageKind.CHAT, text)
@@ -103,14 +111,14 @@ class ServiceMessages:
         receipt = {"digest": digest, "message_id": message["id"], "handle": handle,
                    "accepted_at": accepted, "expires_at": expires}
         index = {"caller": scope.caller, "profile": scope.profile, "message_id": message["id"]}
-        self._store.put_and_delete([
+        records = [
             ("message", message["id"], message),
             ("api_enqueue", identifier, receipt),
             ("api_message", handle, index),
             ("api_enqueue_quota", quota_id, {"count": count + 1}),
-        ], [("conversation_hidden", self._service._conversation_marker_id("direct", contact["id"]))])
-        self._wake_outbox(message)
-        return Acceptance(handle, accepted, expires)
+        ]
+        deletions = [("conversation_hidden", self._service._conversation_marker_id("direct", contact["id"]))]
+        return message, receipt, records, deletions, {("api_enqueue_quota", quota_id): quota}
 
     def _wake_outbox(self, message):
         # These hints follow the durable commit. Restart reconstructs the queue
