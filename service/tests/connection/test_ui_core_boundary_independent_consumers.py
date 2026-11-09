@@ -9,10 +9,58 @@ import subprocess
 
 import pytest
 
+from mesh_chat.core_api.composition import bind_service_stream
+from mesh_chat.core_api.session import Grant
+from mesh_chat.core_api.wire_codec import decode_frame, encode_frame
+from test_core_messages import host
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 import stage_independent_core_consumers as staging
 import check_independent_core_consumers as bootstrap
 import check_independent_core_pairing as pairing
+
+
+def test_pairing_relay_settings_serialize_real_public_query_into_accepted_core_update(host):
+    service = host()
+    stream = bind_service_stream(service, lambda: Grant(
+        "independent-settings", frozenset({"observe", "read", "send"}), ("local",)))
+
+    def invoke(operation, **params):
+        return decode_frame(stream.exchange(encode_frame({"api_version": 1,
+            "request_id": "independent:relay-settings", "operation": operation, "params": params})))
+
+    try:
+        capabilities = invoke("runtime.capabilities")
+        assert capabilities["ok"], capabilities
+        profile = capabilities["result"]["profiles"][0]
+        queried = invoke("call.settings_query", profile=profile)
+        assert queried["ok"], queried
+        settings = queried["result"]["settings"]
+        assert settings["turn_configured"] is False
+        # Replaying a public query as an update was the actual producer defect.
+        rejected = invoke("call.settings_update", profile=profile,
+                          settings={**settings, "turn_broker_consent": True, "relay_only": True})
+        assert not rejected["ok"] and rejected["error"]["code"] == "invalid_request"
+        node, _ = staging.tools()
+        script = """
+import { freshRelaySettings } from './examples/typescript-independent-consumer/relay-settings.mjs';
+let input = '';
+for await (const chunk of process.stdin) input += chunk;
+process.stdout.write(JSON.stringify(freshRelaySettings(JSON.parse(input))));
+"""
+        completed = subprocess.run([node, "--input-type=module", "-e", script], cwd=staging.ROOT,
+            input=json.dumps(settings), capture_output=True, text=True, check=True, timeout=15)
+        update = json.loads(completed.stdout)
+        assert set(update) == {"stun_urls", "turn_url", "turn_username", "turn_broker_url",
+            "signal_mailbox_url", "store_call_signaling", "turn_broker_consent", "relay_only"}
+        accepted = invoke("call.settings_update", profile=profile, settings=update)
+        assert accepted["ok"], accepted
+        applied = invoke("call.settings_query", profile=profile)
+        assert applied["ok"], applied
+        assert applied["result"]["settings"]["turn_broker_consent"] is True
+        assert applied["result"]["settings"]["relay_only"] is True
+    finally:
+        stream.close()
 
 
 def test_application_owned_runtime_framing_and_retirement_use_real_subprocesses():
