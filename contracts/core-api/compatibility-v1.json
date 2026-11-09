@@ -24,11 +24,18 @@
   },
   "python_client": {
     "status": "experimental_component",
-    "version": "0.2.0-experimental",
-    "packaged": false
+    "version": "0.3.0.dev0",
+    "packaged": false,
+    "artifact": "mesh-chat-core-client wheel",
+    "first_standalone_distribution": true
+  },
+  "service_carried_python_client": {
+    "version": "0.3.0-experimental",
+    "artifact": "mesh-chat-service wheel; internal portable client module",
+    "standalone_distribution": false
   },
   "typescript_client": {
-    "version": "0.2.0-experimental",
+    "version": "0.3.0-experimental",
     "packaged": false
   },
   "kotlin_client": {

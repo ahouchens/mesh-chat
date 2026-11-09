@@ -1,0 +1,5 @@
+[project]
+name = "mesh-core-distribution-consumer"
+version = "0.0.0"
+requires-python = ">=3.11"
+dependencies = ["mesh-chat-core-client==0.3.0.dev0"]

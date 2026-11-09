@@ -69,6 +69,9 @@ export interface RequestOptions {
   signal?: AbortSignal;
 }
 
+const REQUIRED_KEYS = new Set(["call.control", "connection.retry", "events.ack", "message.enqueue", "message.enqueue_draft", "peer.composer_update", "profile.create", "profile.lock", "profile.select", "profile.unlock", "remote_profile.mutate", "route.update", "runtime.mutate", "workspace.admin_request_approve", "workspace.admin_request_cancel", "workspace.admin_request_decline", "workspace.admin_request_dismiss", "workspace.admin_request_submit", "workspace.admission_grant_accept", "workspace.admission_grant_create", "workspace.admission_grant_end", "workspace.admission_grant_list", "workspace.authority_accept", "workspace.authority_finalize", "workspace.authority_loss_report", "workspace.authority_offer", "workspace.channel_archive", "workspace.channel_create", "workspace.channel_members_update", "workspace.channel_recover", "workspace.channel_state", "workspace.channel_transfer_accept", "workspace.channel_transfer_offer", "workspace.channel_update", "workspace.close", "workspace.create", "workspace.device_link_approve", "workspace.device_link_create", "workspace.device_link_decline", "workspace.device_link_submit", "workspace.device_remove", "workspace.direct_open", "workspace.display_name_decide", "workspace.display_name_request", "workspace.draft_set", "workspace.invitation_create", "workspace.invitation_revoke", "workspace.join", "workspace.join_approve", "workspace.join_decline", "workspace.join_prompt", "workspace.leave", "workspace.member_remove", "workspace.member_role", "workspace.metadata_update", "workspace.policy_update", "workspace.read_hint_sync", "workspace.remove_data", "workspace.retention_update", "workspace.timeline_mutation"]);
+const KEYED_ACTIONS: Record<string, string[]> = {"workspace.connection": ["invite_contact", "prompt_dismiss", "prompt_submit", "reconnect_consent"], "workspace.history": ["cancel", "hide_direct", "hide_message", "prune", "start"], "workspace.access_recommendation": ["apply", "apply_by_id", "create", "send"]};
+
 export class CoreClient {
   readonly #transport: LineTransport;
   readonly #timeoutMs: number;
@@ -87,6 +90,7 @@ export class CoreClient {
     const client = new CoreClient(transport, options);
     const capabilities = await client.request<Capabilities>("runtime.capabilities", {});
     if (capabilities.api_major !== 1) {
+      client.close();
       throw new ProtocolError("unsupported public API major");
     }
     client.#capabilities = capabilities;
@@ -119,14 +123,20 @@ export class CoreClient {
     if (this.#closed) {
       throw new TransportClosedError();
     }
+    if ((REQUIRED_KEYS.has(operation) || (KEYED_ACTIONS[operation] ?? []).includes(String(params.action))) &&
+        (typeof options.idempotencyKey !== "string" || !/^[A-Za-z0-9._:-]{16,128}$/.test(options.idempotencyKey))) {
+      throw new ProtocolError("operation requires a caller-provided idempotency key");
+    }
     const requestId = `client:${(++this.#sequence).toString(36)}`;
     const envelope: RequestEnvelope = { api_version: 1, request_id: requestId, operation, params };
     if (options.idempotencyKey !== undefined) {
       envelope.idempotency_key = options.idempotencyKey;
     }
     const line = encodeRequest(envelope);
+    const timeoutMs = options.timeoutMs ?? this.#timeoutMs;
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 3600000) throw new ProtocolError("invalid request timeout");
     const run = (): Promise<unknown> =>
-      this.#exchange(line, requestId, options.timeoutMs ?? this.#timeoutMs, options.signal);
+      this.#exchange(line, requestId, timeoutMs, options.signal);
     const result = this.#tail.then(run, run);
     this.#tail = result.then(
       () => undefined,
@@ -144,25 +154,39 @@ export class CoreClient {
     if (this.#closed || signal?.aborted) {
       throw this.#closed ? new TransportClosedError() : new AbortError(requestId);
     }
-    await this.#transport.writeLine(line);
-    const response = decodeResponse(await this.#read(requestId, timeoutMs, signal));
+    let response: ReturnType<typeof decodeResponse>;
+    try {
+      response = decodeResponse(await this.#read(line, requestId, timeoutMs, signal));
+    } catch (error) {
+      this.close();
+      throw error;
+    }
     if (response.request_id !== requestId) {
+      this.close();
+      if (!response.ok && response.request_id === null &&
+          ["forbidden", "invalid_request", "resource_exhausted", "unavailable"].includes(response.error.code)) {
+        throw new CoreError(response.error.code, null, response.error.retry_after_ms, response.error);
+      }
       throw new ProtocolError("response does not correlate with the dispatched request");
     }
     if (!response.ok) {
-      throw new CoreError(response.error.code, response.request_id, response.error.retry_after_ms);
+      throw new CoreError(response.error.code, response.request_id, response.error.retry_after_ms, response.error);
     }
     return response.result;
   }
 
-  async #read(requestId: string, timeoutMs: number, signal?: AbortSignal): Promise<string> {
+  async #read(request: string, requestId: string, timeoutMs: number, signal?: AbortSignal): Promise<string> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     let detach: (() => void) | undefined;
     try {
       const deadline = new Promise<never>((_, reject) => {
         timer = setTimeout(() => reject(new TimeoutError(requestId)), timeoutMs);
       });
-      const racers: Promise<string | null>[] = [this.#transport.readLine(), deadline];
+      const exchange = (async () => {
+        await this.#transport.writeLine(request);
+        return this.#transport.readLine();
+      })();
+      const racers: Promise<string | null>[] = [exchange, deadline];
       if (signal !== undefined) {
         racers.push(new Promise<never>((_, reject) => {
           const onAbort = (): void => reject(new AbortError(requestId));
@@ -176,6 +200,9 @@ export class CoreClient {
         throw new TransportClosedError();
       }
       return line;
+    } catch (error) {
+      this.close();
+      throw error;
     } finally {
       if (timer !== undefined) {
         clearTimeout(timer);
@@ -322,15 +349,34 @@ export class CoreClient {
   }
 
   async composerQuery(profile: string, peer: string, send_revision?: string): Promise<import("./types.js").Composer> {
+    this.#requireComposer();
     return this.request("peer.composer_query", { profile, peer, ...(send_revision === undefined ? {} : { send_revision }) });
   }
 
   async composerUpdate(profile: string, peer: string, expected_revision: string | null, text: string, update_key: string): Promise<import("./types.js").ComposerUpdate> {
+    this.#requireComposer();
+    if (Buffer.byteLength(text, "utf8") > this.capabilities.limits.composer_text_utf8_bytes!) {
+      throw new ProtocolError("composer text exceeds the negotiated byte limit");
+    }
     return this.request("peer.composer_update", { profile, peer, expected_revision, text }, { idempotencyKey: update_key });
   }
 
   async enqueueDraft(profile: string, recipient: string, draft_revision: string): Promise<import("./types.js").DraftAcceptance> {
+    this.#requireComposer();
     return this.request("message.enqueue_draft", { profile, recipient, draft_revision }, { idempotencyKey: draft_revision });
+  }
+
+  #requireComposer(): void {
+    const caps = this.capabilities;
+    const names = ["composer_text_utf8_bytes", "composers_per_caller_profile", "composers_per_vault",
+      "composer_update_idempotency_seconds", "composer_update_keys_per_caller_profile", "composer_update_keys_per_vault",
+      "composer_send_idempotency_seconds", "composer_send_keys_per_caller_profile", "composer_send_keys_per_vault"];
+    if (!Number.isSafeInteger(caps.api_minor) || caps.api_minor < 1 ||
+        !Array.isArray(caps.operations) ||
+        !["peer.composer_query", "peer.composer_update", "message.enqueue_draft"].every(name => caps.operations.includes(name)) ||
+        !caps.limits || !names.every(name => Number.isSafeInteger(caps.limits[name]) && caps.limits[name]! > 0)) {
+      throw new CoreError("unsupported_operation", null, null);
+    }
   }
 
   async draftSet(profile: string, peer: string, text: string): Promise<{ profile: string; peer: string; text: string }> {
@@ -365,11 +411,11 @@ export class CoreClient {
     return this.request<WorkspacePreviewView>("workspace.invitation_preview", { profile, document });
   }
 
-  async workspaceJoin(profile: string, document: string): Promise<WorkspaceJoinView> {
+  async workspaceJoin(profile: string, document: string, idempotencyKey?: string): Promise<WorkspaceJoinView> {
     if (document.length === 0) {
       throw new ProtocolError("workspace joins require signed material");
     }
-    return this.request<WorkspaceJoinView>("workspace.join", { profile, document });
+    return this.request<WorkspaceJoinView>("workspace.join", { profile, document }, idempotencyKey === undefined ? {} : { idempotencyKey });
   }
 
   async workspaceChannels(profile: string, workspace: string): Promise<WorkspaceChannelsView> {
@@ -584,8 +630,8 @@ export class CoreClient {
       { idempotencyKey });
   }
 
-  async createProfile(displayName: string): Promise<unknown> {
-    return this.request("profile.create", { display_name: displayName });
+  async createProfile(displayName: string, idempotencyKey?: string): Promise<unknown> {
+    return this.request("profile.create", { display_name: displayName }, idempotencyKey === undefined ? {} : { idempotencyKey });
   }
 
   async workspaceJoinPrompt(profile: string, prompt: string,
@@ -712,8 +758,8 @@ export class CoreClient {
       { profile, workspace, invitation }, { idempotencyKey });
   }
 
-  async workspaceAdmissionGrantList(profile: string, workspace: string): Promise<unknown> {
-    return this.request("workspace.admission_grant_list", { profile, workspace });
+  async workspaceAdmissionGrantList(profile: string, workspace: string, idempotencyKey?: string): Promise<unknown> {
+    return this.request("workspace.admission_grant_list", { profile, workspace }, idempotencyKey === undefined ? {} : { idempotencyKey });
   }
 
   async workspaceAdmissionGrantCreate(profile: string, workspace: string, member: string,

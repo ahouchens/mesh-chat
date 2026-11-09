@@ -98,12 +98,36 @@ def test_component_versions_match_the_compatibility_declaration():
     declaration = json.loads((ROOT / "contracts/core-api/compatibility-v1.json").read_text())
     package = json.loads((ROOT / "sdk/typescript/package.json").read_text())
     kotlin = (ROOT / "sdk/kotlin/src/main/java/com/meshchat/runtime/core/CoreClient.kt").read_text()
-    assert declaration["python_client"]["version"] == __version__
+    assert declaration["service_carried_python_client"]["version"] == __version__
+    python_package = tomllib.loads((ROOT / "sdk/python/pyproject.toml").read_text())
+    assert declaration["python_client"]["version"] == python_package["project"]["version"]
+    assert declaration["python_client"]["first_standalone_distribution"] is True
     assert declaration["typescript_client"]["version"] == package["version"]
     assert f'const val VERSION = "{declaration["kotlin_client"]["version"]}"' in kotlin
     distribution = (ROOT / "sdk/kotlin/build.gradle.kts").read_text()
     assert f'version = "{declaration["kotlin_client"]["version"]}"' in distribution
-    assert declaration["typescript_client"]["version"] == declaration["python_client"]["version"]
+    assert declaration["typescript_client"]["version"] == declaration["service_carried_python_client"]["version"]
+
+
+def test_standalone_and_service_carried_python_protocol_methods_do_not_drift():
+    import ast
+    import re
+    from mesh_chat.core_api.requests import KEYED_OPERATIONS, OPTIONAL_KEY_OPERATIONS, KEYED_ACTIONS
+    from mesh_chat.core_api.client_keys import REQUIRED_KEYS, KEYED_ACTIONS as CLIENT_ACTIONS
+
+    expected = KEYED_OPERATIONS - OPTIONAL_KEY_OPERATIONS
+    assert REQUIRED_KEYS == expected
+    assert {key: set(value) for key, value in CLIENT_ACTIONS.items()} == {key: set(value) for key, value in KEYED_ACTIONS.items()}
+    sources = [ROOT / "service/src/mesh_chat/core_api/client.py", ROOT / "sdk/python/src/mesh_chat_core_client/client.py"]
+    methods = []
+    for path in sources:
+        client = next(item for item in ast.parse(path.read_text()).body if isinstance(item, ast.ClassDef) and item.name == "CoreClient")
+        methods.append({item.name: ast.dump(item, include_attributes=False) for item in client.body if isinstance(item, ast.FunctionDef) and item.name != "native_command"})
+    assert methods[0] == methods[1]
+    for path in [ROOT / "sdk/typescript/src/client.ts", ROOT / "sdk/kotlin/src/main/java/com/meshchat/runtime/core/CoreClient.kt"]:
+        source = path.read_text()
+        inventory = re.search(r"REQUIRED_KEYS\s*=\s*(?:new Set\(\[|setOf\()(.*?)(?:\]\)|\))", source, re.S).group(1)
+        assert set(re.findall(r'"([a-z_.]+)"', inventory)) == expected
 
 
 def test_component_clients_cover_every_advertised_operation():
