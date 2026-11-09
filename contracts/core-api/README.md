@@ -1,5 +1,63 @@
 # Experimental Core API v1 design
 
+## Revisioned direct composer (API 1.1)
+
+The additive `peer.composer_query`, `peer.composer_update` and
+`message.enqueue_draft` operations preserve every existing result shape. Hosts
+advertise them only when the Composer port is bound. Clients require minor 1,
+all three names and these numeric limits before using the feature:
+
+| Limit | Value |
+| --- | ---: |
+| `composer_text_utf8_bytes` | 16384 |
+| `composers_per_caller_profile` | 256 |
+| `composers_per_vault` | 4096 |
+| `composer_update_idempotency_seconds` | 3600 |
+| `composer_update_keys_per_caller_profile` | 8192 |
+| `composer_update_keys_per_vault` | 65536 |
+| `composer_send_idempotency_seconds` | 604800 |
+| `composer_send_keys_per_caller_profile` | 4096 |
+| `composer_send_keys_per_vault` | 65536 |
+
+Query takes `{profile,peer,send_revision?}` without an envelope key and returns
+`{profile,peer,revision,text,update_key,last_send,send_lookup}`. It is read-only:
+an uninitialized composer has `revision:null`. Every token is 64 lowercase hex
+characters, scoped to the authenticated caller/profile/peer and its token kind.
+
+Update takes `{profile,peer,expected_revision,text}` and uses the Core-issued
+`update_key` as its envelope key. Its result is
+`{applied_revision,changed,composer}`. A successful unchanged-text update keeps
+the send revision but rotates the update key. A retained retry returns the
+original applied revision plus the **current** composer. Stale comparison
+returns `conflict`; changed input under a retained key returns
+`idempotency_conflict`. A retired key whose receipt expired returns
+`idempotency_expired` and cannot become a fresh edit.
+
+Enqueue takes `{profile,recipient,draft_revision}`, with that revision as the
+envelope key. It returns existing acceptance fields plus
+`{peer,draft_revision,draft_disposition,composer}`. Acceptance, message, scoped
+index, quota and clearing only the matching revision share one vault commit.
+An old accepted retry returns its original message and current composer; it
+cannot clear a newer draft. Deliberately sending the same text again requires
+a new persisted revision. No client may fall back to a legacy send after an
+uncertain enqueue result.
+
+`last_send` contains an accepted outcome with retained message text, or an
+expired notice without text/acceptance. `send_lookup` is null when omitted,
+an accepted outcome for a retained receipt, or `{revision,status:"not_accepted"}`
+for the current unsent revision. This is no guarantee about an in-flight send.
+An explicit expired/deleted/unretained revision lookup fails
+`idempotency_expired`; foreign/forged tokens fail `forbidden`.
+
+The three strict result schemas and `composer-vectors-v1.json` define wire
+shapes. UTF-8 byte bounds are enforced by the production parser. Plaintext is
+kept only in the encrypted current draft and retained primary message, not in
+receipt history. Initial legacy import requires the separate trusted host
+`private_composer_legacy` flag, never JSON or ordinary owner grants. The first
+composer mutation atomically raises the vault format floor to 2 and installs
+legacy write fences. A pinned older format-1 host must reject that vault;
+public API compatibility does not promise binary vault downgrade.
+
 These are experimental contracts, not a supported integration release. A protected
 facade component implements capabilities, profile queries, connection observations,
 peer queries, durable text enqueue, scoped message snapshots and retained change

@@ -192,6 +192,20 @@ class CoreClient:
     def draft_get(self, handle, peer):
         return self.request("peer.draft_get", {"profile": handle, "peer": peer})
 
+    def composer_query(self, profile, peer, send_revision=None):
+        params = {"profile": profile, "peer": peer}
+        if send_revision is not None:
+            params["send_revision"] = send_revision
+        return self.request("peer.composer_query", params)
+
+    def composer_update(self, profile, peer, expected_revision, text, update_key):
+        return self.request("peer.composer_update", {"profile": profile, "peer": peer,
+            "expected_revision": expected_revision, "text": text}, idempotency_key=update_key)
+
+    def enqueue_draft(self, profile, recipient, draft_revision):
+        return self.request("message.enqueue_draft", {"profile": profile, "recipient": recipient,
+            "draft_revision": draft_revision}, idempotency_key=draft_revision)
+
     def draft_set(self, handle, peer, text):
         return self.request("peer.draft_set", {"profile": handle, "peer": peer, "text": text})
 

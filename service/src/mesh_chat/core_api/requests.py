@@ -17,6 +17,7 @@ RECEIVED_OPERATIONS = ("message.received",)
 INTENT_OPERATIONS = ("connection.start", "connection.stop")
 RELATIONSHIP_OPERATIONS = ("peer.approve", "peer.revoke", "peer.unblock", "peer.delete", "peer.update", "peer.decide")
 DRAFT_OPERATIONS = ("peer.draft_get", "peer.draft_set")
+COMPOSER_OPERATIONS = ("peer.composer_query", "peer.composer_update", "message.enqueue_draft")
 CALL_CONTROL_OPERATIONS = ("call.control",)
 CALL_OPERATIONS = ("call.settings_query", "call.settings_update", "call.ice_servers",
                     "call.media_query")
@@ -203,6 +204,7 @@ CURSOR = re.compile(r"[A-Za-z0-9_-]{16,1024}\Z")
 # Envelope identity is defined once for parsing and session admission. Contract
 # tests bind this inventory to operations-v1.json, including composite operations.
 KEYED_OPERATIONS = frozenset({
+    "peer.composer_update", "message.enqueue_draft",
     "call.control",
     "connection.retry",
     "events.ack",
@@ -285,6 +287,32 @@ def requires_idempotency_key(operation, params):
         isinstance(params, dict) and params.get("action") in KEYED_ACTIONS.get(operation, ()))
 
 
+def _composer_params(operation, params):
+    token = re.compile(r"[0-9a-f]{64}\Z")
+    peer = "recipient" if operation == "message.enqueue_draft" else "peer"
+    required = {"profile", peer}
+    optional = set()
+    if operation == "peer.composer_query":
+        optional = {"send_revision"}
+    elif operation == "peer.composer_update":
+        required |= {"expected_revision", "text"}
+    else:
+        required.add("draft_revision")
+    if (not required <= set(params) or set(params) - required - optional
+            or any(not isinstance(params.get(name), str) or HANDLE.fullmatch(params[name]) is None
+                   for name in ("profile", peer))):
+        raise ApiFailure("invalid_request")
+    for field in ("send_revision", "draft_revision", "expected_revision"):
+        if field not in params or (field == "expected_revision" and params[field] is None):
+            continue
+        if not isinstance(params[field], str) or token.fullmatch(params[field]) is None:
+            raise ApiFailure("invalid_request")
+    if operation == "peer.composer_update" and (
+            not isinstance(params["text"], str) or len(params["text"].encode("utf-8")) > 16384):
+        raise ApiFailure("invalid_request")
+    return params
+
+
 def parse_request(value, operations):
     try:
         return _parse_request(value, operations)
@@ -329,6 +357,10 @@ def _parse_request(value, operations):
             or HANDLE.fullmatch(params["group"]) is None):
         raise ApiFailure("invalid_request")
     _component_field_bounds(operation, params)
+    if operation in COMPOSER_OPERATIONS:
+        if operation != "peer.composer_query" and re.fullmatch(r"[0-9a-f]{64}", value["idempotency_key"]) is None:
+            raise ApiFailure("invalid_request")
+        return operation, _composer_params(operation, params)
     if operation == "message.enqueue":
         return operation, _enqueue_params(value)
     if operation == "events.ack":
@@ -1478,6 +1510,7 @@ COMPONENT_OPERATIONS = (
     + INTENT_OPERATIONS
     + RELATIONSHIP_OPERATIONS
     + DRAFT_OPERATIONS
+    + COMPOSER_OPERATIONS
     + CALL_OPERATIONS
     + CALL_CONTROL_OPERATIONS
     + SETTINGS_OPERATIONS

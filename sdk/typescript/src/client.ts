@@ -321,6 +321,18 @@ export class CoreClient {
     return this.request("peer.draft_get", { profile, peer });
   }
 
+  async composerQuery(profile: string, peer: string, send_revision?: string): Promise<import("./types.js").Composer> {
+    return this.request("peer.composer_query", { profile, peer, ...(send_revision === undefined ? {} : { send_revision }) });
+  }
+
+  async composerUpdate(profile: string, peer: string, expected_revision: string | null, text: string, update_key: string): Promise<import("./types.js").ComposerUpdate> {
+    return this.request("peer.composer_update", { profile, peer, expected_revision, text }, { idempotencyKey: update_key });
+  }
+
+  async enqueueDraft(profile: string, recipient: string, draft_revision: string): Promise<import("./types.js").DraftAcceptance> {
+    return this.request("message.enqueue_draft", { profile, recipient, draft_revision }, { idempotencyKey: draft_revision });
+  }
+
   async draftSet(profile: string, peer: string, text: string): Promise<{ profile: string; peer: string; text: string }> {
     return this.request("peer.draft_set", { profile, peer, text });
   }

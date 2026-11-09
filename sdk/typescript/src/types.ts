@@ -1,5 +1,18 @@
 /** Selected public shapes; every field is explicitly chosen by the facade. */
 
+export type ComposerSendOutcome =
+  | { revision: string; status: "accepted"; acceptance: Acceptance; text: string; draft_disposition: "cleared" | "superseded" }
+  | { revision: string; status: "expired"; accepted_at: number; idempotency_expires_at: number };
+export interface Composer {
+  profile: string; peer: string; revision: string | null; text: string; update_key: string;
+  last_send: ComposerSendOutcome | null;
+  send_lookup: Exclude<ComposerSendOutcome, { status: "expired" }> | { revision: string; status: "not_accepted" } | null;
+}
+export interface ComposerUpdate { applied_revision: string; changed: boolean; composer: Composer }
+export interface DraftAcceptance extends Acceptance {
+  peer: string; draft_revision: string; draft_disposition: "cleared" | "superseded"; composer: Composer;
+}
+
 export interface Capabilities {
   api_major: number;
   api_minor: number;
