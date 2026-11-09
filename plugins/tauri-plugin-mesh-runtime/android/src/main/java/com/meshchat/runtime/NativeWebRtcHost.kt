@@ -26,6 +26,9 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.RejectedExecutionException
 import java.security.MessageDigest
 import java.net.InetAddress
 import java.util.UUID
@@ -71,10 +74,24 @@ object NativeWebRtcHost {
         val enqueuedBytes = AtomicLong()
         val sampleSequence = AtomicLong()
         val sampling = AtomicBoolean()
+        val retirement = Any()
+        val registeredChannels = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<DataChannel, Boolean>())
+        val disposal = NativePeerDisposal<DataChannel>(
+            closeChannel = { channel ->
+                if (registeredChannels.contains(channel)) channel.unregisterObserver()
+                channel.close()
+            }, disposeChannel = { it.dispose() }, closePeer = { pc.close() }, disposePeer = { pc.dispose() })
+        val callbacksDrained = AtomicBoolean()
+        val disposing = AtomicBoolean()
         val callbacks = NativeCallbackQueue({ notifyPython("overflow", id, "") })
     }
 
     private val sessions = ConcurrentHashMap<String, Session>()
+    private val retiringSessions = ConcurrentHashMap<String, Session>()
+    private val disposalExecutor = ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS,
+        ArrayBlockingQueue<Runnable>(MAX_SESSIONS), { task ->
+            Thread(task, "mesh-webrtc-disposal").apply { isDaemon = true }
+        })
     private val reservations = NativeSessionReservations(MAX_SESSIONS)
     private val adapterEpoch = UUID.randomUUID().toString().replace("-", "")
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -147,7 +164,7 @@ object NativeWebRtcHost {
             }
         } catch (error: Throwable) {
             Log.e(TAG, "createOffer failed (${error.javaClass.simpleName})")
-            close(sessionId)
+            cancelSession(sessionId)
             error("native_webrtc_offer_failed")
         }
     }
@@ -195,7 +212,7 @@ object NativeWebRtcHost {
             }
         } catch (error: Throwable) {
             Log.e(TAG, "acceptOffer failed (${error.javaClass.simpleName})")
-            close(sessionId)
+            cancelSession(sessionId)
             error("native_webrtc_answer_failed")
         }
     }
@@ -276,42 +293,88 @@ object NativeWebRtcHost {
 
     @JvmStatic
     fun close(sessionId: String) {
-        reservations.cancel(sessionId) ?: return
-        val session = sessions[sessionId]
-        if (session != null) retireSession(session)
-        notifyPython("closed", sessionId, "")
+        val lease = cancelSession(sessionId) ?: return
+        val remaining = if (Looper.myLooper() == Looper.getMainLooper()) 0L else 5_000L
+        check(lease.awaitRetired(remaining)) { "native_webrtc_cleanup_pending" }
+        if (lease.claimRetirementNotification()) notifyPython("closed", sessionId, "")
+    }
+
+    private fun cancelSession(sessionId: String): NativeSessionReservations.Lease? {
+        val lease = reservations.cancel(sessionId) ?: return null
+        (sessions[sessionId] ?: retiringSessions[sessionId])?.let(::retireSession)
+        return lease
     }
 
     private fun retireSession(session: Session) {
-        sessions.remove(session.id, session)
-        session.closed = true
-        // Retire routing immediately. Disposal may wait for an in-flight SDP
-        // operation, so it must never block Android's UI/Service thread.
-        session.callbacks.close {
-          synchronized(session) {
-            for (channel in session.channels.values) {
-                // Fence callbacks before disposing their native pointer.
-                try { channel.unregisterObserver() } catch (_: Throwable) { }
-                disposeUnusedChannel(channel)
+        synchronized(session.retirement) {
+            if (session.disposed.count == 0L) return
+            retiringSessions.putIfAbsent(session.id, session)
+            sessions.remove(session.id, session)
+            session.closed = true
+            // Drain callbacks before disposing pointers they may still observe.
+            session.callbacks.close {
+                session.callbacksDrained.set(true)
+                scheduleDisposal(session)
             }
-            session.channels.clear()
-            try { session.pc.close() } catch (_: Throwable) { }
-            // A failed disposal retains capacity; starting more peers would
-            // hide an unbounded native leak behind an empty routing map.
+            if (session.callbacksDrained.get()) scheduleDisposal(session)
+        }
+    }
+
+    private fun scheduleDisposal(session: Session) {
+        synchronized(session.retirement) {
+            if (session.closed && !session.callbacksDrained.get()) return
+            if (session.disposed.count == 0L && session.disposal.pendingChannels() == 0) return
+            if (!session.closed && session.disposal.pendingDiscards() == 0) return
+            if (!session.disposing.compareAndSet(false, true)) return
+        }
+        try {
+            disposalExecutor.execute {
+                var completed = false
+                try {
+                    synchronized(session) {
+                        if (session.closed && session.callbacksDrained.get()) disposeSession(session)
+                        else if (!session.closed) session.disposal.disposeDiscards()
+                        completed = true
+                    }
+                } catch (_: Throwable) {
+                    // Failed discarded channels also remain owned by this peer.
+                    cancelSession(session.id)
+                    notifyPython("overflow", session.id, "")
+                } finally {
+                    session.disposing.set(false)
+                    if (completed && ((session.closed && session.callbacksDrained.get() && session.disposed.count != 0L)
+                        || session.disposal.pendingDiscards() > 0)) scheduleDisposal(session)
+                }
+            }
+        } catch (_: RejectedExecutionException) {
             try {
-                session.pc.dispose()
-                reservations.disposed(session.lease)
-                session.disposed.countDown()
-            } catch (_: Throwable) {
+                cancelSession(session.id)
                 notifyPython("overflow", session.id, "")
-            }
-          }
+            } finally { session.disposing.set(false) }
+        }
+    }
+
+    private fun disposeSession(session: Session) {
+        if (!session.disposal.dispose()) return
+        session.channels.clear()
+        session.registeredChannels.clear()
+        synchronized(session.retirement) {
+            reservations.disposed(session.lease)
+            retiringSessions.remove(session.id, session)
+            session.disposed.countDown()
         }
     }
 
     @JvmStatic
     fun closeAll() {
-        for (sessionId in reservations.ids()) close(sessionId)
+        val leases = reservations.ids().mapNotNull(::cancelSession)
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        for (lease in leases) {
+            val remaining = if (Looper.myLooper() == Looper.getMainLooper()) 0L else
+                TimeUnit.NANOSECONDS.toMillis((deadline - System.nanoTime()).coerceAtLeast(0))
+            check(lease.awaitRetired(remaining)) { "native_webrtc_cleanup_pending" }
+            if (lease.claimRetirementNotification()) notifyPython("closed", lease.id, "")
+        }
     }
 
     /** Private qualification accounting includes asynchronous disposal leases. */
@@ -424,13 +487,13 @@ object NativeWebRtcHost {
         try {
             val result = create(lease)
             if (!JSONObject(result).optBoolean("ok")) {
-                close(sessionId)
+                cancelSession(sessionId)
                 return result
             }
             if (!reservations.active(lease)) return error("native_webrtc_session_closed")
             return result
         } catch (_: Throwable) {
-            close(sessionId)
+            cancelSession(sessionId)
             return error("native_webrtc_creation_failed")
         } finally {
             reservations.finishCreation(lease)
@@ -512,14 +575,18 @@ object NativeWebRtcHost {
             override fun onRemoveStream(stream: MediaStream) = Unit
 
             override fun onDataChannel(channel: DataChannel) {
+                if (!session.disposal.own(channel)) {
+                    cancelSession(session.id)
+                    notifyPython("overflow", session.id, "")
+                }
                 if (!isCurrent(session)) {
-                    disposeUnusedChannel(channel)
+                    discardChannel(session, channel)
                     return
                 }
-                enqueueChannelEvent(session, { disposeUnusedChannel(channel) }) {
+                enqueueChannelEvent(session, { discardChannel(session, channel) }) {
                     val label = channel.label()
                     if (label !in session.expectedChannels || label !in setOf("mesh-reticulum", "mesh-onboarding", "meshchat-reconnect")) {
-                        disposeUnusedChannel(channel)
+                        discardChannel(session, channel)
                         return@enqueueChannelEvent
                     }
                     registerChannel(session, label, channel)
@@ -536,10 +603,15 @@ object NativeWebRtcHost {
         label: String,
         channel: DataChannel,
     ) {
+        if (!session.disposal.own(channel)) {
+            cancelSession(session.id)
+            throw IllegalStateException("native_webrtc_channel_limit")
+        }
         if (session.channels.putIfAbsent(label, channel) != null) {
-            disposeUnusedChannel(channel)
+            discardChannel(session, channel)
             return
         }
+        session.registeredChannels.add(channel)
         channel.registerObserver(object : DataChannel.Observer {
             override fun onBufferedAmountChange(previousAmount: Long) = Unit
 
@@ -590,11 +662,10 @@ object NativeWebRtcHost {
         return pc.localDescription ?: offer
     }
 
-    private fun disposeUnusedChannel(channel: DataChannel) {
-        try { channel.close() } catch (_: Throwable) { }
-        try { channel.dispose() } catch (_: Throwable) { }
+    private fun discardChannel(session: Session, channel: DataChannel) {
+        session.disposal.discard(channel)
+        scheduleDisposal(session)
     }
-
     private fun enqueueChannelEvent(session: Session, discarded: () -> Unit = {}, block: () -> Unit) {
         if (!isCurrent(session)) { discarded(); return }
         session.callbacks.submit(discarded) {
@@ -720,7 +791,7 @@ object NativeWebRtcHost {
             }
             return error("native_webrtc_no_candidates")
         } catch (_: InterruptedException) {
-            close(lease.id)
+            cancelSession(lease.id)
             Thread.currentThread().interrupt()
             return error("native_webrtc_session_closed")
         } finally {

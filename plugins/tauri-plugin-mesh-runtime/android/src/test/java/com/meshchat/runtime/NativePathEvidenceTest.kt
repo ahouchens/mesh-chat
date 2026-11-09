@@ -6,6 +6,49 @@ import org.junit.Test
 import org.webrtc.RTCStats
 
 class NativePathEvidenceTest {
+    @Test fun cancellationDoesNotAcknowledgePhysicalRetirement() {
+        val reservations = NativeSessionReservations(1)
+        val lease = reservations.reserve("peer")!!
+        assertTrue(reservations.beginAllocation(lease))
+        reservations.finishCreation(lease)
+        reservations.cancel("peer")
+        assertFalse(lease.awaitRetired(1))
+        assertFalse(lease.claimRetirementNotification())
+        assertNull(reservations.reserve("replacement"))
+        reservations.disposed(lease)
+        assertTrue(lease.awaitRetired(0))
+        assertTrue(lease.claimRetirementNotification())
+        assertFalse(lease.claimRetirementNotification())
+        assertNotNull(reservations.reserve("replacement"))
+    }
+
+    @Test fun disposalBeforeCreationUnwindsStillCannotAcknowledgeRetirement() {
+        val reservations = NativeSessionReservations(1)
+        val lease = reservations.reserve("peer")!!
+        assertTrue(reservations.beginAllocation(lease))
+        reservations.cancel("peer")
+        reservations.disposed(lease)
+        assertFalse(lease.awaitRetired(1))
+        reservations.finishCreation(lease)
+        assertTrue(lease.awaitRetired(0))
+    }
+
+    @Test fun lateOldDisposalCannotAcknowledgeANewReservationWithTheSameId() {
+        val reservations = NativeSessionReservations(1)
+        val old = reservations.reserve("peer")!!
+        reservations.cancel("peer")
+        reservations.finishCreation(old)
+        assertTrue(old.awaitRetired(0))
+        val fresh = reservations.reserve("peer")!!
+        assertTrue(reservations.beginAllocation(fresh))
+        reservations.finishCreation(fresh)
+        reservations.cancel("peer")
+        reservations.disposed(old)
+        assertFalse(fresh.awaitRetired(1))
+        reservations.disposed(fresh)
+        assertTrue(fresh.awaitRetired(0))
+    }
+
     @Test fun accountingRetainsCreatingAndCancelledAllocatedLeasesUntilActualDisposal() {
         val reservations = NativeSessionReservations(2)
         val lease = reservations.reserve("peer")!!

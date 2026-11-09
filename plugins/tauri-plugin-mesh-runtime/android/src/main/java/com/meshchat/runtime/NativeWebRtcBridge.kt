@@ -31,9 +31,15 @@ object NativeWebRtcBridge {
     }
 
     @JvmStatic
+    fun retireAll() {
+        // The app-owned runtime requires the actual native acknowledgment.
+        Class.forName(HOST).getMethod("closeAll").invoke(null)
+    }
+
+    @JvmStatic
     fun closeAll() {
         try {
-            Class.forName(HOST).getMethod("closeAll").invoke(null)
+            retireAll()
         } catch (error: Throwable) {
             // The host may never have been loaded; closing is best effort.
             Log.d(TAG, "native WebRTC close skipped (${error.javaClass.simpleName})")

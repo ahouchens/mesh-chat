@@ -1,11 +1,27 @@
 package com.meshchat.runtime
 
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+
 /** Capacity includes creation and asynchronous disposal, not just routable peers. */
 class NativeSessionReservations(private val capacity: Int) {
     class Lease internal constructor(val id: String) {
         internal var creating = true
         internal var allocated = false
         internal var cancelled = false
+        private val retired = CountDownLatch(1)
+        private val notified = AtomicBoolean()
+        fun awaitRetired(timeoutMillis: Long): Boolean = try {
+            require(timeoutMillis >= 0)
+            retired.await(timeoutMillis, TimeUnit.MILLISECONDS)
+        } catch (interrupted: InterruptedException) {
+            Thread.currentThread().interrupt()
+            throw interrupted
+        }
+        internal fun acknowledgeRetirement() = retired.countDown()
+        internal fun claimRetirementNotification(): Boolean =
+            retired.count == 0L && notified.compareAndSet(false, true)
     }
 
     private val leases = mutableMapOf<String, Lease>()
@@ -64,6 +80,9 @@ class NativeSessionReservations(private val capacity: Int) {
     )
 
     private fun releaseFinished(lease: Lease) {
-        if (lease.cancelled && !lease.creating && !lease.allocated) leases.remove(lease.id)
+        if (lease.cancelled && !lease.creating && !lease.allocated) {
+            leases.remove(lease.id)
+            lease.acknowledgeRetirement()
+        }
     }
 }
