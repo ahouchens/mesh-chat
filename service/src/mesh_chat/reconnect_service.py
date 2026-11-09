@@ -241,8 +241,12 @@ class ReconnectServiceMixin:
         profiles.update({identifier: profile for (kind, identifier), profile in records.items()
                          if kind == PROFILE_KIND})
         matches = [profile for profile in profiles.values() if profile.get("contact_id") == contact_id]
-        selected = next((profile for profile in matches
-                         if (profile.get("remote_device_id") or "") == (remote_device_id or "")), None)
+        # A workspace peer ID already identifies the current manifest device.
+        # Its separately signed reconnect device ID may be a dev-* identity.
+        selected = next((profile for profile in matches if profile["id"] == contact_id), None) if contact_id.startswith("workspace:") else None
+        if selected is None:
+            selected = next((profile for profile in matches
+                             if (profile.get("remote_device_id") or "") == (remote_device_id or "")), None)
         if selected is None:
             selected = next((profile for profile in matches if not profile.get("remote_device_id")), None)
         if selected is None and remote_device_id is None and matches:
@@ -800,7 +804,18 @@ class ReconnectServiceMixin:
             raise IdentityMismatch("Reconnect capability peer binding changed")
         if (current.get("scope_kind") == "workspace"
                 and profile.get("remote_device_id") != current["peer_device_id"]):
-            raise IdentityMismatch("Reconnect capability device binding changed")
+            # Verify the retained protocol identity independently of manifest
+            # membership. Historical capabilities may be expired while local
+            # consent is refreshed; this check grants no remote live consent.
+            document = profile.get("remote_capabilities")
+            if not document:
+                raise IdentityMismatch("Reconnect capability device binding changed")
+            remote = verify_connection_capabilities(document,
+                expected_signer=current["destination_hash"],
+                now=int(profile.get("remote_capabilities_issued_at") or _now()))
+            if (remote.device_id != profile.get("remote_device_id")
+                    or remote.peer_destination != self._require_profile()["destination_hash"]):
+                raise IdentityMismatch("Reconnect capability device binding changed")
         device = self._prepare_reconnect_device_id(records=records)
         self._reconnect_issue_local_capabilities(profile, current, rotate=rotate, device_id=device)
         records[PROFILE_KIND, profile["id"]] = profile
