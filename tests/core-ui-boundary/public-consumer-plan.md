@@ -1,0 +1,123 @@
+# Independent public consumer qualification proposal
+
+Status: design handoff for A/C review, not implemented or qualified. The private
+Windows/Android topology controller remains a separate transport test.
+
+## Observed gaps
+
+- The TypeScript archive and Kotlin AAR contain thin protocol clients, not an
+  independently usable app-owned runtime host. The normal frozen Windows
+  `--native-webrtc` mode requires a trusted initializer to provide a vault key;
+  the sidecar can expose an image-authenticated pipe when its launcher asks.
+- The Android example is an external UID bound to `core-api-host`. That CI host
+  seeds a profile, workspace and fabricated approved contact. These are useful
+  packaging/denial checks, but cannot qualify independent pairing and receipts.
+- Native offer/answer admission currently exists only behind
+  `QualificationControl`, with a qualification profile marker and private
+  commands. The existing public signed-invitation operations do not admit that
+  production native negotiation actor. `connection.start` starts reconnect for
+  an existing relationship; it does not replace onboarding.
+- The production Android runtime library currently has Tauri project
+  dependencies and service Python source paths. The independent client build
+  cannot use that project dependency as a versioned runtime distribution.
+
+## A: public pairing intent, not a native command port
+
+Add a bounded public pairing intent family, backed by C's existing actor:
+
+| Operation | Request | Result and authority |
+| --- | --- | --- |
+| `peer.pairing_begin` | `profile`, `role: offer|answer`, optional `pairing_code` (answer only, 1..2048 UTF-8 bytes), optional `allow_direct_ip_disclosure` (boolean, default false); required caller envelope idempotency key | `profile`, caller/profile-scoped opaque `pairing` handle, `state`, `expires_at`, nullable `pairing_code`; requires current approve permission |
+| `peer.pairing_query` | `profile`, `pairing` | Same selected projection, including shareable code; current approve permission plus original caller/profile binding |
+| `peer.pairing_cancel` | `profile`, `pairing` | Same projection; approve permission; convergent cancellation of this exact intent |
+
+Use actual actor states: reserved, offer_ready, awaiting_approval, transferred,
+retiring, retired. Offer codes are shareable admission material, not SDP. An
+answer must supply a code; an offer must omit it. A transferred intent remains
+transferred on cancellation and cannot reclaim the adopted carrier.
+
+Derive the actor operation UUID with the existing keyed-action namespace from
+the host-derived caller, profile and caller key; never accept an internal
+operation UUID or caller identity in JSON. Bind a live authorization callback
+to the exact service incarnation and profile identity. Recheck authority on
+begin replay, query, cancel and each asynchronous effect. Preserve the existing
+actor's resync requirement after an interrupted runtime; do not invent an
+automatic fresh intent. Advertise only when the concrete native actor is bound.
+Document the actual 32-intent bound, one active onboarding intent, 300-second
+maximum expiry and byte limit. SDKs must require the advertised feature and
+limits, with no retries or replacement keys.
+
+Existing public `application.snapshot`, `peer.approve` and `contact.invitation`
+can supply explicit contact decisions for this first owner-app consumer. No
+new public raw native, SDP, signaling HTTP, reducer-event, vault-key or grant
+operation is needed. Disclosure consent remains explicit. Later reconnect uses
+the existing public connection intent and consent semantics.
+
+A file boundary: `contracts/core-api/operations-v1.json`,
+`contracts/core-api/request.schema.json`, `service/src/mesh_chat/core_api/requests.py`,
+`session.py`, `views.py`, `pairing.py`, `service_pairing.py`, `composition.py`,
+the relevant keyed-action/capability implementation, and thin helpers/types in
+`sdk/typescript/src/` and `sdk/kotlin/src/main/java/com/meshchat/runtime/core/`.
+A owns producer contract/authority/idempotency tests. This is an additive
+experimental API feature, not an API stability declaration.
+
+## C: ordinary app-owned bootstrap and host distribution
+
+Windows: add a documented normal packaged host launch mode that creates/reopens
+one app-owned data directory and retrieves its vault key through Windows
+protection inside the runtime. The trusted launcher provides the owned directory,
+unique pipe and exact client image outside public request JSON. The runtime
+returns only pipe/startup status, never keys. Admit that app's owner operations
+without exposing private native controls to its public SDK session. Start empty;
+the app's explicit `profile.create` request creates the identity. Reuse the
+existing frozen native host, same-user image authentication and exact shutdown
+ownership. Do not add an unprotected network daemon or attach to the user's
+installed Mesh Chat profile. Proposed C paths: a new production app-owned host
+composition module under `service/src/mesh_chat/`, its `__main__.py` launch route,
+and existing platform key/provider glue. Coordinate the public endpoint binding
+with A's `core_api/sidecar_host.py` / `pipe_endpoint.py` ownership.
+
+Android: provide a documented trusted host bootstrap API, for example
+`MeshCoreRuntime.start(context)`, which owns that application's private directory,
+Keystore wrapping and native host initialization. The app then uses the installed
+Kotlin SDK against its own real Binder service/UID. Keep external packages at
+their existing consumer grants. The API must not accept owner UID, grant, raw
+vault key or private command in JSON. A separate versioned runtime-host AAR/POM
+should package the existing production host sources, Python assets, ABI inputs
+and declared dependencies without a Tauri project dependency. A small new Gradle
+host module can reuse the production files; no replacement transport or service
+implementation. Proposed C paths: new `MeshCoreRuntime.kt` and runtime-host module
+under `plugins/tauri-plugin-mesh-runtime/android/`; existing
+`NativeWebRtcBridge.kt`, `MeshCoreApiService.kt`, `mobile_bridge.py` and platform
+key/provider code only as needed. C retains native-pairing/custody tests and
+proves normal shutdown acknowledges actual native/store retirement.
+
+The host bootstrap is part of the installing application's trust boundary,
+separate from the thin SDK. It must work through documented distribution inputs;
+no qualification marker, Python reflection, seed fixture or test dispatcher is
+available to the consumer app.
+
+## D: independent apps and source-bound qualification
+
+After the reviewed A/C contracts are available, build both consumer applications
+outside the checkout with access only to versioned SDK/runtime artifacts and
+public documentation. The TypeScript app launches its normal frozen host; the
+Kotlin app initializes its installed runtime-host library and binds normally.
+Create fresh identities, disable alternate LAN/discovery paths through supported
+settings, explicitly exchange offer code and consent decisions, and enqueue
+messages in both directions with caller keys. Query actual authenticated receipt
+state and verify one durable message per logical identity. Repeat with swapped
+platform initiators, then add real restart/reopen, caller isolation and event
+recovery cases as separate declared inventories.
+
+D owns `examples/typescript-core-consumer/`, `examples/android-core-consumer/`,
+consumer packaging/orchestration scripts, native workflow wiring and strict
+source/artifact/run evidence. Test infrastructure can terminate processes or
+impair networking externally, but cannot initialize product internals or supply
+private authority. Retain installed SDK/runtime/APK hashes and actual case
+identities. Missing supported bootstrap/pairing fails the required qualification;
+component archive/import/Binder checks never stand in for receipt traffic.
+
+This first traffic batch does not close physical qualification, a supported
+release/upgrade matrix, the full SC21–SC26 inventory, UI media or the separate
+30-second impaired partition requirement.
