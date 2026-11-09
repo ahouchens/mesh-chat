@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { admitCoreRequest, type CoreRequestAdmission } from "./core-admission";
 import { onBackButtonPress } from "@tauri-apps/api/app";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
@@ -414,13 +415,13 @@ export async function coreApiCreateGroup(
   });
 }
 
-export async function coreApiSendGroupMessage(group: string, text: string): Promise<unknown> {
+export async function coreApiSendGroupMessage(group: string, text: string, admit: CoreRequestAdmission = admitCoreRequest): Promise<unknown> {
   const profile = await coreApiProfile();
-  return coreApiRequest("group.message_enqueue", {
+  return admit(() => coreApiRequest("group.message_enqueue", {
     profile: profile.profile,
     group,
     text,
-  });
+  }));
 }
 
 export async function coreApiSubmitWorkspacePrompt(
@@ -638,10 +639,11 @@ export async function coreApiTimelineMutation(
   action: "thread_reply" | "thread_read" | "mentions_read" | "notification_preference" | "workspace_read" | "direct_read" | "channel_message" | "direct_message" | "message_edit" | "message_delete" | "reaction_set",
   params: Record<string, unknown>,
   idempotencyKey: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<Record<string, unknown>> {
   const profile = await coreApiProfile();
-  const result = await coreApiRequest("workspace.timeline_mutation",
-    { profile: profile.profile, workspace, action, ...params }, idempotencyKey) as { result?: Record<string, unknown> };
+  const result = await admit(() => coreApiRequest("workspace.timeline_mutation",
+    { profile: profile.profile, workspace, action, ...params }, idempotencyKey)) as { result?: Record<string, unknown> };
   return result.result ?? {};
 }
 
@@ -1090,18 +1092,19 @@ export async function coreApiRemoteProfile(
 export async function coreApiWorkspaceDraftSet(
   workspace: string, conversation: string, text: string, idempotencyKey: string,
   extra: { threadRoot?: string; mentions?: string[] } = {},
+  admit: CoreRequestAdmission = admitCoreRequest,
 ): Promise<unknown> {
   const profile = await coreApiProfile();
-  return coreApiRequest("workspace.draft_set", {
+  return admit(() => coreApiRequest("workspace.draft_set", {
     profile: profile.profile, workspace, conversation, text,
     ...(extra.threadRoot ? { thread_root: extra.threadRoot } : {}),
     ...(extra.mentions?.length ? { mention_member_ids: extra.mentions } : {}),
-  }, idempotencyKey);
+  }, idempotencyKey));
 }
 
-export async function coreApiGroupDraftSet(group: string, text: string): Promise<unknown> {
+export async function coreApiGroupDraftSet(group: string, text: string, admit: CoreRequestAdmission = admitCoreRequest): Promise<unknown> {
   const profile = await coreApiProfile();
-  return coreApiRequest("group.draft_set", { profile: profile.profile, group, text });
+  return admit(() => coreApiRequest("group.draft_set", { profile: profile.profile, group, text }));
 }
 
 export async function coreApiGroupInvitation(
