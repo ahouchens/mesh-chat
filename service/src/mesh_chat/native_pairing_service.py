@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from hashlib import sha256
 import json
+import math
 import time
 from weakref import ref
 from uuid import UUID, uuid4, uuid5
@@ -24,12 +25,17 @@ CHANNELS = [
 
 
 class NativePairingServiceMixin:
+    native_pairing_public_intents = True
+
     def native_pairing_begin(self, operation_id, *, role, authorized,
-                             pairing_code=None, allow_direct_ip_disclosure=False):
+                             pairing_code=None, allow_direct_ip_disclosure=False,
+                             cancel_requested=None, on_terminal=None, expires_at=None):
         """Trusted host admission; A binds caller/key before invoking this port."""
         with self._dispatch_lock:
             if (getattr(self, "_connection_policy", "legacy") != "shared-native"
-                    or not callable(authorized) or not authorized()):
+                    or not callable(authorized) or not authorized()
+                    or (cancel_requested is not None and not callable(cancel_requested))
+                    or (on_terminal is not None and not callable(on_terminal))):
                 raise ContactNotApproved("Native pairing authority is unavailable")
             self._require_native_work()
             profile = self._require_profile()
@@ -41,9 +47,17 @@ class NativePairingServiceMixin:
             if base is None:
                 raise NativeUnavailable("Signaling mailbox is not configured")
             imported = parse_pairing(pairing_code, base) if role == "answer" else None
-            operation_id, digest, replay = self._workspace_operation("native.pairing", operation_id, {
+            if expires_at is not None:
+                if (type(expires_at) not in (int, float) or not math.isfinite(expires_at)
+                        or not 0 < expires_at <= time.time() + 300):
+                    raise ValidationError("Native pairing deadline is invalid")
+                expires_at = float(expires_at)
+            inputs = {
                 "role": role, "pairing_digest": sha256((pairing_code or "").encode()).hexdigest(),
-                "allow_direct_ip_disclosure": allow_direct_ip_disclosure})
+                "allow_direct_ip_disclosure": allow_direct_ip_disclosure}
+            if expires_at is not None:
+                inputs["expires_at"] = expires_at
+            operation_id, digest, replay = self._workspace_operation("native.pairing", operation_id, inputs)
             contexts = self._native_pairing_contexts = getattr(self, "_native_pairing_contexts", {})
             if replay is not None:
                 context = contexts.get(operation_id)
@@ -51,15 +65,18 @@ class NativePairingServiceMixin:
                         or replay.get("identity_hash") != profile["identity_hash"]):
                     raise CallOutcomeRequiresResync("Native pairing intent requires a fresh runtime")
                 self._native_pairing_check(context, terminal=True)
+                self._native_pairing_notify_terminal(context)
                 return self._native_pairing_projection(context)
             if len(contexts) >= 32 or any(context.get("state") not in {"retired", "transferred"}
                                           for context in contexts.values()):
                 raise NativeUnavailable("Native pairing capacity reached")
             context = {"id": operation_id, "role": role, "authorized": authorized,
+                       "cancel_requested": cancel_requested, "on_terminal": on_terminal,
                        "runtime_epoch": self._runtime_incarnation, "identity": ref(self._identity),
                        "identity_hash": profile["identity_hash"], "mailbox_url": base,
                        "session": "pairing-" + uuid4().hex, "code": pairing_code,
-                       "expires_at": min(time.time() + 300, imported["expires_at"] if imported else float("inf")),
+                       "expires_at": min(time.time() + 300, expires_at if expires_at is not None else float("inf"),
+                                         imported["expires_at"] if imported else float("inf")),
                        "direct": allow_direct_ip_disclosure, "state": "reserved", "admitted": False,
                        "physical": None, "source": None, "allocation_attempted": False}
             contexts[operation_id] = context
@@ -78,6 +95,8 @@ class NativePairingServiceMixin:
 
     def _native_pairing_check(self, context, *, terminal=False):
         self._require_native_work()
+        if not terminal and self._native_pairing_reconcile_cancel(context):
+            raise ContactNotApproved("Native pairing cancellation is committed")
         if (not context.get("admitted") or self._identity is not context["identity"]()
                 or self._runtime_incarnation != context["runtime_epoch"]
                 or self._call_settings.signal_mailbox_url != context["mailbox_url"]
@@ -86,12 +105,49 @@ class NativePairingServiceMixin:
                 or (not terminal and context["state"] in {"retired", "retiring", "transferred"})):
             raise ContactNotApproved("Native pairing authority is no longer current")
 
+    @staticmethod
+    def _native_pairing_notify_terminal(context):
+        state = context["state"]
+        callback = context.get("on_terminal")
+        if (state in {"retired", "transferred"} and callback is not None
+                and context.get("terminal_checkpoint") != state):
+            callback(state)
+            context["terminal_checkpoint"] = state
+
+    def _native_pairing_cancel_context(self, context):
+        with self._dispatch_lock:
+            if context["state"] not in {"retired", "transferred"}:
+                self._connection_runtime.fence(context["id"])
+                context["state"] = "retiring" if context["source"] is not None else "retired"
+                context["code"] = None
+            self._native_pairing_notify_terminal(context)
+
+    def _native_pairing_reconcile_cancel(self, context):
+        callback = context.get("cancel_requested")
+        if context["state"] in {"retired", "transferred"}:
+            return False
+        if time.time() >= context["expires_at"]:
+            self._native_pairing_cancel_context(context)
+            return True
+        if callback is None:
+            return False
+        try:
+            cancelled = callback()
+            if type(cancelled) is not bool:
+                cancelled = True
+        except Exception:
+            cancelled = True
+        if cancelled:
+            self._native_pairing_cancel_context(context)
+        return cancelled
+
     def native_pairing_status(self, operation_id):
         with self._dispatch_lock:
             context = getattr(self, "_native_pairing_contexts", {}).get(operation_id)
             if context is None:
                 raise CallOutcomeRequiresResync("Native pairing intent is unavailable")
             self._native_pairing_check(context, terminal=True)
+            self._native_pairing_notify_terminal(context)
             return self._native_pairing_projection(context)
 
     @staticmethod
@@ -107,11 +163,7 @@ class NativePairingServiceMixin:
             if context is None:
                 raise CallOutcomeRequiresResync("Native pairing intent is unavailable")
             self._native_pairing_check(context, terminal=True)
-            if context["state"] == "transferred":
-                return {"intent": operation_id, "state": "transferred"}
-            self._connection_runtime.fence(operation_id)
-            context["state"] = "retiring" if context["source"] is not None else "retired"
-            context["code"] = None
+            self._native_pairing_cancel_context(context)
             return {"intent": operation_id, "state": context["state"]}
 
     def _native_pairing_profiles(self):
@@ -119,6 +171,8 @@ class NativePairingServiceMixin:
             result = []
             for context in getattr(self, "_native_pairing_contexts", {}).values():
                 try:
+                    self._native_pairing_notify_terminal(context)
+                    self._native_pairing_reconcile_cancel(context)
                     self._native_pairing_check(context)
                     active = context["state"] != "retiring"
                 except Exception:
@@ -266,9 +320,14 @@ class NativePairingServiceMixin:
             # owns pending physical custody until the exact target adopts it.
             context["state"] = "transferred"
             context["code"] = None
+            self._native_pairing_notify_terminal(context)
 
     def _native_pairing_retire(self, context, resource):
         if resource == context["source"] and context["state"] == "transferred":
+            self._native_pairing_notify_terminal(context)
+            return
+        if context["state"] == "retired":
+            self._native_pairing_notify_terminal(context)
             return
         physical = context.get("physical")
         if physical is not None:
@@ -278,5 +337,7 @@ class NativePairingServiceMixin:
                 # A failed create can release the logical registry reservation
                 # while its exact native close still needs acknowledgement.
                 context["host"].close(physical)
-        context["state"] = "retired"
-        context["code"] = None
+        if context["state"] != "transferred":
+            context["state"] = "retired"
+            context["code"] = None
+        self._native_pairing_notify_terminal(context)

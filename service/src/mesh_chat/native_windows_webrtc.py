@@ -294,6 +294,9 @@ class WindowsNativeWebRTCHost:
             with self._lock:
                 lease.session = session
             if offer is None:
+                # aiortc 1.13 defaults to legacy sctpmap SDP. The signed
+                # onboarding protocol and Android host use modern sctp-port SDP.
+                pc._sctpLegacySdp = False
                 for label, _binary, ordered in specs:
                     channel = pc.createDataChannel(label, ordered=ordered)
                     session.channels[label] = channel

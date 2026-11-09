@@ -395,6 +395,95 @@ def test_pairing_cancellation_closes_only_its_exact_peer_without_replacement(nat
     assert not created or created[0][0] in closed
 
 
+@pytest.mark.parametrize("allocated", [False, True])
+@pytest.mark.parametrize("cancel_read_fails", [False, True])
+def test_durable_cancel_callback_retires_without_a_cancel_api_call(native_pairing, allocated, cancel_read_fails):
+    create, _ = native_pairing
+    service, _, created, closed, *_ = create()
+    cancelled, terminal = [False], []
+    def requested():
+        if cancelled[0] and cancel_read_fails:
+            raise OSError("Protected cancellation read failed")
+        return cancelled[0]
+    def checkpoint(state):
+        context = service._native_pairing_contexts[operation]
+        assert context["state"] == state == "retired"
+        assert context["physical"] is None or context["physical"] in closed
+        terminal.append(state)
+    operation = str(uuid4())
+    service.native_pairing_begin(operation, role="offer", authorized=lambda: True,
+        cancel_requested=requested, on_terminal=checkpoint)
+    if allocated:
+        run_until(service, lambda: service.native_pairing_status(operation)["pairing_code"] is not None)
+    cancelled[0] = True  # Core committed this before its API return was lost.
+    run_until(service, lambda: service._native_pairing_contexts[operation]["state"] == "retired")
+    for _ in range(3): service._connection_runtime.step()
+    assert terminal == ["retired"]
+    assert len(created) == len(closed) == int(allocated)
+    assert service.native_pairing_status(operation)["state"] == "retired"
+    replacement = service.native_pairing_begin(str(uuid4()), role="offer", authorized=lambda: True)
+    assert replacement["state"] == "reserved"
+
+
+def test_failed_terminal_checkpoint_retries_without_repeating_native_disposal(native_pairing):
+    create, _ = native_pairing
+    service, _, _, closed, *_ = create()
+    attempts = []
+    def checkpoint(state):
+        attempts.append(state)
+        if len(attempts) == 1: raise OSError("Protected checkpoint unavailable")
+    operation = str(uuid4())
+    service.native_pairing_begin(operation, role="offer", authorized=lambda: True, on_terminal=checkpoint)
+    run_until(service, lambda: service.native_pairing_status(operation)["pairing_code"] is not None)
+    service.native_pairing_cancel(operation)
+    run_until(service, lambda: len(attempts) >= 2)
+    assert attempts == ["retired", "retired"] and len(closed) == 1
+
+
+def test_original_public_deadline_cannot_be_extended_by_late_actor_admission(native_pairing, monkeypatch):
+    from mesh_chat import native_pairing_service as pairing_module
+    import time
+    create, documents = native_pairing
+    service, _, created, closed, *_ = create()
+    original = time.time() + 300
+    monkeypatch.setattr(pairing_module, "time", SimpleNamespace(time=lambda: original + 1))
+    operation, terminal = str(uuid4()), []
+    with pytest.raises(ContactNotApproved):
+        service.native_pairing_begin(operation, role="offer", authorized=lambda: True,
+            expires_at=original, on_terminal=terminal.append)
+    context = service._native_pairing_contexts[operation]
+    assert context["expires_at"] == original and context["state"] == "retired"
+    assert terminal == ["retired"] and not created and not closed and not documents
+    with pytest.raises(ContactNotApproved):
+        service.native_pairing_begin(operation, role="offer", authorized=lambda: True, expires_at=original)
+    with pytest.raises(ValidationError):
+        service.native_pairing_begin(operation, role="offer", authorized=lambda: True, expires_at=original + 100)
+    assert not created and terminal == ["retired"]
+
+
+def test_original_deadline_fences_async_mailbox_work_and_waits_for_physical_retirement(native_pairing, monkeypatch):
+    from mesh_chat import native_pairing_service as pairing_module
+    import time
+    create, documents = native_pairing
+    service, _, created, closed, *_ = create()
+    now = [time.time()]
+    monkeypatch.setattr(pairing_module, "time", SimpleNamespace(time=lambda: now[0]))
+    operation, terminal = str(uuid4()), []
+    deadline = now[0] + 10
+    service.native_pairing_begin(operation, role="offer", authorized=lambda: True,
+        expires_at=deadline, on_terminal=terminal.append)
+    run_until(service, lambda: service.native_pairing_status(operation)["pairing_code"] is not None)
+    context = service._native_pairing_contexts[operation]
+    assert context["expires_at"] == deadline and len(created) == 1
+    published = dict(documents)
+    now[0] = deadline + 1
+    with pytest.raises(ContactNotApproved): service._native_pairing_fetch(context, "answer")
+    assert context["state"] == "retiring" and not terminal
+    run_until(service, lambda: context["state"] == "retired")
+    assert documents == published and len(created) == len(closed) == 1
+    assert terminal == ["retired"]
+
+
 def test_current_caller_revocation_during_native_create_prevents_publish_and_retires_exact_allocation(native_pairing):
     create, documents = native_pairing
     service, host, created, closed, _, _ = create()
@@ -414,14 +503,24 @@ def test_current_caller_revocation_during_native_create_prevents_publish_and_ret
         service.native_pairing_status(operation)
 
 
-def test_domain_checked_handoff_adopts_only_actual_physical_peer_then_requires_normal_path(native_pairing):
+@pytest.mark.parametrize("checkpoint_fails", [False, True])
+def test_domain_checked_handoff_adopts_only_actual_physical_peer_then_requires_normal_path(native_pairing, checkpoint_fails):
     """Approval/contact rows are explicit component fixtures, not bootstrap qualification."""
     from test_reconnect_service import _add_contact
     create, _ = native_pairing
     first, _, created, _, _, _ = create()
     second, _, _, _, _, _ = create()
     first_id, second_id = str(uuid4()), str(uuid4())
-    first.native_pairing_begin(first_id, role="offer", authorized=lambda: True)
+    attempts = []
+    def checkpoint(state):
+        assert state == "transferred"
+        assert first._native_pairing_contexts[first_id]["state"] == state
+        operation = next(iter(first._connection_runtime._handoff_attempts.values()))
+        assert first._connection_runtime.owner.handoff_committed(operation)
+        attempts.append(state)
+        if checkpoint_fails and len(attempts) == 1:
+            raise OSError("Protected terminal checkpoint return lost")
+    first.native_pairing_begin(first_id, role="offer", authorized=lambda: True, on_terminal=checkpoint)
     run_until(first, lambda: first.native_pairing_status(first_id)["pairing_code"] is not None)
     code = first.native_pairing_status(first_id)["pairing_code"]
     second.native_pairing_begin(second_id, role="answer", pairing_code=code, authorized=lambda: True)
@@ -464,6 +563,11 @@ def test_domain_checked_handoff_adopts_only_actual_physical_peer_then_requires_n
     # Original intent cancellation has surrendered cleanup authority.
     assert first.native_pairing_cancel(first_id)["state"] == "transferred"
     assert session in first._native_webrtc_live
+    assert attempts == ["transferred"] * (2 if checkpoint_fails else 1)
+    # The new owner's later cleanup does not rewrite the surrendered intent.
+    first._native_pairing_retire(context, Resource("native", physical))
+    assert context["state"] == "transferred"
+    assert attempts == ["transferred"] * (2 if checkpoint_fails else 1)
 
 
 def test_completed_lock_drops_pairing_capabilities_and_identity_references(native_pairing):
@@ -508,13 +612,15 @@ def test_late_failed_native_create_retains_exact_close_until_acknowledged(native
             raise OSError("close acknowledgement unavailable")
         closed.append(physical)
     host.close = close
-    intent = str(uuid4())
-    service.native_pairing_begin(intent, role="offer", authorized=lambda: True)
+    intent, terminal = str(uuid4()), []
+    service.native_pairing_begin(intent, role="offer", authorized=lambda: True, on_terminal=terminal.append)
     run_until(service, lambda: bool(service._connection_runtime._cleanup_failed))
     assert len(created) == 1 and not closed and not documents
     physical = created[0][0]
     assert set(close_attempts) == {physical}
+    assert terminal == []
     service._connection_runtime.now = lambda: monotonic() + 6
     run_until(service, lambda: service._native_pairing_contexts[intent]["state"] == "retired")
     assert closed == [physical] and set(close_attempts) == {physical}
     assert len(created) == 1 and not service._native_webrtc_live
+    assert terminal == ["retired"]
