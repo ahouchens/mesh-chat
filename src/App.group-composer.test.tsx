@@ -129,3 +129,75 @@ it("does not enqueue or save from an old profile after a delayed Core query reso
   await act(async () => query.resolve(fixture.snapshot()));
   expect(requests("group.composer_update")).toHaveLength(0); expect(requests("group.message_enqueue_draft")).toHaveLength(0);
 });
+it("cancels a queued send when posting is revoked while its draft update reply is pending", async () => {
+  const reply = deferred<unknown>(); const original = host.invoke.getMockImplementation()!;
+  host.invoke.mockImplementation(async (command, args) => {
+    if (command === "core_api_request" && args.operation === "group.composer_update") { await original(command, args); return reply.promise; }
+    return original(command, args);
+  });
+  const { field } = await open(); await typeAndSend(field, "Revoked before enqueue");
+  await waitFor(() => expect(requests("group.composer_update")).toHaveLength(1));
+  const committed = fixture.snapshot();
+  current = { ...current, groups: [{ ...group, status: "removed" }] };
+  await act(async () => window.dispatchEvent(new Event("focus")));
+  await screen.findAllByText("You are no longer an active member of this group.");
+  await act(async () => reply.resolve({ applied_revision: committed.revision, changed: true, composer: committed }));
+  expect(requests("group.message_enqueue_draft")).toHaveLength(0);
+  expect(requests("group.composer_update")).toHaveLength(1);
+});
+it("cancels a queued send on group switch without publishing into the newly selected composer", async () => {
+  const other = { ...group, id: "other-group", core_handle: "f".repeat(64), title: "Other team" };
+  const otherHost = new GroupComposerHostFixture(profileHandle, other.core_handle);
+  current = { ...current, groups: [group, other] };
+  const reply = deferred<unknown>(); const original = host.invoke.getMockImplementation()!;
+  host.invoke.mockImplementation(async (command, args) => {
+    if (command === "core_api_request" && groupComposerCapabilities.operations.includes(args.operation) && args.params.group === other.core_handle) return otherHost.request(args.operation, args.params, args.idempotencyKey);
+    if (command === "core_api_request" && args.operation === "group.composer_update") { await original(command, args); return reply.promise; }
+    return original(command, args);
+  });
+  const { field } = await open(); await typeAndSend(field, "Old group only");
+  await waitFor(() => expect(requests("group.composer_update")).toHaveLength(1));
+  const committed = fixture.snapshot(); fireEvent.click(screen.getByText(other.title));
+  const next = await screen.findByRole("textbox", { name: `Message ${other.title}` });
+  await waitFor(() => expect(next).toHaveProperty("readOnly", false));
+  await act(async () => reply.resolve({ applied_revision: committed.revision, changed: true, composer: committed }));
+  expect(requests("group.message_enqueue_draft")).toHaveLength(0);
+  expect(next).toHaveProperty("value", ""); expect(screen.queryByRole("textbox", { name: "Saved group message text" })).toBeNull();
+});
+it("does not publish or refresh a late already-admitted acceptance after posting revocation", async () => {
+  const reply = deferred<void>(); fixture.onEnqueue = () => reply.promise;
+  const { field } = await open(); await typeAndSend(field, "Already admitted");
+  await waitFor(() => expect(fixture.messageCount).toBe(1));
+  current = { ...current, groups: [{ ...group, status: "removed" }] };
+  await act(async () => window.dispatchEvent(new Event("focus")));
+  await screen.findAllByText("You are no longer an active member of this group.");
+  const reads = requests("application.snapshot").length;
+  await act(async () => reply.resolve());
+  expect(requests("application.snapshot")).toHaveLength(reads);
+  expect(screen.queryByRole("textbox", { name: "Saved group message text" })).toBeNull();
+  expect(requests("group.message_enqueue_draft")).toHaveLength(1);
+});
+it("does not flush uncommitted local text after posting revocation", async () => {
+  const { field } = await open(); fireEvent.change(field, { target: { value: "Uncommitted revoked draft" } });
+  current = { ...current, groups: [{ ...group, status: "removed" }] };
+  await act(async () => window.dispatchEvent(new Event("focus")));
+  await screen.findAllByText("You are no longer an active member of this group.");
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 300)); });
+  expect(requests("group.composer_update")).toHaveLength(0); expect(requests("group.message_enqueue_draft")).toHaveLength(0);
+});
+it("flushes a permitted navigation draft to its original group without sending it", async () => {
+  const other = { ...group, id: "other-group", core_handle: "f".repeat(64), title: "Other team" };
+  const otherHost = new GroupComposerHostFixture(profileHandle, other.core_handle);
+  current = { ...current, groups: [group, other] }; const original = host.invoke.getMockImplementation()!;
+  host.invoke.mockImplementation(async (command, args) => {
+    if (command === "core_api_request" && groupComposerCapabilities.operations.includes(args.operation) && args.params.group === other.core_handle) return otherHost.request(args.operation, args.params, args.idempotencyKey);
+    return original(command, args);
+  });
+  const { field } = await open(); fireEvent.change(field, { target: { value: "Original group draft" } });
+  fireEvent.click(screen.getByText(other.title));
+  const next = await screen.findByRole("textbox", { name: `Message ${other.title}` });
+  await waitFor(() => expect(fixture.snapshot().text).toBe("Original group draft"));
+  expect(requests("group.composer_update")).toHaveLength(1);
+  expect(requests("group.composer_update")[0].params.group).toBe(groupHandle);
+  expect(next).toHaveProperty("value", ""); expect(requests("group.message_enqueue_draft")).toHaveLength(0);
+});
