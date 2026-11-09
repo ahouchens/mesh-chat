@@ -42,7 +42,8 @@ import { CoreClient } from "@mesh-chat/core-client";
 import { createStdioTransport } from "@mesh-chat/core-client/node";
 assert.equal(typeof CoreClient, "function");
 assert.equal(typeof CoreClient.prototype.enqueueDraft, "function");
-for (const name of ["callOperationList", "callOperationQuery", "callOperationAbandon", "pairingBegin", "pairingQuery", "pairingCancel"]) {
+for (const name of ["callOperationList", "callOperationQuery", "callOperationAbandon", "pairingBegin", "pairingQuery", "pairingCancel",
+  "groupComposerQuery", "groupComposerUpdate", "groupEnqueueDraft"]) {
   assert.equal(typeof CoreClient.prototype[name], "function", name);
 }
 assert.equal(typeof createStdioTransport, "function");

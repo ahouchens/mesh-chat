@@ -34,6 +34,8 @@ bounded quota, global operation receipt, send receipt, clear/new revision and
 last-send pointer in one conditional transaction. A retry returns the original
 acceptance and current composer; it never overwrites a newer draft. Membership,
 posting policy and current grants are checked before fresh work and replay.
+All three operations require current `read`; update and enqueue also require
+`send`, because their results include protected draft and acceptance text.
 No peer or scheduling effect occurs before commit. A committed durable outbox
 may be woken afterward.
 
@@ -46,6 +48,8 @@ Bounds: `group_composer_text_utf8_bytes=16384`,
 `group_composer_send_keys_per_caller_profile=4096`,
 `group_composer_send_keys_per_vault=65536`. Expired send keys remain consumed;
 quota exhaustion refuses fresh sends rather than recycling an old revision.
+Consumed update keys also remain bounded and consumed after expiry; exhausted
+update capacity refuses fresh keys instead of forgetting prior outcomes.
 
 Only a trusted host's existing private composer-migration flag may preview and
 adopt shared `group_draft` text. Public legacy `group.draft_set` writes become

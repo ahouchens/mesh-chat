@@ -48,8 +48,9 @@ from .requests import CALL_RECOVERY_OPERATIONS
 from .requests import PAIRING_INTENT_OPERATIONS
 from .service_pairing_intents import PAIRING_INTENT_LIMITS
 from .views import pairing_intent_view
-from .views import composer_view
-from .requests import COMPOSER_OPERATIONS
+from .views import composer_view, group_composer_view
+from .requests import COMPOSER_OPERATIONS, GROUP_COMPOSER_OPERATIONS
+from .service_group_composer import GROUP_COMPOSER_LIMITS
 from .diagnostics import Diagnostics, MAX_DIAGNOSTICS, MAX_DIAGNOSTIC_BYTES
 from .diagnostic_views import diagnostics_view
 from .requests import (
@@ -105,6 +106,9 @@ PERMISSION_BY_OPERATION = {
     "peer.composer_query": "read",
     "peer.composer_update": "send",
     "message.enqueue_draft": "send",
+    "group.composer_query": "read",
+    "group.composer_update": "send",
+    "group.message_enqueue_draft": "send",
     "connection.snapshot": "observe",
     "connection.start": "connect",
     "connection.stop": "connect",
@@ -280,6 +284,7 @@ class Ports:
 
     messages: Messages | None = None
     composer: Composer | None = None
+    group_composer: object | None = None
     recovery: Recovery | None = None
     diagnostics: Diagnostics | None = None
     received: ReceivedLog | None = None
@@ -314,6 +319,7 @@ class CoreSession:
         self._observations = observations
         self._messages = ports.messages
         self._composer = ports.composer
+        self._group_composer = ports.group_composer
         self._recovery = ports.recovery
         self._diagnostics = ports.diagnostics
         self._received = ports.received
@@ -341,6 +347,7 @@ class CoreSession:
         for operations, port in (
             (MESSAGE_OPERATIONS, self._messages),
             (COMPOSER_OPERATIONS, self._composer),
+            (GROUP_COMPOSER_OPERATIONS, self._group_composer),
             (RECOVERY_OPERATIONS, self._recovery),
             (RECOVERY_TRANSFER_OPERATIONS, self._recovery),
             (RECEIVED_OPERATIONS, self._received),
@@ -619,6 +626,8 @@ class CoreSession:
         profile = self._profile_target(profiles, params)
         if operation in COMPOSER_OPERATIONS:
             return self._composer_operation(grant, profile, operation, params, key)
+        if operation in GROUP_COMPOSER_OPERATIONS:
+            return self._group_composer_operation(grant, profile, operation, params, key)
         if operation == "diagnostics.query":
             return diagnostics_view(params["profile"], self._diagnostics.query(profile), params["limit"],
                                     lambda internal: self._handle(grant, "connection", profile, internal))
@@ -638,7 +647,7 @@ class CoreSession:
                  == params["group"]), None)
             if group_id is None:
                 raise ApiFailure("forbidden")
-            state = self._groups.save_draft(target, group_id, params["text"])
+            state = self._groups.save_draft_scoped(MessageScope(grant.caller, target), group_id, params["text"])
             return {"state": state}
         if operation in GROUP_OPERATIONS:
             if operation in {"group.invitation_accept", "group.invitation_decline"}:
@@ -1462,6 +1471,8 @@ class CoreSession:
             limits.update(diagnostic_count=MAX_DIAGNOSTICS, diagnostic_bytes=MAX_DIAGNOSTIC_BYTES)
         if self._composer is not None:
             limits.update(COMPOSER_LIMITS)
+        if self._group_composer is not None:
+            limits.update(GROUP_COMPOSER_LIMITS)
         if set(CALL_RECOVERY_OPERATIONS) <= set(self._operations):
             limits.update(CALL_OPERATION_LIMITS)
         if set(PAIRING_INTENT_OPERATIONS) <= set(self._operations):
@@ -1513,6 +1524,28 @@ class CoreSession:
         return {**acceptance_view(params["profile"], result.acceptance), "peer": peer_handle,
                 "draft_revision": result.revision, "draft_disposition": result.disposition,
                 "composer": composer_view(params["profile"], peer_handle, result.composer)}
+
+    def _group_composer_operation(self, grant, profile, operation, params, key):
+        # Every result contains protected draft/history text, including replay.
+        if "read" not in grant.permissions:
+            raise ApiFailure("forbidden")
+        group = next((item.group_id for item in self._groups.list(profile)
+            if self._handle(grant, "group", profile, item.group_id) == params["group"]), None)
+        if group is None:
+            raise ApiFailure("forbidden")
+        scope = MessageScope(grant.caller, profile)
+        def view(state):
+            return group_composer_view(params["profile"], params["group"], state)
+        if operation == "group.composer_query":
+            return view(self._group_composer.query(scope, group, params.get("send_revision")))
+        if operation == "group.composer_update":
+            result = self._group_composer.update(scope, group, key, params["expected_revision"], params["text"])
+            return {"applied_revision": result.applied_revision, "changed": result.changed, "composer": view(result.composer)}
+        result = self._group_composer.enqueue(scope, group, key, params["draft_revision"],
+                                             self._operation_id(grant, profile, key))
+        return {**acceptance_view(params["profile"], result.acceptance), "group": params["group"],
+                "draft_revision": result.revision, "draft_disposition": result.disposition,
+                "composer": view(result.composer)}
 
     def _peers(self, grant, profile):
         peers = self._messages.peers(profile)

@@ -208,7 +208,10 @@
               "profile.catalog",
               "profile.lock",
               "profile.select",
-              "profile.unlock"
+              "profile.unlock",
+              "group.composer_query",
+              "group.composer_update",
+              "group.message_enqueue_draft"
             ]
           }
         },
@@ -418,6 +421,42 @@
               "type": "integer",
               "minimum": 1,
               "maximum": 9007199254740991
+            },
+            "group_composer_text_utf8_bytes": {
+              "type": "integer",
+              "const": 16384
+            },
+            "group_composers_per_caller_profile": {
+              "type": "integer",
+              "const": 256
+            },
+            "group_composers_per_vault": {
+              "type": "integer",
+              "const": 4096
+            },
+            "group_composer_update_idempotency_seconds": {
+              "type": "integer",
+              "const": 3600
+            },
+            "group_composer_update_keys_per_caller_profile": {
+              "type": "integer",
+              "const": 8192
+            },
+            "group_composer_update_keys_per_vault": {
+              "type": "integer",
+              "const": 65536
+            },
+            "group_composer_send_idempotency_seconds": {
+              "type": "integer",
+              "const": 604800
+            },
+            "group_composer_send_keys_per_caller_profile": {
+              "type": "integer",
+              "const": 4096
+            },
+            "group_composer_send_keys_per_vault": {
+              "type": "integer",
+              "const": 65536
             }
           }
         },
@@ -962,6 +1001,156 @@
                   "pairing_key_idempotency_seconds",
                   "pairing_keys_per_caller_profile",
                   "pairing_keys_per_vault"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operations": {
+                "contains": {
+                  "const": "group.composer_query"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "api_minor": {
+                "minimum": 1
+              },
+              "operations": {
+                "allOf": [
+                  {
+                    "contains": {
+                      "const": "group.composer_query"
+                    }
+                  },
+                  {
+                    "contains": {
+                      "const": "group.composer_update"
+                    }
+                  },
+                  {
+                    "contains": {
+                      "const": "group.message_enqueue_draft"
+                    }
+                  }
+                ]
+              },
+              "limits": {
+                "required": [
+                  "group_composer_text_utf8_bytes",
+                  "group_composers_per_caller_profile",
+                  "group_composers_per_vault",
+                  "group_composer_update_idempotency_seconds",
+                  "group_composer_update_keys_per_caller_profile",
+                  "group_composer_update_keys_per_vault",
+                  "group_composer_send_idempotency_seconds",
+                  "group_composer_send_keys_per_caller_profile",
+                  "group_composer_send_keys_per_vault"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operations": {
+                "contains": {
+                  "const": "group.composer_update"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "api_minor": {
+                "minimum": 1
+              },
+              "operations": {
+                "allOf": [
+                  {
+                    "contains": {
+                      "const": "group.composer_query"
+                    }
+                  },
+                  {
+                    "contains": {
+                      "const": "group.composer_update"
+                    }
+                  },
+                  {
+                    "contains": {
+                      "const": "group.message_enqueue_draft"
+                    }
+                  }
+                ]
+              },
+              "limits": {
+                "required": [
+                  "group_composer_text_utf8_bytes",
+                  "group_composers_per_caller_profile",
+                  "group_composers_per_vault",
+                  "group_composer_update_idempotency_seconds",
+                  "group_composer_update_keys_per_caller_profile",
+                  "group_composer_update_keys_per_vault",
+                  "group_composer_send_idempotency_seconds",
+                  "group_composer_send_keys_per_caller_profile",
+                  "group_composer_send_keys_per_vault"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operations": {
+                "contains": {
+                  "const": "group.message_enqueue_draft"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "api_minor": {
+                "minimum": 1
+              },
+              "operations": {
+                "allOf": [
+                  {
+                    "contains": {
+                      "const": "group.composer_query"
+                    }
+                  },
+                  {
+                    "contains": {
+                      "const": "group.composer_update"
+                    }
+                  },
+                  {
+                    "contains": {
+                      "const": "group.message_enqueue_draft"
+                    }
+                  }
+                ]
+              },
+              "limits": {
+                "required": [
+                  "group_composer_text_utf8_bytes",
+                  "group_composers_per_caller_profile",
+                  "group_composers_per_vault",
+                  "group_composer_update_idempotency_seconds",
+                  "group_composer_update_keys_per_caller_profile",
+                  "group_composer_update_keys_per_vault",
+                  "group_composer_send_idempotency_seconds",
+                  "group_composer_send_keys_per_caller_profile",
+                  "group_composer_send_keys_per_vault"
                 ]
               }
             }

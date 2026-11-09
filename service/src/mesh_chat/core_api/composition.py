@@ -25,6 +25,7 @@ from .service_reactions import ServiceReactions
 from .service_settings import ServiceNetworkSettings
 from .service_drafts import ServiceDrafts
 from .service_composer import ServiceComposer
+from .service_group_composer import ServiceGroupComposer
 from .service_relationship import ServiceRelationship
 from .service_pairing_intents import ServicePairingIntents
 from .wire import FramedSession
@@ -66,6 +67,9 @@ def bind_service_session(service, authenticated_grant, *, private_native=False,
         messages = ServiceMessages(service)
         composer = (ServiceComposer(service, messages, legacy=private_composer_legacy)
                     if hasattr(service.store, "conditional_put_and_delete") else None)
+        group_composer = (ServiceGroupComposer(service, legacy=private_composer_legacy)
+                          if composer is not None and all(callable(getattr(service, method, None)) for method in (
+                              "prepare_group_send", "validate_group_composer", "wake_group_outbox")) else None)
         recovery = ServiceRecovery(service, messages) if hasattr(service, "_message_journal") else None
         received = recovery if hasattr(service, "_received_messages") else None
         intent = ServiceIntent(service) if hasattr(service, "reconnect_start") else None
@@ -84,7 +88,7 @@ def bind_service_session(service, authenticated_grant, *, private_native=False,
                    if hasattr(service, "background_availability_status") else None)
         calls = ServiceCallSettings(service, call_retirement)
         pairing_intents = ServicePairingIntents(service, current_grant)
-        ports = Ports(messages=messages, composer=composer, recovery=recovery,
+        ports = Ports(messages=messages, composer=composer, group_composer=group_composer, recovery=recovery,
                       diagnostics=ServiceDiagnostics(service, messages), received=received,
                       intent=intent, relationship=relationship, pairing=pairing,
                       invitations=invitations, lifecycle=lifecycle, workspace=workspace,
@@ -100,7 +104,7 @@ def bind_service_session(service, authenticated_grant, *, private_native=False,
                       pairing_intents=pairing_intents if pairing_intents.available else None,
                       settings=ServiceNetworkSettings(service),
                       reactions=ServiceReactions(service),
-                      groups=ServiceGroups(service))
+                      groups=ServiceGroups(service, legacy=private_composer_legacy))
         return CoreSession(current_grant, ServiceObservations(service), handle_key=handle_key,
                            transaction=service._dispatch_lock, ports=ports)
 

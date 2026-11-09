@@ -38,6 +38,13 @@ back to an unkeyed call. Other mutation identity gaps remain open. Composer help
 operations and all nine positive integer limits. They use Core-issued update
 keys and persisted send revisions.
 
+Group composer helpers `groupComposerQuery`, `groupComposerUpdate` and
+`groupEnqueueDraft` require all three group composer operations and all nine
+positive `group_composer_*` limits. Use the returned update key and revision;
+enqueue carries no text. Query `last_send` after restart to recover acceptance.
+Replaying an earlier revision preserves any newer group draft. See the
+[group composer contract](../../contracts/core-api/GROUP_COMPOSER.md).
+
 First composer use raises the host vault format floor from 1 to 2 atomically.
 An old format-1 host must refuse it; binary downgrade after migration is
 unsupported. API minor compatibility does not imply storage downgrade safety.

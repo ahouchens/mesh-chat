@@ -9,6 +9,11 @@ export interface Composer {
   send_lookup: Exclude<ComposerSendOutcome, { status: "expired" }> | { revision: string; status: "not_accepted" } | null;
 }
 export interface ComposerUpdate { applied_revision: string; changed: boolean; composer: Composer }
+export interface GroupComposer extends Omit<Composer, "peer"> { group: string }
+export interface GroupComposerUpdate { applied_revision: string; changed: boolean; composer: GroupComposer }
+export interface GroupDraftAcceptance extends Acceptance {
+  group: string; draft_revision: string; draft_disposition: "cleared" | "superseded"; composer: GroupComposer;
+}
 export interface DraftAcceptance extends Acceptance {
   peer: string; draft_revision: string; draft_disposition: "cleared" | "superseded"; composer: Composer;
 }

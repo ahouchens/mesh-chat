@@ -152,6 +152,42 @@ class CoreClientTest {
     }
 
     @Test
+    fun groupComposerRequiresCompleteFeatureAndPreservesIssuedKeys() {
+        val names = listOf("group_composer_text_utf8_bytes", "group_composers_per_caller_profile", "group_composers_per_vault",
+            "group_composer_update_idempotency_seconds", "group_composer_update_keys_per_caller_profile", "group_composer_update_keys_per_vault",
+            "group_composer_send_idempotency_seconds", "group_composer_send_keys_per_caller_profile", "group_composer_send_keys_per_vault")
+        fun groupCaps(): JSONObject {
+            val caps = capabilities().put("api_minor", 1).put("operations", org.json.JSONArray(listOf(
+                "group.composer_query", "group.composer_update", "group.message_enqueue_draft")))
+            for (name in names) caps.getJSONObject("limits").put(name, 16384)
+            return caps
+        }
+        for (broken in listOf(groupCaps().put("api_minor", "1"), groupCaps().put("api_minor", true),
+            groupCaps().put("api_minor", 1.5), groupCaps().put("limits", JSONObject()),
+            groupCaps().put("operations", org.json.JSONArray(listOf("group.composer_query"))))) {
+            val transport = Scripted(success("client:1", broken))
+            val client = CoreClient.open(transport)
+            for (call in listOf<() -> JSONObject>({ client.groupComposerQuery(PROFILE, PEER) },
+                { client.groupComposerUpdate(PROFILE, PEER, null, "draft", "b".repeat(64)) },
+                { client.groupEnqueueDraft(PROFILE, PEER, "a".repeat(64)) })) {
+                assertEquals("unsupported_operation", (runCatching { call() }.exceptionOrNull() as CoreException).code)
+            }
+            assertEquals(1, transport.written.size)
+        }
+        val transport = Scripted(success("client:1", groupCaps()), success("client:2", JSONObject()), success("client:3", JSONObject()))
+        val client = CoreClient.open(transport)
+        assertTrue(runCatching { client.groupEnqueueDraft(PROFILE, PEER, "caller-random-key-0001") }.exceptionOrNull() is IllegalArgumentException)
+        client.groupComposerUpdate(PROFILE, PEER, null, "draft", "b".repeat(64))
+        client.groupEnqueueDraft(PROFILE, PEER, "a".repeat(64))
+        val update = JSONObject(transport.written[1])
+        assertTrue(update.getJSONObject("params").isNull("expected_revision"))
+        assertEquals("b".repeat(64), update.getString("idempotency_key"))
+        val enqueue = JSONObject(transport.written[2])
+        assertEquals("a".repeat(64), enqueue.getString("idempotency_key"))
+        assertFalse(enqueue.getJSONObject("params").has("text"))
+    }
+
+    @Test
     fun hostAdmissionErrorsKeepTheirCodeAndCloseTheUncorrelatedSession() {
         for (code in listOf("forbidden", "invalid_request", "resource_exhausted", "unavailable")) {
             val rejection = JSONObject(failure("ignored", code)).put("request_id", JSONObject.NULL).toString()
