@@ -46,10 +46,12 @@ def host_grant(caller, permissions, profiles=ALLOWED_PROFILES, *, scope="consume
 
 
 def bind_host_stream(service, *, caller, permissions, profiles=ALLOWED_PROFILES,
-                     scope="consumer"):
+                     scope="consumer", private_native=False):
     """Bind one already-trusted stream to a fixed caller and permission set."""
     grant = host_grant(caller, permissions, profiles, scope=scope)
-    return bind_service_stream(service, lambda: grant)
+    if private_native and scope != "owner":
+        raise ValueError("Private native binding requires the application owner")
+    return bind_service_stream(service, lambda: grant, private_native=private_native)
 
 
 def serve_host(service, reader, writer, *, caller, permissions,

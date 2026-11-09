@@ -8,7 +8,6 @@
     "runtime.capabilities",
     "profile.query",
     "connection.snapshot",
-    "native.command",
     "application.snapshot",
     "call.ice_servers",
     "call.media_query",
@@ -128,6 +127,7 @@
     "workspace.create",
     "profile.create"
   ],
+  "private_host_operations": ["native.command"],
   "operations": [
     {
       "operation": "runtime.capabilities",
@@ -152,6 +152,7 @@
     },
     {
       "operation": "native.command",
+      "visibility": "private_host",
       "permission": "approve",
       "scope": "runtime",
       "mutation": true,

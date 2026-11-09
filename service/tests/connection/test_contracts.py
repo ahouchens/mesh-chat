@@ -237,7 +237,9 @@ def request_vectors():
 
 @pytest.mark.parametrize("operation,value", request_vectors().items())
 def test_each_designed_operation_has_an_executable_request_vector_and_permission(operation, value):
-    validator("core-api/request-v1.schema.json").validate(value)
+    contract = ("core-api/private-host-request-v1.schema.json" if operation == "native.command"
+                else "core-api/request-v1.schema.json")
+    validator(contract).validate(value)
     if operation in COMPONENT_OPERATIONS:
         assert parse_request(value, COMPONENT_OPERATIONS) == (operation, value["params"])
 
@@ -288,6 +290,7 @@ def test_malformed_component_fields_are_rejected_at_the_parser_boundary(bad):
     branches = {item["properties"]["operation"]["const"]:
                 Draft202012Validator({**item, "$defs": schema["$defs"]})
                 for item in schema["oneOf"]}
+    branches["native.command"] = validator("core-api/private-host-request-v1.schema.json")
     for operation, value in request_vectors().items():
         if operation not in COMPONENT_OPERATIONS:
             continue
@@ -298,6 +301,12 @@ def test_malformed_component_fields_are_rejected_at_the_parser_boundary(bad):
                 continue
             with pytest.raises(ApiFailure, match="invalid_request"):
                 parse_request(changed, COMPONENT_OPERATIONS)
+
+
+def test_private_native_commands_are_not_public_contract_requests():
+    value = request_vectors()["native.command"]
+    assert not validator("core-api/request-v1.schema.json").is_valid(value)
+    validator("core-api/private-host-request-v1.schema.json").validate(value)
 
 
 @pytest.mark.parametrize("operation,extra", [

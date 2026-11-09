@@ -17,6 +17,7 @@ from .service_recovery import ServiceRecovery
 from .service_diagnostics import ServiceDiagnostics
 from .service_intent import ServiceIntent
 from .application import ServiceApplication
+from .native_commands import ServiceNativeCommands
 from .service_calls import ServiceCallSettings
 from .service_groups import ServiceGroups
 from .service_reactions import ServiceReactions
@@ -42,8 +43,10 @@ class ServiceObservations:
         return ProfileObservation(profile["display_name"], profile["destination_hash"], connections)
 
 
-def bind_service_session(service, authenticated_grant):
+def bind_service_session(service, authenticated_grant, *, private_native=False):
     """Trusted host entry point, never a client-supplied identity or grant."""
+    if type(private_native) is not bool:
+        raise ValueError("Private native binding must be a host boolean")
     def current_grant():
         return None if service._shutdown.is_set() else authenticated_grant()
 
@@ -74,6 +77,7 @@ def bind_service_session(service, authenticated_grant):
                       workspace_timeline=workspace_timeline,
                       runtime=runtime,
                       application=ServiceApplication(service),
+                      native_commands=ServiceNativeCommands(service) if private_native else None,
                       drafts=ServiceDrafts(service),
                       calls=ServiceCallSettings(service),
                       settings=ServiceNetworkSettings(service),
@@ -83,6 +87,7 @@ def bind_service_session(service, authenticated_grant):
                            transaction=service._dispatch_lock, ports=ports)
 
 
-def bind_service_stream(service, authenticated_grant):
+def bind_service_stream(service, authenticated_grant, *, private_native=False):
     """Private host binding; raw frames can never select the grant callback."""
-    return FramedSession(bind_service_session(service, authenticated_grant))
+    return FramedSession(bind_service_session(service, authenticated_grant,
+                                              private_native=private_native))

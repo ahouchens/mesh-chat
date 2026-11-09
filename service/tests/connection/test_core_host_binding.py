@@ -125,3 +125,24 @@ def test_owner_scope_cannot_request_runtime_ownership():
         host.host_grant("mesh-chat-desktop", ("approve",), scope="consumer")
     with pytest.raises(ValueError):
         host.host_grant("mesh-chat-desktop", ("observe",), scope="administrator")
+
+
+def test_public_owner_cannot_attach_or_invoke_the_private_native_port(service_host):
+    service = service_host()
+    permissions = tuple(host.OWNER_PERMISSIONS)
+    command = request("native.command", command="workspace_snapshot", payload={})
+    public = host.bind_host_stream(service, caller="external-owner", permissions=permissions,
+                                   scope="owner")
+    capabilities = json.loads(public.exchange(frame(request("runtime.capabilities"))))
+    assert "native.command" not in capabilities["result"]["operations"]
+    assert json.loads(public.exchange(frame(command)))["error"]["code"] == "unsupported_operation"
+    injected = {**command, "private_native": True}
+    assert json.loads(public.exchange(frame(injected)))["error"]["code"] == "invalid_request"
+    private = host.bind_host_stream(service, caller="mesh-chat-desktop", permissions=permissions,
+                                    scope="owner", private_native=True)
+    capabilities = json.loads(private.exchange(frame(request("runtime.capabilities"))))
+    assert "native.command" in capabilities["result"]["operations"]
+    assert json.loads(private.exchange(frame(command)))["ok"]
+    with pytest.raises(ValueError):
+        host.bind_host_stream(service, caller="external-consumer", permissions=("observe",),
+                               private_native=True)
