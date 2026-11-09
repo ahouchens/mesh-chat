@@ -72,11 +72,23 @@ def test_gate_revalidates_policy_inventory_and_both_platform_component_reports(t
     source, tree, _ = fixture(tmp_path)
     result = matrix.collect(tmp_path, source, tree, ["policy", "verification", "android"])
     assert result["policy_tests_executed"] == 1
-    assert result["android_tests_executed"] == 41
+    assert result["android_tests_executed"] == 44
     assert set(result["windows_transport_checks"]) == CHECKS
     assert set(result["report_sha256"]) == {"policy", "windows_transport", "windows_packaged_lifecycle",
                                           "windows_packaged_transport", "windows_packaged_pairing", "android"}
     assert result["windows_packaged_lifecycle_checks"] == list(PACKAGED_CHECKS)
+
+
+def test_android_report_without_typed_app_bridge_execution_cannot_qualify(tmp_path):
+    source, tree, android = fixture(tmp_path)
+    suite = next(item for item in android["suites"] if item["suite"] == "core_api")
+    suite["scenarios"] = [case for case in suite["scenarios"]
+                          if "TypedCoreBridgeBoundaryTest" not in case["scenario_id"]]
+    for key in ("tests_collected", "tests_executed", "tests_passed"):
+        suite[key] = len(suite["scenarios"])
+    (tmp_path / "android/android-qualification.json").write_text(json.dumps(android))
+    with pytest.raises(ValueError, match="scenario execution"):
+        matrix.collect(tmp_path, source, tree, ["policy", "verification", "android"])
 
 
 @pytest.mark.parametrize("omission", ["suite", "aar", "consumer_apk"])
