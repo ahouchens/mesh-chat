@@ -200,6 +200,43 @@ def test_deferred_constructor_cleanup_retains_unpublished_instance_until_worker_
             assert mobile_bridge._retiring_service is None
 
 
+def test_mobile_publication_retires_exact_android_sessions_before_service_close(mobile_request, monkeypatch):
+    from mesh_chat.core_api import android_host
+    from mesh_chat.core_api.wire_codec import decode_frame, encode_frame
+    assert json.loads(mobile_bridge.initialize(mobile_request))["ok"]
+    service = mobile_bridge._service
+    frame = encode_frame({"api_version": 1, "request_id": "host:lifecycle",
+                          "operation": "runtime.capabilities", "params": {}})
+    caller = "com.example.stableUID"
+    assert decode_frame(android_host.exchange(service, caller, frame))["ok"]
+    assert android_host.active_callers() == [caller]
+    original_retire, original_close = android_host.retire, service.close
+    retired = []
+    def retire(exact):
+        assert mobile_bridge._service is None and exact is service
+        assert not exact._store_closed
+        retired.append(exact)
+        result = original_retire(exact)
+        assert android_host.active_callers() == []
+        return result
+    def close():
+        assert retired == [service]
+        return original_close()
+    monkeypatch.setattr(android_host, "retire", retire)
+    monkeypatch.setattr(service, "close", close)
+    assert json.loads(mobile_bridge.shutdown())["ok"]
+    monkeypatch.setattr(service, "close", original_close)
+    monkeypatch.setattr(android_host, "retire", original_retire)
+    assert json.loads(mobile_bridge.initialize(mobile_request))["ok"]
+    replacement = mobile_bridge._service
+    assert decode_frame(android_host.exchange(replacement, caller, frame))["ok"]
+    current_session = android_host._sessions[caller, "consumer"]
+    original_retire(service)  # An old cleanup callback cannot detach the replacement.
+    assert mobile_bridge._service is replacement and not replacement._shutdown.is_set()
+    assert android_host._sessions[caller, "consumer"] is current_session
+    assert decode_frame(android_host.exchange(replacement, caller, frame))["ok"]
+
+
 @pytest.mark.parametrize("field", ["connection_policy", "native_webrtc_host"])
 def test_mobile_json_cannot_select_private_composition(mobile_request, field):
     request = json.loads(mobile_request)

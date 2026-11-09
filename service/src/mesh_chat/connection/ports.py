@@ -2,7 +2,7 @@
 
 from typing import Protocol
 
-from .model import Adopted, ConnectionKey, Desired, Failed, Resource, Result, Work
+from .model import Adopted, ConnectionKey, Desired, Failed, Operation, Resource, Result, Work
 
 
 class Cancellation(Protocol):
@@ -26,4 +26,10 @@ class PhaseExecutor(Protocol):
 class IntentStore(Protocol):
     def save(self, key: ConnectionKey, desired: Desired) -> None:
         """Return only after the existing protected-store transaction commits."""
+        ...
+
+
+class PairingHandoff(Protocol):
+    def __call__(self, operation: Operation, resource: Resource) -> bool:
+        """Revalidate approved capability binding after the owner releases it."""
         ...
