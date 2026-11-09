@@ -238,17 +238,24 @@ describe("Core application serialization", () => {
     expect((name as HTMLInputElement).value).toBe("Blair");
   });
 
-  it("keeps a pre-profile invitation without creating or accepting when scoped preview is unavailable", async () => {
+  it.each([
+    "MESHCHAT2:pending-consent",
+    "MESHWORKSPACE4:pending-consent",
+    "MESHWORKSPACEDEVICE1:pending-consent",
+  ])("keeps pre-profile %s without effects when scoped preview is unavailable", async (document) => {
     current = { ...current, profile: null };
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Join a chat" }));
     const invitation = screen.getByRole("textbox", { name: "Invitation" });
-    fireEvent.change(invitation, { target: { value: "MESHCHAT2:pending-consent" } });
+    fireEvent.change(invitation, { target: { value: document } });
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     await screen.findByRole("alert");
-    expect((invitation as HTMLTextAreaElement).value).toBe("MESHCHAT2:pending-consent");
+    expect((invitation as HTMLTextAreaElement).value).toBe(document);
+    expect(host.invoke).toHaveBeenCalledWith("core_api_profile", undefined);
     expect(requests("profile.create")).toHaveLength(0);
     expect(requests("peer.pairing_accept")).toHaveLength(0);
+    expect(requests("workspace.join")).toHaveLength(0);
+    expect(requests("workspace.device_link_submit")).toHaveLength(0);
     expect(host.invoke.mock.calls.filter(([command]) => command === "initialize_service")).toHaveLength(1);
     expect(host.invoke.mock.calls.some(([command]) => command === "service_command")).toBe(false);
   });
