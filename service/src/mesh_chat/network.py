@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import ipaddress
+import signal
 import socket
+import sys
 import threading
 import time
 from collections import deque
@@ -48,6 +50,30 @@ CALLBACK_CANCEL_TIMEOUT = 0.1
 
 class EmbeddedRuntimeTermination(RuntimeError):
     """A process-level RNS exit converted into an embedded-runtime failure."""
+
+
+class _EmbeddedSignals:
+    """Keep worker-thread constructors from claiming process signal handlers."""
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(signal, name)
+
+    def signal(self, number: int, handler: Any) -> Any:
+        if (number in {signal.SIGINT, signal.SIGTERM} and callable(handler)
+                and threading.current_thread() is not threading.main_thread()):
+            return signal.getsignal(number)
+        return signal.signal(number, handler)
+
+
+def _install_embedded_signal_guards() -> None:
+    # These pinned constructors unconditionally register SIGINT/SIGTERM. A
+    # fresh profile is created on an IPC worker, where Python rejects that
+    # registration. Scope the adapter to the two upstream module references;
+    # never replace the host's process-global signal.signal function.
+    for runtime in (RNS.Reticulum, LXMF.LXMRouter):
+        module = sys.modules[runtime.__module__]
+        if getattr(module, "signal", None) is signal:
+            module.signal = _EmbeddedSignals()
 
 
 def _local_ipv4_entries(rns_module: Any = RNS) -> list[tuple[str, int]]:
@@ -236,6 +262,9 @@ def install_embedded_runtime_guards(rns_module: Any = RNS) -> None:
     entire app. A failed interface is isolated and marked unavailable; other
     fatal exits become catchable startup errors.
     """
+
+    if rns_module is RNS:
+        _install_embedded_signal_guards()
 
     # Upstream TCP clients synchronously wait for their first connection by
     # default. Invitations can contain several signed return routes, so adding
