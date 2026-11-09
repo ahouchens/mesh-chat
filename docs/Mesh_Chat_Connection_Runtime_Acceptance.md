@@ -20,38 +20,37 @@ and scenario rows below to complete; their named remaining obligations still
 apply, including packaged cross-platform transport and unavailable physical
 qualification.
 
-Latest local source `72a5319` passes all 3,494 required policy cases with clean
-SDK import setup, exact 670-Python/12-rendered boundary and nine Windows cases,
-zero skips. CI at `32cc1d5` independently passes the same boundary and normal
-installed Windows DPAPI/EFS bootstrap, but public pairing times out before
-receipt qualification. The independent Android consumer is locally integrated
-and still needs actual built/installed evidence. No scenario/default promotion.
+The current feature-branch checkpoint is `577250e7b0dad8fca7a9d460f5e990dcc29af8dc`
+(tree `2ff3f7c8aac2d558e9af05a1d3aaca04e0a6048b`). Full manual CI
+[42711039872](https://github.com/ahouchens/mesh-chat/actions/runs/42711039872)
+is running. Its retained selection independently confirms all six suite families
+and native workload `full`; duplicate PR run `42711014339` was canceled.
 
-The completed run independently passes both direct-platform suites. Android has
-47 successful and three failed case reports, with all 50 cases present, seven
-binary hashes and 62 JVM passes independently verified. Three native-offerer
-cleanup failures prevent overall Android acceptance. Bounded pairing diagnostics
-and supported readiness queries are integrated with 324 focused passes; neither
-component result resolves the timeout or qualifies cross-platform delivery.
+At this exact source, SDK staging and **3,529 required policy tests** pass using
+only the service source path. The App/Core boundary passes **670 Python plus
+12 rendered cases**, and the Windows component boundary passes **nine cases**,
+all with zero failures and skips. These local results do not qualify actual
+Android execution, frozen Windows pairing, or cross-platform receipts.
 
-The Android helper correction `f161626` preserves the cleanup contract and has
-JVM control-flow and separate compilation evidence only. It is not accepted as
-an emulator repair until all required cases pass at the new checkpoint.
+This checkpoint includes the clean SDK import repair, ordinary independent
+Android consumer and ADB stdin repair, supported Windows readiness query and
+bounded pairing failure diagnostics, and the Android cancellation test repair.
+The Android inventory now requires **52 cases and 17 artifact hashes**, retaining
+all previous 50 cases. Production native disposal and timing bounds are unchanged.
+The single instrumentation test ownership has returned from C to D.
 
-Latest repaired source `32cc1d5` is under full manual qualification
-`42704405112`. Its required local policy passes 3,463 tests and exact Windows
-boundary passes nine tests with no skips. The App/Core boundary at `986815f`
-passes 670 Python plus 12 rendered cases; only a static Binder guard repair
-intervenes. These supersede the earlier group inventory/fixture failures and
-queued-send retirement gap below. They do not establish packaged/device or
-independent cross-platform acceptance. The new independent Android consumer is
-excluded from this run and still needs actual publication and installed tests.
+Previous full CI `42704405112` at `32cc1d5` completed **failed**. Its retained
+evidence independently passes the 670/12 App/Core boundary, normal installed
+Windows bootstrap with actual DPAPI/EFS, and both direct-platform suites.
+Policy/broad collection failed on SDK import; public Windows pairing timed out;
+three of 50 Android cases failed in native-offerer cleanup. The import and helper
+repairs need this new CI run. The pairing timeout's root cause remains unproven.
 
-That CI run cannot pass: policy and broad verification fail collecting the group
-Python SDK test because its standalone import setup is missing. The local policy
-command supplied an extra SDK search path, so its result does not prove clean
-runner compatibility. A tracked repair and clean rerun are required. The separate
-Android integration at `75b7719` has 401 focused passes and no platform claim.
+Protected pending-action recovery and personal direct-IP consent remain reviewed
+proposals. Workers hold source unless assigned a specific review or repair; the
+lead owns artifact validation and the next integration decision. No Wave 2,
+SC21, default selector, release or physical-device promotion follows from these
+component results.
 
 Earlier checkpoint evidence follows.
 

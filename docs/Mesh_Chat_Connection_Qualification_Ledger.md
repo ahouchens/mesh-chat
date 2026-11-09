@@ -2,6 +2,55 @@
 
 ## Integration revalidation (2026-11-09)
 
+### Current repaired checkpoint: full CI dispatched
+
+The current feature-branch checkpoint is `577250e7b0dad8fca7a9d460f5e990dcc29af8dc`
+(tree `2ff3f7c8aac2d558e9af05a1d3aaca04e0a6048b`). Full manual CI
+[42711039872](https://github.com/ahouchens/mesh-chat/actions/runs/42711039872)
+is running. Its retained selection independently confirms all six suite families
+and native workload `full`; duplicate PR run `42711014339` was canceled.
+
+At this exact source, SDK staging and **3,529 required policy tests** pass using
+only the service source path. The App/Core boundary passes **670 Python plus
+12 rendered cases**, and the Windows component boundary passes **nine cases**,
+all with zero failures and skips. These local results do not qualify actual
+Android execution, frozen Windows pairing, or cross-platform receipts.
+
+This checkpoint includes the clean SDK import repair, ordinary independent
+Android consumer and ADB stdin repair, supported Windows readiness query and
+bounded pairing failure diagnostics, and the Android cancellation test repair.
+The Android inventory now requires **52 cases and 17 artifact hashes**, retaining
+all previous 50 cases. Production native disposal and timing bounds are unchanged.
+The single instrumentation test ownership has returned from C to D.
+
+Previous full CI `42704405112` at `32cc1d5` completed **failed**. Its retained
+evidence independently passes the 670/12 App/Core boundary, normal installed
+Windows bootstrap with actual DPAPI/EFS, and both direct-platform suites.
+Policy/broad collection failed on SDK import; public Windows pairing timed out;
+three of 50 Android cases failed in native-offerer cleanup. The import and helper
+repairs need this new CI run. The pairing timeout's root cause remains unproven.
+
+Protected pending-action recovery and personal direct-IP consent remain reviewed
+proposals. Workers hold source unless assigned a specific review or repair; the
+lead owns artifact validation and the next integration decision. No Wave 2,
+SC21, default selector, release or physical-device promotion follows from these
+component results.
+
+The policy qualification ID is `5cad48cebef44411abbfc09cb9af6463`;
+wall time is 338.71s (summed case durations 328.898s). App/Core wall time is
+41.01s, with Python XML SHA-256
+`ee6d379fe166e60b36cf63d3ccd5474d705f6258ff2fd075e39c1d23dbf9f89e`,
+inventory `6cf45efc09e08c61267ec9697ca0c3387844465bf62613096420e694e92c3dba`,
+and rendered XML `8e8b98bb66593b3e4b06f4428f08715b8ff872e95786f3369d784cc99f68c658`.
+Windows wall time is 2.18s, XML
+`405ecd33d9d66828c037fd4761b1dcf7ee00afb2a1d7fba04f4d6c3f8946995c`,
+inventory `6e971b93a93995ed2dd79daefec1deb9f37532ae1d232445691e98a97920e216`.
+
+Selection artifact `13715257587` has archive SHA-256
+`1c949a81cd1b53082607b10897fcb2d2085cc78384e099c00fdd971d2cb7f601`.
+The lead retains 146 validator source files pinned to the candidate and will
+rebuild evidence from the actual reports. No platform result is claimed yet.
+
 ### Clean Android consumer integration and Windows bootstrap evidence
 
 CI `42704405112` completed failed at **22:05:03 UTC**. Each direct platform
@@ -26,7 +75,7 @@ Debug artifact `13714895133` archive SHA-256:
 qualification `13714326555`:
 `00989330164c5fa83daf0b517df3372471e54ac0821ccc35d2b4b744657fef1f`.
 The archive was hashed in memory; retained text/XML/JSON was losslessly NTFS
-compressed. C is correcting the shared cancellation test helper to consume the
+compressed. C subsequently corrected the shared cancellation test helper to consume the
 expected pending signal, then require the existing unwind wait and actual
 disposal acknowledgment, without weakening production custody.
 
@@ -90,7 +139,7 @@ qualification follows from the passing bootstrap subset.
 ### Repaired group checkpoint dispatched
 
 Full manual workflow [42704405112](https://github.com/ahouchens/mesh-chat/actions/runs/42704405112)
-is running at source `32cc1d5765a1ae1a3ad91e752e341b95cbce2e40`, tree
+completed failed at source `32cc1d5765a1ae1a3ad91e752e341b95cbce2e40`, tree
 `cae703b3360004bdd0bf2d0b55793fed7efafe08`. Duplicate PR run `42704390818`
 was canceled. All 143 retained validator source files are pinned to this source.
 There is no CI success claim yet.

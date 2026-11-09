@@ -11,73 +11,37 @@ reports. Exact evidence and limits are in the ledger. Wave 2 is activated below.
 Existing human authorization covers continued implementation, integration and
 worker follow-ups without another permission request.
 
-Latest lead source `72a5319` includes the independent Android consumer, its
-reproduced ADB stdin fix `b59f951`, and tracked standalone-SDK import setup
-`1866660`. Exact SDK staging and **3,494 required policy tests** pass with only
-the service path configured. The exact App/Core boundary passes **670 Python
-plus 12 rendered cases**, and Windows passes **nine cases**, all zero failures
-and skips. This source has not been pushed or platform-qualified yet.
+The current feature-branch checkpoint is `577250e7b0dad8fca7a9d460f5e990dcc29af8dc`
+(tree `2ff3f7c8aac2d558e9af05a1d3aaca04e0a6048b`). Full manual CI
+[42711039872](https://github.com/ahouchens/mesh-chat/actions/runs/42711039872)
+is running. Its retained selection independently confirms all six suite families
+and native workload `full`; duplicate PR run `42711014339` was canceled.
 
-Current CI at `32cc1d5` independently passes the same 670/12 boundary and the
-normal installed Windows bootstrap with actual DPAPI/EFS. Public pairing fails
-after 242.10s in the coarse approval phase. D adds safe diagnostic substeps and
-repairs a separate definite `connection.query`/`connection.snapshot` mismatch;
-C audits production bootstrap/handoff, A audits public shapes. The timeout's
-cause remains unproven. Android and direct-platform jobs continue. Recovery
-design remains deferred: reviews require a common lifecycle dispatch fence and
-native document-attachment/issued-credential cancellation before implementation.
+At this exact source, SDK staging and **3,529 required policy tests** pass using
+only the service source path. The App/Core boundary passes **670 Python plus
+12 rendered cases**, and the Windows component boundary passes **nine cases**,
+all with zero failures and skips. These local results do not qualify actual
+Android execution, frozen Windows pairing, or cross-platform receipts.
 
-CI `42704405112` completed failed at 22:05:03 UTC. Both direct platforms
-independently pass 25 fabric, ten recovery and 12 setup cases. Android built and
-ran all 50 required cases: 47 successful reports and three native-offerer
-cleanup failures, with seven binary hashes and 62 JVM passes independently
-validated. C temporarily owns only `NativeWebRtcInteropTest.kt` from D for the
-cancellation-helper repair; the lead verified D's file clean before transfer.
-Pending cleanup must still reach actual disposal acknowledgment and zero resource
-accounting. No production disposal behavior or timeout relaxation is authorized
-as a substitute. D retains all other instrumentation and evidence ownership.
+This checkpoint includes the clean SDK import repair, ordinary independent
+Android consumer and ADB stdin repair, supported Windows readiness query and
+bounded pairing failure diagnostics, and the Android cancellation test repair.
+The Android inventory now requires **52 cases and 17 artifact hashes**, retaining
+all previous 50 cases. Production native disposal and timing bounds are unchanged.
+The single instrumentation test ownership has returned from C to D.
 
-D's diagnostics `379d948`, supported readiness `3032436` and bounded failure
-probe `92cb643` are integrated at `ba2b12f`. The probe makes at most one existing
-public query per initialized peer with a two-second timeout before shutdown,
-retains only safe projected state, and preserves the original failure. The lead
-passes 324 focused consumer/matrix/selection cases without skips in 14.46s.
+Previous full CI `42704405112` at `32cc1d5` completed **failed**. Its retained
+evidence independently passes the 670/12 App/Core boundary, normal installed
+Windows bootstrap with actual DPAPI/EFS, and both direct-platform suites.
+Policy/broad collection failed on SDK import; public Windows pairing timed out;
+three of 50 Android cases failed in native-offerer cleanup. The import and helper
+repairs need this new CI run. The pairing timeout's root cause remains unproven.
 
-C's isolated instrumentation correction `f161626` is now integrated. It handles
-only the expected main-thread pending signal, retains the existing one-second
-nonblocking and 35-second creator-wait bounds, then requires acknowledged close
-and complete zero native accounting. Helper and outer teardown preserve original
-failures while attempting all cleanup. Actual-source JVM control reproduces the
-old skipped wait; the edited test compiles in a separate Kotlin module. Production
-disposal is unchanged. The exact test path is returned to D after integration;
-all required emulator cases still need the next source-bound CI run.
-
-The shared feature branch is now `32cc1d5765a1ae1a3ad91e752e341b95cbce2e40`
-(tree `cae703b3360004bdd0bf2d0b55793fed7efafe08`). Full manual CI
-`42704405112` is running; duplicate PR run `42704390818` was canceled.
-The complete local policy passes 3,463 cases and the exact Windows boundary
-passes nine cases, all without failures/skips. The App/Core boundary at ancestor
-`986815f` passes 670 Python plus 12 rendered cases; the intervening source change
-only repairs the static Binder guard. All 24 actual-source Kotlin SDK tests pass.
-The group inventory/fixture, queued-send retirement, writable Windows settings,
-standalone host dependency and Binder guard repairs are integrated. The first
-complete policy attempt at `4da0ccf` had 3,460 passes and one stale Binder guard
-failure; the repaired full run above supersedes that result.
-
-D's independent Android consumer `cd08903` remains a separate next checkpoint,
-with C's source review accepted. Its actual publication, APK build and two
-installed lifecycle cases have not run. A/C's personal direct-consent proposal
-and B's protected pending-action recovery proposal remain read-only design work.
-No Wave 2 acceptance or release promotion follows from this dispatch.
-
-CI update: both policy and broad verification fail collection of
-`test_core_group_composer_sdk.py`: the clean runner cannot import the standalone
-Python SDK. The lead's local command added `sdk/python/src` to `PYTHONPATH`,
-masking this missing tracked setup. A's narrow repair and the clean full local
-rerun now pass as recorded above. Windows, Android and direct jobs continued.
-D's independent Android checkpoint is now integrated separately at `75b7719`;
-401 consumer, matrix, selection, controller and Android report checks pass with
-zero skips in 22.73s. That integration is not tested by CI `42704405112`.
+Protected pending-action recovery and personal direct-IP consent remain reviewed
+proposals. Workers hold source unless assigned a specific review or repair; the
+lead owns artifact validation and the next integration decision. No Wave 2,
+SC21, default selector, release or physical-device promotion follows from these
+component results.
 
 Earlier checkpoint history follows. At `a175ae5`, the feature branch was
 `5ea2949`.
