@@ -32,6 +32,7 @@ it("does not invoke native legacy fallback or late cleanup after the originating
   const lifetime = new ProfileLifetime();
   const pending = nativeWebRTCOffer("original-session", ice, undefined, undefined, scope(lifetime));
   const rejected = expect(pending).rejects.toMatchObject({ code: "profile_changed" });
+  await vi.waitFor(() => expect(nativeCommands()).toEqual(["native_webrtc_offer"]));
   const retirement = lifetime.retire();
   await vi.advanceTimersByTimeAsync(1000);
   await retirement;

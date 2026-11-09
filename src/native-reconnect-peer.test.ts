@@ -50,7 +50,7 @@ describe("NativeReconnectPeer", () => {
     expect(await offerer.open()).toMatchObject({ attached: true });
     expect(offerer.isAttached()).toBe(true);
     offerer.close();
-    expect(native.close).toHaveBeenCalledWith(offerer.sessionId);
+    expect(native.close).toHaveBeenCalledWith(offerer.sessionId, expect.any(Object));
 
     const answerer = NativeReconnectPeer.create(ice, "answer", "profile-1");
     expect(await answerer.createAnswer("remote-offer")).toBe("answer-sdp");
@@ -60,6 +60,7 @@ describe("NativeReconnectPeer", () => {
       ice,
       [],
       "profile-1",
+      expect.objectContaining({ isCurrent: expect.any(Function) }),
     );
   });
 
@@ -93,7 +94,7 @@ describe("NativeReconnectPeer", () => {
     native.stats.mockResolvedValue(stats);
     await peer.refreshHealth();
     expect(peer.isAttached()).toBe(false);
-    expect(native.close).toHaveBeenCalledWith(peer.sessionId);
+    expect(native.close).toHaveBeenCalledWith(peer.sessionId, expect.any(Object));
   });
 
   it("preserves a temporary disconnection, resets on recovery and retires a persistent loss", async () => {
