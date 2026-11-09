@@ -153,4 +153,19 @@ jobs:
             dist/reports/packaged-transport.json
             dist/reports/packaged-pairing.json
             dist/reports/core-windows-boundary.*
+            dist/reports/native-windows-control.json
+            dist/reports/native-windows-lifecycle.json
           if-no-files-found: error
+      - name: Retain the exact tested native Windows sidecar and build inputs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-windows-tested-${{ github.sha }}
+          path: |
+            src-tauri/binaries/mesh-chat-service-x86_64-pc-windows-msvc.exe
+            src-tauri/binaries/.mesh-chat-service-x86_64-pc-windows-msvc.build.json
+            dist/reports/native-windows-control.json
+            dist/reports/native-windows-lifecycle.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14

@@ -176,6 +176,20 @@ class CoreClient private constructor(private val transport: CoreTransport) {
     fun draftGet(profile: String, peer: String): JSONObject =
         request("peer.draft_get", JSONObject().put("profile", profile).put("peer", peer))
 
+    fun composerQuery(profile: String, peer: String, sendRevision: String? = null): JSONObject {
+        val params = JSONObject().put("profile", profile).put("peer", peer)
+        if (sendRevision != null) params.put("send_revision", sendRevision)
+        return request("peer.composer_query", params)
+    }
+
+    fun composerUpdate(profile: String, peer: String, expectedRevision: String?, text: String, updateKey: String): JSONObject =
+        dispatch("peer.composer_update", JSONObject().put("profile", profile).put("peer", peer)
+            .put("expected_revision", expectedRevision ?: JSONObject.NULL).put("text", text), updateKey)
+
+    fun enqueueDraft(profile: String, recipient: String, draftRevision: String): JSONObject =
+        dispatch("message.enqueue_draft", JSONObject().put("profile", profile).put("recipient", recipient)
+            .put("draft_revision", draftRevision), draftRevision)
+
     fun draftSet(profile: String, peer: String, text: String): JSONObject =
         request("peer.draft_set", JSONObject().put("profile", profile).put("peer", peer)
             .put("text", text))
