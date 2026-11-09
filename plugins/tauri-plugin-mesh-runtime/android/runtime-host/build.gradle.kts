@@ -1,4 +1,6 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.tasks.OutputDirectory
 
 plugins {
     id("com.android.library")
@@ -12,13 +14,19 @@ version = "0.3.0-experimental"
 val runtimeAbis = providers.gradleProperty("meshRuntimeAbis").orElse("arm64-v8a").get()
     .split(',').map(String::trim).filter(String::isNotEmpty)
 require(runtimeAbis.isNotEmpty() && runtimeAbis.all { it in setOf("arm64-v8a", "x86_64") })
-val runtimeSources = tasks.register<Sync>("prepareRuntimeSources") {
+abstract class PrepareRuntimeSources : Sync() {
+    // A tracked output property carries this producer into AGP's generated sources.
+    @get:OutputDirectory
+    abstract val outputDirectory: DirectoryProperty
+}
+val runtimeSources = tasks.register<PrepareRuntimeSources>("prepareRuntimeSources") {
     from(fileTree("../src/main/java") {
         include("com/meshchat/runtime/Native*.kt", "com/meshchat/runtime/Bootstrap*.kt",
             "com/meshchat/runtime/CoreDispatch.kt", "com/meshchat/runtime/MeshCoreApiService.kt",
             "com/meshchat/runtime/MeshCoreRuntime.kt")
     })
-    into(layout.buildDirectory.dir("generated/runtimeSources"))
+    outputDirectory.set(layout.buildDirectory.dir("generated/runtimeSources"))
+    into(outputDirectory)
 }
 
 // The legacy DSL advertises a source-set type that AGP 9's objects do not implement.
@@ -30,7 +38,6 @@ extensions.configure<com.android.build.api.dsl.LibraryExtension> {
         ndk { abiFilters += runtimeAbis }
         consumerProguardFiles("consumer-rules.pro")
     }
-    sourceSets.getByName("main").java.srcDir(runtimeSources.map { it.destinationDir })
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -40,6 +47,12 @@ extensions.configure<com.android.build.api.dsl.LibraryExtension> {
         excludes.remove("META-INF/LICENSE")
     }
     publishing { singleVariant("release") { withSourcesJar() } }
+}
+extensions.configure<com.android.build.api.variant.LibraryAndroidComponentsExtension> {
+    onVariants(selector().all()) { variant ->
+        checkNotNull(variant.sources.java).addGeneratedSourceDirectory(
+            runtimeSources, PrepareRuntimeSources::outputDirectory)
+    }
 }
 kotlin { compilerOptions { jvmTarget = JvmTarget.JVM_17 } }
 tasks.named("preBuild") { dependsOn(runtimeSources) }
