@@ -42,7 +42,8 @@ class BoundaryHost:
         permissions = frozenset({"observe", "read", "send", "approve", "pair", "connect",
                                  "diagnose", "runtime_owner", "profile_owner"})
         self.session = bind_service_stream(self.service, lambda: Grant("boundary-ui", permissions, ("local",)),
-                                          private_native=True, private_profile_bootstrap=True)
+                                          private_native=True, private_profile_bootstrap=True,
+                                          private_composer_legacy=True)
         self.call("runtime.capabilities")
 
     def call(self, operation, params=None, key=None):
@@ -75,6 +76,14 @@ class BoundaryHost:
             return self.profile()
         if command == "core_api_request":
             return self.call(args["operation"], args.get("params"), args.get("idempotencyKey"))
+        if command == "core_api_peer_for_destination":
+            profile = self.profile()["result"]
+            for peer in profile["peers"]:
+                view = self.call("peer.query", {"profile": profile["profile"], "peer": peer})
+                if view["ok"] and view["result"]["destination"] == args["destination"]:
+                    return {"ok": True, "result": {"profile": profile["profile"], "peer": peer,
+                                                    "destination": view["result"]["destination"]}}
+            raise ValueError("Unknown fixture peer")
         if command == "core_api_send_message":
             profile = self.profile()["result"]
             for peer in profile["peers"]:
