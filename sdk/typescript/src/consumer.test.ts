@@ -85,7 +85,7 @@ test("abort before dispatch writes nothing", async () => {
   assert.equal(transport.written.length, 1);
 });
 
-test("abort during a read rejects without resending or closing", async () => {
+test("abort during a read closes the uncertain stream without resending", async () => {
   const transport = new Slow(success("client:1", CAPABILITIES));
   const client = await CoreClient.open(transport);
   const controller = new AbortController();
@@ -95,7 +95,7 @@ test("abort during a read rejects without resending or closing", async () => {
   setTimeout(() => controller.abort(), 10);
   await assert.rejects(pending, AbortError);
   assert.equal(transport.written.length, 2);
-  assert.equal(client.closed, false);
+  assert.equal(client.closed, true);
 });
 
 test("consumer resynchronizes through every snapshot page", async () => {

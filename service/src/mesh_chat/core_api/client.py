@@ -6,6 +6,7 @@ tooling can use the same versioned frames as any other consumer.
 """
 
 from .compatibility import check_capabilities
+import re
 from .limits import MAX_FRAME_BYTES
 from .wire_codec import decode_frame, encode_frame
 
@@ -18,24 +19,28 @@ class CoreClientError(Exception):
         self.code = code
         self.request_id = request_id
         self.retry_after_ms = retry_after_ms
+from .client_keys import needs_key
 
 
 class CoreClient:
-    def __init__(self, readline, write):
+    """Serial protocol client; callers own authenticated streams and credentials."""
+
+    def __init__(self, readline, write, close=None):
+        import threading
         if not callable(readline) or not callable(write):
             raise ValueError("A core client needs stream callbacks")
-        self._readline = readline
-        self._write = write
-        self._sequence = 0
-        self._capabilities = None
+        self._readline, self._write, self._close_callback = readline, write, close
+        self._sequence, self._capabilities, self._closed = 0, None, False
+        self._lock = threading.Lock()
 
     @classmethod
-    def open(cls, readline, write):
-        client = cls(readline, write)
+    def open(cls, readline, write, close=None):
+        client = cls(readline, write, close)
         capabilities = client.request("runtime.capabilities", {})
         try:
             check_capabilities(capabilities)
         except ValueError as error:
+            client.close()
             raise CoreClientError("incompatible_version") from error
         client._capabilities = capabilities
         return client
@@ -43,38 +48,94 @@ class CoreClient:
     @property
     def capabilities(self):
         if self._capabilities is None:
-            raise CoreClientError("unauthenticated")
+            raise CoreClientError("negotiation_required")
         return self._capabilities
 
+    def close(self):
+        if not self._closed:
+            self._closed = True
+            if self._close_callback is not None:
+                self._close_callback()
+
     def request(self, operation, params=None, *, idempotency_key=None):
+        with self._lock:
+            return self._request(operation, params, idempotency_key)
+
+    def _request(self, operation, params, key):
+        if self._closed:
+            raise CoreClientError("transport_closed")
         if not isinstance(operation, str) or not operation:
             raise ValueError("Operation name is required")
+        if needs_key(operation, params) and (not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9._:-]{16,128}", key)):
+            raise ValueError("Operation requires a caller-provided idempotency_key")
         self._sequence += 1
         request_id = f"client:{self._sequence}"
         value = {"api_version": 1, "request_id": request_id, "operation": operation,
                  "params": {} if params is None else params}
-        if idempotency_key is not None:
-            value["idempotency_key"] = idempotency_key
-        self._write(encode_frame(value))
-        frame = self._readline(MAX_FRAME_BYTES + 1)
-        if not frame:
+        if key is not None:
+            value["idempotency_key"] = key
+        frame = encode_frame(value)
+        try:
+            offset = 0
+            while offset < len(frame):
+                written = self._write(frame[offset:])
+                if written is None:
+                    offset = len(frame)
+                elif type(written) is int and 0 < written <= len(frame) - offset:
+                    offset += written
+                else:
+                    raise OSError("Invalid stream write")
+            reply = self._readline(MAX_FRAME_BYTES + 1)
+        except (OSError, EOFError, TimeoutError) as error:
+            self.close()
+            raise CoreClientError("transport_closed", request_id) from error
+        if not reply:
+            self.close()
             raise CoreClientError("transport_closed", request_id)
         try:
-            response = decode_frame(frame)
+            response = decode_frame(reply)
+            if (not isinstance(response, dict) or type(response.get("api_version")) is not int
+                    or response["api_version"] != 1 or type(response.get("ok")) is not bool):
+                raise ValueError("Invalid response envelope")
+            failure = response.get("error")
+            if response.get("request_id") != request_id:
+                self.close()
+                if (response.get("request_id") is None and response["ok"] is False and isinstance(failure, dict)
+                        and failure.get("code") in {"forbidden", "invalid_request", "resource_exhausted", "unavailable"}):
+                    retry = failure.get("retry_after_ms")
+                    if retry is not None and (type(retry) is not int or not 0 <= retry <= 3600000):
+                        raise ValueError("Invalid admission retry hint")
+                    raise CoreClientError(failure["code"], None, failure.get("retry_after_ms"))
+                raise ValueError("Uncorrelated response")
+            if response["ok"]:
+                if "result" not in response:
+                    raise ValueError("Missing result")
+                return response["result"]
+            if (not isinstance(failure, dict) or not isinstance(failure.get("code"), str)
+                    or not 1 <= len(failure["code"]) <= 80):
+                raise ValueError("Invalid error")
+            retry = failure.get("retry_after_ms")
+            if retry is not None and (type(retry) is not int or not 0 <= retry <= 3600000):
+                raise ValueError("Invalid retry hint")
         except (TypeError, ValueError) as error:
+            self.close()
             raise CoreClientError("protocol", request_id) from error
-        if (not isinstance(response, dict) or response.get("api_version") != 1
-                or response.get("request_id") != request_id
-                or type(response.get("ok")) is not bool):
-            raise CoreClientError("protocol", request_id)
-        if response["ok"]:
-            if "result" not in response:
-                raise CoreClientError("protocol", request_id)
-            return response["result"]
-        failure = response.get("error")
-        if not isinstance(failure, dict) or not isinstance(failure.get("code"), str):
-            raise CoreClientError("protocol", request_id)
-        raise CoreClientError(failure["code"], request_id, failure.get("retry_after_ms"))
+        error = CoreClientError(failure["code"], request_id, retry)
+        error.details = dict(failure)
+        raise error
+
+    def _require_composer(self):
+        caps = self.capabilities
+        names = ("composer_text_utf8_bytes", "composers_per_caller_profile", "composers_per_vault",
+                 "composer_update_idempotency_seconds", "composer_update_keys_per_caller_profile",
+                 "composer_update_keys_per_vault", "composer_send_idempotency_seconds",
+                 "composer_send_keys_per_caller_profile", "composer_send_keys_per_vault")
+        limits, operations = caps.get("limits"), caps.get("operations")
+        if (type(caps.get("api_minor")) is not int or caps["api_minor"] < 1
+                or not isinstance(operations, list) or not isinstance(limits, dict)
+                or not {"peer.composer_query", "peer.composer_update", "message.enqueue_draft"} <= set(operations)
+                or any(type(limits.get(name)) is not int or not 0 < limits[name] <= 9007199254740991 for name in names)):
+            raise CoreClientError("unsupported_operation")
 
     def native_command(self, command, payload):
         return self.request("native.command", {"command": command, "payload": payload})
@@ -193,16 +254,21 @@ class CoreClient:
         return self.request("peer.draft_get", {"profile": handle, "peer": peer})
 
     def composer_query(self, profile, peer, send_revision=None):
+        self._require_composer()
         params = {"profile": profile, "peer": peer}
         if send_revision is not None:
             params["send_revision"] = send_revision
         return self.request("peer.composer_query", params)
 
     def composer_update(self, profile, peer, expected_revision, text, update_key):
+        self._require_composer()
+        if len(text.encode("utf-8")) > self.capabilities["limits"]["composer_text_utf8_bytes"]:
+            raise ValueError("Composer text exceeds negotiated byte limit")
         return self.request("peer.composer_update", {"profile": profile, "peer": peer,
             "expected_revision": expected_revision, "text": text}, idempotency_key=update_key)
 
     def enqueue_draft(self, profile, recipient, draft_revision):
+        self._require_composer()
         return self.request("message.enqueue_draft", {"profile": profile, "recipient": recipient,
             "draft_revision": draft_revision}, idempotency_key=draft_revision)
 
@@ -303,8 +369,8 @@ class CoreClient:
                             {"profile": handle, "name": name, "description": description},
                             idempotency_key=key)
 
-    def create_profile(self, display_name):
-        return self.request("profile.create", {"display_name": display_name})
+    def create_profile(self, display_name, key=None):
+        return self.request("profile.create", {"display_name": display_name}, idempotency_key=key)
 
     def workspace_join_prompt(self, handle, prompt, key):
         return self.request("workspace.join_prompt",
@@ -411,9 +477,9 @@ class CoreClient:
                             {"profile": handle, "workspace": workspace,
                              "invitation": invitation}, idempotency_key=key)
 
-    def workspace_admission_grant_list(self, handle, workspace):
+    def workspace_admission_grant_list(self, handle, workspace, key=None):
         return self.request("workspace.admission_grant_list",
-                            {"profile": handle, "workspace": workspace})
+                            {"profile": handle, "workspace": workspace}, idempotency_key=key)
 
     def workspace_admission_grant_create(self, handle, workspace, member, device,
                                          max_admissions, lifetime_days, v2_ready, key):
@@ -686,10 +752,10 @@ class CoreClient:
                              "member": member, "role": role},
                             idempotency_key=key)
 
-    def workspace_join(self, handle, document):
+    def workspace_join(self, handle, document, key=None):
         if not isinstance(document, str) or not document:
             raise ValueError("Workspace joins require signed material")
-        return self.request("workspace.join", {"profile": handle, "document": document})
+        return self.request("workspace.join", {"profile": handle, "document": document}, idempotency_key=key)
 
     def pairing_accept(self, handle, document, *, i2p_consent=False):
         if not isinstance(document, str) or not document:

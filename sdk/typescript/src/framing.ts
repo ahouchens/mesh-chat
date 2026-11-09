@@ -24,10 +24,12 @@ export type ResponseEnvelope =
     };
 
 export function encodeRequest(value: RequestEnvelope): string {
+  checkValues(value);
   if (!REQUEST_ID.test(value.request_id)) {
     throw new ProtocolError("request id is outside the declared grammar");
   }
   const line = `${JSON.stringify(value)}\n`;
+  checkStructure(line);
   if (Buffer.byteLength(line, "utf8") > MAX_FRAME_BYTES) {
     throw new ProtocolError("request frame exceeds the negotiated ceiling");
   }
@@ -42,7 +44,7 @@ export function decodeResponse(line: string): ResponseEnvelope {
   if (body === null) {
     throw new ProtocolError("response frame is not line delimited");
   }
-  if (Buffer.byteLength(body, "utf8") > MAX_FRAME_BYTES) {
+  if (Buffer.byteLength(line, "utf8") > MAX_FRAME_BYTES) {
     throw new ProtocolError("response frame exceeds the negotiated ceiling");
   }
   if (body.startsWith("\uFEFF")) {
@@ -50,7 +52,9 @@ export function decodeResponse(line: string): ResponseEnvelope {
   }
   let value: unknown;
   try {
+    checkStructure(body);
     value = JSON.parse(body);
+    checkValues(value);
   } catch {
     throw new ProtocolError("response frame is not JSON");
   }
@@ -77,19 +81,61 @@ export function decodeResponse(line: string): ResponseEnvelope {
       throw new ProtocolError("failed response has no typed error");
     }
     const fields = error as Record<string, unknown>;
-    if (typeof fields.code !== "string" || fields.code.length === 0) {
+    if (typeof fields.code !== "string" || fields.code.length === 0 || fields.code.length > 80) {
       throw new ProtocolError("failed response has no error code");
     }
     const retry = fields.retry_after_ms;
-    if (retry !== null && !(typeof retry === "number" && Number.isFinite(retry) && retry >= 0)) {
+    if (retry !== null && !(typeof retry === "number" && Number.isSafeInteger(retry) && retry >= 0 && retry <= 3600000)) {
       throw new ProtocolError("failed response has an invalid retry hint");
     }
     return {
       api_version: 1,
       request_id: requestId,
       ok: false,
-      error: { code: fields.code, retry_after_ms: retry },
+      error: { ...fields, code: fields.code, retry_after_ms: retry },
     };
   }
   throw new ProtocolError("response outcome is not a boolean");
+}
+
+function checkValues(value: unknown, depth = 0): void {
+  if (depth > 16) throw new ProtocolError("JSON depth exceeds limit");
+  if (typeof value === "number" && (!Number.isFinite(value) || (Number.isInteger(value) && !Number.isSafeInteger(value)))) {
+    throw new ProtocolError("JSON number is outside portable range");
+  }
+  if (typeof value === "string" && /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u.test(value)) {
+    throw new ProtocolError("JSON string contains an unpaired surrogate");
+  }
+  if (Array.isArray(value)) for (const child of value) checkValues(child, depth + 1);
+  else if (value !== null && typeof value === "object") {
+    for (const [key, child] of Object.entries(value)) { checkValues(key); checkValues(child, depth + 1); }
+  }
+}
+
+function checkStructure(text: string): void {
+  const stack: ({ keys: Set<string>; expectingKey: boolean } | null)[] = [];
+  let tokens = 0;
+  for (let index = 0; index < text.length; index++) {
+    const character = text[index]!;
+    if (character === '"') {
+      const start = index;
+      for (index++; index < text.length; index++) {
+        if (text[index] === "\\") index++;
+        else if (text[index] === '"') break;
+      }
+      const top = stack.at(-1);
+      if (top?.expectingKey) {
+        const key: string = JSON.parse(text.slice(start, index + 1));
+        if (top.keys.has(key)) throw new ProtocolError("duplicate JSON member");
+        top.keys.add(key); top.expectingKey = false;
+      }
+    } else if ("{}[]:,".includes(character)) {
+      if (++tokens > 1024) throw new ProtocolError("JSON structural budget exceeded");
+      if (character === "{") stack.push({ keys: new Set(), expectingKey: true });
+      else if (character === "[") stack.push(null);
+      else if (character === "}" || character === "]") stack.pop();
+      else if (character === "," && stack.at(-1)) stack.at(-1)!.expectingKey = true;
+      if (stack.length > 16) throw new ProtocolError("JSON depth exceeds limit");
+    }
+  }
 }

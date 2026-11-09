@@ -4,6 +4,7 @@ export class CoreError extends Error {
     readonly code: string,
     readonly requestId: string | null,
     readonly retryAfterMs: number | null,
+    readonly details: Readonly<Record<string, unknown>> = {},
   ) {
     super(`core api error: ${code}`);
     this.name = "CoreError";

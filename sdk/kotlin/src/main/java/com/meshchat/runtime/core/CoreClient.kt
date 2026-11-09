@@ -18,6 +18,8 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         private set
 
     companion object {
+        private val REQUIRED_KEYS = setOf("call.control","connection.retry","events.ack","message.enqueue","message.enqueue_draft","peer.composer_update","profile.create","profile.lock","profile.select","profile.unlock","remote_profile.mutate","route.update","runtime.mutate","workspace.admin_request_approve","workspace.admin_request_cancel","workspace.admin_request_decline","workspace.admin_request_dismiss","workspace.admin_request_submit","workspace.admission_grant_accept","workspace.admission_grant_create","workspace.admission_grant_end","workspace.admission_grant_list","workspace.authority_accept","workspace.authority_finalize","workspace.authority_loss_report","workspace.authority_offer","workspace.channel_archive","workspace.channel_create","workspace.channel_members_update","workspace.channel_recover","workspace.channel_state","workspace.channel_transfer_accept","workspace.channel_transfer_offer","workspace.channel_update","workspace.close","workspace.create","workspace.device_link_approve","workspace.device_link_create","workspace.device_link_decline","workspace.device_link_submit","workspace.device_remove","workspace.direct_open","workspace.display_name_decide","workspace.display_name_request","workspace.draft_set","workspace.invitation_create","workspace.invitation_revoke","workspace.join","workspace.join_approve","workspace.join_decline","workspace.join_prompt","workspace.leave","workspace.member_remove","workspace.member_role","workspace.metadata_update","workspace.policy_update","workspace.read_hint_sync","workspace.remove_data","workspace.retention_update","workspace.timeline_mutation")
+        private val KEYED_ACTIONS = mapOf("workspace.connection" to setOf("invite_contact","prompt_dismiss","prompt_submit","reconnect_consent"),"workspace.history" to setOf("cancel","hide_direct","hide_message","prune","start"),"workspace.access_recommendation" to setOf("apply","apply_by_id","create","send"))
         const val VERSION = "0.3.0-experimental"
         const val MAX_FRAME_CHARS = 4 * 1024 * 1024
         const val MAX_BATCH = 128
@@ -40,8 +42,16 @@ class CoreClient private constructor(private val transport: CoreTransport) {
     fun request(operation: String, params: JSONObject = JSONObject()): JSONObject =
         dispatch(operation, params, null)
 
+    fun request(operation: String, params: JSONObject, idempotencyKey: String): JSONObject =
+        dispatch(operation, params, idempotencyKey)
+
     private fun dispatch(operation: String, params: JSONObject, key: String?): JSONObject {
         if (closed) throw CoreException("transport_closed")
+        if (operation in REQUIRED_KEYS || params.optString("action") in (KEYED_ACTIONS[operation] ?: emptySet())) {
+            require(key != null && Regex("[A-Za-z0-9._:-]{16,128}").matches(key)) {
+                "operation requires a caller-provided idempotency key"
+            }
+        }
         val requestId = "client:${(++sequence).toString(36)}"
         val envelope = JSONObject()
             .put("api_version", 1)
@@ -541,9 +551,10 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         dispatch("workspace.invitation_revoke", JSONObject().put("profile", profile)
             .put("workspace", workspace).put("invitation", invitation), idempotencyKey)
 
-    fun workspaceAdmissionGrantList(profile: String, workspace: String): JSONObject =
-        request("workspace.admission_grant_list",
-            JSONObject().put("profile", profile).put("workspace", workspace))
+    @JvmOverloads
+    fun workspaceAdmissionGrantList(profile: String, workspace: String, idempotencyKey: String? = null): JSONObject =
+        dispatch("workspace.admission_grant_list",
+            JSONObject().put("profile", profile).put("workspace", workspace), idempotencyKey)
 
     fun workspaceAdmissionGrantCreate(profile: String, workspace: String, member: String,
                                       device: String, maxAdmissions: Int, lifetimeDays: Int,
@@ -928,11 +939,12 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         )
     }
 
-    fun workspaceJoin(profile: String, document: String): JSONObject {
+    @JvmOverloads
+    fun workspaceJoin(profile: String, document: String, idempotencyKey: String? = null): JSONObject {
         if (document.isEmpty()) throw CoreException("invalid_request")
-        return request(
+        return dispatch(
             "workspace.join",
-            JSONObject().put("profile", profile).put("document", document),
+            JSONObject().put("profile", profile).put("document", document), idempotencyKey,
         )
     }
 

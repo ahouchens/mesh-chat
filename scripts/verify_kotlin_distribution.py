@@ -25,7 +25,10 @@ def verify(path):
                 for name in names):
             raise ValueError("Distribution has missing client or unexpected runtime payloads")
         with zipfile.ZipFile(io.BytesIO(aar.read("classes.jar"))) as jar:
-            classes = {name for name in entries(jar) if name.endswith(".class")}
+            jar_entries = entries(jar)
+            if "META-INF/LICENSE" not in jar_entries:
+                raise ValueError("Client distribution omits license")
+            classes = {name for name in jar_entries if name.endswith(".class")}
             if not {"com/meshchat/runtime/core/CoreClient.class", "com/meshchat/runtime/IMeshCoreApi.class"} <= classes:
                 raise ValueError("Distribution lacks the public client or Binder interface")
             for name in classes:

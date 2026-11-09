@@ -1,6 +1,6 @@
 {
   "name": "@mesh-chat/core-client",
-  "version": "0.2.0-experimental",
+  "version": "0.3.0-experimental",
   "private": true,
   "description": "Experimental TypeScript client for the private Mesh Chat Core API.",
   "type": "module",
@@ -10,10 +10,17 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "import": "./dist/node.js"
     }
   },
   "files": [
-    "dist"
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "!dist/**/*.test.js",
+    "!dist/**/*.test.d.ts"
   ],
   "scripts": {
     "build": "tsc -p .",
