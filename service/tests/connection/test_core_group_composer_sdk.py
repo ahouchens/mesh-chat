@@ -1,9 +1,14 @@
 """Standalone SDK gating and actual installed group composer consumers."""
 import json
+import sys
 from copy import deepcopy
+from pathlib import Path
 
 import pytest
 
+# Unit vectors use the standalone source, as sdk/python/tests does. Installed
+# consumers below still run isolated child processes with source paths removed.
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "sdk/python/src"))
 from mesh_chat_core_client import CoreClient, CoreClientError
 from mesh_chat.core_api.service_group_composer import GROUP_COMPOSER_LIMITS
 from test_core_client import Scripted, reply, CAPABILITIES
