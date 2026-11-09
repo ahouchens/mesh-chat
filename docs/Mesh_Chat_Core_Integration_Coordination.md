@@ -22,6 +22,16 @@ traffic or packaged acceptance. A's call recovery must preserve ordinary
 start/end/start behavior and require actual trusted retirement before replacing
 uncertain media resources. B's group keys remain explicit and capability gated.
 
+The run has finished with a failed overall gate. Both controlled direct-network
+platforms pass independently validated 25/10/12-case inventories. Android's two
+manual-readiness fixture failures are repaired by targeting the inner reconnect
+executor (`3a122d4`); Kotlin explicit-key assertion and license packaging repairs
+are integrated with host-gated call recovery (`5be412a`, `dee09a7`). The lead's
+248 focused checks pass at `5556cc0`. D supplies complete recovery vectors and
+failed-run reporting. C's Android provider batch `0b012c3` remains under review:
+cold catalog initialization must not read the profile vault key before native
+authentication. Windows first-time pairing diagnosis remains the CI priority.
+
 Wave 2 local checkpoint: `8950053` passes 420 Python and all eight rendered
 boundary cases, including same-vault reopen and uncertain-send recovery. The
 earlier full policy gate passed 2,630 cases at `6e97db5`. Composer storage,
