@@ -1,5 +1,5 @@
-import { createContext, useCallback, useContext, useState } from "react";
-import { ProfileRetiredError, type CoreRequestAdmission } from "./core-admission";
+import { createContext, useCallback, useContext, useMemo, useState } from "react";
+import { ProfileRetiredError, type CoreRequestAdmission, type CoreEffectScope } from "./core-admission";
 export { ProfileRetiredError } from "./core-admission";
 
 export const PROFILE_RETIREMENT_GRACE_MS = 1000;
@@ -98,4 +98,14 @@ export function useProfileRequestAdmission(): CoreRequestAdmission {
   const lifetime = useProfileLifetime();
   const [generation] = useState(() => lifetime?.capture());
   return useCallback((request) => lifetime ? lifetime.mutate(generation!, request) : request(), [lifetime, generation]);
+}
+
+export function useProfileEffectScope(): CoreEffectScope {
+  const lifetime = useProfileLifetime();
+  const [generation] = useState(() => lifetime?.capture());
+  return useMemo(() => Object.freeze({
+    admit: <T,>(request: () => Promise<T>) => lifetime ? lifetime.mutate(generation!, request) : request(),
+    admitCleanup: <T,>(request: () => Promise<T>) => lifetime ? lifetime.mutate(generation!, request, true) : request(),
+    isCurrent: () => !lifetime || lifetime.isCurrent(generation!),
+  }), [lifetime, generation]);
 }
