@@ -52,6 +52,16 @@ and packaged CI remain required. Supervisor-owned initial pairing still needs
 its trusted host entry wired into the topology controller; a manually driven
 native handshake does not establish that coverage.
 
+The corrected complete policy run at
+`1e288ecbf9da00d49c84ee63ff9ece76a3f15f7d` passes all 3,108 collected/executed
+cases with zero failures or skips in 306.43 seconds. Qualification ID:
+`6b165305c11c4d418b07f57484b6b60c`; retained files are
+`dist/reports/policy-runtime-custody.{xml,json,inventory.json}`. Seven warnings
+concern existing JUnit metadata/upstream deprecation behavior. This source also
+contains the two-role topology infrastructure, whose actual execution and
+supervisor-owned pairing-entry followup remain pending. Passing its controller
+component tests is not transport qualification.
+
 ### Runtime catalog and installed SDK checkpoint
 
 Source `8ef8dd5388e617ad4dae0a1425318cd05f08d8f7`, tree
