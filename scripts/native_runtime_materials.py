@@ -12,7 +12,14 @@ ROOT = Path(__file__).resolve().parents[1]
 DECLARATION = Path(__file__).with_name("native-runtime-materials-v1.json")
 PREFIX = "mesh-runtime-materials"
 EMBEDDED = PREFIX + "/inventory.json"
+EMBEDDED_DECLARATION = PREFIX + "/native-runtime-materials-v1.json"
 LEVEL = "windows_frozen_runtime_materials_inventory"
+
+
+class MaterialFailure(ValueError):
+    def __init__(self, code):
+        self.code = code
+        super().__init__(code)
 
 
 def digest(data):
@@ -88,7 +95,7 @@ def collection(*, root=ROOT, distribution=importlib.metadata.distribution):
                          "notice_files": materials, "wheel_native_files": native})
     for source, target in ((root / "THIRD_PARTY_NOTICES.md", PREFIX + "/THIRD_PARTY_NOTICES.md"),
                            (root / "LICENSE", PREFIX + "/LICENSE"),
-                           (root / "scripts/native-runtime-materials-v1.json", PREFIX + "/declaration.json")):
+                           (root / "scripts/native-runtime-materials-v1.json", EMBEDDED_DECLARATION)):
         datas.append((str(source), str(PurePosixPath(target).parent)))
     return {"v": 1, "declaration_sha256": digest(canonical(declaration)), "packages": packages,
             "project_license_sha256": digest((root / "LICENSE").read_bytes()),
@@ -108,14 +115,19 @@ def inspect_archive(archive, expected, declaration):
     if len(names) != len(archive.toc):
         raise ValueError("Frozen archive has ambiguous normalized paths")
     def extract(name):
+        if name not in names:
+            code = {EMBEDDED: "frozen_inventory_missing", EMBEDDED_DECLARATION: "frozen_declaration_missing",
+                    PREFIX + "/LICENSE": "frozen_project_license_missing",
+                    PREFIX + "/THIRD_PARTY_NOTICES.md": "frozen_repository_notices_missing"}.get(name, "frozen_dependency_material_missing")
+            raise MaterialFailure(code)
         value = archive.extract(names[name])
         if not isinstance(value, bytes):
             raise ValueError("Required frozen material is not bytes")
         return value
     if extract(EMBEDDED) != canonical(expected):
         raise ValueError("Frozen inventory differs from the installed locked materials")
-    if digest(extract(PREFIX + "/declaration.json")) != digest(DECLARATION.read_bytes()):
-        raise ValueError("Frozen materials declaration is stale")
+    if digest(extract(EMBEDDED_DECLARATION)) != digest(DECLARATION.read_bytes()):
+        raise MaterialFailure("frozen_declaration_changed")
     if digest(extract(PREFIX + "/THIRD_PARTY_NOTICES.md")) != expected["repository_notices_sha256"]:
         raise ValueError("Frozen repository notice differs")
     if digest(extract(PREFIX + "/LICENSE")) != expected["project_license_sha256"]:
@@ -238,13 +250,19 @@ def main():
     parser.add_argument("--output", type=Path, default=ROOT / "dist/reports/native-runtime-materials.json")
     args = parser.parse_args()
     result = {"v": 1, "passed": False, "evidence_level": LEVEL}
+    phase = "source_artifact_binding"
     try:
         from native_windows_evidence import artifact_binding, require_unchanged
         from PyInstaller.archive.readers import CArchiveReader
         binary, binding = artifact_binding(args.expected_source)
+        phase = "locked_installed_materials"
         expected, _ = collection()
         declaration = json.loads(DECLARATION.read_text())
-        inspected = inspect_archive(CArchiveReader(str(binary)), expected, declaration)
+        phase = "frozen_archive_open"
+        archive = CArchiveReader(str(binary))
+        phase = "frozen_archive_validation"
+        inspected = inspect_archive(archive, expected, declaration)
+        phase = "unchanged_artifact_binding"
         require_unchanged(binary, binding)
         result.update(binding, inventory=inspected, passed=True,
                       scope=declaration["scope"], declaration_sha256=digest(DECLARATION.read_bytes()))
@@ -252,8 +270,14 @@ def main():
     except Exception as error:
         result["passed"] = False
         result["failure_type"] = type(error).__name__
+        result["phase"] = phase
+        result["error_code"] = error.code if isinstance(error, MaterialFailure) else {
+            KeyError: "archive_member_missing", FileNotFoundError: "required_file_missing",
+            ValueError: "material_validation_failed", RuntimeError: "artifact_binding_failed",
+        }.get(type(error), "materials_verification_failed")
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=2) + "\n")
+    print(json.dumps({key: result[key] for key in ("passed", "phase", "error_code", "failure_type") if key in result}))
     return 0 if result["passed"] else 1
 
 
