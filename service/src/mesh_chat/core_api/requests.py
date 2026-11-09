@@ -131,6 +131,38 @@ WORKSPACE_ACCESS_MUTATION_OPERATIONS = frozenset().union(
 )
 
 WORKSPACE_OPERATIONS = frozenset().union(
+    WORKSPACE_PROMPT_JOIN_OPERATIONS,
+    WORKSPACE_CHANNEL_RECOVER_OPERATIONS,
+    WORKSPACE_CHANNEL_STATE_OPERATIONS,
+    WORKSPACE_MEMBER_REMOVE_OPERATIONS,
+    WORKSPACE_DRAFT_OPERATIONS,
+    REMOTE_PROFILE_OPERATIONS,
+    REMOTE_PROFILE_QUERY_OPERATIONS,
+    WORKSPACE_DISPLAY_DECIDE_OPERATIONS,
+    WORKSPACE_DIRECT_OPEN_OPERATIONS,
+    ROUTE_UPDATE_OPERATIONS,
+    CONVERSATION_OPERATIONS,
+    LINK_PREVIEW_OPERATIONS,
+    CONNECTION_SUPPORT_OPERATIONS,
+    CONNECTION_DOCUMENT_OPERATIONS,
+    WORKSPACE_METADATA_OPERATIONS,
+    WORKSPACE_RETENTION_OPERATIONS,
+    WORKSPACE_AUTHORITY_LOSS_OPERATIONS,
+    WORKSPACE_AUTHORITY_OPERATIONS,
+    WORKSPACE_AUTHORITY_OFFER_OPERATIONS,
+    WORKSPACE_ACCESS_OPERATIONS,
+    WORKSPACE_HISTORY_OPERATIONS,
+    WORKSPACE_CONNECTION_OPERATIONS,
+    RUNTIME_QUERY_OPERATIONS,
+    RUNTIME_MUTATION_OPERATIONS,
+    WORKSPACE_SNAPSHOT_OPERATIONS,
+    WORKSPACE_TIMELINE_OPERATIONS,
+    WORKSPACE_ADMISSION_OPERATIONS,
+    WORKSPACE_EDGE_OPERATIONS,
+    WORKSPACE_LIFECYCLE_OPERATIONS,
+    WORKSPACE_ADMIN_REQUEST_OPERATIONS,
+    WORKSPACE_DEVICE_REMOVAL_REQUEST_OPERATIONS,
+    WORKSPACE_DEVICE_REMOVAL_DECIDE_OPERATIONS,
     WORKSPACE_PREVIEW_OPERATIONS,
     WORKSPACE_JOIN_OPERATIONS,
     WORKSPACE_CREATE_OPERATIONS,
@@ -167,7 +199,88 @@ IDEMPOTENCY_KEY = re.compile(r"[A-Za-z0-9._:-]{16,128}\Z")
 CURSOR = re.compile(r"[A-Za-z0-9_-]{16,1024}\Z")
 
 
+# Envelope identity is defined once for parsing and session admission. Contract
+# tests bind this inventory to operations-v1.json, including composite operations.
+KEYED_OPERATIONS = frozenset({
+    "call.control",
+    "connection.retry",
+    "events.ack",
+    "message.enqueue",
+    "profile.create",
+    "profile.lock",
+    "profile.select",
+    "profile.unlock",
+    "remote_profile.mutate",
+    "route.update",
+    "runtime.mutate",
+    "workspace.access_recommendation",
+    "workspace.admin_request_approve",
+    "workspace.admin_request_cancel",
+    "workspace.admin_request_decline",
+    "workspace.admin_request_dismiss",
+    "workspace.admin_request_submit",
+    "workspace.admission_grant_accept",
+    "workspace.admission_grant_create",
+    "workspace.admission_grant_end",
+    "workspace.admission_grant_list",
+    "workspace.authority_accept",
+    "workspace.authority_finalize",
+    "workspace.authority_loss_report",
+    "workspace.authority_offer",
+    "workspace.channel_archive",
+    "workspace.channel_create",
+    "workspace.channel_members_update",
+    "workspace.channel_recover",
+    "workspace.channel_state",
+    "workspace.channel_transfer_accept",
+    "workspace.channel_transfer_offer",
+    "workspace.channel_update",
+    "workspace.close",
+    "workspace.connection",
+    "workspace.create",
+    "workspace.device_link_approve",
+    "workspace.device_link_create",
+    "workspace.device_link_decline",
+    "workspace.device_link_submit",
+    "workspace.device_remove",
+    "workspace.direct_open",
+    "workspace.display_name_decide",
+    "workspace.display_name_request",
+    "workspace.draft_set",
+    "workspace.history",
+    "workspace.invitation_create",
+    "workspace.invitation_revoke",
+    "workspace.join",
+    "workspace.join_approve",
+    "workspace.join_decline",
+    "workspace.join_prompt",
+    "workspace.leave",
+    "workspace.member_remove",
+    "workspace.member_role",
+    "workspace.metadata_update",
+    "workspace.policy_update",
+    "workspace.read_hint_sync",
+    "workspace.remove_data",
+    "workspace.retention_update",
+    "workspace.timeline_mutation",
+})
+
+OPTIONAL_KEY_OPERATIONS = frozenset({
+    "workspace.access_recommendation", "workspace.history", "workspace.connection",
+    "group.draft_set", "peer.update", "conversation.mutate", "peer.decide",
+    "link.preview", "contact.invitation", "recovery.transfer", "connection.support",
+    "remote_profile.query", "connection.document", "peer.pairing_preview",
+})
+
+
 def parse_request(value, operations):
+    try:
+        return _parse_request(value, operations)
+    except (KeyError, TypeError, ValueError) as error:
+        raise ApiFailure("invalid_request") from error
+
+
+def _parse_request(value, operations):
     if not isinstance(value, dict):
         raise ApiFailure("invalid_request")
     fields = {"api_version", "request_id", "operation", "params"}
@@ -181,19 +294,29 @@ def parse_request(value, operations):
     operation = value["operation"]
     if not isinstance(operation, str) or operation not in operations:
         raise ApiFailure("unsupported_operation")
-    if operation in ("message.enqueue", "events.ack", "workspace.join",
-                      "workspace.join_approve", "workspace.join_decline",
-                      "workspace.member_role", "workspace.channel_create",
-                      "workspace.channel_members_update", "workspace.channel_update",
-                      "workspace.channel_archive", "workspace.device_link_create",
-                      "workspace.device_link_submit", "workspace.device_link_approve",
-                      "workspace.device_link_decline", "workspace.channel_transfer_offer",
-                      "workspace.channel_transfer_accept", "workspace.policy_update",
-                      "workspace.device_remove", "workspace.invitation_create",
-                      "workspace.create"):
+    if operation in KEYED_OPERATIONS - OPTIONAL_KEY_OPERATIONS or (
+            operation in OPTIONAL_KEY_OPERATIONS and "idempotency_key" in value):
         fields.add("idempotency_key")
     if set(value) != fields:
         raise ApiFailure("invalid_request")
+    if "idempotency_key" in value:
+        key = value["idempotency_key"]
+        if not isinstance(key, str) or IDEMPOTENCY_KEY.fullmatch(key) is None:
+            raise ApiFailure("invalid_request")
+    params = value["params"]
+    if not isinstance(params, dict):
+        raise ApiFailure("invalid_request")
+    if "profile" in params and (not isinstance(params["profile"], str)
+                                or HANDLE.fullmatch(params["profile"]) is None):
+        raise ApiFailure("invalid_request")
+    if "workspace" in params and (not isinstance(params["workspace"], str)
+                                  or HANDLE.fullmatch(params["workspace"]) is None):
+        raise ApiFailure("invalid_request")
+    if operation == "group.draft_set" and (
+            not isinstance(params.get("group"), str)
+            or HANDLE.fullmatch(params["group"]) is None):
+        raise ApiFailure("invalid_request")
+    _component_field_bounds(operation, params)
     if operation == "message.enqueue":
         return operation, _enqueue_params(value)
     if operation == "events.ack":
@@ -285,118 +408,118 @@ def parse_request(value, operations):
             raise ApiFailure("invalid_request")
         return operation, params
     if operation in WORKSPACE_CONNECTION_OPERATIONS:
-        params = value[params]
-        action = params.get(action) if isinstance(params, dict) else None
+        params = value["params"]
+        action = params.get("action") if isinstance(params, dict) else None
         allowed = {
-            reconnect_status: {profile, workspace, action},
-            reconnect_consent: {profile, workspace, action,
-                                  auto_reconnect, allow_direct_ip_disclosure,
-                                  relay_consent_scope},
-            invite_contact: {profile, workspace, action, contact_id},
-            prompt_preview: {profile, action, prompt_id},
-            prompt_submit: {profile, action, prompt_id},
-            prompt_dismiss: {profile, action, prompt_id},
-            device_link_preview: {profile, action, device_link},
+            "reconnect_status": {"profile", "workspace", "action"},
+            "reconnect_consent": {"profile", "workspace", "action",
+                                  "auto_reconnect", "allow_direct_ip_disclosure",
+                                  "relay_consent_scope"},
+            "invite_contact": {"profile", "workspace", "action", "contact_id"},
+            "prompt_preview": {"profile", "action", "prompt_id"},
+            "prompt_submit": {"profile", "action", "prompt_id"},
+            "prompt_dismiss": {"profile", "action", "prompt_id"},
+            "device_link_preview": {"profile", "action", "device_link"},
         }
         if not isinstance(params, dict) or action not in allowed or set(params) != allowed[action]:
-            raise ApiFailure(invalid_request)
-        if not isinstance(params[profile], str) or HANDLE.fullmatch(params[profile]) is None:
-            raise ApiFailure(invalid_request)
-        if workspace in params and (not isinstance(params[workspace], str)
-                                      or HANDLE.fullmatch(params[workspace]) is None):
-            raise ApiFailure(invalid_request)
-        if action == reconnect_consent and (type(params[auto_reconnect]) is not bool
-                                              or type(params[allow_direct_ip_disclosure]) is not bool
-                                              or params[relay_consent_scope] not in {workspace, profile}):
-            raise ApiFailure(invalid_request)
+            raise ApiFailure("invalid_request")
+        if not isinstance(params["profile"], str) or HANDLE.fullmatch(params["profile"]) is None:
+            raise ApiFailure("invalid_request")
+        if "workspace" in params and (not isinstance(params["workspace"], str)
+                                      or HANDLE.fullmatch(params["workspace"]) is None):
+            raise ApiFailure("invalid_request")
+        if action == "reconnect_consent" and (type(params["auto_reconnect"]) is not bool
+                                              or type(params["allow_direct_ip_disclosure"]) is not bool
+                                              or params["relay_consent_scope"] not in {"workspace", "profile"}):
+            raise ApiFailure("invalid_request")
         return operation, params
     if operation in WORKSPACE_HISTORY_OPERATIONS:
-        params = value[params]
-        action = params.get(action) if isinstance(params, dict) else None
-        required = {profile, workspace, action}
-        if action == status:
-            required |= {conversation}
-        elif action == prune:
-            required |= {max_events}
-        elif action == revisions:
-            required |= {event_id, cursor, limit}
-        elif action == tombstones:
-            required |= {conversation, cursor, limit}
-        elif action == hide_message:
-            required |= {event_id}
-        elif action == hide_direct:
-            required |= {conversation}
-        if (not isinstance(params, dict) or action not in {status, prune, revisions,
-                                                          tombstones, hide_message, hide_direct,
+        params = value["params"]
+        action = params.get("action") if isinstance(params, dict) else None
+        required = {"profile", "workspace", "action"}
+        if action in {"status", "start", "cancel"}:
+            required |= {"conversation"}
+        elif action == "prune":
+            required |= {"max_events"}
+        elif action == "revisions":
+            required |= {"event_id", "cursor", "limit"}
+        elif action == "tombstones":
+            required |= {"conversation", "cursor", "limit"}
+        elif action == "hide_message":
+            required |= {"event_id"}
+        elif action == "hide_direct":
+            required |= {"conversation"}
+        if (not isinstance(params, dict) or action not in {"status", "prune", "revisions",
+                                                          "tombstones", "hide_message", "hide_direct",
                                                           "start", "cancel"}
                 or set(params) != required):
-            raise ApiFailure(invalid_request)
+            raise ApiFailure("invalid_request")
         if any(not isinstance(params[key], str) or HANDLE.fullmatch(params[key]) is None
-               for key in (profile, workspace)):
-            raise ApiFailure(invalid_request)
-        if action == prune and (type(params[max_events]) is not int
-                                  or not 1 <= params[max_events] <= 5000):
-            raise ApiFailure(invalid_request)
+               for key in ("profile", "workspace")):
+            raise ApiFailure("invalid_request")
+        if action == "prune" and (type(params["max_events"]) is not int
+                                  or not 1 <= params["max_events"] <= 5000):
+            raise ApiFailure("invalid_request")
         return operation, params
     if operation in WORKSPACE_ACCESS_OPERATIONS:
-        params = value[params]
-        action = params.get(action) if isinstance(params, dict) else None
-        required = {profile, workspace, action}
-        if action in {create}:
-            required |= {remote_profile_id}
-        elif action in {send, preview}:
-            required |= {recommendation}
-        elif action in {preview_by_id, apply_by_id}:
-            required |= {recommendation_id}
-        elif action in {apply}:
-            required |= {recommendation, consent}
-        if action == create:
-            required |= {lifetime_days}
-        if action == apply_by_id:
-            required |= {consent}
-        if (not isinstance(params, dict) or action not in {list, create, send, preview,
-                                                          preview_by_id, apply, apply_by_id}
+        params = value["params"]
+        action = params.get("action") if isinstance(params, dict) else None
+        required = {"profile", "workspace", "action"}
+        if action in {"create"}:
+            required |= {"remote_profile_id"}
+        elif action in {"send", "preview"}:
+            required |= {"recommendation"}
+        elif action in {"preview_by_id", "apply_by_id"}:
+            required |= {"recommendation_id"}
+        elif action in {"apply"}:
+            required |= {"recommendation", "consent"}
+        if action == "create":
+            required |= {"lifetime_days"}
+        if action == "apply_by_id":
+            required |= {"consent"}
+        if (not isinstance(params, dict) or action not in {"list", "create", "send", "preview",
+                                                          "preview_by_id", "apply", "apply_by_id"}
                 or set(params) != required):
-            raise ApiFailure(invalid_request)
+            raise ApiFailure("invalid_request")
         if any(not isinstance(params[key], str) or HANDLE.fullmatch(params[key]) is None
-               for key in (profile, workspace)):
-            raise ApiFailure(invalid_request)
-        if action == create and (not isinstance(params[remote_profile_id], str)
-                                   or type(params[lifetime_days]) is not int):
-            raise ApiFailure(invalid_request)
-        if action in {apply, apply_by_id} and type(params[consent]) is not bool:
-            raise ApiFailure(invalid_request)
+               for key in ("profile", "workspace")):
+            raise ApiFailure("invalid_request")
+        if action == "create" and (not isinstance(params["remote_profile_id"], str)
+                                   or type(params["lifetime_days"]) is not int):
+            raise ApiFailure("invalid_request")
+        if action in {"apply", "apply_by_id"} and type(params["consent"]) is not bool:
+            raise ApiFailure("invalid_request")
         return operation, params
     if operation in RUNTIME_QUERY_OPERATIONS:
-        params = value[params]
-        if (not isinstance(params, dict) or set(params) != {profile, action}
-                or params[action] not in {background, notifications}
-                or not isinstance(params[profile], str)
-                or HANDLE.fullmatch(params[profile]) is None):
-            raise ApiFailure(invalid_request)
+        params = value["params"]
+        if (not isinstance(params, dict) or set(params) != {"profile", "action"}
+                or params["action"] not in {"background", "notifications"}
+                or not isinstance(params["profile"], str)
+                or HANDLE.fullmatch(params["profile"]) is None):
+            raise ApiFailure("invalid_request")
         return operation, params
     if operation in RUNTIME_MUTATION_OPERATIONS:
-        params = value[params]
-        action = params.get(action) if isinstance(params, dict) else None
-        allowed = {background_set: {profile, action, enabled},
-                   notification_previews: {profile, action, hidden},
-                   notification_open: {profile, action, notification_id}}
+        params = value["params"]
+        action = params.get("action") if isinstance(params, dict) else None
+        allowed = {"background_set": {"profile", "action", "enabled"},
+                   "notification_previews": {"profile", "action", "hidden"},
+                   "notification_open": {"profile", "action", "notification_id"}}
         if not isinstance(params, dict) or action not in allowed or set(params) != allowed[action]:
-            raise ApiFailure(invalid_request)
-        if action == background_set and type(params[enabled]) is not bool:
-            raise ApiFailure(invalid_request)
-        if action == notification_previews and type(params[hidden]) is not bool:
-            raise ApiFailure(invalid_request)
-        if action == notification_open and (not isinstance(params[notification_id], str)
-                                              or not 1 <= len(params[notification_id]) <= 160):
-            raise ApiFailure(invalid_request)
+            raise ApiFailure("invalid_request")
+        if action == "background_set" and type(params["enabled"]) is not bool:
+            raise ApiFailure("invalid_request")
+        if action == "notification_previews" and type(params["hidden"]) is not bool:
+            raise ApiFailure("invalid_request")
+        if action == "notification_open" and (not isinstance(params["notification_id"], str)
+                                              or not 1 <= len(params["notification_id"]) <= 160):
+            raise ApiFailure("invalid_request")
         return operation, params
     if operation in WORKSPACE_SNAPSHOT_OPERATIONS:
-        params = value[params]
-        if (not isinstance(params, dict) or set(params) != {profile}
-                or not isinstance(params[profile], str)
-                or HANDLE.fullmatch(params[profile]) is None):
-            raise ApiFailure(invalid_request)
+        params = value["params"]
+        if (not isinstance(params, dict) or set(params) != {"profile"}
+                or not isinstance(params["profile"], str)
+                or HANDLE.fullmatch(params["profile"]) is None):
+            raise ApiFailure("invalid_request")
         return operation, params
     if operation in RECOVERY_TRANSFER_OPERATIONS:
         params = value["params"]
@@ -472,7 +595,7 @@ def parse_request(value, operations):
         allowed = required | ({"mention_member_ids"}
                               if action in {"channel_message", "direct_message", "message_edit"}
                               else set())
-        if set(params) != allowed:
+        if not required <= set(params) or set(params) - allowed:
             raise ApiFailure("invalid_request")
         for key in required - {"profile", "workspace", "action", "high_water",
                                 "text", "event_id", "mode", "mutation_event_id",
@@ -496,7 +619,8 @@ def parse_request(value, operations):
                                 for item in params["mention_member_ids"])))):
             raise ApiFailure("invalid_request")
         if action == "thread_reply" and (not isinstance(params["text"], str)
-                                        or not 1 <= len(params["text"]) <= 4000):
+                                        or not params["text"].strip()
+                                        or len(params["text"].encode("utf-8")) > 16384):
             raise ApiFailure("invalid_request")
         if action == "notification_preference" and params["mode"] not in {"all", "mentions", "none"}:
             raise ApiFailure("invalid_request")
@@ -530,7 +654,7 @@ def parse_request(value, operations):
                 raise ApiFailure("invalid_request")
         return operation, params
     if operation in WORKSPACE_EDGE_OPERATIONS:
-        params = value[params]
+        params = value["params"]
         if operation == "workspace.admin_request_submit":
             allowed = {"profile", "workspace", "request_kind"}
             optional = {"target_member", "requested_role", "note"}
@@ -557,34 +681,34 @@ def parse_request(value, operations):
             raise ApiFailure("invalid_request")
         return operation, params
     if operation in WORKSPACE_AUTHORITY_OFFER_OPERATIONS:
-        params = value[params]
+        params = value["params"]
         if (not isinstance(params, dict)
-                or set(params) != {profile, workspace, transition_kind,
-                                   successor_member, successor_device,
-                                   outgoing_owner_role}
+                or set(params) != {"profile", "workspace", "transition_kind",
+                                   "successor_member", "successor_device",
+                                   "outgoing_owner_role"}
                 or any(not isinstance(params[key], str) or HANDLE.fullmatch(params[key]) is None
-                       for key in (profile, workspace, successor_member, successor_device))
-                or params[transition_kind] not in {owner_rotation, device_handoff, owner_handoff}
-                or params[outgoing_owner_role] not in {admin, member}):
-            raise ApiFailure(invalid_request)
+                       for key in ("profile", "workspace", "successor_member", "successor_device"))
+                or params["transition_kind"] not in {"ownership_transfer", "same_owner_rotation"}
+                or params["outgoing_owner_role"] not in {"admin", "member"}):
+            raise ApiFailure("invalid_request")
         return operation, params
     if operation in WORKSPACE_AUTHORITY_OPERATIONS:
-        params = value[params]
+        params = value["params"]
         if (not isinstance(params, dict)
-                or set(params) != {profile, workspace, transition}
+                or set(params) != {"profile", "workspace", "transition"}
                 or any(not isinstance(params[key], str) or HANDLE.fullmatch(params[key]) is None
-                       for key in (profile, workspace, transition))):
-            raise ApiFailure(invalid_request)
+                       for key in ("profile", "workspace", "transition"))):
+            raise ApiFailure("invalid_request")
         return operation, params
     if operation in WORKSPACE_AUTHORITY_LOSS_OPERATIONS:
-        params = value[params]
-        if (not isinstance(params, dict) or set(params) != {profile, workspace}
+        params = value["params"]
+        if (not isinstance(params, dict) or set(params) != {"profile", "workspace"}
                 or any(not isinstance(params[key], str) or HANDLE.fullmatch(params[key]) is None
-                       for key in (profile, workspace))):
-            raise ApiFailure(invalid_request)
+                       for key in ("profile", "workspace"))):
+            raise ApiFailure("invalid_request")
         return operation, params
     if operation in WORKSPACE_LIFECYCLE_OPERATIONS:
-        params = value[params]
+        params = value["params"]
         expected = ({"profile", "workspace", "confirmation"}
                     if operation == "workspace.remove_data" else {"profile", "workspace"})
         if (not isinstance(params, dict) or set(params) != expected
@@ -837,8 +961,8 @@ def parse_request(value, operations):
                 or not {"profile", "workspace", "conversation", "text"} <= set(params)
                 or set(params) - {"profile", "workspace", "conversation", "text",
                                   "thread_root", "mention_member_ids"}
-                or any(not isinstance(params[key], str) or not params[key]
-                       for key in ("conversation", "text"))
+                or not isinstance(params["conversation"], str) or not params["conversation"]
+                or not isinstance(params["text"], str)
                 or len(params["text"].encode("utf-8")) > 16384
                 or any(not isinstance(params[key], str) or HANDLE.fullmatch(params[key]) is None
                        for key in ("profile", "workspace"))
@@ -1073,7 +1197,7 @@ def parse_request(value, operations):
             allowed = required
         else:
             raise ApiFailure("invalid_request")
-        if not isinstance(params, dict) or set(params) != allowed:
+        if not isinstance(params, dict) or not required <= set(params) or set(params) - allowed:
             raise ApiFailure("invalid_request")
         if not isinstance(params["profile"], str) or HANDLE.fullmatch(params["profile"]) is None:
             raise ApiFailure("invalid_request")
@@ -1176,26 +1300,26 @@ def parse_request(value, operations):
             raise ApiFailure("invalid_request")
         return operation, params
     if operation in CALL_CONTROL_OPERATIONS:
-        params = value[params]
-        action = params.get(action) if isinstance(params, dict) else None
+        params = value["params"]
+        action = params.get("action") if isinstance(params, dict) else None
         allowed = {
-            start: {profile, action, contact_id, media, sdp, dtls_fingerprint},
-            answer: {profile, action, call_id, sdp, dtls_fingerprint},
-            restart: {profile, action, call_id, sdp, dtls_fingerprint},
-            answer_restart: {profile, action, call_id, sdp, dtls_fingerprint},
-            end: {profile, action, call_id, reason},
-            candidate: {profile, action, call_id, candidate},
-            signal_publish: {profile, action, document, role,
-                               session_id, mailbox_token},
-            signal_fetch: {profile, action, session, role, mailbox_token},
+            "start": {"profile", "action", "contact_id", "media", "sdp", "dtls_fingerprint"},
+            "answer": {"profile", "action", "call_id", "sdp", "dtls_fingerprint"},
+            "restart": {"profile", "action", "call_id", "sdp", "dtls_fingerprint"},
+            "answer_restart": {"profile", "action", "call_id", "sdp", "dtls_fingerprint"},
+            "end": {"profile", "action", "call_id", "reason"},
+            "candidate": {"profile", "action", "call_id", "candidate"},
+            "signal_publish": {"profile", "action", "document", "role",
+                               "session_id", "mailbox_token"},
+            "signal_fetch": {"profile", "action", "session", "role", "mailbox_token"},
         }
         if not isinstance(params, dict) or action not in allowed:
-            raise ApiFailure(invalid_request)
-        required = allowed[action] - {session_id, mailbox_token}
+            raise ApiFailure("invalid_request")
+        required = allowed[action] - {"session_id", "mailbox_token"}
         if not required <= set(params) or set(params) - allowed[action]:
-            raise ApiFailure(invalid_request)
-        if not isinstance(params[profile], str) or HANDLE.fullmatch(params[profile]) is None:
-            raise ApiFailure(invalid_request)
+            raise ApiFailure("invalid_request")
+        if not isinstance(params["profile"], str) or HANDLE.fullmatch(params["profile"]) is None:
+            raise ApiFailure("invalid_request")
         return operation, params
     if operation in CALL_OPERATIONS:
         params = value["params"]
@@ -1400,3 +1524,50 @@ COMPONENT_OPERATIONS = (
     + WORKSPACE_DEVICE_REMOVAL_REQUEST_OPERATIONS
     + DIAGNOSTIC_OPERATIONS
 )
+
+
+# Composite operations share bounded field types; branches above enforce their
+# action-specific required fields. Keep identifiers in public Core spelling.
+_COMPONENT_STRING_LIMITS = {
+    "workspace.timeline_query": {"conversation": 160, "channel": 160,
+        "thread_root": 160, "cursor": 256},
+    "workspace.timeline_mutation": {"conversation": 160, "channel": 160,
+        "thread_root": 160, "high_water": 160, "event_id": 160,
+        "mutation_event_id": 160, "emoji": 16},
+    "workspace.draft_set": {"conversation": 160, "thread_root": 160},
+    "workspace.display_name_decide": {"request": 160},
+    "workspace.history": {"conversation": 160, "event_id": 160, "cursor": 256},
+    "workspace.access_recommendation": {"remote_profile_id": 160,
+        "recommendation": 8192, "recommendation_id": 160},
+    "workspace.connection": {"contact_id": 160, "prompt_id": 160,
+        "device_link": 16384},
+    "remote_profile.mutate": {"remote_profile_id": 160, "label": 64},
+    "route.update": {"scope_id": 160, "peer_destination": 160},
+    "conversation.mutate": {"target_id": 160, "message_id": 160},
+    "link.preview": {"identifier": 64},
+    "contact.invitation": {"peer": 160, "invitation": 160},
+    "recovery.transfer": {"identifier": 160, "workspace_id": 160},
+    "workspace.join_prompt": {"prompt": 160},
+    "call.control": {"contact_id": 160, "call_id": 160, "sdp": 65536,
+        "dtls_fingerprint": 256, "reason": 64, "candidate": 4096,
+        "document": 65536, "session": 256, "session_id": 256,
+        "mailbox_token": 4096},
+}
+
+
+def _component_field_bounds(operation, params):
+    for field, maximum in _COMPONENT_STRING_LIMITS.get(operation, {}).items():
+        if field not in params:
+            continue
+        value = params[field]
+        if value is None and field in {"cursor", "remote_profile_id"}:
+            continue
+        if not isinstance(value, str) or not 1 <= len(value) <= maximum:
+            raise ApiFailure("invalid_request")
+    if operation == "link.preview" and params.get("provider") not in {"youtube", "x"}:
+        raise ApiFailure("invalid_request")
+    if operation == "call.control":
+        if "media" in params and params["media"] not in {"audio", "video"}:
+            raise ApiFailure("invalid_request")
+        if "role" in params and params["role"] not in {"caller", "callee"}:
+            raise ApiFailure("invalid_request")

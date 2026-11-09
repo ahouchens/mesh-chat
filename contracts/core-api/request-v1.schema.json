@@ -2287,9 +2287,14 @@
             "conversation": {"type": "string", "minLength": 1, "maxLength": 160},
             "channel": {"type": "string", "minLength": 1, "maxLength": 160},
             "thread_root": {"type": "string", "minLength": 1, "maxLength": 160},
-            "text": {"type": "string", "minLength": 1, "maxLength": 4000},
+            "text": {"type": "string", "minLength": 1, "maxLength": 16384},
             "event_id": {"type": "string", "minLength": 1, "maxLength": 160},
             "high_water": {"type": "string", "minLength": 1, "maxLength": 160},
+            "mutation_event_id": {"type": "string", "minLength": 1, "maxLength": 160},
+            "emoji": {"type": "string", "minLength": 1, "maxLength": 16},
+            "active": {"type": "boolean"},
+            "mention_member_ids": {"type": "array", "maxItems": 32,
+              "items": {"type": "string", "minLength": 1, "maxLength": 160}},
             "mode": {"enum": ["all", "mentions", "none"]}
           },
           "required": ["profile", "workspace", "action"],
@@ -2464,7 +2469,7 @@
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"": "#//handle"},
+            "profile": {"$ref": "#/$defs/handle"},
             "action": {"enum": ["start", "answer", "restart", "answer_restart",
                                     "end", "candidate", "signal_publish", "signal_fetch"]},
             "contact_id": {"type": "string", "minLength": 1, "maxLength": 160},
@@ -2499,9 +2504,9 @@
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"": "#//handle"},
-            "workspace": {"": "#//handle"},
-            "channel": {"": "#//handle"}
+            "profile": {"$ref": "#/$defs/handle"},
+            "workspace": {"$ref": "#/$defs/handle"},
+            "channel": {"$ref": "#/$defs/handle"}
           },
           "required": ["profile", "workspace", "channel"],
           "additionalProperties": false
@@ -2522,9 +2527,9 @@
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"": "#//handle"},
-            "workspace": {"": "#//handle"},
-            "channel": {"": "#//handle"},
+            "profile": {"$ref": "#/$defs/handle"},
+            "workspace": {"$ref": "#/$defs/handle"},
+            "channel": {"$ref": "#/$defs/handle"},
             "action": {"enum": ["subscribe", "mute", "leave", "sync"]},
             "subscribed": {"type": "boolean"},
             "muted": {"type": "boolean"}
@@ -2548,9 +2553,9 @@
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"": "#//handle"},
-            "workspace": {"": "#//handle"},
-            "member": {"": "#//handle"}
+            "profile": {"$ref": "#/$defs/handle"},
+            "workspace": {"$ref": "#/$defs/handle"},
+            "member": {"$ref": "#/$defs/handle"}
           },
           "required": ["profile", "workspace", "member"],
           "additionalProperties": false
@@ -2571,8 +2576,8 @@
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"": "#//handle"},
-            "group": {"": "#//handle"},
+            "profile": {"$ref": "#/$defs/handle"},
+            "group": {"$ref": "#/$defs/handle"},
             "text": {"type": "string", "maxLength": 16384}
           },
           "required": ["profile", "group", "text"],
@@ -2594,8 +2599,8 @@
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"": "#//handle"},
-            "workspace": {"": "#//handle"},
+            "profile": {"$ref": "#/$defs/handle"},
+            "workspace": {"$ref": "#/$defs/handle"},
             "conversation": {"type": "string", "minLength": 1, "maxLength": 160},
             "text": {"type": "string", "maxLength": 16384},
             "thread_root": {"type": "string", "minLength": 1, "maxLength": 160},
@@ -2621,7 +2626,7 @@
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"": "#//handle"},
+            "profile": {"$ref": "#/$defs/handle"},
             "action": {"enum": ["create", "test", "retry", "remove", "remove_propagation"]},
             "label": {"type": "string", "minLength": 1, "maxLength": 64},
             "endpoints": {"type": "array", "maxItems": 8, "items": {
@@ -2652,8 +2657,8 @@
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"": "#//handle"},
-            "workspace": {"": "#//handle"},
+            "profile": {"$ref": "#/$defs/handle"},
+            "workspace": {"$ref": "#/$defs/handle"},
             "request": {"type": "string", "minLength": 1, "maxLength": 160},
             "approve": {"type": "boolean"}
           },
@@ -2676,9 +2681,9 @@
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"": "#//handle"},
-            "workspace": {"": "#//handle"},
-            "member": {"": "#//handle"}
+            "profile": {"$ref": "#/$defs/handle"},
+            "workspace": {"$ref": "#/$defs/handle"},
+            "member": {"$ref": "#/$defs/handle"}
           },
           "required": ["profile", "workspace", "member"],
           "additionalProperties": false
@@ -2699,7 +2704,7 @@
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"": "#//handle"},
+            "profile": {"$ref": "#/$defs/handle"},
             "action": {"enum": ["preview", "apply", "create"]},
             "update": {"type": "string", "minLength": 1, "maxLength": 1048576},
             "scope_kind": {"enum": ["contact", "workspace_device"]},
@@ -2725,8 +2730,8 @@
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"": "#//handle"},
-            "peer": {"": "#//handle"},
+            "profile": {"$ref": "#/$defs/handle"},
+            "peer": {"$ref": "#/$defs/handle"},
             "action": {"enum": ["rename", "verify", "unverify"]},
             "display_name": {"type": "string", "minLength": 1, "maxLength": 80}
           },
@@ -2749,7 +2754,7 @@
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"": "#//handle"},
+            "profile": {"$ref": "#/$defs/handle"},
             "action": {"enum": ["delete", "restore", "reaction_set"]},
             "kind": {"enum": ["direct", "group"]},
             "target_id": {"type": "string", "minLength": 1, "maxLength": 160},
@@ -2776,8 +2781,8 @@
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"": "#//handle"},
-            "peer": {"": "#//handle"},
+            "profile": {"$ref": "#/$defs/handle"},
+            "peer": {"$ref": "#/$defs/handle"},
             "accept": {"type": "boolean"}
           },
           "required": ["profile", "peer", "accept"],
@@ -2799,7 +2804,7 @@
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"": "#//handle"},
+            "profile": {"$ref": "#/$defs/handle"},
             "provider": {"enum": ["youtube", "x"]},
             "identifier": {"type": "string", "minLength": 1, "maxLength": 64}
           },
@@ -2822,7 +2827,7 @@
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"": "#//handle"},
+            "profile": {"$ref": "#/$defs/handle"},
             "action": {"enum": ["receive", "decide"]},
             "document": {"type": "string", "minLength": 1, "maxLength": 1048576},
             "peer": {"type": "string", "minLength": 1, "maxLength": 160},
@@ -2849,7 +2854,7 @@
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"": "#//handle"},
+            "profile": {"$ref": "#/$defs/handle"},
             "action": {"enum": ["export", "import"]},
             "identifier": {"type": "string", "minLength": 1, "maxLength": 160},
             "document": {"type": "string", "minLength": 1, "maxLength": 1048576},
@@ -2874,7 +2879,7 @@
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"": "#//handle"},
+            "profile": {"$ref": "#/$defs/handle"},
             "action": {"enum": ["help", "diagnostics", "clear"]},
             "contact_id": {"type": "string", "minLength": 1, "maxLength": 160}
           },
@@ -2896,7 +2901,7 @@
         "operation": {"const": "remote_profile.query"},
         "params": {
           "type": "object",
-          "properties": {"profile": {"": "#//handle"}},
+          "properties": {"profile": {"$ref": "#/$defs/handle"}},
           "required": ["profile"],
           "additionalProperties": false
         },
@@ -2916,7 +2921,7 @@
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"": "#//handle"},
+            "profile": {"$ref": "#/$defs/handle"},
             "action": {"enum": ["preview_direct", "create_reply", "preview_reply"]},
             "document": {"type": "string", "minLength": 1, "maxLength": 1048576},
             "invitation": {"type": "string", "minLength": 1, "maxLength": 1048576},
@@ -2942,7 +2947,7 @@
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"": "#//handle"},
+            "profile": {"$ref": "#/$defs/handle"},
             "document": {"type": "string", "minLength": 1, "maxLength": 1048576}
           },
           "required": ["profile", "document"],
@@ -2964,7 +2969,7 @@
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"": "#//handle"},
+            "profile": {"$ref": "#/$defs/handle"},
             "prompt": {"type": "string", "minLength": 1, "maxLength": 160}
           },
           "required": ["profile", "prompt"],
@@ -2986,7 +2991,7 @@
         "params": {
           "type": "object",
           "properties": {
-            "profile": {"": "#//handle"},
+            "profile": {"$ref": "#/$defs/handle"},
             "name": {"type": "string", "minLength": 1, "maxLength": 64},
             "description": {"type": "string", "maxLength": 250}
           },

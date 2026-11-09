@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from test_workspace_service import (_deliver, _deliver_all, _flush, _joined_pair,  # noqa: E402
                                    _op, _service)
 
-from test_core_messages import request  # noqa: E402
+from test_core_messages import host, request  # noqa: E402, F401
 
 
 CONTRACTS = Path(__file__).resolve().parents[3] / "contracts" / "core-api"
@@ -335,7 +335,7 @@ def test_a_new_device_can_submit_a_device_link_and_wait_for_approval(admin_pair,
         assert new_session.request(submit)["result"] == submitted["result"]
         invalid = dict(submit)
         invalid["params"] = {"profile": new_profile, "document": "not-a-link"}
-        assert new_session.request(invalid)["error"]["code"] == "invalid_request"
+        assert new_session.request(invalid)["error"]["code"] == "idempotency_conflict"
     finally:
         new_device.close()
 
@@ -588,7 +588,7 @@ def test_reusing_one_caller_key_across_operations_fails_closed(admin_pair):
                    "name": "Replayed", "topic": ""},
         "idempotency_key": key,
     })
-    assert collided["error"]["code"] == "invalid_request", collided
+    assert collided["error"]["code"] == "idempotency_conflict", collided
     channels = session.request(request("workspace.channels", profile=profile,
                                        workspace=workspace))["result"]["channels"]
     names = [item["name"] for item in channels]
@@ -723,5 +723,68 @@ def test_workspace_invite_join_and_approval_through_the_facade(awaiting_pair):
                                             workspace=workspace_handle))
     assert [(item["display_name"], item["role"]) for item in members["result"]["members"]] == [
         ("Alex", "owner"), ("Blair", "member")]
+
+
+def component_request(session, operation, key=None, **params):
+    value = request(operation, **params)
+    if key is not None:
+        value["idempotency_key"] = key
+    # Exercise the public JSON boundary before production parsing/execution.
+    return session.request(json.loads(json.dumps(value)))
+
+
+def test_new_component_mutations_execute_and_replay_through_the_real_vault(host):
+    service = host()
+    session, profile = open_client(service, permissions=("observe", "read", "send", "approve"))
+    created = component_request(session, "workspace.create", "create-workspace-key",
+                                profile=profile, name="Component", description="")
+    assert created["ok"], created
+    listing = component_request(session, "workspace.query", profile=profile)
+    workspace = listing["result"]["workspaces"][0]["workspace"]
+    channel_id = service.store.list("workspace_channel")[0]["id"]
+    channel = component_request(session, "workspace.channels", profile=profile,
+                                 workspace=workspace)["result"]["channels"][0]["channel"]
+    mutations = [
+        ("workspace.metadata_update", {"workspace": workspace, "name": "Renamed", "description": "Core"}),
+        ("workspace.retention_update", {"workspace": workspace, "retention_days": 30}),
+        ("workspace.read_hint_sync", {"workspace": workspace, "enabled": False}),
+        ("workspace.draft_set", {"workspace": workspace, "conversation": channel_id, "text": "draft"}),
+        ("workspace.channel_state", {"workspace": workspace, "channel": channel,
+                                      "action": "mute", "muted": True}),
+        ("runtime.mutate", {"action": "notification_previews", "hidden": True}),
+        ("workspace.timeline_mutation", {"workspace": workspace, "action": "channel_message",
+            "conversation": channel_id, "text": "Hello Core", "event_id": _op(73000)}),
+    ]
+    replies = []
+    for index, (operation, params) in enumerate(mutations):
+        key = f"component-mutation-{index:04}"
+        reply = component_request(session, operation, key, profile=profile, **params)
+        assert reply["ok"], (operation, reply)
+        assert component_request(session, operation, key, profile=profile, **params) == reply
+        replies.append(reply)
+    assert service.store.list("workspace")[0]["name"] == "Renamed"
+    assert service.store.list("workspace_draft")[0]["text"] == "draft"
+    assert service.notification_state()["hide_previews"] is True
+    messages = component_request(session, "workspace.timeline_query", profile=profile,
+                                  workspace=workspace, view="channel_messages", channel=channel_id)
+    assert messages["ok"], messages
+    assert "Hello Core" in json.dumps(messages)
+    service.close()
+    reopened = host()
+    again, same_profile = open_client(reopened, permissions=("observe", "read", "send", "approve"))
+    assert same_profile == profile
+    for index, (operation, params) in enumerate(mutations):
+        assert component_request(again, operation, f"component-mutation-{index:04}",
+                                 profile=profile, **params) == replies[index]
+    changed = component_request(again, "workspace.metadata_update", "component-mutation-0000",
+                                 profile=profile, workspace=workspace,
+                                 name="Different", description="Core")
+    assert changed["error"]["code"] == "idempotency_conflict", changed
+    assert reopened.store.list("workspace")[0]["name"] == "Renamed"
+    cleared = component_request(again, "workspace.draft_set", "clear-workspace-draft",
+                                 profile=profile, workspace=workspace,
+                                 conversation=channel_id, text="")
+    assert cleared["ok"], cleared
+    assert reopened.store.list("workspace_draft") == []
 
 

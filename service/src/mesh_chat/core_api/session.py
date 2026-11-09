@@ -7,7 +7,6 @@ an authenticated connection; callers never choose that function or its grants.
 from contextlib import nullcontext
 from dataclasses import dataclass
 import hashlib
-import hashlib
 import hmac
 import json
 import re
@@ -15,9 +14,11 @@ from threading import RLock
 import uuid
 from typing import Protocol
 
+from ..errors import ContactNotApproved, StorageUnavailable, ValidationError
 from .views import (call_ice_view, call_media_view, call_settings_view, device_removal_view, draft_view,
     workspace_admin_request_view, workspace_authority_loss_view, workspace_authority_offer_view,
-    workspace_edge_view,
+    workspace_edge_view, workspace_member_remove_view, workspace_channel_state_view,
+    workspace_channel_recover_view,
     workspace_authority_view, workspace_lifecycle_view,
     workspace_metadata_view, workspace_retention_view,
     group_invitation_decision_view,
@@ -38,7 +39,7 @@ from .views import (call_ice_view, call_media_view, call_settings_view, device_r
     workspace_list_view, workspace_member_role_view, workspace_members_view,
     workspace_invitation_create_view, workspace_preview_view, workspace_requests_view,
 )
-from .errors import ApiFailure
+from .errors import ApiFailure, failure_code
 from .limits import MAX_FRAME_BYTES, MAX_REQUEST_JSON_DEPTH, MAX_REQUEST_JSON_TOKENS
 from .diagnostics import Diagnostics, MAX_DIAGNOSTICS, MAX_DIAGNOSTIC_BYTES
 from .diagnostic_views import diagnostics_view
@@ -375,6 +376,8 @@ class CoreSession:
             (WORKSPACE_CONNECTION_OPERATIONS, self._workspace_admin),
             (WORKSPACE_DEVICES_OPERATIONS, self._workspace_admin),
             (WORKSPACE_DEVICE_REMOVE_OPERATIONS, self._workspace_admin),
+            (WORKSPACE_DEVICE_REMOVAL_REQUEST_OPERATIONS, self._workspace_admin),
+            (WORKSPACE_DEVICE_REMOVAL_DECIDE_OPERATIONS, self._workspace_admin),
             (DIAGNOSTIC_OPERATIONS, self._diagnostics),
         ):
             if port is not None:
@@ -398,26 +401,6 @@ class CoreSession:
                 grant = self._grant()
                 operation, params = parse_request(value, self._operations)
                 key = value.get("idempotency_key") if isinstance(value, dict) else None
-                if key is not None and operation not in {"message.enqueue", "events.ack",
-                                                        "workspace.join",
-                                                        "workspace.join_approve",
-                                                        "workspace.join_decline",
-                                                        "workspace.member_role",
-                                                        "workspace.invitation_create",
-                                                        "workspace.channel_create",
-                                                        "workspace.channel_members_update",
-                                                        "workspace.channel_update",
-                                                        "workspace.channel_archive",
-                                                        "workspace.device_link_create",
-                                                        "workspace.device_link_submit",
-                                                        "workspace.device_link_approve",
-                                                        "workspace.device_link_decline",
-                                                        "workspace.channel_transfer_offer",
-                                                        "workspace.channel_transfer_accept",
-                                                        "workspace.policy_update",
-                                                        "workspace.device_remove",
-                                                        "workspace.create"}:
-                    raise ApiFailure("invalid_request")
                 permission = PERMISSION_BY_OPERATION.get(operation)
                 if permission is None:
                     raise ApiFailure("forbidden")
@@ -426,7 +409,13 @@ class CoreSession:
                 result = self._execute(grant, operation, params, key)
                 return {"api_version": 1, "request_id": request_id, "ok": True, "result": result}
             except ApiFailure as error:
-                code = error.code
+                code = failure_code(error)
+            except ValidationError as error:
+                code = failure_code(error)
+            except ContactNotApproved:
+                code = "forbidden"
+            except StorageUnavailable:
+                code = "unavailable"
             except Exception:
                 code = "internal"
         return {"api_version": 1, "request_id": request_id, "ok": False,
@@ -651,7 +640,7 @@ class CoreSession:
             else:
                 observation = self._settings.get(profile)
             return network_settings_view(params["profile"], observation)
-        if operation in CALL_OPERATIONS:
+        if operation in CALL_OPERATIONS + CALL_CONTROL_OPERATIONS:
             if operation == "call.settings_update":
                 observation = self._calls.update(profile, params["settings"])
             elif operation == "call.ice_servers":
@@ -733,42 +722,43 @@ class CoreSession:
                     "invitation": params["invitation"], "state": state}
         if operation in WORKSPACE_CONNECTION_OPERATIONS:
             target = self._profile_target(profiles, params)
-            inside = (self._workspace_target(grant, target, params[workspace])
-                      if workspace in params else None)
+            inside = (self._workspace_target(grant, target, params["workspace"])
+                      if "workspace" in params else None)
             operation_id = (self._required_operation_id(grant, target, key)
-                            if params[action] in {prompt_submit} else None)
+                            if params["action"] in {"prompt_submit"} else None)
             result = self._workspace_admin.connection(
-                target, inside, params[action], params, operation_id)
-            view = {profile: params[profile], result: result}
+                target, inside, params["action"], params, operation_id)
+            view = {"profile": params["profile"], "result": result}
             if inside is not None:
-                view[workspace] = params[workspace]
+                view["workspace"] = params["workspace"]
             return view
         if operation in WORKSPACE_HISTORY_OPERATIONS:
             target, inside = self._workspace_scope(grant, profiles, params)
             operation_id = (self._required_operation_id(grant, target, key)
-                            if params[action] in {prune, hide_message, hide_direct} else None)
+                            if params["action"] in {"prune", "hide_message", "hide_direct",
+                                                    "start", "cancel"} else None)
             result = self._workspace_admin.history(
-                target, inside, params[action], params, operation_id)
-            return {profile: params[profile], workspace: params[workspace],
-                    result: result}
+                target, inside, params["action"], params, operation_id)
+            return {"profile": params["profile"], "workspace": params["workspace"],
+                    "result": result}
         if operation in WORKSPACE_ACCESS_OPERATIONS:
             target, inside = self._workspace_scope(grant, profiles, params)
             operation_id = (self._required_operation_id(grant, target, key)
-                            if params[action] == send else None)
+                            if params["action"] == "send" else None)
             result = self._workspace_admin.access_recommendation(
-                target, inside, params[action], params, operation_id)
-            return {profile: params[profile], workspace: params[workspace],
-                    result: result}
+                target, inside, params["action"], params, operation_id)
+            return {"profile": params["profile"], "workspace": params["workspace"],
+                    "result": result}
         if operation in RUNTIME_QUERY_OPERATIONS:
             target = self._profile_target(profiles, params)
-            result = self._runtime.query(target, params[action])
-            return {profile: params[profile], result: result}
+            result = self._runtime.query(target, params["action"])
+            return {"profile": params["profile"], "result": result}
         if operation in RUNTIME_MUTATION_OPERATIONS:
             target = self._profile_target(profiles, params)
             operation_id = self._required_operation_id(grant, target, key)
             result = self._runtime.mutate(
-                target, params[action], params, operation_id)
-            return {profile: params[profile], result: result}
+                target, params["action"], params, operation_id)
+            return {"profile": params["profile"], "result": result}
         if operation in WORKSPACE_SNAPSHOT_OPERATIONS:
             target = self._profile_target(profiles, params)
             return self._workspace_admin.snapshot(target)
@@ -1273,10 +1263,9 @@ class CoreSession:
                 None)
             if device_id is None:
                 raise ApiFailure("forbidden")
-            if key is None:
-                raise ApiFailure("invalid_request")
             self._workspace_admin.request_device_removal(
-                target, inside, device_id, self._operation_id(grant, target, key))
+                target, inside, device_id,
+                self._operation_id(grant, target, f"{operation}:{inside}:{device_id}"))
             return device_removal_view(params["profile"], params["workspace"],
                                        params["device"], "requested")
         if operation in WORKSPACE_DEVICE_REMOVAL_DECIDE_OPERATIONS:
@@ -1290,9 +1279,8 @@ class CoreSession:
                 None)
             if removal_id is None:
                 raise ApiFailure("forbidden")
-            if key is None:
-                raise ApiFailure("invalid_request")
-            operation_id = self._operation_id(grant, target, key)
+            operation_id = self._operation_id(grant, target,
+                                               f"{operation}:{inside}:{removal_id}")
             if operation == "workspace.device_removal_approve":
                 state = self._workspace_admin.approve_device_removal(
                     target, inside, removal_id, operation_id)
