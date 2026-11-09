@@ -2,6 +2,7 @@ import { CallDialog, IncomingCallPrompt, type CallPeer } from "./CallDialog";
 import { CallRecoveryNotice } from "./CallRecoveryNotice";
 import { ProfileLifetime, ProfileLifetimeContext, ProfileRetiredError, useProfileLifetime, useProfileRequestAdmission } from "./profile-lifetime";
 import { admitCoreRequest, type CoreRequestAdmission } from "./core-admission";
+import { prepareKeyedGroupCreation, submitKeyedGroupCreation, prepareKeyedGroupSend, submitKeyedGroupSend, type GroupCreationTicket, type GroupSendTicket } from "./core-groups";
 import { workspaceConnectivityLabel, workspaceStateLabel, workspaceSyncIssueLabel } from "./workspaceLabels";
 import { contactTrustDescription, contactTrustLabel, groupComposerState, groupInvitationBanner, groupInviteDeliveryLabel, groupPolicyLabel, pluralize } from "./groupLabels";
 import { canPrepareDirectHost, directActionLabel, directPhaseLabel, directFailureReport, directReasonLabel, sanitizedDoctorSummary } from "./directLabels";
@@ -1192,14 +1193,18 @@ function NewChatDialog({ initialInvitation, initialTab = "invite", initialConnec
   );
 }
 
+type GroupCreationAttempt = { ticket: GroupCreationTicket; result?: { group: string; name: string } };
+
 function CreateGroupDialog({
   contacts,
+  creationAttempts,
   onClose,
   onCreated,
 }: {
   contacts: Contact[];
+  creationAttempts: Map<string, GroupCreationAttempt>;
   onClose: () => void;
-  onCreated: (group: Group | { name: string }) => Promise<void>;
+  onCreated: (group: Group | { name: string; core_handle?: string }) => Promise<void>;
 }) {
   const admitProfileRequest = useProfileRequestAdmission();
   const [mode, setMode] = useState<"group" | "channel">("group");
@@ -1210,6 +1215,11 @@ function CreateGroupDialog({
   const eligible = contacts.filter((contact) => contact.trust === "approved" || contact.trust === "verified");
   const memberLimitReached = memberIds.length >= 7;
   const postingPolicy: GroupPostingPolicy = mode === "channel" ? "owner_admins" : "members";
+  const creationInFlight = useRef(false);
+  const destinations = memberIds.map((id) => contacts.find((contact) => contact.id === id)?.destination_hash)
+    .filter((value): value is string => Boolean(value));
+  const creationFingerprint = JSON.stringify([title.trim(), postingPolicy, [...destinations].sort()]);
+  const previousCreation = creationAttempts.get(creationFingerprint);
 
   const toggleMember = (contactId: string) => {
     setMemberIds((current) => current.includes(contactId)
@@ -1218,25 +1228,33 @@ function CreateGroupDialog({
   };
 
   const create = async () => {
-    if (!title.trim() || memberIds.length === 0) return;
+    if (!title.trim() || memberIds.length === 0 || creationInFlight.current) return;
+    creationInFlight.current = true;
     setBusy(true);
     setError("");
     try {
-      const destinations = memberIds
-        .map((id) => contacts.find((contact) => contact.id === id)?.destination_hash)
-        .filter((value): value is string => Boolean(value));
       try {
-        const created = await coreApiCreateGroup(title.trim(), postingPolicy, destinations, admitProfileRequest);
-        await onCreated({ name: created.name });
+        let attempt = creationAttempts.get(creationFingerprint);
+        if (!attempt) {
+          const ticket = await prepareKeyedGroupCreation(title.trim(), postingPolicy, destinations, newOperationId());
+          if (ticket) { attempt = { ticket }; creationAttempts.set(creationFingerprint, attempt); }
+        }
+        const created = attempt
+          ? attempt.result ?? (attempt.result = await submitKeyedGroupCreation(attempt.ticket, admitProfileRequest))
+          : await coreApiCreateGroup(title.trim(), postingPolicy, destinations, admitProfileRequest);
+        await onCreated({ name: created.name, ...(attempt ? { core_handle: created.group } : {}) });
+        creationAttempts.delete(creationFingerprint);
         return;
       } catch (reason) {
         if (!String(reason).includes("core_api_unavailable")) throw reason;
         throw new Error("core_api_unavailable");
       }
     } catch (reason) {
-      setError(errorMessage(reason));
+      const previous = creationAttempts.get(creationFingerprint);
+      setError(previous?.result ? "The group was created. Its conversation could not refresh yet. Open the created group to try again."
+        : previous ? `${errorMessage(reason)} Group creation is not confirmed. Retry checks the original request.` : errorMessage(reason));
       setBusy(false);
-    }
+    } finally { creationInFlight.current = false; }
   };
 
   return (
@@ -1274,7 +1292,7 @@ function CreateGroupDialog({
         <div className="dialog__actions">
           <Button variant="secondary" onClick={onClose} disabled={busy}>Cancel</Button>
           <Button onClick={() => void create()} disabled={busy || !title.trim() || memberIds.length === 0}>
-            {busy ? "Creating…" : mode === "channel" ? "Create channel" : "Create group"}
+            {busy ? "Creating…" : previousCreation?.result ? "Open created group" : previousCreation ? "Retry group creation" : mode === "channel" ? "Create channel" : "Create group"}
           </Button>
         </div>
       </div>
@@ -2690,6 +2708,8 @@ function GroupConversation({
   draft,
   sendError,
   sending,
+  retrying,
+  pendingText,
   actionBusy,
   actionError,
   detailsOpen,
@@ -2717,6 +2737,8 @@ function GroupConversation({
   draft: string;
   sendError: string;
   sending: boolean;
+  retrying: boolean;
+  pendingText?: string;
   actionBusy: boolean;
   actionError: string;
   detailsOpen: boolean;
@@ -2794,12 +2816,13 @@ function GroupConversation({
           </article>
         ))}
       </div>
+      {retrying && <details className="composer-saved" role="status"><summary>Previous group send is not confirmed. View original text</summary><textarea readOnly aria-label="Previous group send text" value={pendingText ?? ""} /></details>}
       {canPost ? (
         <form className="composer" aria-busy={sending} onSubmit={(event) => { event.preventDefault(); onSend(); }}>
           {sendError && <p className="composer__error" role="alert">{sendError}</p>}
           <label className="sr-only" htmlFor="group-message-composer">Message {group.title}</label>
           <textarea id="group-message-composer" rows={1} value={draft} readOnly={sending} enterKeyHint="send" onChange={(event) => onDraft(event.target.value)} placeholder={`Message ${group.title}`} maxLength={16384} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); onSend(); } }} />
-          <button type="submit" disabled={sending || !draft.trim()} aria-label="Send group message"><Send size={19} /></button>
+          <button type="submit" disabled={sending || (!retrying && !draft.trim())} aria-label={retrying ? "Retry previous group send" : "Send group message"}><Send size={19} /></button>
         </form>
       ) : <div className="composer composer--restricted"><LockKeyhole size={17} /><span>{composerReason}</span></div>}
     </section>
@@ -4246,6 +4269,10 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
   const [showDeletedConversations, setShowDeletedConversations] = useState(false);
   const [conversationDetailsOpen, setConversationDetailsOpen] = useState(false);
   const [groupDrafts, setGroupDrafts] = useState<Record<string, string>>(() => Object.fromEntries((snapshot.group_drafts ?? []).map((draft) => [draft.group_id, draft.text])));
+  const currentGroupDrafts = useRef(groupDrafts);
+  currentGroupDrafts.current = groupDrafts;
+  const pendingGroupSends = useRef(new Map<string, GroupSendTicket>());
+  const groupCreationAttempts = useRef(new Map<string, GroupCreationAttempt>());
   const [newChat, setNewChat] = useState(false);
   const [newChatStartTab, setNewChatStartTab] = useState<"invite" | "join">("invite");
   const [newChatTransport, setNewChatTransport] = useState<ConnectionTransportKind>("direct_tcp");
@@ -5068,19 +5095,25 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       return;
     }
     const groupId = selectedGroup.id;
-    const text = groupDrafts[groupId] ?? "";
+    const previous = pendingGroupSends.current.get(groupId);
+    const text = previous?.params.text ?? groupDrafts[groupId] ?? "";
     if (!text.trim()) return;
     const draftKey = `group:${groupId}`;
     groupSendInFlight.current = true;
     setGroupSendBusy(true);
     setSendError("");
-    setGroupDrafts((current) => ({ ...current, [groupId]: "" }));
+    setGroupDrafts((current) => !previous || current[groupId] === text ? { ...current, [groupId]: "" } : current);
     await cancelPendingDraftWrite(draftKey);
     try {
       let sent = false;
       if (selectedGroup.core_handle) {
         try {
-          await coreApiSendGroupMessage(selectedGroup.core_handle, text, admitMutation);
+          const ticket = previous ?? await prepareKeyedGroupSend(selectedGroup.core_handle, text, newOperationId());
+          if (ticket) {
+            pendingGroupSends.current.set(groupId, ticket);
+            await submitKeyedGroupSend(ticket, admitMutation);
+            pendingGroupSends.current.delete(groupId);
+          } else await coreApiSendGroupMessage(selectedGroup.core_handle, text, admitMutation);
           sent = true;
         } catch (reason) {
           if (!String(reason).includes("core_api_unavailable")) throw reason;
@@ -5088,20 +5121,24 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       }
       if (!sent) throw new Error("core_api_unavailable");
     } catch (reason) {
+      const restoredText = currentGroupDrafts.current[groupId] || text;
       setGroupDrafts((current) => current[groupId] ? current : { ...current, [groupId]: text });
       scheduleDraftWrite(draftKey, {
         command: "save_group_draft",
-        payload: { group_id: groupId, text },
+        payload: { group_id: groupId, text: restoredText },
       });
-      setSendError(`${errorMessage(reason)} Your text is still in the composer. Check the conversation before sending it again.`);
+      setSendError(pendingGroupSends.current.has(groupId)
+        ? `${errorMessage(reason)} The previous send is not confirmed. Retry checks that same message.`
+        : `${errorMessage(reason)} Your text is still in the composer. Check the conversation before sending it again.`);
       groupSendInFlight.current = false;
       setGroupSendBusy(false);
       return;
     }
     try {
+      const remainingText = currentGroupDrafts.current[groupId] ?? "";
       await writeDraftNow(draftKey, {
         command: "save_group_draft",
-        payload: { group_id: groupId, text: "" },
+        payload: { group_id: groupId, text: remainingText === text ? "" : remainingText },
       });
     } catch {
       setSendError("Your message was saved, but its saved draft could not be cleared. It may reappear after reopening Mesh Chat.");
@@ -6706,6 +6743,8 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
             draft={groupDrafts[selectedGroup.id] ?? ""}
             sendError={sendError}
             sending={groupSendBusy}
+            retrying={pendingGroupSends.current.has(selectedGroup.id)}
+            pendingText={pendingGroupSends.current.get(selectedGroup.id)?.params.text}
             actionBusy={groupActionBusy}
             actionError={groupActionError}
             detailsOpen={conversationDetailsOpen}
@@ -6773,7 +6812,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       {connectEntryOpen && <ConnectEntryDialog onClose={() => setConnectEntryOpen(false)} onInvite={() => { setNewChatStartTab("invite"); setNewChatTransport("direct_tcp"); setConnectEntryOpen(false); setNewChat(true); }} onJoin={() => { setNewChatStartTab("join"); setConnectEntryOpen(false); setNewChat(true); }} onWebRTC={() => { setConnectEntryOpen(false); setWebRtcOnboardingOpen(true); }} onTransport={(kind) => { setNewChatStartTab("invite"); setNewChatTransport(kind); setConnectEntryOpen(false); setNewChat(true); }} onResume={() => { setConnectEntryOpen(false); setResumePairingOpen(true); }} resumeCode={resumePairingCode} />}
       {webrtcOnboardingOpen && <WebRTCOnboardingDialog initialPairingCode={initialPairingCode || (resumePairingOpen ? resumePairingCode : "")} onClose={() => { setWebRtcOnboardingOpen(false); setResumePairingOpen(false); onPairingHandled?.(); }} onConnected={(path) => { setWebRtcSessionActive(true); setWebRtcSessionCount(getWebRTCSessionCount()); setWebrtcPath(path); }} onFallback={() => { setNewChatStartTab("invite"); setNewChat(true); }} onChanged={async () => { await refresh(true); }} workspaces={(snapshot.workspaces ?? []).map((workspace) => ({ id: workspace.id, name: workspace.name }))} />}
       {newChat && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><NewChatDialog initialInvitation={initialInvitation} initialTab={newChatStartTab} initialConnection={newChatTransport} remoteProfiles={snapshot.remote_profiles ?? []} onClose={() => { setNewChat(false); onInvitationHandled(); }} onChanged={async () => { await refresh(true); }} onWorkspaceInvitation={(value) => { setNewChat(false); setJoinWorkspaceValue(value); setJoinWorkspaceOpen(true); }} /></div>}
-      {newGroup && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><CreateGroupDialog contacts={snapshot.contacts} onClose={() => setNewGroup(false)} onCreated={async (created) => { const refreshed = await refresh(true); const group = "id" in created ? created : refreshed.groups?.find((item) => item.title === created.name); if (group) selectConversation({ kind: "group", id: group.id }); setNewGroup(false); }} /></div>}
+      {newGroup && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><CreateGroupDialog creationAttempts={groupCreationAttempts.current} contacts={snapshot.contacts} onClose={() => setNewGroup(false)} onCreated={async (created) => { const refreshed = await refresh(true); const group = "id" in created ? created : refreshed.groups?.find((item) => created.core_handle ? item.core_handle === created.core_handle : item.title === created.name); if (group) selectConversation({ kind: "group", id: group.id }); setNewGroup(false); }} /></div>}
       {contactsOpen && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><ContactsDialog initialContactId={contactsInitialId} contacts={snapshot.contacts.filter((contact) => contact.trust !== "pending_request")} reconnect={reconnectCoordinator} onClose={() => setContactsOpen(false)} onChanged={async () => { await refresh(true); }} onOpenConversation={async (contact) => { const hidden = hiddenConversationKeys.has(`direct:${contact.id}`); setContactsOpen(false); await restoreAndSelect({ kind: "contact", id: contact.id }, hidden); }} onDeleted={async (contactId) => { if (selection?.kind === "contact" && selection.id === contactId) setSelection(null); await refresh(true); }} /></div>}
       {settings && <div className={`settings-page-slot ${hasForegroundRequest ? "dialog-suspended" : ""}`} aria-hidden={hasForegroundRequest ? true : undefined}><SettingsPage snapshot={snapshot} theme={theme} onThemeChange={onThemeChange} onClose={() => setSettings(false)} onBackHandlerChange={registerSettingsBackHandler} onSaved={async () => { await refresh(true); }} /></div>}
       {notificationTarget && !notificationTarget.available && <Dialog title="Notification unavailable" onClose={onNotificationHandled}><div className="form-stack"><p>{notificationTarget.message ?? "This notification is no longer available or authorized on this device."}</p><p className="muted">Mesh Chat did not open stale content or change any read state.</p><Button onClick={onNotificationHandled}>Done</Button></div></Dialog>}
