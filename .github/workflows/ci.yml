@@ -52,11 +52,8 @@ jobs:
           node node_modules/typescript/bin/tsc -p sdk/typescript
           node --test "sdk/typescript/dist/**/*.test.js"
 
-      - name: Package and smoke the TypeScript client
-        run: node scripts/check_typescript_distribution.mjs
-
-      - name: Package and smoke the Python service
-        run: python scripts/check_python_distribution.py
+      - name: Stage standalone artifacts before broad installed-consumer collection
+        run: python scripts/stage_core_sdk.py --expected-source "${{ github.sha }}"
 
       - name: Prove the TypeScript client against the Python facade
         run: |
@@ -73,6 +70,16 @@ jobs:
           name: mesh-chat-verification
           path: dist/reports/**
           if-no-files-found: warn
+          retention-days: 14
+      - name: Retain candidate public SDK staging inputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-sdk-verification-${{ github.sha }}
+          path: |
+            dist/sdk/**
+            dist/reports/core-sdk-distribution-staging.json
+          if-no-files-found: error
           retention-days: 14
 
   desktop-host:
