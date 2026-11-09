@@ -2,6 +2,37 @@
 
 ## Integration revalidation (2026-11-09)
 
+### Repairs after the profile checkpoint
+
+Run `42693457737` at `5ea2949` cannot pass. The lead independently validated
+its policy artifact: **3,379 passes, zero failures/skips**, qualification
+`16d5f26166cf411c8bd3bce3487b6f93`. Windows bootstrap failed because its
+test confused an authorized profile scope with an existing identity. Android
+instrumentation compilation failed on missing AndroidX dependencies and access
+to an internal class across separate modules. Broad verification had 4,583
+passes, one CSS-selector guard failure and 52 platform skips. Native interop
+was skipped; the direct-platform jobs remain pending at this recording.
+
+The Windows assertion repair `e8f73e0` is integrated at `ed1a82d`; the lead
+reproduced nine Windows component and 29 consumer passes. Android repair
+`d23452c` adds the test dependencies and test-only internal visibility access.
+Separate production/test Kotlin compilation fails without the suppression and
+passes with it; this is not an APK or device execution result. Layout repair
+`706df7f` is integrated at `361780f`, with all nine layout guards passing.
+At that exact source, SDK staging and the **664 Python plus ten rendered App**
+boundary cases pass with no failures/skips in 43.51s. Python XML SHA-256 is
+`6bb4b53f2114bee9778417111ccd50a3cce4f23b5e763d1214003614b9495724`;
+rendered XML is `8869e7c3255ba50ff4a8dd2455019d74f347415693a2f1fbf40cc5324e586d95`.
+
+D's independent Windows public-pairing producer `9070db4` is integrated at
+`90a0004`; 287 focused consumer, matrix and selection checks pass without skips
+in 16.10s. Actual frozen-host traffic is still unexecuted. Review identified
+that direct gathering consent does not grant persistent personal messaging
+consent. A follow-up must explicitly select relay-only pairing before dispatch;
+no private consent bypass or selected-path/SC21 acceptance is authorized by
+these component results. The standalone Android host and group composer remain
+separate pending integration batches.
+
 ### Current combined checkpoint and full CI dispatch
 
 Source `5ea29493d0420896a8801169c78145e640fdc5dd`, tree
