@@ -1,0 +1,610 @@
+{
+  "v": 1,
+  "source_review": "7e7249a plus current C2 lead merge; audit only, no acceptance claim",
+  "scope": "All manifest mutation families outside caller_profile_operation_key; composite actions split from read-only actions. Existing bounded92-keyed-action Wave1 acceptance stays distinct.",
+  "family_count": 33,
+  "action_row_count": 45,
+  "public_mutation_action_count": 40,
+  "rows": [
+    {
+      "operation": "runtime.stop",
+      "action": null,
+      "manifest_idempotency": "convergent_desired_state",
+      "classification": "mutation_without_caller_key",
+      "adapter": "ServiceLifecycle.stop",
+      "paths": [
+        "service/src/mesh_chat/core_api/service_lifecycle.py"
+      ],
+      "finding": "Owner permission rechecked; process-local stop convergence is not a durable caller intent receipt.",
+      "state": "open_gap"
+    },
+    {
+      "operation": "native.command",
+      "action": null,
+      "manifest_idempotency": "renderer_command_contract",
+      "classification": "private_host_excluded",
+      "adapter": "private renderer command boundary",
+      "paths": [
+        "service/src/mesh_chat/core_api/native_commands.py"
+      ],
+      "finding": "PRIVATE HOST EXCLUSION: existing renderer command-specific policy, not a public operation family.",
+      "state": "excluded_from_public_mutation_extension"
+    },
+    {
+      "operation": "peer.pairing_request",
+      "action": null,
+      "manifest_idempotency": "convergent_desired_state",
+      "classification": "mutation_without_caller_key",
+      "adapter": "ServicePairing.request",
+      "paths": [
+        "service/src/mesh_chat/core_api/service_pairing.py",
+        "service/src/mesh_chat/service.py"
+      ],
+      "finding": "Reuses an unexpired outbound contact request only while domain request window is open; no caller key receipt.",
+      "state": "open_gap"
+    },
+    {
+      "operation": "peer.pairing_accept",
+      "action": null,
+      "manifest_idempotency": "convergent_desired_state",
+      "classification": "mutation_without_caller_key",
+      "adapter": "ServicePairing.accept",
+      "paths": [
+        "service/src/mesh_chat/core_api/service_pairing.py",
+        "service/src/mesh_chat/service.py"
+      ],
+      "finding": "Domain contact/document convergence does not define immutable caller-key intent or results.",
+      "state": "open_gap"
+    },
+    {
+      "operation": "peer.approve",
+      "action": null,
+      "manifest_idempotency": "convergent_desired_state",
+      "classification": "mutation_without_caller_key",
+      "adapter": "ServiceRelationship.approve",
+      "paths": [
+        "service/src/mesh_chat/core_api/service_relationship.py",
+        "service/src/mesh_chat/service.py"
+      ],
+      "finding": "Approved/verified adapter no-op is convergent; no caller-key identity across subsequent trust changes.",
+      "state": "open_gap"
+    },
+    {
+      "operation": "peer.revoke",
+      "action": null,
+      "manifest_idempotency": "convergent_desired_state",
+      "classification": "mutation_without_caller_key",
+      "adapter": "ServiceRelationship.revoke",
+      "paths": [
+        "service/src/mesh_chat/core_api/service_relationship.py",
+        "service/src/mesh_chat/service.py"
+      ],
+      "finding": "Blocked adapter no-op is convergent; no caller-key identity across subsequent trust changes.",
+      "state": "open_gap"
+    },
+    {
+      "operation": "peer.unblock",
+      "action": null,
+      "manifest_idempotency": "convergent_desired_state",
+      "classification": "mutation_without_caller_key",
+      "adapter": "ServiceRelationship.unblock",
+      "paths": [
+        "service/src/mesh_chat/core_api/service_relationship.py",
+        "service/src/mesh_chat/service.py"
+      ],
+      "finding": "Adapter forbids replay once contact is no longer blocked; no immutable caller receipt.",
+      "state": "open_gap"
+    },
+    {
+      "operation": "peer.delete",
+      "action": null,
+      "manifest_idempotency": "convergent_desired_state",
+      "classification": "mutation_without_caller_key",
+      "adapter": "ServiceRelationship.delete",
+      "paths": [
+        "service/src/mesh_chat/core_api/service_relationship.py",
+        "service/src/mesh_chat/service.py"
+      ],
+      "finding": "Adapter resolves current contact before deletion; after deletion same request becomes forbidden.",
+      "state": "open_gap"
+    },
+    {
+      "operation": "peer.draft_set",
+      "action": null,
+      "manifest_idempotency": "last_write_wins",
+      "classification": "mutation_without_caller_key",
+      "adapter": "ServiceDrafts.set",
+      "paths": [
+        "service/src/mesh_chat/core_api/service_drafts.py"
+      ],
+      "finding": "Caller-scoped legacy LWW is fenced after composer migration. Composer replacement is keyed, legacy set remains unkeyed.",
+      "state": "open_gap"
+    },
+    {
+      "operation": "call.settings_update",
+      "action": null,
+      "manifest_idempotency": "last_write_wins",
+      "classification": "mutation_without_caller_key",
+      "adapter": "ServiceCallSettings.update",
+      "paths": [
+        "service/src/mesh_chat/core_api/service_calls.py",
+        "service/src/mesh_chat/service.py"
+      ],
+      "finding": "Direct settings write has no intent receipt; replay can overwrite a newer setting.",
+      "state": "open_gap"
+    },
+    {
+      "operation": "settings.update",
+      "action": null,
+      "manifest_idempotency": "last_write_wins",
+      "classification": "mutation_without_caller_key",
+      "adapter": "ServiceNetworkSettings.update",
+      "paths": [
+        "service/src/mesh_chat/core_api/service_settings.py",
+        "service/src/mesh_chat/service.py"
+      ],
+      "finding": "Adapter invents a fresh internal dispatch UUID each invocation; caller envelope key cannot bind it.",
+      "state": "open_gap"
+    },
+    {
+      "operation": "message.reaction_set",
+      "action": null,
+      "manifest_idempotency": "convergent_desired_state",
+      "classification": "mutation_without_caller_key",
+      "adapter": "ServiceReactions.set",
+      "paths": [
+        "service/src/mesh_chat/core_api/service_reactions.py",
+        "service/src/mesh_chat/reactions.py"
+      ],
+      "finding": "Desired state/domain reaction suppression is not a caller-scoped durable key receipt.",
+      "state": "open_gap"
+    },
+    {
+      "operation": "group.create",
+      "action": null,
+      "manifest_idempotency": "repeatable",
+      "classification": "mutation_without_caller_key",
+      "adapter": "ServiceGroups.create",
+      "paths": [
+        "service/src/mesh_chat/core_api/service_groups.py",
+        "service/src/mesh_chat/group_service.py"
+      ],
+      "finding": "No caller key is forwarded to group domain; random group/message/delivery IDs or last-write-wins draft. Keyed extension assigned to A.",
+      "state": "open_gap"
+    },
+    {
+      "operation": "group.message_enqueue",
+      "action": null,
+      "manifest_idempotency": "repeatable",
+      "classification": "mutation_without_caller_key",
+      "adapter": "ServiceGroups.send",
+      "paths": [
+        "service/src/mesh_chat/core_api/service_groups.py",
+        "service/src/mesh_chat/group_service.py"
+      ],
+      "finding": "No caller key is forwarded to group domain; random group/message/delivery IDs or last-write-wins draft. Keyed extension assigned to A.",
+      "state": "open_gap"
+    },
+    {
+      "operation": "group.member_remove",
+      "action": null,
+      "manifest_idempotency": "repeatable",
+      "classification": "mutation_without_caller_key",
+      "adapter": "ServiceGroups.remove",
+      "paths": [
+        "service/src/mesh_chat/core_api/service_groups.py",
+        "service/src/mesh_chat/group_service.py"
+      ],
+      "finding": "No caller key is forwarded to group domain; random group/message/delivery IDs or last-write-wins draft. Keyed extension assigned to A.",
+      "state": "open_gap"
+    },
+    {
+      "operation": "group.invitation_decline",
+      "action": null,
+      "manifest_idempotency": "repeatable",
+      "classification": "mutation_without_caller_key",
+      "adapter": "ServiceGroups.decline_invitation",
+      "paths": [
+        "service/src/mesh_chat/core_api/service_groups.py",
+        "service/src/mesh_chat/group_service.py"
+      ],
+      "finding": "No caller key is forwarded to group domain; random group/message/delivery IDs or last-write-wins draft. Keyed extension assigned to A.",
+      "state": "open_gap"
+    },
+    {
+      "operation": "group.invitation_retry",
+      "action": null,
+      "manifest_idempotency": "repeatable",
+      "classification": "mutation_without_caller_key",
+      "adapter": "ServiceGroups.retry_invitation",
+      "paths": [
+        "service/src/mesh_chat/core_api/service_groups.py",
+        "service/src/mesh_chat/group_service.py"
+      ],
+      "finding": "No caller key is forwarded to group domain; random group/message/delivery IDs or last-write-wins draft. Keyed extension assigned to A.",
+      "state": "open_gap"
+    },
+    {
+      "operation": "group.invitation_accept",
+      "action": null,
+      "manifest_idempotency": "repeatable",
+      "classification": "mutation_without_caller_key",
+      "adapter": "ServiceGroups.accept_invitation",
+      "paths": [
+        "service/src/mesh_chat/core_api/service_groups.py",
+        "service/src/mesh_chat/group_service.py"
+      ],
+      "finding": "No caller key is forwarded to group domain; random group/message/delivery IDs or last-write-wins draft. Keyed extension assigned to A.",
+      "state": "open_gap"
+    },
+    {
+      "operation": "group.close",
+      "action": null,
+      "manifest_idempotency": "repeatable",
+      "classification": "mutation_without_caller_key",
+      "adapter": "ServiceGroups.close",
+      "paths": [
+        "service/src/mesh_chat/core_api/service_groups.py",
+        "service/src/mesh_chat/group_service.py"
+      ],
+      "finding": "No caller key is forwarded to group domain; random group/message/delivery IDs or last-write-wins draft. Keyed extension assigned to A.",
+      "state": "open_gap"
+    },
+    {
+      "operation": "group.leave",
+      "action": null,
+      "manifest_idempotency": "repeatable",
+      "classification": "mutation_without_caller_key",
+      "adapter": "ServiceGroups.leave",
+      "paths": [
+        "service/src/mesh_chat/core_api/service_groups.py",
+        "service/src/mesh_chat/group_service.py"
+      ],
+      "finding": "No caller key is forwarded to group domain; random group/message/delivery IDs or last-write-wins draft. Keyed extension assigned to A.",
+      "state": "open_gap"
+    },
+    {
+      "operation": "connection.start",
+      "action": null,
+      "manifest_idempotency": "convergent_desired_state",
+      "classification": "mutation_without_caller_key",
+      "adapter": "ServiceIntent.start",
+      "paths": [
+        "service/src/mesh_chat/core_api/service_intent.py",
+        "service/src/mesh_chat/reconnect_service.py"
+      ],
+      "finding": "Domain convergence has no caller-key immutable intent and receipt.",
+      "state": "open_gap"
+    },
+    {
+      "operation": "connection.stop",
+      "action": null,
+      "manifest_idempotency": "convergent_desired_state",
+      "classification": "mutation_without_caller_key",
+      "adapter": "ServiceIntent.stop",
+      "paths": [
+        "service/src/mesh_chat/core_api/service_intent.py",
+        "service/src/mesh_chat/reconnect_service.py"
+      ],
+      "finding": "Domain convergence has no caller-key immutable intent and receipt.",
+      "state": "open_gap"
+    },
+    {
+      "operation": "workspace.device_removal_request",
+      "action": null,
+      "manifest_idempotency": "repeatable",
+      "classification": "mutation_without_caller_key",
+      "adapter": "ServiceWorkspaceAdmin.request/approve/decline_device_removal",
+      "paths": [
+        "service/src/mesh_chat/core_api/session.py",
+        "service/src/mesh_chat/core_api/service_workspace_admin.py",
+        "service/src/mesh_chat/workspace_service.py"
+      ],
+      "finding": "SDK helper attaches a caller key but production parser rejects it. Session synthesizes operation ID from operation/workspace/target, domain has receipts under that synthetic ID. Adapter resolves pending-only removal IDs, so completed decisions may fail before domain replay. Not caller-keyed.",
+      "state": "open_gap"
+    },
+    {
+      "operation": "workspace.device_removal_approve",
+      "action": null,
+      "manifest_idempotency": "repeatable",
+      "classification": "mutation_without_caller_key",
+      "adapter": "ServiceWorkspaceAdmin.request/approve/decline_device_removal",
+      "paths": [
+        "service/src/mesh_chat/core_api/session.py",
+        "service/src/mesh_chat/core_api/service_workspace_admin.py",
+        "service/src/mesh_chat/workspace_service.py"
+      ],
+      "finding": "SDK helper attaches a caller key but production parser rejects it. Session synthesizes operation ID from operation/workspace/target, domain has receipts under that synthetic ID. Adapter resolves pending-only removal IDs, so completed decisions may fail before domain replay. Not caller-keyed.",
+      "state": "open_gap"
+    },
+    {
+      "operation": "workspace.device_removal_decline",
+      "action": null,
+      "manifest_idempotency": "repeatable",
+      "classification": "mutation_without_caller_key",
+      "adapter": "ServiceWorkspaceAdmin.request/approve/decline_device_removal",
+      "paths": [
+        "service/src/mesh_chat/core_api/session.py",
+        "service/src/mesh_chat/core_api/service_workspace_admin.py",
+        "service/src/mesh_chat/workspace_service.py"
+      ],
+      "finding": "SDK helper attaches a caller key but production parser rejects it. Session synthesizes operation ID from operation/workspace/target, domain has receipts under that synthetic ID. Adapter resolves pending-only removal IDs, so completed decisions may fail before domain replay. Not caller-keyed.",
+      "state": "open_gap"
+    },
+    {
+      "operation": "group.draft_set",
+      "action": null,
+      "manifest_idempotency": "none",
+      "classification": "mutation_without_caller_key",
+      "adapter": "ServiceGroups.save_draft",
+      "paths": [
+        "service/src/mesh_chat/core_api/service_groups.py",
+        "service/src/mesh_chat/group_service.py"
+      ],
+      "finding": "No caller key is forwarded to group domain; random group/message/delivery IDs or last-write-wins draft. Keyed extension assigned to A.",
+      "state": "open_gap"
+    },
+    {
+      "operation": "peer.update",
+      "action": "rename",
+      "manifest_idempotency": "none",
+      "classification": "mutation_without_caller_key",
+      "adapter": "ServiceRelationship.update",
+      "paths": [
+        "service/src/mesh_chat/core_api/service_relationship.py",
+        "service/src/mesh_chat/service.py"
+      ],
+      "finding": "Current contact/trust writes have no caller-key receipt.",
+      "state": "open_gap"
+    },
+    {
+      "operation": "peer.update",
+      "action": "verify",
+      "manifest_idempotency": "none",
+      "classification": "mutation_without_caller_key",
+      "adapter": "ServiceRelationship.update",
+      "paths": [
+        "service/src/mesh_chat/core_api/service_relationship.py",
+        "service/src/mesh_chat/service.py"
+      ],
+      "finding": "Current contact/trust writes have no caller-key receipt.",
+      "state": "open_gap"
+    },
+    {
+      "operation": "peer.update",
+      "action": "unverify",
+      "manifest_idempotency": "none",
+      "classification": "mutation_without_caller_key",
+      "adapter": "ServiceRelationship.update",
+      "paths": [
+        "service/src/mesh_chat/core_api/service_relationship.py",
+        "service/src/mesh_chat/service.py"
+      ],
+      "finding": "Current contact/trust writes have no caller-key receipt.",
+      "state": "open_gap"
+    },
+    {
+      "operation": "conversation.mutate",
+      "action": "delete",
+      "manifest_idempotency": "none",
+      "classification": "mutation_without_caller_key",
+      "adapter": "ServiceWorkspaceAdmin.conversation",
+      "paths": [
+        "service/src/mesh_chat/core_api/service_workspace_admin.py",
+        "service/src/mesh_chat/service.py",
+        "service/src/mesh_chat/reactions.py"
+      ],
+      "finding": "Domain convergence has no caller-key immutable intent and receipt.",
+      "state": "open_gap"
+    },
+    {
+      "operation": "conversation.mutate",
+      "action": "restore",
+      "manifest_idempotency": "none",
+      "classification": "mutation_without_caller_key",
+      "adapter": "ServiceWorkspaceAdmin.conversation",
+      "paths": [
+        "service/src/mesh_chat/core_api/service_workspace_admin.py",
+        "service/src/mesh_chat/service.py",
+        "service/src/mesh_chat/reactions.py"
+      ],
+      "finding": "Domain convergence has no caller-key immutable intent and receipt.",
+      "state": "open_gap"
+    },
+    {
+      "operation": "conversation.mutate",
+      "action": "reaction_set",
+      "manifest_idempotency": "none",
+      "classification": "mutation_without_caller_key",
+      "adapter": "ServiceWorkspaceAdmin.conversation",
+      "paths": [
+        "service/src/mesh_chat/core_api/service_workspace_admin.py",
+        "service/src/mesh_chat/service.py",
+        "service/src/mesh_chat/reactions.py"
+      ],
+      "finding": "Domain convergence has no caller-key immutable intent and receipt.",
+      "state": "open_gap"
+    },
+    {
+      "operation": "peer.decide",
+      "action": "accept",
+      "manifest_idempotency": "none",
+      "classification": "mutation_without_caller_key",
+      "adapter": "ServiceRelationship.decide",
+      "paths": [
+        "service/src/mesh_chat/core_api/service_relationship.py",
+        "service/src/mesh_chat/service.py"
+      ],
+      "finding": "Current contact/trust writes have no caller-key receipt.",
+      "state": "open_gap"
+    },
+    {
+      "operation": "peer.decide",
+      "action": "decline",
+      "manifest_idempotency": "none",
+      "classification": "mutation_without_caller_key",
+      "adapter": "ServiceRelationship.decide",
+      "paths": [
+        "service/src/mesh_chat/core_api/service_relationship.py",
+        "service/src/mesh_chat/service.py"
+      ],
+      "finding": "Current contact/trust writes have no caller-key receipt.",
+      "state": "open_gap"
+    },
+    {
+      "operation": "contact.invitation",
+      "action": "receive",
+      "manifest_idempotency": "none",
+      "classification": "mutation_without_caller_key",
+      "adapter": "ServicePairing.contact_invitation",
+      "paths": [
+        "service/src/mesh_chat/core_api/service_pairing.py",
+        "service/src/mesh_chat/contact_invitations.py",
+        "service/src/mesh_chat/service.py"
+      ],
+      "finding": "Document-digest record and decision state suppress some repeats; contact acceptance/workspace join/decision write are not one caller-key atomic parent.",
+      "state": "open_gap"
+    },
+    {
+      "operation": "contact.invitation",
+      "action": "decide_accept",
+      "manifest_idempotency": "none",
+      "classification": "mutation_without_caller_key",
+      "adapter": "ServicePairing.contact_invitation",
+      "paths": [
+        "service/src/mesh_chat/core_api/service_pairing.py",
+        "service/src/mesh_chat/contact_invitations.py",
+        "service/src/mesh_chat/service.py"
+      ],
+      "finding": "Document-digest record and decision state suppress some repeats; contact acceptance/workspace join/decision write are not one caller-key atomic parent.",
+      "state": "open_gap"
+    },
+    {
+      "operation": "contact.invitation",
+      "action": "decide_decline",
+      "manifest_idempotency": "none",
+      "classification": "mutation_without_caller_key",
+      "adapter": "ServicePairing.contact_invitation",
+      "paths": [
+        "service/src/mesh_chat/core_api/service_pairing.py",
+        "service/src/mesh_chat/contact_invitations.py",
+        "service/src/mesh_chat/service.py"
+      ],
+      "finding": "Document-digest record and decision state suppress some repeats; contact acceptance/workspace join/decision write are not one caller-key atomic parent.",
+      "state": "open_gap"
+    },
+    {
+      "operation": "recovery.transfer",
+      "action": "export",
+      "manifest_idempotency": "none",
+      "classification": "mutation_without_caller_key",
+      "adapter": "ServiceRecovery.transfer",
+      "paths": [
+        "service/src/mesh_chat/core_api/service_recovery.py",
+        "service/src/mesh_chat/direct_recovery.py"
+      ],
+      "finding": "Export can call resume and allocate resources when expired/unprepared; it is NOT a pure read. Import updates signed bindings and may wake resource preparation.",
+      "state": "open_gap"
+    },
+    {
+      "operation": "recovery.transfer",
+      "action": "import",
+      "manifest_idempotency": "none",
+      "classification": "mutation_without_caller_key",
+      "adapter": "ServiceRecovery.transfer",
+      "paths": [
+        "service/src/mesh_chat/core_api/service_recovery.py",
+        "service/src/mesh_chat/direct_recovery.py"
+      ],
+      "finding": "Export can call resume and allocate resources when expired/unprepared; it is NOT a pure read. Import updates signed bindings and may wake resource preparation.",
+      "state": "open_gap"
+    },
+    {
+      "operation": "connection.support",
+      "action": "help",
+      "manifest_idempotency": "none",
+      "classification": "read_only_action",
+      "adapter": "ServiceWorkspaceAdmin.connection_support",
+      "paths": [
+        "service/src/mesh_chat/core_api/service_workspace_admin.py",
+        "service/src/mesh_chat/service.py"
+      ],
+      "finding": "help and diagnostics are observations. clear deletes history; only clear needs mutation identity.",
+      "state": "excluded_from_public_mutation_extension"
+    },
+    {
+      "operation": "connection.support",
+      "action": "diagnostics",
+      "manifest_idempotency": "none",
+      "classification": "read_only_action",
+      "adapter": "ServiceWorkspaceAdmin.connection_support",
+      "paths": [
+        "service/src/mesh_chat/core_api/service_workspace_admin.py",
+        "service/src/mesh_chat/service.py"
+      ],
+      "finding": "help and diagnostics are observations. clear deletes history; only clear needs mutation identity.",
+      "state": "excluded_from_public_mutation_extension"
+    },
+    {
+      "operation": "connection.support",
+      "action": "clear",
+      "manifest_idempotency": "none",
+      "classification": "mutation_without_caller_key",
+      "adapter": "ServiceWorkspaceAdmin.connection_support",
+      "paths": [
+        "service/src/mesh_chat/core_api/service_workspace_admin.py",
+        "service/src/mesh_chat/service.py"
+      ],
+      "finding": "help and diagnostics are observations. clear deletes history; only clear needs mutation identity.",
+      "state": "open_gap"
+    },
+    {
+      "operation": "connection.document",
+      "action": "preview_direct",
+      "manifest_idempotency": "none",
+      "classification": "read_only_action",
+      "adapter": "ServiceWorkspaceAdmin.connection_document",
+      "paths": [
+        "service/src/mesh_chat/core_api/service_workspace_admin.py",
+        "service/src/mesh_chat/service.py",
+        "service/src/mesh_chat/participant_service.py"
+      ],
+      "finding": "create_reply allocates participant callback access and overwrites connection_response; previews verify only.",
+      "state": "excluded_from_public_mutation_extension"
+    },
+    {
+      "operation": "connection.document",
+      "action": "create_reply",
+      "manifest_idempotency": "none",
+      "classification": "mutation_without_caller_key",
+      "adapter": "ServiceWorkspaceAdmin.connection_document",
+      "paths": [
+        "service/src/mesh_chat/core_api/service_workspace_admin.py",
+        "service/src/mesh_chat/service.py",
+        "service/src/mesh_chat/participant_service.py"
+      ],
+      "finding": "create_reply allocates participant callback access and overwrites connection_response; previews verify only.",
+      "state": "open_gap"
+    },
+    {
+      "operation": "connection.document",
+      "action": "preview_reply",
+      "manifest_idempotency": "none",
+      "classification": "read_only_action",
+      "adapter": "ServiceWorkspaceAdmin.connection_document",
+      "paths": [
+        "service/src/mesh_chat/core_api/service_workspace_admin.py",
+        "service/src/mesh_chat/service.py",
+        "service/src/mesh_chat/participant_service.py"
+      ],
+      "finding": "create_reply allocates participant callback access and overwrites connection_response; previews verify only.",
+      "state": "excluded_from_public_mutation_extension"
+    }
+  ],
+  "extension_plan": {
+    "compatibility": "Preserve legacy no-key shapes with documented legacy guarantees; additive advertised explicit-key support only after atomic domain parent is implemented. SDKs never manufacture keys.",
+    "first_domain_batch": "A group_service.py and new test_group_operation_idempotency.py assigned. Atomic message+recipient legs+global receipt; current profile/membership/posting authority before replay; postcommit network attempts.",
+    "remaining_cross_owner": "C service.py remains exclusive; require prepared trust/settings/conversation/connection-reply hooks, C reconnect_service.py/participant_service.py hooks; request reactions.py/contact_invitations.py/direct_recovery.py exact ownership before edits.",
+    "metadata_correction": "Three workspace.device_removal_* families already have synthetic target-derived domain IDs but reject SDK-provided keys; additive explicit key path must fix parser/schema/session/pending replay together."
+  }
+}
