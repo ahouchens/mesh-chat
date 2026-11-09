@@ -20,6 +20,7 @@ PYTHON_SELECTION = (
     "service/tests/connection/test_ui_core_boundary_consent.py",
     "service/tests/connection/test_ui_core_boundary_noop_idempotency.py",
     "service/tests/connection/test_ui_core_boundary_native_evidence.py",
+    "service/tests/connection/test_ui_core_boundary_composer.py",
 )
 RENDERED_CASES = {("tests/core-ui-boundary/app.test.tsx",
                    "rendered UI through the production framed Core session > " + name) for name in (
@@ -29,6 +30,8 @@ RENDERED_CASES = {("tests/core-ui-boundary/app.test.tsx",
     "retries an uncertain committed enqueue with the same key and one durable record",
     "preserves canonical workspace conversation fields from rendered channel send",
     "serializes thread_root to a real timeline query without legacy field aliases",
+    "restores an unsent composer after renderer remount and real vault reopen",
+    "resolves a lost draft enqueue reply after remount and vault reopen without a second send",
 )}
 
 

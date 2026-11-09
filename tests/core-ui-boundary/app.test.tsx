@@ -15,6 +15,7 @@ import { coreApiProfile, coreApiTimelineQuery } from "../../src/api";
 let host: FacadeHost;
 let hostStarted = false;
 let loseNextSendReply = false;
+let loseNextDraftSendReply = false;
 let loseNextProfileReply = false;
 let failRefreshAfterEnqueue = false;
 let enqueueAccepted = false;
@@ -23,6 +24,7 @@ let beforeThreadReply: (() => Promise<void>) | null = null;
 beforeEach(async () => {
   hostStarted = false;
   loseNextSendReply = false;
+  loseNextDraftSendReply = false;
   loseNextProfileReply = false;
   failRefreshAfterEnqueue = false;
   enqueueAccepted = false;
@@ -38,6 +40,13 @@ beforeEach(async () => {
     if (command === "core_api_request" && args.operation === "workspace.timeline_mutation"
       && (args.params as Record<string, unknown>).action === "thread_reply") await beforeThreadReply?.();
     const result = await host.invoke(command, args);
+    if (command === "core_api_request" && args.operation === "message.enqueue_draft") {
+      enqueueAccepted = true;
+      if (loseNextDraftSendReply) {
+        loseNextDraftSendReply = false;
+        throw new Error(JSON.stringify({ code: "unavailable", retry_after_ms: null, outcome: "unknown" }));
+      }
+    }
     if (command === "core_api_request" && args.operation === "profile.create" && loseNextProfileReply) {
       loseNextProfileReply = false;
       throw new Error(JSON.stringify({ code: "unavailable", retry_after_ms: null, outcome: "unknown" }));
@@ -75,6 +84,59 @@ async function compose(text: string) {
 }
 
 describe("rendered UI through the production framed Core session", () => {
+  it("restores an unsent composer after renderer remount and real vault reopen", async () => {
+    await startHost();
+    const caps = await host.invoke("core_api_capabilities") as { operations: string[] };
+    expect(caps.operations).toEqual(expect.arrayContaining(["peer.composer_query", "peer.composer_update", "message.enqueue_draft"]));
+    render(<App />);
+    const composer = await screen.findByRole("textbox", { name: "Message Boundary Blair" });
+    fireEvent.change(composer, { target: { value: "Durable unsent composer" } });
+    await waitFor(() => expect(transport.invoke.mock.calls.some(([command, args]) => command === "core_api_request"
+      && args.operation === "peer.composer_update" && args.params.text === "Durable unsent composer")).toBe(true));
+    // Await a later serialized read to ensure the real update has reached the host.
+    const profile = await coreApiProfile();
+    const persisted = await host.invoke("core_api_request", { operation: "peer.composer_query",
+      params: { profile: profile.profile, peer: profile.peers[0] } }) as { text: string; revision: string };
+    expect(persisted).toMatchObject({ text: "Durable unsent composer", revision: expect.any(String) });
+    cleanup();
+    await host.invoke("fixture_reopen");
+    render(<App />);
+    const restored = await screen.findByRole("textbox", { name: "Message Boundary Blair" });
+    await waitFor(() => expect((restored as HTMLTextAreaElement).value).toBe("Durable unsent composer"));
+    expect(transport.invoke.mock.calls.some(([command]) => command === "core_api_send_message")).toBe(false);
+    expect(await host.invoke("fixture_inspect")).toMatchObject({ messages: [] });
+  });
+
+  it("resolves a lost draft enqueue reply after remount and vault reopen without a second send", async () => {
+    await startHost();
+    const caps = await host.invoke("core_api_capabilities") as { operations: string[] };
+    expect(caps.operations).toEqual(expect.arrayContaining(["peer.composer_query", "peer.composer_update", "message.enqueue_draft"]));
+    render(<App />);
+    const composer = await screen.findByRole("textbox", { name: "Message Boundary Blair" });
+    fireEvent.change(composer, { target: { value: "Committed composer remount" } });
+    await waitFor(() => expect(transport.invoke.mock.calls.some(([command, args]) => command === "core_api_request"
+      && args.operation === "peer.composer_update" && args.params.text === "Committed composer remount")).toBe(true));
+    const profile = await coreApiProfile();
+    const persisted = await host.invoke("core_api_request", { operation: "peer.composer_query",
+      params: { profile: profile.profile, peer: profile.peers[0] } }) as { revision: string; text: string };
+    expect(persisted.text).toBe("Committed composer remount");
+    loseNextDraftSendReply = true;
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(enqueueAccepted).toBe(true));
+    cleanup();
+    await host.invoke("fixture_reopen");
+    render(<App />);
+    const restored = await screen.findByRole("textbox", { name: "Message Boundary Blair" });
+    await waitFor(() => expect((restored as HTMLTextAreaElement).value).toBe(""));
+    const stored = await host.invoke("fixture_inspect") as { messages: { text: string }[] };
+    expect(stored.messages.map(message => message.text)).toEqual(["Committed composer remount"]);
+    const sends = transport.invoke.mock.calls.filter(([command, args]) => command === "core_api_request" && args.operation === "message.enqueue_draft");
+    expect(sends).toHaveLength(1);
+    expect(sends[0][1]).toMatchObject({ idempotencyKey: persisted.revision,
+      params: { draft_revision: persisted.revision } });
+    expect(transport.invoke.mock.calls.some(([command]) => command === "core_api_send_message" || command === "service_command")).toBe(false);
+  });
+
   it("creates one fresh identity from rendered onboarding and resolves a lost committed reply", async () => {
     await startHost({ freshProfile: true });
     expect(await host.invoke("fixture_inspect")).toMatchObject({ profile_count: 0, identity_count: 0, profile: null });
