@@ -24,9 +24,16 @@ No default selector or scenario promotion follows from these component passes.
 Both inventory repairs and native profile controls are integrated at `5ea2949`.
 Complete policy now passes 3,379 tests; exact boundary passes 664 Python plus ten
 rendered-App cases, and all nine Windows host components pass without skips.
-The shared feature checkpoint is under full CI `42693457737`. Standalone Android
-runtime packaging, ordinary installed-SDK pairing traffic, protected action-key
-recovery across renderer restart and trusted browser-media ownership remain work.
+Full CI `42693457737` completed failed despite independently validated policy,
+exact boundary and both controlled direct-platform suites. Windows bootstrap,
+Android test-module compilation and broad CSS guards have local repairs. Atomic
+group composer producer/SDK and UI are integrated at `02f83b8` with focused
+passes, pending independent boundary inventory/fixture repairs and queued-send
+retirement handling. Ordinary Windows pairing now explicitly requests relay-only
+operation through public settings; persistent personal direct-disclosure consent
+has no public Core operation yet. Standalone Android runtime packaging, actual
+installed-SDK pairing traffic, protected action-key recovery across renderer
+restart and trusted browser-media ownership remain work.
 
 Wave 2 local source `538ba226` passes 2,815 required policy cases and strict
 model/reducer typing. Composer recovery, retained call-operation tickets,

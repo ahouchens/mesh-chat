@@ -32,9 +32,17 @@ jobs fail initialization. The pipe-name repair requires a fresh full run.
 
 The repaired combined source `5ea2949` passes all 3,379 required policy cases,
 664 Python plus ten rendered-App boundary cases, and nine Windows host components,
-with zero failures/skips. Full CI `42693457737` is newly dispatched at this exact
-source. These passes supersede the nine local inventory failures above; packaged,
-device authentication, independent cross-platform and media obligations remain.
+with zero failures/skips. Full CI `42693457737` completed failed: the policy and
+exact boundary artifacts independently pass, and each direct platform passes
+25 fabric, ten recovery and 12 setup cases. Windows bootstrap assertion,
+Android test-module compilation and one broad CSS guard failed; all three have
+local repairs. These passes supersede the nine earlier local inventory failures.
+Packaged, device authentication, independent cross-platform and media obligations
+remain. The next group-composer batch at `02f83b8` has 275 focused producer and
+installed-SDK passes, 41 UI/controller passes and 51 SDK passes, but its exact
+boundary fails the missing three-operation vector inventory and one outdated
+rendered group-send fixture. It is not accepted pending those repairs and the
+queued-send retirement fix.
 
 Wave 2 now has a complete local policy pass at `538ba226` (2,815 cases, no skips),
 exact rendered-App/Core recovery evidence, installed SDK consumer checks and
