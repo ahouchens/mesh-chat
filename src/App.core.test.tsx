@@ -261,6 +261,27 @@ describe("Core application serialization", () => {
     expect(requests("group.create")).toHaveLength(1);
   });
 
+  it("retains a confirmed creation when a successful refresh lacks its exact group", async () => {
+    const other = { ...group, id: "other-local-group", core_handle: "other-core-group" };
+    optionalGroups(async (_operation, params) => {
+      current = { ...current, groups: [other] };
+      return { group: group.core_handle, name: params.title };
+    });
+    let dialog = await openGroupCreation();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create group" }));
+    await within(dialog).findByRole("button", { name: "Open created group" });
+    // A different group with the same title is not the completed creation.
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "New group" }));
+    dialog = await screen.findByRole("dialog", { name: "Create a private group" });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Name" }), { target: { value: group.title } });
+    fireEvent.click(within(dialog).getByRole("checkbox"));
+    current = { ...current, groups: [other, group] };
+    fireEvent.click(within(dialog).getByRole("button", { name: "Open created group" }));
+    await screen.findByRole("textbox", { name: `Message ${group.title}` });
+    expect(requests("group.create")).toHaveLength(1);
+  });
+
   it("keeps each proposed group payload bound to its original action key", async () => {
     optionalGroups(async () => { throw JSON.stringify({ code: "unavailable" }); });
     const dialog = await openGroupCreation();
