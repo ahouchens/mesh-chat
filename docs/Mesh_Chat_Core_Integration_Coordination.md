@@ -122,3 +122,19 @@ A additionally owns `service/src/mesh_chat/background_availability.py` for
 keyed runtime preference changes and post-commit reconciliation. D's independent
 signed-membership-removal replay regressions remain in its reserved
 `test_ui_core_boundary*.py` files; A repairs the production authority ordering.
+
+To parallelize the remaining bounded Wave 1 work, the lead verified A's
+`background_availability.py` path clean, then transferred it exclusively to B,
+with the new `service/tests/connection/test_background_preference_idempotency.py`.
+A retains the Core runtime adapter. C additionally owns
+`service/src/mesh_chat/participant_service.py` and the new
+`service/tests/connection/test_participant_keyed_preparation.py` for route resource
+reservation and prepared access replacement; A retains route parent operations
+in `service.py`. These assignments do not activate general Wave 2.
+
+Consent administration requires `approve` in addition to the existing `send`
+grant for remote-profile create, approve/remove propagation and remove; workspace
+access-recommendation apply/apply-by-ID; and workspace reconnect consent. Query,
+test, retry and ordinary send actions retain their separate requirements. A owns
+contract metadata and enforcement; D owns independent consumer denial, owner
+success and revoked-grant replay checks, plus aggregate boundary evidence wiring.

@@ -132,6 +132,15 @@ match. These are controlled native/service component scenarios, not packaged
 cross-platform interoperability; binary hashes in these reports-only archives
 remain runner-generated claims.
 
+Prepared remote/reconnect helpers at `2def80a` passed 140 focused and legacy
+tests without skips. They supply write sets for parent atomic commits; this is
+not yet evidence that every parent action uses them. D's two signed-removal
+replay regressions were integrated and independently reproduced at `bddf089`.
+Mailbox intent batch `61d7a1c` passed 22 focused signaling/call cases, including
+an owned loopback HTTP server and a lost reply after encrypted storage. Three
+separate external-Worker tests skipped because no test Worker was configured;
+they are not counted as passing execution.
+
 ### Baseline findings (historical audit)
 
 The current integration baseline is
