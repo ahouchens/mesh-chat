@@ -1,0 +1,13 @@
+{
+  "v": 1,
+  "baseline_source": "174728edad62aae6ef16e95b075183d06c5cdda3",
+  "baseline_api": {"major": 1, "minor": 0},
+  "baseline_python": {"carrier": "mesh-chat-service wheel", "client_version": "0.2.0-experimental", "standalone_wheel": false},
+  "baseline_typescript": "0.2.0-experimental",
+  "candidate_api": {"major": 1, "minor": 1},
+  "candidate_python": "0.3.0.dev0",
+  "candidate_typescript": "0.3.0-experimental",
+  "provenance": "Component artifacts rebuilt from exact Git source; not retained platform binaries",
+  "storage": {"old_format": 1, "composer_format": 2, "binary_downgrade_after_composer": "refused"},
+  "supported_window": "none; unpublished experimental combinations only"
+}

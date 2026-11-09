@@ -88,11 +88,12 @@ def installed_consumer(request):
         yield language, work, command, env, hashlib.sha256(artifact.read_bytes()).hexdigest()
 
 
-def run_consumer(installed, service, mode, *, drop_commit_reply=False, extra_args=(), bootstrap=False):
+def run_consumer(installed, service, mode, *, drop_commit_reply=False, extra_args=(), bootstrap=False, session=None):
     _, work, command, env, _ = installed
-    session = bind_service_stream(service, lambda: Grant("sdk-distribution-qualification",
-        frozenset({"observe", "read", "send", "pair", "approve", "profile_owner"}), ("local",)),
-        private_profile_bootstrap=bootstrap)
+    if session is None:
+        session = bind_service_stream(service, lambda: Grant("sdk-distribution-qualification",
+            frozenset({"observe", "read", "send", "pair", "approve", "profile_owner"}), ("local",)),
+            private_profile_bootstrap=bootstrap)
     child = subprocess.Popen([*command, mode, *extra_args], cwd=work, env=env,
                              stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     failures, dropped = [], []
