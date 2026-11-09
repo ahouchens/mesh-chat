@@ -64,6 +64,13 @@ cannot be mistaken for current media evidence or enqueue another call. The
 contain no SDP, ICE candidates or signed documents. This does not qualify media
 transport or make external mailbox HTTP atomic with the vault.
 
+Composite workspace operations distinguish queries from mutations at action
+granularity. `keyed_actions` in the manifest, schema conditions and production
+parser require an envelope key for mutating connection, history and access
+actions; their read-only actions may omit it. Prompt dismissal commits its local
+tombstone and receipt together. Creating a signed access recommendation retains
+the exact artifact by key and rechecks current authority before replay.
+
 The trusted application host authenticates callers before constructing a facade
 session. The session holds its caller ID, operation permissions and allowed
 profile scopes; none of those facts come from request JSON. Windows bootstrap

@@ -20596,7 +20596,8 @@ class WorkspaceServiceMixin:
         )
 
     def create_workspace_access_recommendation(
-        self, workspace_id: Any, remote_profile_id: Any, lifetime_days: Any = 7
+        self, workspace_id: Any, remote_profile_id: Any, lifetime_days: Any = 7,
+        *, operation_id: Any = None
     ) -> dict[str, Any]:
         """Create an owner-signed, out-of-band workspace access recommendation."""
 
@@ -20624,6 +20625,15 @@ class WorkspaceServiceMixin:
         now = time.time()
         if float(profile.get("expires_at", 0)) <= now:
             raise ValidationError("Remote profile has expired")
+        digest = None
+        if operation_id is not None:
+            operation_id, digest, replay = self._workspace_operation(
+                "create_workspace_access_recommendation", operation_id,
+                {"workspace_id": workspace_id, "remote_profile_id": remote_profile_id,
+                 "lifetime_days": lifetime_days})
+            if replay is not None:
+                self.preview_workspace_access_recommendation(replay["recommendation"])
+                return replay
         lifetime_seconds = min(
             lifetime_days * 24 * 60 * 60, WORKSPACE_ACCESS_MAX_LIFETIME
         )
@@ -20636,7 +20646,7 @@ class WorkspaceServiceMixin:
             lifetime_seconds=lifetime_seconds,
         )
         checked = verify_workspace_access_recommendation(raw, now=int(now))
-        return {
+        outcome = {
             "workspace_id": workspace["id"],
             "workspace_name": workspace["name"],
             "profile_id": checked.profile["id"],
@@ -20646,6 +20656,10 @@ class WorkspaceServiceMixin:
             "recommendation": raw,
             "text": raw,
         }
+
+        if operation_id is not None:
+            return self._workspace_store.commit_operation(operation_id, digest, outcome, ())
+        return outcome
 
     def preview_workspace_access_recommendation(self, raw: Any) -> dict[str, Any]:
         """Verify a recommendation against the current workspace authority."""

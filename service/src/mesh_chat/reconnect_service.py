@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 import time
+from copy import deepcopy
 from contextlib import contextmanager
 from typing import Any
 
@@ -139,6 +140,16 @@ class ReconnectServiceMixin:
         )
         return device
 
+    def _prepare_reconnect_device_id(self, *, records: dict[tuple[str, str], dict[str, Any]]) -> str:
+        """Reserve one device in the parent's shared write set, without saving."""
+        key = (DEVICE_KIND, "local")
+        record = records.get(key) or self.store.get(*key)
+        if record is not None:
+            return _text(record.get("device_id"), "Reconnect device ID")
+        device = "dev-" + secrets.token_hex(12)
+        records[key] = {"v": PROFILE_VERSION, "device_id": device, "created_at": _now()}
+        return device
+
     # ---------------------------------------------------------------- profiles
 
     def _reconnect_profiles_raw(self) -> list[dict[str, Any]]:
@@ -183,11 +194,18 @@ class ReconnectServiceMixin:
         return self._reconnect_migrate_preference(profile)
 
     def _reconnect_migrate_preference(self, profile: dict[str, Any]) -> dict[str, Any]:
+        prepared = self._prepare_reconnect_preference(profile)
+        if prepared != profile:
+            self.store.put(PROFILE_KIND, prepared["id"], prepared)
+        return prepared
+
+    @staticmethod
+    def _prepare_reconnect_preference(profile: dict[str, Any]) -> dict[str, Any]:
+        profile = deepcopy(profile)
         if profile.get("scope_kind") == "workspace" or str(profile.get("contact_id", "")).startswith("workspace:"):
             return profile
         if profile.get("auto_reconnect_preference") in {"default", "explicit", "legacy_disabled"}:
             return profile
-        profile = dict(profile)
         if profile.get("auto_reconnect"):
             profile["auto_reconnect_preference"] = "explicit"
         elif not profile.get("local_capabilities") and not profile.get("last_attempt_at") and not profile.get("reciprocal_since"):
@@ -199,11 +217,50 @@ class ReconnectServiceMixin:
             # Old signed false values do not say whether they came from the
             # former default or a deliberate opt-out. Preserve that choice.
             profile["auto_reconnect_preference"] = "legacy_disabled"
-        self.store.put(PROFILE_KIND, profile["id"], profile)
+        return profile
+
+    def _prepare_reconnect_profile_for_contact(
+        self, contact_id: str, remote_device_id: str | None = None, *,
+        records: dict[tuple[str, str], dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Prepare current authorized peer state in a caller-owned write set.
+
+        Share the write set across the entire parent mutation, then commit its
+        entries with consent, deliveries and receipt under the dispatch lock.
+        Preparation neither activates work nor grants reciprocal consent.
+        """
+        contact = self._reconnect_contact(contact_id)
+        if contact_id.startswith("workspace:"):
+            expected = contact["peer_device_id"]
+            if remote_device_id is not None and remote_device_id != expected:
+                raise IdentityMismatch("Reconnect device does not match workspace peer")
+            remote_device_id = expected
+        elif remote_device_id is not None:
+            remote_device_id = _text(remote_device_id, "Remote reconnect device ID")
+        profiles = {profile["id"]: profile for profile in self.store.list(PROFILE_KIND)}
+        profiles.update({identifier: profile for (kind, identifier), profile in records.items()
+                         if kind == PROFILE_KIND})
+        matches = [profile for profile in profiles.values() if profile.get("contact_id") == contact_id]
+        selected = next((profile for profile in matches
+                         if (profile.get("remote_device_id") or "") == (remote_device_id or "")), None)
+        if selected is None:
+            selected = next((profile for profile in matches if not profile.get("remote_device_id")), None)
+        if selected is None and remote_device_id is None and matches:
+            selected = matches[0]
+        if selected is None:
+            if len(profiles) >= MAX_PROFILES:
+                raise ValidationError("Too many reconnect profiles")
+            device = self._prepare_reconnect_device_id(records=records)
+            profile = self._new_profile(contact_id, remote_device_id, local_device_id=device)
+        else:
+            profile = self._prepare_reconnect_preference(selected)
+            if remote_device_id and not profile.get("remote_device_id"):
+                profile["remote_device_id"] = remote_device_id
+        records[PROFILE_KIND, profile["id"]] = profile
         return profile
 
     def _new_profile(
-        self, contact_id: str, remote_device_id: str | None
+        self, contact_id: str, remote_device_id: str | None, *, local_device_id: str | None = None,
     ) -> dict[str, Any]:
         if len(self.store.list(PROFILE_KIND)) >= MAX_PROFILES:
             raise ValidationError("Too many reconnect profiles")
@@ -217,7 +274,7 @@ class ReconnectServiceMixin:
             "workspace_name": None,
             "peer_member_id": None,
             "peer_display_name": None,
-            "local_device_id": self._reconnect_device_id(),
+            "local_device_id": local_device_id if local_device_id is not None else self._reconnect_device_id(),
             "remote_device_id": remote_device_id or "",
             "auto_reconnect": not contact_id.startswith("workspace:"),
             "auto_reconnect_preference": "default",
@@ -672,6 +729,7 @@ class ReconnectServiceMixin:
         contact: dict[str, Any],
         *,
         rotate: bool,
+        device_id: str | None = None,
     ) -> None:
         identity = self._call_identity()
         mailbox_url = getattr(self._call_settings, "signal_mailbox_url", None)
@@ -700,7 +758,7 @@ class ReconnectServiceMixin:
         serialized = create_connection_capabilities(
             identity,
             peer_destination=contact["destination_hash"],
-            device_id=self._reconnect_device_id(),
+            device_id=self._reconnect_device_id() if device_id is None else _text(device_id, "Reconnect device ID"),
             transports=["webrtc"],
             auto_reconnect=bool(profile.get("auto_reconnect")),
             allow_direct_ip_disclosure=bool(
@@ -728,6 +786,25 @@ class ReconnectServiceMixin:
         profile["mailbox_secret"] = verified.mailbox_secret
         profile["mailbox_expires_at"] = verified.mailbox_expires_at or 0
         profile["local_device_id"] = verified.device_id
+
+    def _prepare_reconnect_local_capabilities(
+        self, profile: dict[str, Any], contact: dict[str, Any], *, rotate: bool,
+        records: dict[tuple[str, str], dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Sign staged consent without persisting a device or profile early."""
+        if type(rotate) is not bool:
+            raise ValidationError("Reconnect token rotation must be boolean")
+        current = self._reconnect_contact(contact.get("id"))
+        if (current["destination_hash"] != contact.get("destination_hash")
+                or profile.get("contact_id") != current["id"]):
+            raise IdentityMismatch("Reconnect capability peer binding changed")
+        if (current.get("scope_kind") == "workspace"
+                and profile.get("remote_device_id") != current["peer_device_id"]):
+            raise IdentityMismatch("Reconnect capability device binding changed")
+        device = self._prepare_reconnect_device_id(records=records)
+        self._reconnect_issue_local_capabilities(profile, current, rotate=rotate, device_id=device)
+        records[PROFILE_KIND, profile["id"]] = profile
+        return profile
 
     def reconnect_capabilities_store(
         self, document: Any, expected_contact_id: Any = None,
