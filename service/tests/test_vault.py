@@ -265,3 +265,38 @@ def test_unknown_platform_still_fails_closed(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(vault.sys, "platform", "plan9")
     with pytest.raises(StorageUnavailable, match="No verified"):
         vault.protect_workspace(tmp_path / "profile")
+
+
+@pytest.mark.parametrize("mobile", [False, True])
+def test_completed_close_drops_crypto_references_and_refuses_late_use(tmp_path, mobile):
+    store = VaultStore(tmp_path, os.urandom(32), allow_unprotected_for_tests=True,
+                       native_mobile_protection="android" if mobile else None)
+    sealed = store._seal("test", "one", {"value": 1})
+    cursor = store.seal_cursor({"value": 1})
+    private = store.seal_private_cursor("scope", {"value": 1})
+    store.close()
+    assert store._key is None and store._cipher is None and store._token_type is None
+    for action in [lambda: store.opaque_id("test", "one"), lambda: store.seal_cursor({}),
+                   lambda: store.open_cursor(cursor), lambda: store.seal_private_cursor("scope", {}),
+                   lambda: store.open_private_cursor("scope", private),
+                   lambda: store._seal("test", "one", {}), lambda: store._open("test", "one", sealed)]:
+        with pytest.raises(StorageUnavailable, match="closed"):
+            action()
+    store.close()  # Idempotent completion also remains fenced.
+
+
+def test_failed_database_close_retains_exact_key_until_retry_completes(tmp_path):
+    key = os.urandom(32)
+    store = VaultStore(tmp_path, key, allow_unprotected_for_tests=True)
+    original = store._db
+    class FailClose:
+        def close(self):
+            raise OSError("injected close failure")
+    store._db = FailClose()
+    with pytest.raises(OSError):
+        store.close()
+    assert store._key is key
+    assert store.opaque_id("test", "one")
+    store._db = original
+    store.close()
+    assert store._key is None and store._cipher is None
