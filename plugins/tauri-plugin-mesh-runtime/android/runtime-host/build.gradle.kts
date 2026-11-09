@@ -55,7 +55,8 @@ chaquopy.sourceSets.getByName("main") { srcDir("../../../../service/src") }
 
 dependencies {
     api(project(":mesh-core-client"))
-    implementation("androidx.activity:activity-ktx:1.10.1")
+    // ComponentActivity is part of MeshCoreRuntime.confirmUnlock's public ABI.
+    api("androidx.activity:activity-ktx:1.10.1")
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("io.github.webrtc-sdk:android:150.7871.01")
 }
