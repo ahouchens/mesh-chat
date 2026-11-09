@@ -306,6 +306,10 @@ def main() -> int:
     if sys.argv[1:] == ["--direct-bootstrap"]:
         from .direct_bootstrap_worker import main as bootstrap_main
         return bootstrap_main(os.environ.get("MESH_CHAT_BOOTSTRAP_DIRECTORY"))
+    if sys.argv[1:] == ["--app-owned-native"]:
+        from .app_owned_host import run
+        return run(interruptible_input(sys.stdin.buffer), FrameWriter(sys.stdout.buffer),
+                   watch_parent=_start_parent_watchdog)
     reader = interruptible_input(sys.stdin.buffer)
     writer = FrameWriter(sys.stdout.buffer)
     service: MeshChatService | None = None
