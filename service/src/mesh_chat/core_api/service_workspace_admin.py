@@ -213,8 +213,6 @@ class ServiceWorkspaceAdmin:
             current = members[0]
             if current.get("role") == "owner":
                 raise ApiFailure("invalid_request")
-            if current.get("role") == role:
-                return MemberRoleChange(member_id, role)
             try:
                 self._service.change_workspace_role(workspace_id, member_id, role, operation_id)
             except (ValidationError, ContactNotApproved) as error:
@@ -222,9 +220,9 @@ class ServiceWorkspaceAdmin:
             updated = self._workspace(workspace_id)
             found = [item for item in updated.get("members", [])
                      if isinstance(item, dict) and item.get("id") == member_id]
-            if not found or found[0].get("role") != role:
+            if not found or found[0].get("role") not in ROLES_ASSIGNABLE:
                 raise ApiFailure("internal")
-            return MemberRoleChange(member_id, role)
+            return MemberRoleChange(member_id, found[0]["role"])
 
     def channels(self, profile, workspace_id):
         self._require_local(profile)
@@ -479,9 +477,7 @@ class ServiceWorkspaceAdmin:
             if request_id not in states:
                 raise ApiFailure("forbidden")
             expected = "approved" if approve else "declined"
-            if states[request_id] == expected:
-                return expected
-            if states[request_id] != "pending":
+            if states[request_id] not in {"pending", expected}:
                 raise ApiFailure("invalid_request")
             try:
                 if approve:
@@ -541,12 +537,12 @@ class ServiceWorkspaceAdmin:
                     break
             if transfer is None or not isinstance(transfer.get("id"), str):
                 channel = self._channel(workspace_id, channel_id)
-                if channel.get("manager_member_id") == local_member:
-                    return "accepted"
-                raise ApiFailure("forbidden")
+                if channel.get("manager_member_id") != local_member:
+                    raise ApiFailure("forbidden")
             try:
                 accepted = self._service.accept_workspace_channel_transfer(
-                    workspace_id, transfer["id"], operation_id)
+                    workspace_id, None if transfer is None else transfer["id"], operation_id,
+                    channel_id=channel_id)
             except (ValidationError, ContactNotApproved) as error:
                 raise ApiFailure("invalid_request") from error
             if accepted.get("manager_member_id") != local_member:
@@ -650,9 +646,8 @@ class ServiceWorkspaceAdmin:
                     and item.get("device_id") == device_id
                     and item.get("state") == "approved"
                     for item in self._store.list("workspace_device_transition"))
-                if settled:
-                    return "removed"
-                raise ApiFailure("forbidden")
+                if not settled:
+                    raise ApiFailure("forbidden")
             try:
                 requested = self._service.request_workspace_device_removal(
                     workspace_id, device_id, operation_id)
@@ -1034,13 +1029,13 @@ class ServiceWorkspaceAdmin:
                         workspace_id, params["recommendation_id"]))
                 if action == "apply_by_id":
                     return dict(self._service.apply_workspace_access_recommendation_by_id(
-                        workspace_id, params["recommendation_id"], params["consent"]))
+                        workspace_id, params["recommendation_id"], params["consent"], operation_id=operation_id))
                 if action == "preview":
                     return dict(self._service.preview_workspace_access_recommendation(
                         params["recommendation"]))
                 if action == "apply":
                     return dict(self._service.apply_workspace_access_recommendation(
-                        params["recommendation"], params["consent"]))
+                        params["recommendation"], params["consent"], operation_id=operation_id))
             except ValidationError as error:
                 raise ApiFailure("invalid_request") from error
             raise ApiFailure("invalid_request")
@@ -1091,10 +1086,10 @@ class ServiceWorkspaceAdmin:
                     return dict(self._service.workspace_reconnect_consent_set(
                         workspace_id, params["auto_reconnect"],
                         params["allow_direct_ip_disclosure"],
-                        params.get("relay_consent_scope", "workspace")))
+                        params.get("relay_consent_scope", "workspace"), operation_id=operation_id))
                 if action == "invite_contact":
                     return dict(self._service.invite_contact_to_workspace(
-                        workspace_id, params["contact_id"]))
+                        workspace_id, params["contact_id"], operation_id=operation_id))
                 if action == "prompt_preview":
                     return dict(self._service.preview_workspace_invitation_prompt(
                         params["prompt_id"]))

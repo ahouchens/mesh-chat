@@ -2360,7 +2360,7 @@
                                  "device_link_preview"]},
             "auto_reconnect": {"type": "boolean"},
             "allow_direct_ip_disclosure": {"type": "boolean"},
-            "relay_consent_scope": {"enum": ["workspace", "profile"]},
+            "relay_consent_scope": {"enum": ["workspace", "session"]},
             "contact_id": {"type": "string", "minLength": 1, "maxLength": 160},
             "prompt_id": {"type": "string", "minLength": 1, "maxLength": 160},
             "device_link": {"type": "string", "minLength": 1, "maxLength": 16384}
