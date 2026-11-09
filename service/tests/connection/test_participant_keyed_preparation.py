@@ -321,6 +321,99 @@ def test_restore_retries_retirement_after_host_deletion_commit_fault(hosts, monk
     assert service.network.listeners == {} and len(mappings) == len(removed) == 1
 
 
+@pytest.mark.parametrize("delete_fails", [False, True])
+def test_first_retirement_write_failure_still_fences_and_cleans_exact_resources(hosts, monkeypatch, delete_fails):
+    open_host, mappings, removed, _, _ = hosts
+    service = open_host()
+    intent, other = reserve(service), reserve(service)
+    service.materialize_participant_host_intent(intent["id"], intent["input_digest"])
+    service.materialize_participant_host_intent(other["id"], other["input_digest"])
+    original_put, original_delete = service.store.put, service.store.delete
+
+    def failed_put(kind, identifier, value):
+        if kind == "participant_host_intent" and identifier == intent["id"]:
+            raise OSError("first retirement write unavailable")
+        return original_put(kind, identifier, value)
+
+    def failed_delete(kind, identifier):
+        if kind == "participant_host" and identifier == intent["host_session_id"]:
+            raise OSError("host deletion also unavailable")
+        return original_delete(kind, identifier)
+
+    monkeypatch.setattr(service.store, "put", failed_put)
+    if delete_fails:
+        monkeypatch.setattr(service.store, "delete", failed_delete)
+    with pytest.raises(OSError, match="first retirement write"):
+        service.retire_participant_host_intent(intent["id"], intent["input_digest"])
+    assert service.store.get("participant_host_intent", intent["id"])["state"] == "allocated"
+    assert set(service.network.listeners) == {other["host_session_id"]}
+    assert len(mappings) == 2 and len(removed) == 1
+    with pytest.raises(ParticipantReservationUnavailable):
+        service.materialize_participant_host_intent(intent["id"], intent["input_digest"])
+    service._apply_participant_interfaces()
+    assert set(service.network.listeners) == {other["host_session_id"]}
+    monkeypatch.setattr(service.store, "put", original_put)
+    monkeypatch.setattr(service.store, "delete", original_delete)
+    service.retire_participant_host_intent(intent["id"], intent["input_digest"])
+    assert service.store.get("participant_host", intent["host_session_id"]) is None
+    assert len(removed) == 1
+
+
+def test_full_private_history_capacity_recovers_without_freeing_active_or_uncertain_keys(hosts):
+    open_host, mappings, _, _, _ = hosts
+    service = open_host()
+    active, uncertain = reserve(service), reserve(service)
+    service.materialize_participant_host_intent(active["id"], active["input_digest"])
+    uncertain.update(state="allocating", maximum_expires_at=int(time.time()) - 1)
+    service.store.put("participant_host_intent", uncertain["id"], uncertain)
+    history = []
+    for _ in range(participant_service.MAX_PARTICIPANT_INTENTS - 2):
+        operation = str(uuid4())
+        old = {**active, "id": operation, "host_session_id": os.urandom(32).hex(), "state": "committed",
+               "maximum_expires_at": int(time.time()) - participant_service.DEFAULT_MAPPING_LIFETIME - 10}
+        service.store.commit_operation(operation, old["input_digest"], service._participant_intent_receipt(operation),
+            [("participant_host_intent", operation, old),
+             ("participant_host_completion", operation, {"id": operation, "input_digest": old["input_digest"],
+                                                       "result": {"document": "expired historical result"}})])
+        history.append(old)
+    assert len(service.store.list("participant_host_intent")) == participant_service.MAX_PARTICIPANT_INTENTS
+    fresh = reserve(service)
+    assert {item["id"] for item in service.store.list("participant_host_intent")} == {active["id"], uncertain["id"], fresh["id"]}
+    assert service.store.list("participant_host_completion") == []
+    for old in history:
+        assert service.store.operation_result(old["id"], old["input_digest"]) == service._participant_intent_receipt(old["id"])
+    old = history[0]
+    with pytest.raises(ParticipantReservationUnavailable):
+        reserve(service, old["id"])
+    with pytest.raises(ValidationError, match="already used with different input"):
+        reserve(service, old["id"], "b" * 64)
+    with pytest.raises(ParticipantReservationUnavailable):
+        service.materialize_participant_host_intent(old["id"], old["input_digest"])
+    assert len(mappings) == service.network.created == 1
+    assert service.store.get("participant_host_intent", uncertain["id"]) == uncertain
+
+
+def test_retirement_retries_listener_detach_without_repeating_mapping_cleanup(hosts, monkeypatch):
+    open_host, _, removed, _, _ = hosts
+    service = open_host()
+    intent = reserve(service)
+    service.materialize_participant_host_intent(intent["id"], intent["input_digest"])
+    original = service.network.apply_participant_interfaces
+
+    def failed_detach(*args):
+        raise OSError("listener detach unavailable")
+
+    monkeypatch.setattr(service.network, "apply_participant_interfaces", failed_detach)
+    with pytest.raises(OSError, match="listener detach"):
+        service.retire_participant_host_intent(intent["id"], intent["input_digest"])
+    assert len(removed) == 1
+    with pytest.raises(ParticipantReservationUnavailable):
+        service.materialize_participant_host_intent(intent["id"], intent["input_digest"])
+    monkeypatch.setattr(service.network, "apply_participant_interfaces", original)
+    service.retire_participant_host_intent(intent["id"], intent["input_digest"])
+    assert service.network.listeners == {} and len(removed) == 1
+
+
 def test_changed_payload_conflicts_before_new_allocation(hosts):
     open_host, mappings, _, _, _ = hosts
     service = open_host()
