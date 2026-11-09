@@ -108,6 +108,8 @@ jobs:
           key: ci-pyinstaller-${{ runner.os }}-${{ hashFiles('service/src/**/*.py', 'service/entrypoint.py', 'service/mesh-chat-service.spec', 'service/requirements*.lock', 'service/pyproject.toml', 'scripts/build_sidecar.py') }}
       - run: pnpm install --frozen-lockfile
       - run: python -m pip install --disable-pip-version-check -r service/requirements-dev.lock
+      - name: Prove settings and call mutations through the actual Windows app pipe
+        run: python scripts/check_core_windows_boundary.py --expected-source "${{ github.sha }}"
       - run: pnpm build
       - run: python scripts/build_sidecar.py
       - name: Qualify packaged native WebRTC messaging
@@ -150,4 +152,5 @@ jobs:
             dist/reports/packaged-lifecycle.json
             dist/reports/packaged-transport.json
             dist/reports/packaged-pairing.json
+            dist/reports/core-windows-boundary.*
           if-no-files-found: error

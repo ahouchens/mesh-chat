@@ -16,6 +16,7 @@ from connection_test_inventory import TestInventory
 SELECTION = (
     "service/tests/connection/test_ui_core_boundary_requests.py",
     "service/tests/connection/test_ui_core_boundary_ci.py",
+    "service/tests/connection/test_ui_core_boundary_calls.py",
 )
 
 
