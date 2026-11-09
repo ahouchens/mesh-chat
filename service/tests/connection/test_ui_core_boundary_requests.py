@@ -12,7 +12,7 @@ from pathlib import Path
 from jsonschema import Draft202012Validator
 import pytest
 
-from mesh_chat.core_api.requests import COMPONENT_OPERATIONS, PROFILE_RUNTIME_OPERATIONS, CALL_RECOVERY_OPERATIONS, PAIRING_INTENT_OPERATIONS, parse_request
+from mesh_chat.core_api.requests import COMPONENT_OPERATIONS, PROFILE_RUNTIME_OPERATIONS, CALL_RECOVERY_OPERATIONS, PAIRING_INTENT_OPERATIONS, GROUP_COMPOSER_OPERATIONS, parse_request
 from mesh_chat.core_api.composition import bind_service_stream
 from mesh_chat.core_api.runtime_host import CoreRuntimeHost, RegisteredProfile
 from mesh_chat.core_api.session import CoreSession, Grant, Ports
@@ -23,6 +23,7 @@ from mesh_chat.core_api.call_operations import CallRetirementAcknowledgment, Cal
 from test_core_messages import host
 from test_core_call_idempotency import FINGERPRINT, SDP
 from test_pairing_runtime import native_pairing, run_until
+from test_group_operation_idempotency import group_host
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -182,6 +183,51 @@ def denied_pairing_intents(native_pairing):
         stream.close()
 
 
+@pytest.fixture
+def denied_group_composer(group_host):
+    """Actual signed group and protected draft; domain transport is doubled."""
+    pair, _ = group_host
+    service = pair.owner
+    grants = [Grant("boundary-group-ui", frozenset({"observe", "read", "send"}), ("local",))]
+    stream = bind_service_stream(service, lambda: grants[0])
+    def invoke(operation, params=None, key=None, identifier="group-vector:fixture"):
+        value = {"api_version": 1, "request_id": identifier, "operation": operation, "params": params or {}}
+        if key is not None: value["idempotency_key"] = key
+        return decode_frame(stream.exchange(encode_frame(value)))
+    caps = invoke("runtime.capabilities")
+    assert caps["ok"] and set(GROUP_COMPOSER_OPERATIONS) <= set(caps["result"]["operations"])
+    profile = caps["result"]["profiles"][0]
+    group = invoke("group.query", {"profile": profile})["result"]["groups"][0]["group"]
+    scope = {"profile": profile, "group": group}
+    initial = invoke("group.composer_query", scope)["result"]
+    saved = invoke("group.composer_update", {**scope, "expected_revision": initial["revision"],
+        "text": "Boundary protected group draft"}, initial["update_key"])
+    assert saved["ok"], saved
+    draft = saved["result"]["composer"]
+    grants[0] = Grant("boundary-group-ui", frozenset(), ("local",))
+    def state():
+        return (service.store._db.execute("SELECT kind,record_id,sealed FROM records ORDER BY kind,record_id").fetchall(),
+                service.store._db.total_changes, list(pair.owner_network.sent), service._group_retry_snapshot())
+    before = state()
+    def exchange(vector):
+        value = wire_round_trip(vector)
+        value["params"].update(scope)
+        if value["operation"] == "group.composer_update":
+            value["params"]["expected_revision"] = draft["revision"]
+            value["idempotency_key"] = draft["update_key"]
+        elif value["operation"] == "group.message_enqueue_draft":
+            value["params"]["draft_revision"] = draft["revision"]
+            value["idempotency_key"] = draft["revision"]
+        contract_for(value["operation"]).validate(value)
+        result = decode_frame(stream.exchange(encode_frame(value)))
+        assert state() == before and "result" not in result
+        return result
+    try:
+        yield exchange
+    finally:
+        stream.close()
+
+
 @pytest.mark.parametrize("vector", COMPONENT_VECTORS, ids=lambda value: value["operation"])
 def test_schema_valid_serialized_request_reaches_production_parser(vector):
     value = wire_round_trip(vector)
@@ -199,6 +245,11 @@ def test_private_host_envelope_is_rejected_by_the_public_contract(operation):
 
 @pytest.mark.parametrize("vector", COMPONENT_VECTORS, ids=lambda value: value["operation"])
 def test_serialized_request_reaches_session_authority_without_effects(vector, request):
+    if vector["operation"] in GROUP_COMPOSER_OPERATIONS:
+        reply = request.getfixturevalue("denied_group_composer")(vector)
+        assert reply == {"api_version": 1, "request_id": vector["request_id"], "ok": False,
+                         "error": {"code": "forbidden", "retry_after_ms": None}}
+        return
     if vector["operation"] in PROFILE_RUNTIME_OPERATIONS:
         reply = request.getfixturevalue("denied_runtime")(vector)
         assert reply == {"api_version": 1, "request_id": vector["request_id"], "ok": False,

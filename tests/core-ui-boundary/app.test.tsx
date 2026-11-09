@@ -43,7 +43,7 @@ beforeEach(async () => {
       && (args.params as Record<string, unknown>).action === "thread_reply") await beforeThreadReply?.();
     const result = await host.invoke(command, args);
     if (command === "core_api_request" && ((args.operation === "group.create" && loseNextGroupCreateReply)
-      || (args.operation === "group.message_enqueue" && loseNextGroupSendReply))) {
+      || (args.operation === "group.message_enqueue_draft" && loseNextGroupSendReply))) {
       loseNextGroupCreateReply = loseNextGroupSendReply = false;
       throw new Error(JSON.stringify({ code: "unavailable", retry_after_ms: null, outcome: "unknown" }));
     }
@@ -100,6 +100,34 @@ describe("rendered UI through the production framed Core session", () => {
     return dialog;
   }
 
+  async function readyGroup(title: string, key: string) {
+    await startHost();
+    const profile = await coreApiProfile();
+    await host.invoke("core_api_request", { operation: "group.create", params: { profile: profile.profile,
+      title, posting_policy: "members", members: [profile.peers[0]] }, idempotencyKey: key });
+    expect(await host.invoke("fixture_group_accept")).toMatchObject({ signed_acceptance_applied: true, epoch: 2 });
+    const groups = await host.invoke("core_api_request", { operation: "group.query",
+      params: { profile: profile.profile } }) as { groups: { group: string }[] };
+    return { profile: profile.profile, group: groups.groups[0].group };
+  }
+
+  async function openGroup(title: string) {
+    fireEvent.click(await screen.findByRole("button", { name: new RegExp(`^${title}`) }));
+    return waitFor(() => {
+      const composer = screen.getByRole("textbox", { name: `Message ${title}` }) as HTMLTextAreaElement;
+      expect(composer.readOnly).toBe(false);
+      return composer;
+    });
+  }
+
+  async function savedGroupText(scope: { profile: string; group: string }, text: string) {
+    await waitFor(() => expect(transport.invoke.mock.calls.some(([command, args]) => command === "core_api_request"
+      && args.operation === "group.composer_update" && args.params.text === text)).toBe(true));
+    const current = await host.invoke("core_api_request", { operation: "group.composer_query", params: scope }) as { text: string; revision: string };
+    expect(current).toMatchObject({ text, revision: expect.stringMatching(/^[0-9a-f]{64}$/) });
+    return current;
+  }
+
   it("replays lost committed group creation with the original caller key and one durable group", async () => {
     await startHost();
     const caps = await host.invoke("core_api_capabilities") as { optional_keyed_operations: string[] };
@@ -134,25 +162,91 @@ describe("rendered UI through the production framed Core session", () => {
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: /^Boundary send group/ }));
     const composer = await screen.findByRole("textbox", { name: "Message Boundary send group" }) as HTMLTextAreaElement;
+    await waitFor(() => expect(composer.readOnly).toBe(false));
     fireEvent.change(composer, { target: { value: "Original group boundary message" } });
     loseNextGroupSendReply = true;
+    await waitFor(() => expect(screen.getByRole("button", { name: "Send group message" })).toHaveProperty("disabled", false));
     fireEvent.click(screen.getByRole("button", { name: "Send group message" }));
     const retry = await screen.findByRole("button", { name: "Retry previous group send" });
     await waitFor(() => expect(retry).toHaveProperty("disabled", false));
     const committed = await host.invoke("fixture_inspect") as { group_messages: { id: string; text: string }[]; group_delivery_count: number };
     expect(committed.group_messages.map(message => message.text)).toEqual(["Original group boundary message"]);
     fireEvent.change(composer, { target: { value: "Newer group boundary draft" } });
-    expect(screen.getByRole("textbox", { name: "Previous group send text" })).toHaveProperty("value", "Original group boundary message");
     fireEvent.click(retry);
     await screen.findByRole("button", { name: "Send group message" });
     await waitFor(() => expect(composer.value).toBe("Newer group boundary draft"));
-    const sends = transport.invoke.mock.calls.filter(([command, args]) => command === "core_api_request" && args.operation === "group.message_enqueue");
+    const query = transport.invoke.mock.calls.find(([command, args]) => command === "core_api_request"
+      && args.operation === "group.composer_query");
+    await savedGroupText(query![1].params, "Newer group boundary draft");
+    await screen.findByRole("textbox", { name: "Saved group message text" });
+    const sends = transport.invoke.mock.calls.filter(([command, args]) => command === "core_api_request" && args.operation === "group.message_enqueue_draft");
     expect(sends).toHaveLength(2);
     expect(sends[1][1]).toEqual(sends[0][1]);
-    expect(sends[0][1].idempotencyKey).toEqual(expect.any(String));
+    expect(sends[0][1]).toMatchObject({ idempotencyKey: expect.stringMatching(/^[0-9a-f]{64}$/),
+      params: { draft_revision: sends[0][1].idempotencyKey } });
     const replayed = await host.invoke("fixture_inspect");
-    expect(replayed).toMatchObject({ group_messages: committed.group_messages, group_delivery_count: committed.group_delivery_count, optional_receipt_count: 2 });
+    expect(replayed).toMatchObject({ group_messages: committed.group_messages, group_delivery_count: committed.group_delivery_count,
+      optional_receipt_count: 1, group_send_receipt_count: 1 });
+    expect(transport.invoke.mock.calls.some(([command, args]) => command === "core_api_request"
+      && args.operation === "group.composer_update" && args.params.text === "Original group boundary message")).toBe(true);
+    expect(transport.invoke.mock.calls.some(([command, args]) => command === "core_api_request"
+      && ["group.message_enqueue", "group.draft_set"].includes(args.operation))).toBe(false);
     expect(transport.invoke.mock.calls.some(([command, args]) => command === "core_api_request" && args.operation === "message.query")).toBe(false);
+    cleanup();
+    const closing = host.close();
+    await expect(host.invoke("fixture_inspect")).rejects.toThrow("Boundary host is closed");
+    await closing;
+    await expect(host.invoke("fixture_inspect")).rejects.toThrow("Boundary host is closed");
+  });
+
+  it("restores an unsent group composer after renderer remount and real vault reopen", async () => {
+    const scope = await readyGroup("Boundary restored group", "boundary-restore-group-setup-0001");
+    render(<App />);
+    const composer = await openGroup("Boundary restored group");
+    fireEvent.change(composer, { target: { value: "Durable unsent group draft" } });
+    const persisted = await savedGroupText(scope, "Durable unsent group draft");
+    cleanup();
+    await host.invoke("fixture_reopen");
+    render(<App />);
+    const restored = await openGroup("Boundary restored group");
+    await waitFor(() => expect(restored.value).toBe("Durable unsent group draft"));
+    expect(await host.invoke("core_api_request", { operation: "group.composer_query", params: scope })).toMatchObject(persisted);
+    expect(await host.invoke("fixture_inspect")).toMatchObject({ group_messages: [], group_send_receipt_count: 0 });
+    expect(transport.invoke.mock.calls.some(([command, args]) => command === "core_api_request"
+      && ["group.message_enqueue_draft", "group.message_enqueue", "group.draft_set"].includes(args.operation))).toBe(false);
+  });
+
+  it("resolves a lost group draft enqueue after remount and vault reopen without a second send", async () => {
+    const scope = await readyGroup("Boundary recovered group", "boundary-recover-group-setup-0001");
+    render(<App />);
+    const composer = await openGroup("Boundary recovered group");
+    fireEvent.change(composer, { target: { value: "Committed group composer remount" } });
+    const persisted = await savedGroupText(scope, "Committed group composer remount");
+    loseNextGroupSendReply = true;
+    fireEvent.click(screen.getByRole("button", { name: "Send group message" }));
+    const retry = await screen.findByRole("button", { name: "Retry previous group send" });
+    await waitFor(() => expect(retry).toHaveProperty("disabled", false));
+    const committed = await host.invoke("fixture_inspect") as { group_messages: { id: string; text: string }[]; group_delivery_count: number };
+    expect(committed.group_messages.map(message => message.text)).toEqual(["Committed group composer remount"]);
+    cleanup();
+    await host.invoke("fixture_reopen");
+    render(<App />);
+    const restored = await openGroup("Boundary recovered group");
+    await waitFor(() => expect(restored.value).toBe(""));
+    expect(await screen.findByRole("textbox", { name: "Saved group message text" })).toHaveProperty("value", "Committed group composer remount");
+    const sends = transport.invoke.mock.calls.filter(([command, args]) => command === "core_api_request" && args.operation === "group.message_enqueue_draft");
+    expect(sends).toHaveLength(1);
+    expect(sends[0][1]).toMatchObject({ idempotencyKey: persisted.revision,
+      params: { draft_revision: persisted.revision } });
+    fireEvent.change(restored, { target: { value: "Newer group draft after restart" } });
+    await savedGroupText(scope, "Newer group draft after restart");
+    const replay = await host.invoke("core_api_request", sends[0][1]) as { composer: { text: string }; draft_disposition: string };
+    expect(replay.composer.text).toBe("Newer group draft after restart");
+    expect(replay.draft_disposition).toBe("superseded");
+    expect(await host.invoke("fixture_inspect")).toMatchObject({ group_messages: committed.group_messages,
+      group_delivery_count: committed.group_delivery_count, group_send_receipt_count: 1 });
+    expect(transport.invoke.mock.calls.some(([command, args]) => command === "core_api_request"
+      && ["group.message_enqueue", "group.draft_set", "message.query"].includes(args.operation))).toBe(false);
   });
 
   it("restores an unsent composer after renderer remount and real vault reopen", async () => {

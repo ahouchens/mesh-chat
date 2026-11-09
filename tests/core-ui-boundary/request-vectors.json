@@ -1351,5 +1351,27 @@
     "operation": "peer.pairing_cancel",
     "params": {"profile": "callerScopedHandle1", "pairing": "callerScopedPairingHandle1"},
     "idempotency_key": "boundary-pairing-cancel-key0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:group-composer-query",
+    "operation": "group.composer_query",
+    "params": {"profile": "callerScopedHandle1", "group": "callerScopedGroup01"}
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:group-composer-update",
+    "operation": "group.composer_update",
+    "params": {"profile": "callerScopedHandle1", "group": "callerScopedGroup01",
+               "expected_revision": null, "text": "Serialized group composer text"},
+    "idempotency_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:group-enqueue-draft",
+    "operation": "group.message_enqueue_draft",
+    "params": {"profile": "callerScopedHandle1", "group": "callerScopedGroup01",
+               "draft_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+    "idempotency_key": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
   }
 ]

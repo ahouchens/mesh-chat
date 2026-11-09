@@ -151,6 +151,7 @@ class BoundaryHost:
                     "group_messages": [{key: item.get(key) for key in ("id", "group_id", "text", "sequence")}
                                        for item in self.service.store.list("group_message")],
                     "group_delivery_count": self.service.store.record_count("group_delivery"),
+                    "group_send_receipt_count": self.service.store.record_count("api_group_composer_send"),
                     "optional_receipt_count": self.service.store.record_count("api_optional_mutation")}}
         raise ValueError(f"Unsupported host command: {command}")
 
