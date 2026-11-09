@@ -75,9 +75,11 @@ def exchange(service, caller, frame, scope="consumer"):
         if session is None:
             if len(_sessions) >= MAX_CALLERS:
                 return _failure("resource_exhausted")
-            grant = Grant(name, permissions, ("local",))
+            grant = Grant(name, permissions | ({"profile_owner"} if scope == "owner" else set()),
+                          ("local",))
             session = bind_service_stream(service, lambda: grant,
-                                          private_native=scope == "owner")
+                                          private_native=scope == "owner",
+                                          private_profile_bootstrap=scope == "owner")
             _sessions[key] = session
         reply = session.exchange(bytes(frame))
         if session.stopped:

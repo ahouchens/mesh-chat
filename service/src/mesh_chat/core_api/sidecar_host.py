@@ -18,12 +18,13 @@ def start(service, *, pipe_name, client_image):
         raise ValueError("Core API client image is required")
     config = PipeConfig(
         caller=CALLER,
-        permissions=tuple(sorted(OWNER_PERMISSIONS)),
+        permissions=tuple(sorted(OWNER_PERMISSIONS | {"profile_owner"})),
         allowed_images=(client_image,),
         max_clients=2,
         idle_timeout=300.0,
         scope="owner",
         private_native=True,
+        private_profile_bootstrap=True,
     )
     endpoint = PipeEndpoint(pipe_name, config)
     endpoint.start(service)
