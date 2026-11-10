@@ -60,3 +60,11 @@ the installed Windows platform suites successfully. Its cross-platform native
 Android role failed earlier at checked `adb root` preflight; the original cause
 is unknown because command output was not retained. These passing component/
 platform results do not qualify the full Windows–Android sample/receipt matrix.
+
+The later `1b3a2be` full run `42802755780` passes 4,563 policy cases,
+1,130 Python UI plus 12 rendered cases, nine Windows boundary cases, installed
+Windows bootstrap, 52 Android emulator and 71 JVM cases, and all controlled
+direct suites. Installed Windows public pairing fails; final cleanup masks the
+original work failure. Native interop is skipped, so no current pairing,
+shared-host lifetime or Windows–Android acceptance is inferred from this run.
+The earlier Windows lifetime pass remains bound to `902b12d`.

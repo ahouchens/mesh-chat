@@ -3,12 +3,14 @@
 Status: the original proposal below is partly implemented. Public pairing
 intents, normal app-owned hosts and independent distribution inputs exist.
 Checkpoint `902b12d` independently verifies installed Windows bootstrap, public
-pairing and two authenticated receipts. Full run `42784376932` failed native
-interoperability at explicit contact approval, so it is not aggregate or
+pairing and two authenticated receipts; its full run `42796005344` failed native
+Android root preflight. The later `1b3a2be` run `42802755780` passes bootstrap but
+fails installed public pairing, with its original work failure masked by final
+cleanup failure. Native interoperability was skipped. Neither run is aggregate
 Windows–Android qualification. The private topology controller remains a
 separate transport test.
 
-The installed Windows lifetime slice now passes: two SDK sessions in one Node
+The installed Windows lifetime slice passed at `902b12d`: two SDK sessions in one Node
 application, session close/reattach, concurrent-owner refusal with positive child
 exit, and original pending-message/key preservation across trusted owner
 stop/reopen. It does not prove separate consumer-process exit,

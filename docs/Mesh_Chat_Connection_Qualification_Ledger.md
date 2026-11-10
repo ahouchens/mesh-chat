@@ -4,6 +4,56 @@
 
 ### Cold-restart containment: full CI completed; native pairing remains unqualified
 
+The latest completed checkpoint is `1b3a2be94816958d3fe26052e9fbaf5d2f42245c`
+(tree `e1ac699f1b0bd32c07037f5eb9d5dcf5b29b1267`), full run
+[42802755780](https://github.com/ahouchens/mesh-chat/actions/runs/42802755780).
+The required gate **failed Windows installed public-SDK pairing**; native
+interoperability was **skipped**, not passed. The report records retirement
+failure after the first work failure at 240,043 ms. Source review proves that
+the application's `finally` could replace the primary exception, phase and
+subphase with cleanup failure. Its exhausted work deadline leaves a zero-ms
+stop-observation budget; this is not proof of a host shutdown defect. The
+original failed operation and producer cause are not recoverable from this
+report. Earlier saved pairing states are not current failure-time observations;
+the subsequent probes found both intents retired before expiry, without a cause.
+
+The installed sidecar, SDK archive and application file hashes are identical
+to the passing `902b12d` Windows checkpoint. This neither establishes an
+environment cause nor excludes a latent timing defect. Nine Windows boundary
+cases and installed DPAPI/EFS bootstrap pass, but this run does not qualify
+pairing, shared-host lifetime or the later packaged gates. The earlier passing
+Windows lifetime evidence remains explicitly bound to `902b12d`.
+
+Independently verified current passes: **4,563 policy cases**, **1,130 Python UI
++ 12 rendered cases**, **52 Android emulator cases**, **71 JVM cases**, and
+Linux/Windows **25 transport + 10 recovery + 12 setup cases** each, all with zero
+skips. All 17 Android binary/distribution hashes validate. The 72 layout cases
+report no overflow; screenshots were not visually reviewed. Exact-source local
+SDK staging, strict types and all local gates passed. The 81 net added policy
+and UI cases retain the prior root-identity controls and add strict root-command
+diagnostic coverage. The new Android root diagnostic path itself did not run
+in native CI because the Windows prerequisite failed.
+
+The assigned diagnostic follow-up will preserve original work-failure identity and observations,
+report cleanup independently, and use existing public current diagnostics
+with a bounded projection. It is diagnostic work, not a proven product repair
+or first-cause history. No timeout, consent, receipt, positive shutdown, native
+authority or success criterion is relaxed. SC26 remains partial; the separately
+reviewed helper-retirement implementation stays deferred.
+
+Retained `1b3a2be` / run `42802755780` archive SHA-256 values:
+
+- `selection`: `c9ae102a61eea1ac8efdf71f1c231b04a67db21620ee1cbeb1ceb7013004852f`
+- `layout`: `d766be7f4b3bc5dfb5d69233c6fe6b206002bd018aaa31638c5c076ac9505157`
+- `policy`: `21d6f2d3c07e2eae5058bb76c3d011ad7a9545c9f48f47b0fd6df19f8fd9be44`
+- `verification`: `5fd19d0806fd9ad32499bf21d877faa06b39cdd8d9efadee86e5eccde078dc12`
+- `desktop`: `19951d1ba4d4e29091b4ecb2c1d50fac9fc0afc37e5fc99d7b07ec4fa07ef7b2`
+- `native-windows`: `ed51745e3fd8d97b77b415fb4be3ac572730ddd97136e1718e75dea096aec580`
+- `android`: `ec6fe34bcb7ca8129c05d0be1170c716365f9b1be676095bbd029a41127655a8`
+- `android-debug`: `d0ed4bdba5c1111acecb25d5b7f5f66720e80f5e523cd6ac4c44bebd20240748`
+- `direct-linux`: `c02f4897d594a6c177ba6eac1d7190c2c2ffb814b145e92fa234573ef97d2078`
+- `direct-windows`: `b34dd4db155c2ecbc949944c67691dc73f95092084ba5db173e8daa1a1658e91`
+
 The preflight diagnostic follow-up integrates `2fef6f3` at `88ea975`.
 It preserves the single checked `adb root` invocation, fatal outcome, UID
 requirement, command order, deadlines and cleanup. Only that root invocation
@@ -18,10 +68,11 @@ The worker's complete focused controller/peer/preflight suite passed **484
 cases**, zero failures/skips; the lead independently verified XML and inventory
 hashes. Immutable source review found no actionable issues. This is a reporting
 change with scripted-boundary regression evidence, not a fix for the unknown
-`902b12d` root-command cause. Exact-source full local and CI qualification remain
-required. No retry, root bypass or native acceptance is added.
+`902b12d` root-command cause. The exact-source local gates and CI components
+passed as recorded above, but installed Windows pairing failed before the native
+interop job. No retry, root bypass or native acceptance is added.
 
-The latest completed qualification checkpoint is `902b12d1470177fe4207e027bf3d44fbe839cc91`
+The earlier completed qualification checkpoint is `902b12d1470177fe4207e027bf3d44fbe839cc91`
 (tree `ad829c7716cb2b4c15620a9d69504c6ce114922e`), full run
 [42796005344](https://github.com/ahouchens/mesh-chat/actions/runs/42796005344).
 The required gate **failed native interoperability**. Android failed during
