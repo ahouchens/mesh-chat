@@ -198,3 +198,49 @@ def test_cold_capabilities_cannot_overload_existing_control_or_offer_schema(pair
     for phase in ("control", "offer", "answer", "result", "approved"):
         with pytest.raises(ValueError): exchange.checked_payload(phase, {"capabilities": "signed"})
     with pytest.raises(ValueError): exchange.checked_payload("control", {**plan, "capabilities": "signed"})
+
+
+@pytest.mark.parametrize("phase", sorted(exchange.CASE_COMPLETION_PHASES))
+@pytest.mark.parametrize("role", ["windows", "android"])
+def test_case_completion_has_fixed_case_initiator_role_and_one_shot_sealed_binding(pair, phase, role):
+    sender, receiver = pair[:2] if role == "windows" else pair[1::-1]
+    bundle = sender.seal(phase, {"completed": True})
+    exchange.validate_upload(CONTEXT, role, phase, bundle)
+    assert receiver.open(phase, bundle) == {"completed": True}
+    with pytest.raises(ValueError): receiver.open(phase, bundle)
+    with pytest.raises(ValueError): sender.seal(phase, {"completed": True})
+
+
+@pytest.mark.parametrize("payload", [None, [], {}, {"completed": False}, {"completed": 1},
+    {"completed": "true"}, {"completed": None}, {"approved": True}, {"completed": True, "scenario": "direct"}])
+def test_case_completion_rejects_inexact_payload_before_sealing(pair, payload):
+    windows, _, _ = pair
+    with pytest.raises(ValueError): windows.seal("case_complete_direct_windows", payload)
+    assert "case_complete_direct_windows" not in windows._sent
+
+
+@pytest.mark.parametrize("fault", ["case", "initiator", "sender", "recipient", "source", "run", "attempt", "job", "expiry"])
+def test_case_completion_cannot_cross_case_or_existing_cryptographic_context(pair, fault):
+    windows, android, clock = pair
+    phase = "case_complete_direct_windows"
+    bundle = deepcopy(windows.seal(phase, {"completed": True}))
+    if fault == "case": bundle["phase"] = "case_complete_turn_udp_windows"
+    elif fault == "initiator": bundle["phase"] = "case_complete_direct_android"
+    elif fault == "sender": bundle["sender"] = "android"
+    elif fault == "recipient": bundle["recipient"] = "windows"
+    elif fault == "source": bundle["context"]["source_commit"] = "b" * 40
+    elif fault == "run": bundle["context"]["run_id"] += 1
+    elif fault == "attempt": bundle["context"]["run_attempt"] += 1
+    elif fault == "job": bundle["producer_job"] = "native_android_peer"
+    else: clock[0] += exchange.MESSAGE_TTL
+    with pytest.raises((ValueError, InvalidTag)): android.open(phase, bundle)
+    assert phase not in android._received
+
+
+def test_case_completion_catalog_is_exact_full_and_quick_inventory():
+    from native_interop_workload import workload
+    full = {"case_complete_" + scenario + "_" + initiator for scenario, initiator in workload("full")["paths"]}
+    quick = {"case_complete_" + scenario + "_" + initiator for scenario, initiator in workload("quick")["paths"]}
+    assert full == exchange.CASE_COMPLETION_PHASES and len(full) == 6 and len(quick) == 3
+    for phase in ("case_complete_direct_other", "case_complete_turn_tcp_android", "case_complete_cold_start_receipts_windows"):
+        with pytest.raises(ValueError): exchange.artifact_name(CONTEXT, "windows", phase)

@@ -16,7 +16,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 import native_interop_artifacts as backend
-from native_interop_rendezvous import Rendezvous, artifact_name, canonical, encoded
+from native_interop_rendezvous import CASE_COMPLETION_PHASES, Rendezvous, artifact_name, canonical, encoded
 
 CONTEXT = {"repository": "example/mesh", "repository_id": 123, "run_id": 456,
            "run_attempt": 1, "source_commit": "a" * 40}
@@ -474,8 +474,10 @@ def test_decoder_value_error_cannot_inherit_completed_response_read_origin(tmp_p
 
 
 @pytest.mark.parametrize("role", ["windows", "android"])
-@pytest.mark.parametrize("fault", [None, "unknown_phase", "plaintext", "extra_field", "wrong_job", "wrong_source", "nonce", "ciphertext"])
-def test_actual_node_upload_accepts_only_sealed_cold_phase_without_sdk_or_network(tmp_path, role, fault):
+@pytest.mark.parametrize("phase,fault", [("reconnect_capabilities", fault) for fault in (
+    None, "unknown_phase", "plaintext", "extra_field", "wrong_job", "wrong_source", "nonce", "ciphertext")]
+    + [(phase, None) for phase in sorted(CASE_COMPLETION_PHASES)])
+def test_actual_node_upload_accepts_only_sealed_setup_phases_without_sdk_or_network(tmp_path, role, phase, fault):
     """Execute the real upload validator with a local inert ArtifactClient module."""
     node = os.environ.get("MESH_NODE") or shutil.which("node")
     assert node, "Node is required for the upload validator control"
@@ -499,8 +501,8 @@ export class DefaultArtifactClient {
     partner = Rendezvous(CONTEXT, "android" if role == "windows" else "windows")
     sender.bind_partner(partner.public_manifest())
     try:
-        phase = "reconnect_capabilities"
-        sealed = sender.seal(phase, {"capabilities": "PRIVATE_SIGNED_CREDENTIALS"})
+        sealed = sender.seal(phase, {"completed": True} if phase in CASE_COMPLETION_PHASES
+                             else {"capabilities": "PRIVATE_SIGNED_CREDENTIALS"})
         env = {**os.environ, **environment(role), "ACTIONS_RUNTIME_TOKEN": "PRIVATE_TEST_RUNTIME_TOKEN",
                "MESH_UPLOAD_OBSERVATION": str(tmp_path / "observed.json")}
         if fault == "unknown_phase": sealed["phase"] = "reconnect_documents"

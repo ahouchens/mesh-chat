@@ -536,11 +536,14 @@ def carrier_inventory(*, state="acknowledged", request_id="ECHO", resources=Fals
         "carrier_retirement": {"request_id": request_id, "state": state}}
 
 
-def retirement_case(monkeypatch, sample, *, role="windows", polls=None, reply=None, remaining=3000, request_error=None):
+def retirement_case(monkeypatch, sample, *, role="windows", polls=None, reply=None, remaining=3000, request_error=None,
+                    prepare_reply=None):
     """Actual path_case/wait/retired; ready path/receipt and private peer doubles."""
     original, _ = sample
     state = SimpleNamespace(now=0.0, events=[], requests=[], inventories=[], random_draws=[], case_index=0,
-                            observation=0, reads=0, current=None, request_error=request_error)
+                            observation=0, reads=0, current=None, request_error=request_error, actions=[], markers=[])
+    state.request_error_action, state.completion_failure = "prepare", None
+    state.completion_reply = {"completed": True}
     templates = polls if polls is not None else [carrier_inventory(state="pending"),
         carrier_inventory(retiring=1), carrier_inventory()]
     class Peer:
@@ -551,20 +554,26 @@ def retirement_case(monkeypatch, sample, *, role="windows", polls=None, reply=No
         def pairing_status(self, operation): return {"operation_id": operation, "state": "transferred"}
         def pairing_cancel(self, operation): return {"operation_id": operation, "state": "transferred"}
         def retire_carrier(self, operation_id, request_id, logical_session, expected_physical,
-                           expected_service_incarnation, expected_adapter_epoch):
-            state.requests.append({"operation_id": operation_id, "request_id": request_id,
+                           expected_service_incarnation, expected_adapter_epoch, *, action=None):
+            state.actions.append(action)
+            request = {"operation_id": operation_id, "request_id": request_id,
                 "logical_session": logical_session, "expected_physical": expected_physical,
-                "expected_service_incarnation": expected_service_incarnation, "expected_adapter_epoch": expected_adapter_epoch})
+                "expected_service_incarnation": expected_service_incarnation, "expected_adapter_epoch": expected_adapter_epoch}
+            if action == "commit": assert request == state.requests[-1]
+            else: state.requests.append(request)
             state.reads = 0
-            if state.request_error is not None: raise state.request_error
-            if remaining == 0: state.now = state.controller.deadline  # Admission consumed the last global budget.
-            value = copy.deepcopy(reply if reply is not None else {"request_id": "ECHO", "state": "pending"})
+            if state.request_error is not None and action in {None, state.request_error_action}: raise state.request_error
+            if remaining == 0 and action != "prepare": state.now = state.controller.deadline
+            selected = prepare_reply if action == "prepare" else reply
+            value = copy.deepcopy(selected if selected is not None else {
+                "request_id": "ECHO", "state": "prepared" if action == "prepare" else "pending"})
             if isinstance(value, dict) and value.get("request_id") == "ECHO": value["request_id"] = request_id
             return value
         def inventory(self, *, operation_id=None, request_id=None):
             state.inventories.append((operation_id, request_id))
             state.reads += 1
             if not state.requests: return carrier_inventory(resources=True, active=1)
+            assert state.actions[-2:] == ["prepare", "commit"]
             assert operation_id == state.requests[-1]["operation_id"] and request_id == state.requests[-1]["request_id"]
             value = copy.deepcopy(templates[min(state.reads - 1, len(templates) - 1)])
             echo = value.get("carrier_retirement")
@@ -580,6 +589,17 @@ def retirement_case(monkeypatch, sample, *, role="windows", polls=None, reply=No
     monkeypatch.setattr(controller, "time", SimpleNamespace(monotonic=lambda: state.now, sleep=sleep))
     monkeypatch.setattr(controller.os, "urandom", random_bytes)
     instance = controller.Controller(role, Peer(), None, None, {})
+    def publish(phase, value):
+        assert state.actions[-1] == "prepare" and value == {"completed": True}
+        state.markers.append(("publish", phase, value))
+        if state.completion_failure == "publish": raise state.request_error
+    def receive(partner, phase, *, timeout):
+        assert state.actions[-1] == "prepare" and state.markers[-1] == ("publish", phase, {"completed": True})
+        state.markers.append(("receive", phase, timeout))
+        if state.completion_failure == "receive": raise state.request_error
+        return state.completion_reply
+    instance.transport = SimpleNamespace(publish=publish, wait=receive)
+    instance.rendezvous = SimpleNamespace(seal=lambda phase, value: value, open=lambda phase, value: value)
     instance.contact = {"id": "PRIVATE_CONTACT", "core_handle": "PRIVATE_HANDLE"}
     instance.deadline = remaining if remaining > 0 else 3000
     def negotiate(scenario, initiator):
@@ -603,6 +623,66 @@ def retirement_case(monkeypatch, sample, *, role="windows", polls=None, reply=No
     return state
 
 
+def test_prepared_case_publishes_completion_before_committing_same_request(monkeypatch, sample):
+    state = retirement_case(monkeypatch, sample)
+    state.controller.path_case("direct", "windows")
+    assert state.actions == ["prepare", "commit"]
+    assert state.markers == [("publish", "case_complete_direct_windows", {"completed": True}),
+                             ("receive", "case_complete_direct_windows", 180)]
+    assert len(state.requests) == 1 and state.controller.cases[-1]["owner_retirement_acknowledged"] is True
+
+
+@pytest.mark.parametrize("reply", [{}, [], {"request_id": "ECHO", "state": "pending"},
+    {"request_id": "ECHO", "state": "acknowledged"}, {"request_id": "ECHO", "state": True},
+    {"request_id": "0" * 32, "state": "prepared"}, {"request_id": "ECHO", "state": "prepared", "extra": True}])
+def test_first_prepare_reply_requires_exact_prepared_before_any_marker(monkeypatch, sample, reply):
+    state = retirement_case(monkeypatch, sample, prepare_reply=reply)
+    with pytest.raises(controller.PeerFailure) as failure: state.controller.path_case("direct", "windows")
+    assert failure.value.code == "invalid_carrier_retirement_reply"
+    assert state.actions == ["prepare"] and not state.markers and not state.inventories
+    assert state.controller.failure_retirement(failure.value)["carrier_retirement_failure"]["stage"] == "prepare"
+
+
+@pytest.mark.parametrize("marker", [{}, {"completed": False}, {"completed": 1}, {"completed": None},
+    {"completed": "true"}, {"completed": True, "initiator": "windows"}, {"approved": True}])
+def test_case_completion_is_exact_true_and_failure_never_commits(monkeypatch, sample, marker):
+    state = retirement_case(monkeypatch, sample)
+    state.completion_reply = marker
+    with pytest.raises(ValueError) as failure: state.controller.path_case("direct", "windows")
+    assert state.actions == ["prepare"] and len(state.markers) == 2 and not state.inventories
+    context = state.controller.failure_retirement(failure.value)["carrier_retirement_failure"]
+    assert context == {"scenario": "direct", "initiator": "windows", "stage": "completion_receive", "polls": 0,
+                       "polls_capped": False, "last_observation": None}
+
+
+@pytest.mark.parametrize("remaining", [0.5, 180, 3000])
+def test_completion_receive_uses_existing_ceiling_and_remaining_global_budget(monkeypatch, sample, remaining):
+    state = retirement_case(monkeypatch, sample, remaining=remaining, polls=[carrier_inventory()])
+    state.controller.path_case("direct", "windows")
+    assert state.markers[-1] == ("receive", "case_complete_direct_windows", min(180, remaining))
+    assert state.controller.deadline == remaining and state.actions == ["prepare", "commit"]
+
+
+def test_exhausted_global_budget_does_not_start_completion_wait_or_commit(monkeypatch, sample):
+    state = retirement_case(monkeypatch, sample)
+    original = state.controller.peer.retire_carrier
+    def retire(*args, **kwargs):
+        reply = original(*args, **kwargs)
+        state.now = state.controller.deadline
+        return reply
+    monkeypatch.setattr(state.controller.peer, "retire_carrier", retire)
+    with pytest.raises(controller.PeerFailure) as failure: state.controller.path_case("direct", "windows")
+    assert failure.value.code == "scenario_deadline" and state.actions == ["prepare"]
+    assert len(state.markers) == 1 and state.markers[0][0] == "publish" and not state.inventories
+
+
+def test_prepared_inventory_cannot_satisfy_postcommit_poll_even_when_global_zero(monkeypatch, sample):
+    state = retirement_case(monkeypatch, sample, polls=[carrier_inventory(state="prepared")])
+    with pytest.raises(controller.PeerFailure) as failure: state.controller.path_case("direct", "windows")
+    assert failure.value.code == "invalid_carrier_retirement_reply" and state.actions == ["prepare", "commit"]
+    assert "owner_retirement_acknowledged" not in state.controller.cases[-1]
+
+
 def test_per_case_owner_request_and_acknowledgment_precede_zero_evidence(monkeypatch, sample):
     state = retirement_case(monkeypatch, sample)
     state.controller.path_case("direct", "windows")
@@ -618,6 +698,9 @@ def test_each_manual_case_uses_fresh_nonce_and_exact_current_sample_target(monke
     state.controller.path_case("direct", "windows")
     state.controller.path_case("direct", "android")
     assert state.random_draws == [16, 16] and len(state.requests) == 2
+    assert state.actions == ["prepare", "commit", "prepare", "commit"]
+    assert [marker[1] for marker in state.markers if marker[0] == "publish"] == [
+        "case_complete_direct_windows", "case_complete_direct_android"]
     for index, request in enumerate(state.requests, 1):
         assert request == {"operation_id": f"00000000-0000-4000-8000-{index:012x}",
             "request_id": ("d" if index == 1 else "e") * 32, "logical_session": f"PRIVATE_LOGICAL_{index}",
@@ -635,6 +718,7 @@ def test_each_manual_case_uses_fresh_nonce_and_exact_current_sample_target(monke
     pytest.param(value, id=label) for label, value in (
         ("missing", {}), ("type", []), ("wrong-request", {"request_id": "0" * 32, "state": "pending"}),
         ("immediate-ack", {"request_id": "ECHO", "state": "acknowledged"}),
+        ("prepared-is-not-pending", {"request_id": "ECHO", "state": "prepared"}),
         ("unknown-state", {"request_id": "ECHO", "state": "retired"}),
         ("state-type", {"request_id": "ECHO", "state": True}),
         ("extra", {"request_id": "ECHO", "state": "pending", "resource": "PRIVATE_RESOURCE"}),
@@ -803,6 +887,7 @@ def negative_control_case(monkeypatch, sample, *, role="android", point="receipt
         if phase.startswith("negative_checked"): state.blocked, state.restored = False, True
     def receive(partner, phase, *, timeout):
         state.events.append(("receive", phase, timeout))
+        if phase.startswith("case_complete_"): return {"completed": True}
         if state.point == "receive_error": raise state.boundary_error
         if phase.startswith("negative_ready"): state.blocked = True
         return {"approved": state.point != "ack"}
@@ -994,10 +1079,10 @@ def test_impaired_final_evidence_branch_remains_distinct_from_kernel_negative(tm
     assert "PRIVATE" not in run.output
 
 
-def run_carrier_failure_report(tmp_path, monkeypatch, capsys, sample, *, remaining=0.5, fault="", polls=None):
+def run_carrier_failure_report(tmp_path, monkeypatch, capsys, sample, *, remaining=0.5, fault="", polls=None, role="windows"):
     """Actual main plus case retirement, inert binding and earlier path/receipt effects."""
     import connection_ci
-    state = retirement_case(monkeypatch, sample, remaining=remaining,
+    state = retirement_case(monkeypatch, sample, remaining=remaining, role=role,
         polls=polls if polls is not None else [carrier_inventory(state="pending")])
     peer = state.controller.peer
     peer.process = SimpleNamespace(pid=17)
@@ -1007,6 +1092,13 @@ def run_carrier_failure_report(tmp_path, monkeypatch, capsys, sample, *, remaini
         peer.process = None
         if fault == "cleanup": raise ValueError("PRIVATE_CLEANUP")
     peer.stop = stop
+    if fault in {"prepare_error", "completion_publish", "completion_receive", "commit_error", "poll_error"}:
+        state.request_error = controller.PeerFailure("forbidden")
+        state.request_error_action = "commit" if fault == "commit_error" else ("prepare" if fault == "prepare_error" else "never")
+        if fault.startswith("completion_"): state.completion_failure = fault.split("_")[1]
+        if fault == "poll_error":
+            def inventory(**kwargs): raise state.request_error
+            peer.inventory = inventory
     def execute():
         try: state.controller.path_case("direct", "windows")
         except Exception as error:
@@ -1028,14 +1120,33 @@ def run_carrier_failure_report(tmp_path, monkeypatch, capsys, sample, *, remaini
     monkeypatch.setattr(controller, "binding", lambda *_: (None, {}))
     monkeypatch.setattr(controller, "outbound_services", lambda: {})
     monkeypatch.setattr(controller, "WindowsPeer", lambda *_: peer)
+    monkeypatch.setattr(controller, "AndroidPeer", lambda *_: peer)
+    monkeypatch.setattr(controller, "android_environment", lambda **_: {})
+    monkeypatch.setattr(controller, "AndroidEmulator", lambda: SimpleNamespace(start=lambda *args, **kwargs: None, close=lambda: None))
     monkeypatch.setattr(controller, "GithubArtifacts", lambda *_: SimpleNamespace(close=lambda: None))
     monkeypatch.setattr(controller, "Rendezvous", lambda *_: SimpleNamespace(close=lambda: None))
     output = tmp_path / "carrier.json"
-    monkeypatch.setattr(sys, "argv", ["controller", "--role", "windows", "--workload", "full", "--expected-source", "a" * 40, "--output", str(output)])
+    monkeypatch.setattr(sys, "argv", ["controller", "--role", role, "--workload", "full", "--expected-source", "a" * 40, "--output", str(output)])
     code = controller.main()
     captured = capsys.readouterr()
     return SimpleNamespace(record=json.loads(output.read_text()), code=code, state=state,
                            output=output.read_text() + captured.out + captured.err)
+
+
+@pytest.mark.parametrize("role", ["windows", "android"])
+@pytest.mark.parametrize("fault,stage,actions", [("prepare_error", "prepare", ["prepare"]),
+    ("completion_publish", "completion_publish", ["prepare"]),
+    ("completion_receive", "completion_receive", ["prepare"]),
+    ("commit_error", "commit", ["prepare", "commit"]), ("poll_error", "poll", ["prepare", "commit"])])
+def test_prepared_sequence_failure_keeps_exact_error_and_tears_down_owned_host(tmp_path, monkeypatch, capsys, sample, role, fault, stage, actions):
+    run = run_carrier_failure_report(tmp_path, monkeypatch, capsys, sample, fault=fault, role=role)
+    assert run.code == 1 and run.state.original_error is run.state.request_error
+    assert run.state.actions == actions and run.record["error_code"] == "forbidden"
+    context = run.record["carrier_retirement_failure"]
+    assert context == {"scenario": "direct", "initiator": "windows", "stage": stage, "polls": int(stage == "poll"),
+                       "polls_capped": False, "last_observation": None}
+    assert "host_cleanup" in run.state.events and "execution" not in run.record
+    assert "PRIVATE" not in run.output and "request_id" not in run.output
 
 
 @pytest.mark.parametrize("remaining,polls", [(0, 0), (0.5, 2)])
@@ -1069,7 +1180,7 @@ def test_retirement_diagnostics_clear_after_next_case_success(monkeypatch, sampl
     state = retirement_case(monkeypatch, sample, request_error=error)
     with pytest.raises(controller.PeerFailure): state.controller.path_case("direct", "windows")
     context = state.controller.failure_retirement(error)["carrier_retirement_failure"]
-    assert context == {"scenario": "direct", "initiator": "windows", "stage": "request", "polls": 0,
+    assert context == {"scenario": "direct", "initiator": "windows", "stage": "prepare", "polls": 0,
                        "polls_capped": False, "last_observation": None}
     assert state.controller.failure_retirement(controller.PeerFailure("forbidden")) == {}
     state.request_error = None
@@ -2096,12 +2207,14 @@ def test_transport_filtering_uses_one_broker_url_and_never_counts_configuration_
 
 def test_fixed_plan_and_phase_inventory_keep_explicit_bounded_setup_uploads():
     assert checked_payload("control", {"scenarios": list(evidence.SCENARIOS), "iterations": 100, "cold_start_every": 10})
-    windows = {"key", "reconnect_capabilities", *OFFER_PHASES, *("negative_checked_" + name for name in ("turn_tcp", "turn_tls", "impaired"))}
-    android = {"key", "reconnect_capabilities", "offer", "approved", "impaired_ready", *("negative_ready_" + name for name in ("turn_tcp", "turn_tls", "impaired"))}
-    assert len(windows) == 10 and len(android) == 8
-    assert len(windows) + 1 == 11 and len(android) + 1 == 9
-    assert len({"key", "offer", "offer_turn_udp", "reconnect_capabilities"}) + 1 == 5
-    assert len({"key", "offer", "approved", "reconnect_capabilities"}) + 1 == 5
+    from native_interop_rendezvous import CASE_COMPLETION_PHASES
+    windows = {"key", "reconnect_capabilities", *OFFER_PHASES, *("negative_checked_" + name for name in ("turn_tcp", "turn_tls", "impaired")), *CASE_COMPLETION_PHASES}
+    android = {"key", "reconnect_capabilities", "offer", "approved", "impaired_ready", *("negative_ready_" + name for name in ("turn_tcp", "turn_tls", "impaired")), *CASE_COMPLETION_PHASES}
+    assert len(windows) == 16 and len(android) == 14
+    assert len(windows) + 1 == 17 and len(android) + 1 == 15
+    quick = {"case_complete_direct_windows", "case_complete_direct_android", "case_complete_turn_udp_windows"}
+    assert len({"key", "offer", "offer_turn_udp", "reconnect_capabilities", *quick}) + 1 == 8
+    assert len({"key", "offer", "approved", "reconnect_capabilities", *quick}) + 1 == 8
     assert all(name in APPROVAL_PHASES for name in windows | android if name.startswith("negative"))
 
 
@@ -2383,3 +2496,250 @@ def test_successful_negotiate_report_never_gains_retirement_failure_fields(tmp_p
     assert "PRIVATE_" not in run.output
     # This intentionally incomplete component fixture cannot qualify native CI.
     with pytest.raises(ValueError): evidence.verify_report(run.record, "a" * 40, "b" * 40, role)
+
+
+# Derived from B's independently retained original-path reproducer; boundary models only.
+from copy import deepcopy as completion_copy
+from threading import Event, Lock, Thread
+from time import monotonic as completion_monotonic
+import native_interop_faults as completion_faults
+from native_interop_evidence import ACCOUNTING, APPLICATION
+from mesh_chat.native_path_evidence import candidate, observation, pair_token
+
+class CompletionRendezvous:
+    def seal(self, _phase, value): return completion_copy(value)
+    def open(self, _phase, value): return completion_copy(value)
+
+
+class CompletionWorld:
+    def __init__(self, mode):
+        self.mode, self.lock = mode, Lock()
+        self.live, self.blocked = True, False
+        self.events, self.documents, self.messages = [], {}, {}
+        self.records = {role: [] for role in ("windows", "android")}
+        self.counters = {role: dict.fromkeys(APPLICATION, 0) for role in self.records}
+        self.final_entered, self.fast_retired = Event(), Event()
+        self.cleanup_entered, self.cleanup_finished = Event(), Event()
+        self.final_finished = {role: Event() for role in self.records}
+        self.measurement_invalidated = self.cleanup_overtaken = False
+        self.retired_roles, self.pending = set(), []
+        self.results = {}
+        self.release_slow, self.completion_reached = Event(), Event()
+        self.prepared_roles = set()
+
+    def event(self, role, stage):
+        with self.lock: self.events.append([role, stage])
+
+    def publish(self, role, phase, value):
+        with self.lock:
+            if phase.startswith("case_complete_"):
+                assert phase == "case_complete_turn_tcp_windows" and value == {"completed": True}
+                assert role in self.prepared_roles and self.final_finished[role].is_set()
+                if role == "android": assert self.cleanup_finished.is_set()
+                self.events.append([role, "completion_publish"])
+            self.documents[role, phase] = completion_copy(value)
+        if role == "windows" and phase.startswith("case_complete_"): self.completion_reached.set()
+
+    def receive(self, role, phase):
+        until = completion_monotonic() + 3  # Harness safety bound, not a product deadline.
+        while completion_monotonic() < until:
+            with self.lock:
+                if (role, phase) in self.documents:
+                    return completion_copy(self.documents[role, phase])
+            Event().wait(.001)
+        raise AssertionError("scripted rendezvous did not receive its phase")
+
+    def enqueue(self, role, text):
+        with self.lock:
+            handle = role + ":" + str(len(self.messages))
+            self.messages[handle] = {"role": role, "text": text, "delivered": False}
+            self.records[role].append({"id": handle, "text": text, "direction": "outbound",
+                "kind": "chat", "native_message_id": "modeled-native-message"})
+            self.counters[role]["enqueued_packets"] += 1
+            self.counters[role]["enqueued_bytes"] += len(text)
+            if self.blocked: self.pending.append(handle)
+            else: self.deliver(handle)
+            return {"accepted": True, "message": handle}
+
+    def deliver(self, handle):
+        value = self.messages[handle]
+        other = "android" if value["role"] == "windows" else "windows"
+        value["delivered"] = True
+        self.records[other].append({"id": handle, "text": value["text"], "direction": "inbound", "kind": "chat"})
+        self.counters[other]["received_packets"] += 1
+        self.counters[other]["received_bytes"] += len(value["text"])
+
+    def retire(self, role):
+        with self.lock:
+            assert self.prepared_roles == {"windows", "android"}
+            assert all(gate.is_set() for gate in self.final_finished.values()) and self.cleanup_finished.is_set()
+            assert all((peer, "case_complete_turn_tcp_windows") in self.documents for peer in self.records)
+            self.events.append([role, "commit"])
+            self.live = False
+            self.retired_roles.add(role)
+
+
+class CompletionFault:
+    protocol, socket = "tcp", {"modeled_socket": True}
+    def __init__(self, peer, _sample, _url, *, diagnostics=None): self.world = peer.world
+    def block(self):
+        with self.world.lock: self.world.blocked = True
+    def unblock(self):
+        with self.world.lock:
+            self.world.blocked = False
+            count = len(self.world.pending)
+            for handle in self.world.pending: self.world.deliver(handle)
+            self.world.pending.clear()
+            return count
+    def close(self):
+        world = self.world
+        world.event("android", "fault_cleanup_entered")
+        world.cleanup_entered.set()
+        if world.mode == "cleanup":
+            assert world.release_slow.wait(6), "test did not independently release pending cleanup"
+        world.cleanup_finished.set()
+        world.event("android", "fault_cleanup_finished")
+
+
+class CompletionPeer:
+    def __init__(self, world, role):
+        self.world, self.role, self.calls = world, role, 0
+        self.service = ("a" if role == "windows" else "b") * 32
+        self.profile = ("c" if role == "windows" else "d") * 32
+        self.epoch = ("e" if role == "windows" else "f") * 32
+        self.logical, self.physical = "modeled-session-" + role, "modeled-resource-" + role
+        self.operation, self.request_id = None, None
+
+    def core(self, operation, params, key=None):
+        assert (isinstance(key, str) and len(key) == 32) if operation == "message.enqueue" else key is None
+        if operation == "call.settings_update": return {}
+        if operation == "native.command":
+            assert params["command"] == "native_webrtc_stats"
+            return {"data_channel_state": "open"}
+        if operation == "message.enqueue": return self.world.enqueue(self.role, params["text"])
+        if operation == "message.query":
+            with self.world.lock: delivered = self.world.messages[params["message"]]["delivered"]
+            return {"state": "delivered" if delivered else "pending"}
+        if operation == "application.snapshot":
+            with self.world.lock: return {"messages": completion_copy(self.world.records[self.role])}
+        raise AssertionError("unexpected modeled Core operation")
+
+    def pairing_begin(self, operation, _role, **_kwargs):
+        self.operation = operation
+        return {"operation_id": operation}
+    def pairing_status(self, operation):
+        assert operation == self.operation
+        return {"operation_id": operation, "state": "transferred", "pairing_code": "modeled-shareable-code"}
+    def pairing_cancel(self, operation):
+        assert operation == self.operation
+        return {"operation_id": operation, "state": "transferred"}
+
+    def inventory(self, *, operation_id=None, request_id=None):
+        retired = self.role in self.world.retired_roles
+        counts = dict(capacity=16, reserved_count=int(not retired), creating_count=0,
+            allocated_count=int(not retired), active_count=int(not retired), retiring_count=0)
+        value = {"service_incarnation": self.service, "profile_incarnation": self.profile,
+            "resources": [] if retired else [{"logical_session": self.logical,
+                "physical_resource": self.physical, "owner_state": "authorized"}],
+            "host_accounting": {"v": 1, "complete": True, "semantics": "native_allocation_leases",
+                "availability": dict.fromkeys(ACCOUNTING, True), **counts}}
+        if operation_id is not None:
+            assert operation_id == self.operation and request_id == self.request_id
+            value["carrier_retirement"] = {"request_id": request_id, "state": "acknowledged"}
+        return value
+
+    def path(self, logical, physical, sample_request):
+        assert (logical, physical) == (self.logical, self.physical)
+        self.calls += 1
+        if self.calls == 3:
+            self.world.event(self.role, "final_measurement_entered")
+            if self.role == "android" and self.world.mode == "measurement":
+                self.world.final_entered.set()
+                assert self.world.release_slow.wait(6), "test did not independently release final measurement"
+        with self.world.lock:
+            live, counters = self.world.live, dict(self.world.counters[self.role])
+        local = candidate("192.0.2.1", 10001, "relay", "udp")
+        remote = candidate("198.51.100.2", 10002, "relay", "udp")
+        pair = {"token": pair_token(self.epoch, physical, local, remote), "local": local, "remote": remote,
+            "nominated": True, "relay_protocol": "tcp", "relay_socket": None,
+            "bytes_sent": None, "bytes_received": None, "rtt_ms": 1.0}
+        result = observation(physical, self.epoch, self.calls, 100000, sample_request=sample_request,
+            status="selected" if live else "not_selected", ice_state="completed" if live else "closed",
+            dtls_state="connected" if live else "closed", channel_state="open" if live else "closed",
+            pair=pair if live else None, application=counters)
+        result.update(service_incarnation=self.service, profile_incarnation=self.profile,
+            logical_session=logical, qualification_only=True, valid_for_ms=2000, sample_elapsed_ms=0,
+            adopted=live, attached=live, messaging_ready=live)
+        if self.calls == 3:
+            self.world.final_finished[self.role].set()
+            self.world.event(self.role, "final_measurement_finished" if live else "final_measurement_lost")
+        return result
+
+    def retire_carrier(self, operation_id, request_id, logical_session, expected_physical,
+                       expected_service_incarnation, expected_adapter_epoch, *, action):
+        assert (operation_id, logical_session, expected_physical, expected_service_incarnation, expected_adapter_epoch) == (
+            self.operation, self.logical, self.physical, self.service, self.epoch)
+        if action == "prepare":
+            assert self.world.live and self.request_id is None
+            self.request_id = request_id
+            with self.world.lock:
+                self.world.prepared_roles.add(self.role)
+                self.world.events.append([self.role, "prepare"])
+            return {"request_id": request_id, "state": "prepared"}
+        assert action == "commit" and request_id == self.request_id
+        self.world.retire(self.role)
+        return {"request_id": request_id, "state": "pending"}
+
+
+def run_completion_pair(mode, monkeypatch):
+    world = CompletionWorld(mode)
+    monkeypatch.setattr(completion_faults, "AndroidKernelPath", CompletionFault)
+    observers = {}
+    for role in ("windows", "android"):
+        peer = CompletionPeer(world, role)
+        transport = type("Transport", (), {
+            "publish": lambda _self, phase, value, r=role: world.publish(r, phase, value),
+            "wait": lambda _self, partner, phase, **_kwargs: world.receive(partner, phase)})()
+        observer = controller.Controller(role, peer, transport, CompletionRendezvous(),
+            {"run_id": "modeled-run", "run_attempt": "1"})
+        observer.profile, observer.contact = "modeled-profile", {"id": "modeled-contact", "core_handle": "modeled-peer"}
+        observer.default_call_settings = {}
+        observer.broker_ice = {"iceServers": [{"urls": ["turn:192.0.2.1:3478?transport=tcp"],
+            "username": "modeled", "credential": "modeled"}]}
+        observers[role] = observer
+    def execute(role):
+        try:
+            observers[role].path_case("turn_tcp", "windows")
+            world.results[role] = None
+        except BaseException as error:
+            world.results[role] = error
+    workers = [Thread(target=execute, args=(role,), daemon=True) for role in observers]
+    for worker in workers: worker.start()
+    try:
+        assert world.completion_reached.wait(6), "fast controller did not publish completion"
+        gate = world.cleanup_entered if mode == "cleanup" else world.final_entered
+        assert gate.wait(3), "slow peer never reached its independent gate"
+        assert world.retired_roles == set() and world.prepared_roles == {"windows"}
+        assert ("android", "case_complete_turn_tcp_windows") not in world.documents
+    finally:
+        world.release_slow.set()
+        for worker in workers: worker.join(8)
+    assert all(not worker.is_alive() for worker in workers), "scripted controller worker remained active"
+    return world, observers
+
+
+
+
+@pytest.mark.parametrize("mode", ["measurement", "cleanup"])
+def test_two_actual_controllers_cannot_retire_before_peer_final_measurement_and_cleanup(monkeypatch, mode):
+    """Actual controller algorithms; scripted packet/host/crypto boundaries, no native proof."""
+    world, instances = run_completion_pair(mode, monkeypatch)
+    assert world.results == {"windows": None, "android": None}
+    for role, instance in instances.items():
+        assert instance.peer.calls == 3 and len(instance.cases) == 1
+        assert instance.cases[0]["owner_retirement_acknowledged"] is True
+        events = [stage for peer, stage in world.events if peer == role]
+        assert events.index("final_measurement_finished") < events.index("prepare") < events.index("completion_publish") < events.index("commit")
+    first_commit = min(index for index, event in enumerate(world.events) if event[1] == "commit")
+    assert world.events.index(["android", "fault_cleanup_finished"]) < first_commit
+    assert all(world.events.index([role, "completion_publish"]) < first_commit for role in instances)

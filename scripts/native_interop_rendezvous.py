@@ -26,7 +26,10 @@ OFFER_PHASES = {"offer", "offer_turn_udp", "offer_turn_tcp", "offer_turn_tls", "
 NEGATIVE_CASES = {"turn_tcp", "turn_tls", "impaired"}
 APPROVAL_PHASES = {"approved", "impaired_ready"} | {
     prefix + scenario for prefix in ("negative_ready_", "negative_checked_") for scenario in NEGATIVE_CASES}
-PHASES = OFFER_PHASES | APPROVAL_PHASES | {"answer", "control", "result", "reconnect_capabilities"}
+CASE_COMPLETION_PHASES = frozenset({"case_complete_direct_windows", "case_complete_direct_android",
+    "case_complete_turn_udp_windows", "case_complete_turn_tcp_windows", "case_complete_turn_tls_windows",
+    "case_complete_impaired_windows"})
+PHASES = OFFER_PHASES | APPROVAL_PHASES | CASE_COMPLETION_PHASES | {"answer", "control", "result", "reconnect_capabilities"}
 KEY_TTL = 7200
 MESSAGE_TTL = 600
 MAX_BLOB = 96 * 1024
@@ -65,6 +68,8 @@ def checked_payload(phase, value):
     if phase in OFFER_PHASES | {"answer"}:
         valid = (set(value) == {"shareable"} and isinstance(value["shareable"], str)
                  and 0 < len(value["shareable"].encode("utf-8")) <= MAX_SHAREABLE)
+    elif phase in CASE_COMPLETION_PHASES:
+        valid = type(value) is dict and set(value) == {"completed"} and value["completed"] is True
     elif phase in APPROVAL_PHASES:
         valid = set(value) == {"approved"} and type(value["approved"]) is bool
     elif phase == "reconnect_capabilities":

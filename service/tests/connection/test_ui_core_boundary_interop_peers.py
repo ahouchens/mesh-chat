@@ -56,7 +56,8 @@ RETIREMENT = {"operation_id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", "request_i
 
 @pytest.mark.parametrize("role", ["windows", "android"])
 def test_private_retirement_and_correlated_inventory_use_exact_existing_frames(role, monkeypatch):
-    responses = [{}, {"request_id": RETIREMENT["request_id"], "state": "pending"},
+    responses = [{}, {"request_id": RETIREMENT["request_id"], "state": "prepared"},
+                 {"request_id": RETIREMENT["request_id"], "state": "pending"},
                  {"carrier_retirement": {"request_id": RETIREMENT["request_id"], "state": "acknowledged"}}]
     frames = []
     if role == "windows":
@@ -73,19 +74,22 @@ def test_private_retirement_and_correlated_inventory_use_exact_existing_frames(r
             def recv(self, count): return response.read(count)
         peer.socket = Socket()
     assert peer.inventory() == responses[0]
-    assert peer.retire_carrier(**RETIREMENT) == responses[1]
+    assert peer.retire_carrier(**RETIREMENT, action="prepare") == responses[1]
+    assert peer.retire_carrier(**RETIREMENT, action="commit") == responses[2]
     correlation = {key: RETIREMENT[key] for key in ("operation_id", "request_id")}
-    assert peer.inventory(**correlation) == responses[2]
+    assert peer.inventory(**correlation) == responses[3]
     if role == "windows":
         encoded = BytesIO(streams[0].getvalue())
         while encoded.tell() < len(encoded.getvalue()): frames.append(peers.receive(encoded.read))
         assert frames == [{"v": 1, "id": f"qualification:{index}", "command": command, "payload": payload}
             for index, (command, payload) in enumerate((("qualification.inventory", {}),
-                ("qualification.retire_carrier", RETIREMENT), ("qualification.inventory", correlation)), 1)]
+                ("qualification.retire_carrier", {**RETIREMENT, "action": "prepare"}),
+                ("qualification.retire_carrier", {**RETIREMENT, "action": "commit"}), ("qualification.inventory", correlation)), 1)]
     else:
         assert frames == [{"id": f"qualification:{index}", "action": "inspect", "payload": {"command": command, "payload": payload}}
             for index, (command, payload) in enumerate((("qualification.inventory", {}),
-                ("qualification.retire_carrier", RETIREMENT), ("qualification.inventory", correlation)), 1)]
+                ("qualification.retire_carrier", {**RETIREMENT, "action": "prepare"}),
+                ("qualification.retire_carrier", {**RETIREMENT, "action": "commit"}), ("qualification.inventory", correlation)), 1)]
 
 
 @pytest.mark.parametrize("role", ["windows", "android"])
@@ -98,6 +102,8 @@ def test_private_retirement_and_correlated_inventory_use_exact_existing_frames(r
         ("nonce-subclass", "request_id", SampleRequest("d" * 32)),
         ("logical-empty", "logical_session", ""), ("logical-long", "logical_session", "x" * 129),
         ("logical-control", "logical_session", "PRIVATE\nID"), ("physical-type", "expected_physical", []),
+        ("logical-unicode", "logical_session", "PRIVATE_\u00e9"), ("physical-space", "expected_physical", "PRIVATE ID"),
+        ("physical-dot", "expected_physical", "PRIVATE.ID"), ("physical-del", "expected_physical", "PRIVATE\x7f"),
         ("service-uppercase", "expected_service_incarnation", "B" * 32),
         ("service-type", "expected_service_incarnation", True), ("adapter-short", "expected_adapter_epoch", "a" * 31),
     )
@@ -108,7 +114,7 @@ def test_invalid_retirement_target_is_rejected_before_private_io(role, field, va
     peer.private = peer._request = lambda *args, **kwargs: calls.append(args)
     payload = copy.deepcopy(RETIREMENT)
     payload[field] = value
-    with pytest.raises(peers.PeerFailure) as caught: peer.retire_carrier(**payload)
+    with pytest.raises(peers.PeerFailure) as caught: peer.retire_carrier(**payload, action="prepare")
     assert caught.value.code == "invalid_carrier_retirement_request" and calls == []
 
 
@@ -124,6 +130,30 @@ def test_correlated_inventory_cannot_omit_or_substitute_request_identity(role, c
     peer.private = peer._request = lambda *args, **kwargs: calls.append(args)
     with pytest.raises(peers.PeerFailure): peer.inventory(**correlation)
     assert calls == []
+
+
+@pytest.mark.parametrize("role", ["windows", "android"])
+@pytest.mark.parametrize("action", [None, "abort", "pending", "Prepare", True, 1, [], SampleRequest("prepare")])
+def test_private_retirement_requires_exact_prepare_or_commit_before_io(role, action):
+    peer = object.__new__(peers.WindowsPeer if role == "windows" else peers.AndroidPeer)
+    calls = []
+    peer.private = peer._request = lambda *args, **kwargs: calls.append(args)
+    with pytest.raises(peers.PeerFailure): peer.retire_carrier(**RETIREMENT, action=action)
+    assert calls == []
+
+
+@pytest.mark.parametrize("role", ["windows", "android"])
+def test_missing_retirement_action_cannot_silently_use_legacy_one_step(role):
+    peer = object.__new__(peers.WindowsPeer if role == "windows" else peers.AndroidPeer)
+    calls = []
+    peer.private = peer._request = lambda *args, **kwargs: calls.append(args)
+    with pytest.raises(peers.PeerFailure): peer.retire_carrier(**RETIREMENT)
+    assert calls == []
+
+
+def test_retirement_identifier_accepts_exact_existing_ascii_bound():
+    target = {**RETIREMENT, "logical_session": "A" * 126 + "_-", "expected_physical": "9" * 128}
+    assert peers.retirement_payload(**target, action="prepare") == {**target, "action": "prepare"}
 
 
 @pytest.mark.parametrize("role", ["windows", "android"])

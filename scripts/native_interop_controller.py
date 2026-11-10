@@ -34,6 +34,7 @@ FAILURE_SUBSTAGES = frozenset({
     "carrier_identity_check", "path_inventory", "path_read", "path_validation",
 })
 RETIREMENT_COUNTS = ("reserved_count", "creating_count", "allocated_count", "active_count", "retiring_count")
+RETIREMENT_STAGES = frozenset({"prepare", "completion_publish", "completion_receive", "commit", "poll"})
 
 
 def retirement_failure_snapshot(value):
@@ -41,12 +42,12 @@ def retirement_failure_snapshot(value):
     if (type(value) is not dict or set(value) != fields
             or type(value["scenario"]) is not str or value["scenario"] not in SCENARIOS[:5]
             or type(value["initiator"]) is not str or value["initiator"] not in {"windows", "android"}
-            or type(value["stage"]) is not str or value["stage"] not in {"request", "poll"}
+            or type(value["stage"]) is not str or value["stage"] not in RETIREMENT_STAGES
             or type(value["polls"]) is not int or not 0 <= value["polls"] <= 128
             or type(value["polls_capped"]) is not bool or (value["polls_capped"] and value["polls"] != 128)):
         return None
     last = value["last_observation"]
-    if value["stage"] == "request" and (value["polls"] != 0 or last is not None): return None
+    if value["stage"] != "poll" and (value["polls"] != 0 or value["polls_capped"] or last is not None): return None
     if last is not None:
         if (value["polls"] == 0 or type(last) is not dict
                 or set(last) != {"state", "resource_count", "resources_capped", "counts"}
@@ -60,11 +61,11 @@ def retirement_failure_snapshot(value):
     return {**value, "last_observation": last}
 
 
-def carrier_retirement_state(value, request_id, *, admission=False):
+def carrier_retirement_state(value, request_id, *, admission=None):
     if (type(value) is not dict or set(value) != {"request_id", "state"}
             or type(value["request_id"]) is not str or value["request_id"] != request_id
             or type(value["state"]) is not str
-            or value["state"] not in ({"pending"} if admission else {"pending", "acknowledged"})):
+            or value["state"] not in ({admission} if admission is not None else {"pending", "acknowledged"})):
         raise PeerFailure("invalid_carrier_retirement_reply")
     return value["state"]
 
@@ -268,9 +269,9 @@ class Controller:
         with self._failure_scope("rendezvous_publish"):
             self.transport.publish(phase, self.rendezvous.seal(phase, value))
 
-    def receive(self, phase):
+    def receive(self, phase, *, timeout=180):
         with self._failure_scope("rendezvous_receive"):
-            return self.rendezvous.open(phase, self.transport.wait(self.partner, phase, timeout=180))
+            return self.rendezvous.open(phase, self.transport.wait(self.partner, phase, timeout=timeout))
 
     def initialize(self):
         from mesh_chat.call_settings import DEFAULT_SIGNAL_MAILBOX_URL, DEFAULT_TURN_BROKER_URL, DEFAULT_STUN_URLS
@@ -566,14 +567,25 @@ class Controller:
                 with negative_control_stage(self._negative_diagnostics, "fault_cleanup"): fault.close()
         self._negative_diagnostics = reset_negative_control(self._negative_diagnostics)
         self.phase = scenario + "_native_lease_retirement"
-        self._retirement_context = {"scenario": scenario, "initiator": initiator, "stage": "request",
+        self._retirement_context = {"scenario": scenario, "initiator": initiator, "stage": "prepare",
             "polls": 0, "polls_capped": False, "last_observation": None}
         try:
             operation_id, request_id = self.pairing, os.urandom(16).hex()
             expected_service, expected_profile = after["service_incarnation"], after["profile_incarnation"]
-            reply = self.peer.retire_carrier(operation_id, request_id, after["logical_session"], after["resource"],
-                expected_service, after["adapter_epoch"])
-            carrier_retirement_state(reply, request_id, admission=True)
+            target = {"operation_id": operation_id, "request_id": request_id,
+                "logical_session": after["logical_session"], "expected_physical": after["resource"],
+                "expected_service_incarnation": expected_service, "expected_adapter_epoch": after["adapter_epoch"]}
+            carrier_retirement_state(self.peer.retire_carrier(**target, action="prepare"), request_id, admission="prepared")
+            phase = "case_complete_" + scenario + "_" + initiator
+            self._retirement_context["stage"] = "completion_publish"
+            self.publish(phase, {"completed": True})
+            self._retirement_context["stage"] = "completion_receive"
+            remaining = min(180, self.deadline - time.monotonic())
+            if remaining <= 0: raise PeerFailure("scenario_deadline")
+            marker = checked_payload(phase, self.receive(phase, timeout=remaining))
+            if marker != {"completed": True}: raise ValueError("Peer case completion is missing")
+            self._retirement_context["stage"] = "commit"
+            carrier_retirement_state(self.peer.retire_carrier(**target, action="commit"), request_id, admission="pending")
             self._retirement_context["stage"] = "poll"
             self.cases[-1]["retired_host_accounting"] = self.wait(lambda: self.retired(
                 operation_id=operation_id, request_id=request_id, expected_service=expected_service,
@@ -647,7 +659,7 @@ class Controller:
         self.transport.publish("key", self.rendezvous.public_manifest())
         self.rendezvous.bind_partner(self.transport.wait(self.partner, "key", timeout=900))
         # Both roles execute this fixed source-bound inventory. Keep bootstrap
-        # uploads bounded at Windows 10 / Android 8 (quick 4 each), plus one final report.
+        # uploads bounded at Windows 16 / Android 14 (quick 7 each), plus one final report.
         for scenario, initiator in self.workload["paths"]: self.path_case(scenario, initiator)
         self.cold_starts()
         self.phase = "clean_host_retirement"
