@@ -2,6 +2,7 @@
 
 from io import BytesIO
 import json
+import copy
 import os
 from pathlib import Path
 import socket
@@ -46,6 +47,83 @@ def test_private_path_framing_threads_exact_invocation_challenge(role, monkeypat
 
 
 class SampleRequest(str): pass
+
+
+RETIREMENT = {"operation_id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", "request_id": "d" * 32,
+    "logical_session": "PRIVATE_LOGICAL", "expected_physical": "PRIVATE_PHYSICAL",
+    "expected_service_incarnation": "b" * 32, "expected_adapter_epoch": "a" * 32}
+
+
+@pytest.mark.parametrize("role", ["windows", "android"])
+def test_private_retirement_and_correlated_inventory_use_exact_existing_frames(role, monkeypatch):
+    responses = [{}, {"request_id": RETIREMENT["request_id"], "state": "pending"},
+                 {"carrier_retirement": {"request_id": RETIREMENT["request_id"], "state": "acknowledged"}}]
+    frames = []
+    if role == "windows":
+        peer, streams, _ = windows_fixture(monkeypatch)
+        for index, result in enumerate(responses, 1):
+            peer._responses.put({"id": f"qualification:{index}", "ok": True, "result": result})
+    else:
+        peer = peers.AndroidPeer(b"k" * 32)
+        response = BytesIO(b"".join(peers.encode({"id": f"qualification:{index}", "ok": True, "result": result})
+                                  for index, result in enumerate(responses, 1)))
+        class Socket:
+            def settimeout(self, value): assert 0 < value <= 60
+            def sendall(self, value): frames.append(peers.receive(BytesIO(value).read))
+            def recv(self, count): return response.read(count)
+        peer.socket = Socket()
+    assert peer.inventory() == responses[0]
+    assert peer.retire_carrier(**RETIREMENT) == responses[1]
+    correlation = {key: RETIREMENT[key] for key in ("operation_id", "request_id")}
+    assert peer.inventory(**correlation) == responses[2]
+    if role == "windows":
+        encoded = BytesIO(streams[0].getvalue())
+        while encoded.tell() < len(encoded.getvalue()): frames.append(peers.receive(encoded.read))
+        assert frames == [{"v": 1, "id": f"qualification:{index}", "command": command, "payload": payload}
+            for index, (command, payload) in enumerate((("qualification.inventory", {}),
+                ("qualification.retire_carrier", RETIREMENT), ("qualification.inventory", correlation)), 1)]
+    else:
+        assert frames == [{"id": f"qualification:{index}", "action": "inspect", "payload": {"command": command, "payload": payload}}
+            for index, (command, payload) in enumerate((("qualification.inventory", {}),
+                ("qualification.retire_carrier", RETIREMENT), ("qualification.inventory", correlation)), 1)]
+
+
+@pytest.mark.parametrize("role", ["windows", "android"])
+@pytest.mark.parametrize("field,value", [
+    pytest.param(field, value, id=label) for label, field, value in (
+        ("operation-none", "operation_id", None), ("operation-shape", "operation_id", "PRIVATE_BAD_UUID"),
+        ("operation-uppercase", "operation_id", RETIREMENT["operation_id"].upper()),
+        ("nonce-none", "request_id", None), ("nonce-bool", "request_id", True),
+        ("nonce-short", "request_id", "d" * 31), ("nonce-uppercase", "request_id", "D" * 32),
+        ("nonce-subclass", "request_id", SampleRequest("d" * 32)),
+        ("logical-empty", "logical_session", ""), ("logical-long", "logical_session", "x" * 129),
+        ("logical-control", "logical_session", "PRIVATE\nID"), ("physical-type", "expected_physical", []),
+        ("service-uppercase", "expected_service_incarnation", "B" * 32),
+        ("service-type", "expected_service_incarnation", True), ("adapter-short", "expected_adapter_epoch", "a" * 31),
+    )
+])
+def test_invalid_retirement_target_is_rejected_before_private_io(role, field, value):
+    peer = object.__new__(peers.WindowsPeer if role == "windows" else peers.AndroidPeer)
+    calls = []
+    peer.private = peer._request = lambda *args, **kwargs: calls.append(args)
+    payload = copy.deepcopy(RETIREMENT)
+    payload[field] = value
+    with pytest.raises(peers.PeerFailure) as caught: peer.retire_carrier(**payload)
+    assert caught.value.code == "invalid_carrier_retirement_request" and calls == []
+
+
+@pytest.mark.parametrize("role", ["windows", "android"])
+@pytest.mark.parametrize("correlation", [
+    {"operation_id": RETIREMENT["operation_id"]}, {"request_id": RETIREMENT["request_id"]},
+    {"operation_id": "PRIVATE_BAD_UUID", "request_id": RETIREMENT["request_id"]},
+    {"operation_id": RETIREMENT["operation_id"], "request_id": "D" * 32},
+])
+def test_correlated_inventory_cannot_omit_or_substitute_request_identity(role, correlation):
+    peer = object.__new__(peers.WindowsPeer if role == "windows" else peers.AndroidPeer)
+    calls = []
+    peer.private = peer._request = lambda *args, **kwargs: calls.append(args)
+    with pytest.raises(peers.PeerFailure): peer.inventory(**correlation)
+    assert calls == []
 
 
 @pytest.mark.parametrize("role", ["windows", "android"])
