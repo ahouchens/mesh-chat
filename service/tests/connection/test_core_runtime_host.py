@@ -231,6 +231,92 @@ def test_unlock_completion_failure_reuses_consumed_credential_without_second_ope
     assert len(r["loads"]) == before
 
 
+def test_generic_completion_uncertainty_fences_new_lifecycle_identity(runtime, monkeypatch):
+    r = runtime
+    original = r["meta"].conditional_put_and_delete
+    def fail_completion(expected, records, *args, **kwargs):
+        records = list(records)
+        if records and records[0][2].get("state") == "complete":
+            raise OSError("completion custody remains in lifecycle")
+        return original(expected, records, *args, **kwargs)
+    monkeypatch.setattr(r["meta"], "conditional_put_and_delete", fail_completion)
+    params = {"profile": r["profiles"]["alpha"]}
+    assert r["invoke"]("profile.lock", params, "generic-fenced-original-key")["error"]["code"] == "unavailable"
+    status = r["host"].lifecycle.query()
+    target = {"profile": r["profiles"]["beta"]}
+    assert r["invoke"]("profile.select", target, "generic-overtaking-new-key")["error"]["code"] == "unavailable"
+    assert r["host"].lifecycle.query() == status
+    monkeypatch.setattr(r["meta"], "conditional_put_and_delete", original)
+    assert r["invoke"]("profile.lock", params, "generic-fenced-original-key")["ok"]
+    assert r["invoke"]("profile.select", target, "generic-overtaking-new-key")["ok"]
+
+
+@pytest.mark.parametrize("operation", ["profile.lock", "profile.unlock"])
+def test_new_wrong_selected_target_is_rejected_before_admission(runtime, operation):
+    r = runtime
+    before = r["host"].lifecycle.query()
+    params = {"profile": r["profiles"]["beta"]}
+    if operation == "profile.unlock":
+        params["credential_handle"] = r["host"].issue_unlock_credential(r["grants"][0].caller, "beta")
+    assert r["invoke"](operation, params, "wrong-unselected-target-key")["error"]["code"] == "invalid_request"
+    assert r["host"].lifecycle.query() == before
+    assert not r["meta"].list("host_profile_operation")
+    assert r["host"].profile_intents.ledger.slot() is None
+    assert r["invoke"]("profile.lock", {"profile": r["profiles"]["alpha"]}, "later-valid-alpha-lock-key")["ok"]
+    assert r["invoke"]("profile.select", {"profile": r["profiles"]["beta"]}, "later-valid-beta-select-key")["ok"]
+
+
+def test_new_post_admission_grant_denial_records_no_effect_and_releases_slot(runtime, monkeypatch):
+    r = runtime
+    original = r["meta"].conditional_put_and_delete
+    revoked = []
+    original_grant = r["grants"][0]
+    before = r["host"].lifecycle.query()
+    def revoke_after_admission(expected, records, *args, **kwargs):
+        records = list(records)
+        result = original(expected, records, *args, **kwargs)
+        if not revoked and records and records[0][2].get("state") == "intent":
+            revoked.append(True)
+            r["grants"][0] = replace(original_grant, permissions=frozenset())
+        return result
+    monkeypatch.setattr(r["meta"], "conditional_put_and_delete", revoke_after_admission)
+    params = {"profile": r["profiles"]["alpha"]}
+    assert r["invoke"]("profile.lock", params, "revoked-before-first-effect")["error"]["code"] == "forbidden"
+    assert r["host"].lifecycle.query() == before and not r["first"]._store_closed
+    assert r["meta"].list("host_profile_operation")[0]["state"] == "rejected_no_effect"
+    assert r["host"].profile_intents.ledger.slot() is None
+    r["grants"][0] = original_grant
+    assert r["invoke"]("profile.lock", params, "revoked-before-first-effect")["error"]["code"] == "forbidden"
+    assert r["invoke"]("profile.lock", params, "different-valid-effect-key")["ok"]
+
+
+def test_later_pre_effect_denial_does_not_release_earlier_generic_uncertainty(runtime, monkeypatch):
+    r = runtime
+    original = r["meta"].conditional_put_and_delete
+    original_grant = r["grants"][0]
+    attempts = []
+    def uncertain_then_revoke(expected, records, *args, **kwargs):
+        records = list(records)
+        result = original(expected, records, *args, **kwargs)
+        if records and records[0][2].get("state") == "intent":
+            attempts.append(True)
+            if len(attempts) == 1:
+                raise OSError("admission committed but return lost")
+            r["grants"][0] = replace(original_grant, permissions=frozenset())
+        return result
+    monkeypatch.setattr(r["meta"], "conditional_put_and_delete", uncertain_then_revoke)
+    params = {"profile": r["profiles"]["alpha"]}
+    key = "earlier-ambiguous-admission"
+    assert r["invoke"]("profile.lock", params, key)["error"]["code"] == "unavailable"
+    assert r["invoke"]("profile.lock", params, key)["error"]["code"] == "forbidden"
+    assert r["meta"].list("host_profile_operation")[0]["state"] == "intent"
+    assert r["host"].profile_intents.ledger.slot() is not None
+    r["grants"][0] = original_grant
+    monkeypatch.setattr(r["meta"], "conditional_put_and_delete", original)
+    assert r["invoke"]("profile.select", {"profile": r["profiles"]["beta"]}, "must-not-discard-uncertainty")["error"]["code"] == "unavailable"
+    assert r["invoke"]("profile.lock", params, key)["ok"]
+
+
 def test_superseded_or_old_host_epoch_receipt_never_reopens(runtime):
     r = runtime
     profile = r["profiles"]["alpha"]
