@@ -59,8 +59,13 @@ are modeled in those focused suites. Reviewed composition `ce4b9c4` additionally
 passes 28 actual Windows localhost host controls for both role labels, preserving
 all 18 prior cases. It covers retained native cleanup proof across late commit;
 approval/Reticulum remain modeled. It does not establish Android/JNI, full
-controller/path-case or authenticated message receipts. Fresh combined local and
-full qualification remain pending.
+controller/path-case or authenticated message receipts. Combined local gates
+pass at `30c9e4d`. Full run `42886878229` again passes installed Windows public
+pairing, two receipts and the same-application lifetime slice, together with all
+other non-native families. Native Android fails in initialization with `internal`;
+Windows later reports `RendezvousUnavailable`. The exact Android operation and
+cause are unclassified. Full cross-platform and isolated-helper acceptance remain
+open; the private controller diagnostics do not extend public SDK support.
 No public API/grant, timeout, authority or negative-control relaxation is assigned.
 
 Checkpoint `36466e0` full run `42843336931` again verifies the installed Windows

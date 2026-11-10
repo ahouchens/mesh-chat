@@ -20,7 +20,50 @@ and scenario rows below to complete; their named remaining obligations still
 apply, including packaged cross-platform transport and unavailable physical
 qualification.
 
-The latest completed checkpoint is `ccd3b5164181aae6de47e1a939f52a2a05464378`
+The latest completed checkpoint is `30c9e4d996715aec9459da803119d1697bfba086`
+(tree `3e30ef753eef5ab20940bbb242494f715a9f81d2`). The reviewed private v2
+producer, controller and 28-case real Windows composition are integrated.
+Fresh local SDK staging and strict policy types pass, alongside **5,311 required
+policy cases**, **1,657 Python UI + 12 rendered cases** and **nine Windows
+boundary cases**, without required skips. The full local service inventory is
+**6,541 passing cases and 49 unchanged optional/platform skips**, zero failures
+or errors. All 28 composition controls pass; prior inventories remain present
+after the 16 explicitly recorded earlier uploader-vector renames.
+
+Full manual run
+[42886878229](https://github.com/ahouchens/mesh-chat/actions/runs/42886878229)
+completed **failed** on November 10 at 20:13:24 UTC. All non-native families
+pass and their retained evidence independently validates: exact local/CI policy
+inventory parity, the UI/Windows boundaries, packaged Windows and installed
+public-SDK pairing/two receipts/same-application lifetime, **52 Android emulator
+cases**, **71 JVM cases**, all **17 Android distribution hashes**, and both
+Linux and Windows **25 transport + 10 recovery + 12 setup cases** without skips.
+The 72 layout report cases show no overflow; screenshots were not visually
+reviewed. General CI verification passes, but the exact broader service counts
+above belong to the independently retained local run. Existing separate-caller,
+process, helper-retirement, physical and media limits remain unchanged.
+
+Native Android reports `initialize` / `PeerFailure` / `internal`. Windows later
+reports `initialize` / `RendezvousUnavailable`. Both reports are hash-verified;
+neither retains successful native scenario rows, paired authenticated receipts,
+cold-restart iterations or final zero accounting. The initialization phase spans
+peer startup, five Core setup operations, ordinary inventory and the initial
+key publication/partner binding. It does not identify the failing Android call.
+Bounded in-memory inspection of both job logs exposes no fixed failure message,
+script frame or additional safe discriminator. No aggregate acceptance follows.
+
+Independent producer and consumer source audits find no concrete new defect
+explaining this failure. Startup errors ordinarily become
+`android_host_start_failed`; a later correlated Core `internal` response is a
+source-consistent route, not a retained operation trace. An unchanged broker
+credential error path is one possibility, not the selected cause. The next
+bounded change adds fixed initialization call-site failure labels with the same
+escaping error, call order, cleanup and budgets. It adds no probe, retry, raw
+exception text, credential export or Core error remapping. A Core call-site
+label cannot distinguish the SDK's implicit capability request from its requested
+operation. Bootstrap retirement remains deferred until full native qualification.
+
+The preceding checkpoint is `ccd3b5164181aae6de47e1a939f52a2a05464378`
 (tree `39fd544a48f0461a4828f3f6339d274902f9e7b1`). Reviewed fixture
 serialization `c4e6036` is integrated. Fresh SDK staging and strict policy types
 pass; **5,068 required policy cases**, **1,482 Python UI + 12 rendered cases**
@@ -132,8 +175,8 @@ negative to exercise initial preparation; both variants and the complete suite
 pass on the corrected commit. No native receipt, owner generation, acknowledgment
 or zero count is synthesized. Approval/Reticulum boundaries remain modeled and
 runtime steps are driven synchronously; this is not Android/JNI, authenticated
-message receipt, full controller/path-case or packaged qualification. Fresh
-combined local and full native qualification remain pending. No public SDK/grant, JNI/host protocol, timeout,
+message receipt, full controller/path-case or packaged qualification. Combined local qualification passes at `30c9e4d`; its full native run fails
+during initialization as recorded above. No public SDK/grant, JNI/host protocol, timeout,
 retry-budget, kernel-drop, receipt or global-zero relaxation is assigned. Bootstrap retirement remains
 deferred until full native qualification.
 

@@ -59,8 +59,13 @@ are implemented and source-reviewed together at `6459710`. Reviewed composition
 `ce4b9c4` passes 28 controls with actual Windows localhost native hosts for both
 role labels, including late commit and raw closed delivery after mapping release.
 Approval/Reticulum boundaries remain modeled. This is not Android/JNI, full
-controller/path-case or packaged acceptance; full native qualification remains
-pending. The
+controller/path-case or packaged acceptance. Combined local qualification at
+`30c9e4d` passes 5,311 policy cases, 1,657 Python UI + 12 rendered cases, nine
+Windows boundary cases and all 28 composition controls. Full run `42886878229`
+passes all non-native families but fails native initialization: Android reports
+`PeerFailure/internal`, Windows later `RendezvousUnavailable`. The phase spans
+several setup calls and the initial key exchange; the failing Android operation
+and inner cause remain unidentified. No full native acceptance is established. The
 `qualification.retire_carrier` request has exactly `action`, `operation_id`,
 `request_id`, `logical_session`, `expected_physical`,
 `expected_service_incarnation` and `expected_adapter_epoch`. Action is exactly
