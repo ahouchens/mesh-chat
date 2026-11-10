@@ -11,6 +11,52 @@ reports. Exact evidence and limits are in the ledger. Wave 2 is activated below.
 Existing human authorization covers continued implementation, integration and
 worker follow-ups without another permission request.
 
+The latest qualification checkpoint is
+`606f68df05cd0538dbff0b76e6c6745eeda4c24b` (tree
+`7c3cdde2a07108df9c9f8ec58852b98f286bc10c`). Full manual qualification
+[42776359931](https://github.com/ahouchens/mesh-chat/actions/runs/42776359931)
+completed **failed** in the required Android gate. All six families and native
+`full` were selected. Native interoperability was **skipped** because Android
+failed; neither reserved-only creation waiting nor the preceding pending-adoption
+repair received device qualification in this run. Duplicate PR run `42776365861`
+was confirmed canceled. No aggregate pass or acceptance promotion is claimed.
+
+Exact-source local SDK staging, strict types, **4,129 policy cases**, **912 Python
+plus 12 rendered UI cases** and **nine Windows boundary cases** passed with zero
+skips. Policy completed in 406.95 seconds. The inventory adds exactly 46
+controller cases and 11 actual-Core allocation cases to the prior checkpoint,
+removing none. CI independently verifies the identical policy inventory, UI
+results and packaged Windows reports, including independent public-SDK bootstrap,
+pairing and two authenticated receipts. These Windows reports precede the planned
+shared-host SDK-session lifetime scenario and do not qualify it.
+
+Both Linux and Windows direct reports independently verify **25 fabric, 10
+recovery and 12 setup cases** with zero skips. Layout reports 72 cases without
+overflow; all archive entries were hashed, but PNGs were not retained or visually
+reviewed. The tested Windows sidecar remains 54,599,551 bytes, SHA-256
+`4abb51d142a5d747f21832120fe2b86d8393c6735fa75faaa9e8be03a3ecf28f`.
+WebView2 probe and direct binary hashes retain their runner-claim limitations.
+
+Android failed-run diagnostics independently reconstruct **51 passing and one
+failing report among 52 required emulator cases**, with no missing/unvalidated
+reports, plus **62 passing JVM cases** with zero skips. Seventeen inventory
+artifact hashes match the retained debug archive. This is failed-run diagnostic
+evidence, not Android platform, cleanup or overall acceptance. The failing case is
+`SignalMailboxAndroidTest.sharedRuntimeAdoptsVerifiedManualNativeCarrierWithoutMailbox.none`.
+The retained stack reaches `run_manual_native_adoption` line 484's replacement
+offer, then `_claim_native_session` and `NativeResourceRegistry.reserve`, which
+raises `NativeUnavailable: Native resource reservation unavailable`.
+
+The fixture waits for absence from the live-routing set before reusing the
+logical session. Production deliberately removes routing before confirming
+physical disposal and releasing the reservation. This identifies a plausible
+fixture observation gap, not proof of the precise native callback ordering or
+the registry's duplicate-versus-capacity branch in this run. C is tracing a
+bounded regression and exact completion predicate; no early resource reuse,
+capacity relaxation or arbitrary retry is authorized. D separately implements
+the frozen Windows shared-host SDK-session lifetime test, whose scope excludes
+independent consumer-process exit and isolated-bootstrap-helper retirement.
+
 The reserved-creation follow-up is integrated: controller `a872e7f` and
 allocation regressions `a92e69a` are combined at `24f0b1b`. The lead
 reviewed the changes and independently ran **522 focused cases**, all passing
@@ -25,9 +71,10 @@ states and malformed metadata preserve their original behavior; retirement,
 foreign operation identity and stats failures still propagate. No extra RPC,
 exception retry, owner, timer, authority grant or public contract is introduced.
 Stats success still does not establish approval, attachment or messaging readiness.
-Exact-source local and full CI qualification of this follow-up is required.
+Exact-source local gates passed; the full CI outcome and its Android failure
+are recorded above. Native qualification remains open.
 
-The current shared checkpoint is `82aaf19c3671777724d7da5e8cab0e5b2a5d6de2`
+The previous shared checkpoint is `82aaf19c3671777724d7da5e8cab0e5b2a5d6de2`
 (tree `c489caaa361329d9dd50d1d26590bbe2d691fdd8`). Full manual qualification
 [42770728559](https://github.com/ahouchens/mesh-chat/actions/runs/42770728559)
 completed **failed** in native interoperability. All six families and the native
