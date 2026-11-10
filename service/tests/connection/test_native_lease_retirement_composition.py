@@ -6,8 +6,11 @@ Controller.path_case/exchange, establish message receipts, or qualify Android or
 packaged transports. The future per-case retirement port is not faked here.
 """
 import asyncio
+import base64
+from contextlib import contextmanager
 from copy import deepcopy
 import json
+import os
 from pathlib import Path
 import sys
 from threading import Event
@@ -21,22 +24,72 @@ import RNS
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 from native_interop_controller import Controller
 from mesh_chat.core_api.composition import bind_service_session
-from mesh_chat.core_api.qualification_host import QualificationControl
+from mesh_chat.core_api.qualification_host import (
+    QualificationControl, mark_initialized_profile, reserve_fresh_profile,
+)
 from mesh_chat.core_api.session import Grant
+from mesh_chat.errors import ContactNotApproved
 from mesh_chat.native_windows_webrtc import WindowsNativeWebRTCHost
 from test_pairing_runtime import native_pairing
 from test_reconnect_service import _add_contact
+
+
+@contextmanager
+def owned_cleanup():
+    """Attempt every exact owner; preserve primary failure and secondary facts."""
+    callbacks = []
+    def register(priority, label, close):
+        callbacks.append((priority, label, close))
+    def finish():
+        failures = []
+        for _, label, close in sorted(callbacks, key=lambda item: item[0]):
+            try:
+                close()
+            except BaseException as error:
+                error.add_note("fixture cleanup: " + label)
+                failures.append(error)
+        return failures
+    try:
+        yield register
+    except BaseException as primary:
+        failures = finish()
+        if failures:
+            primary.fixture_cleanup_failures = tuple(failures)
+            for error in failures:
+                primary.add_note("secondary fixture cleanup failure: " + type(error).__name__
+                                 + "; " + error.__notes__[-1])
+        raise
+    else:
+        failures = finish()
+        if failures:
+            raise BaseExceptionGroup("fixture cleanup failed", failures)
+
+
+def qualified_service(create, directory, register, role):
+    key = os.urandom(32)
+    initial = {"v": 1, "command": "initialize", "payload": {
+        "profile_dir": str(directory), "vault_key": base64.b64encode(key).decode(),
+        "display_name": "Mesh qualification", "parent_pid": os.getpid()}}
+    reserve_fresh_profile(initial)
+    service, *_ = create(directory, key)
+    register(0, role + " service.close", service.close)
+    mark_initialized_profile(initial)
+    return service
 
 
 class ServicePeer:
     """Forward the controller's existing private binding, without DTO substitutes."""
     def __init__(self, service, *, private_native=True):
         self.service = service
-        self.port = QualificationControl(lambda: service)
+        self.authorized = Event()
+        self.authorized.set()
+        self.port = QualificationControl(lambda: service, authorize=self.authorized.is_set,
+                                         caller="lease-composition")
         self.session = bind_service_session(service, lambda: Grant(
             "lease-composition", frozenset({"observe", "approve", "read"}), ("local",)),
             private_native=private_native)
         self.replies = []
+        self.contexts = {}
         assert self.request("runtime.capabilities")["ok"]
 
     def request(self, operation, params=None, key=None):
@@ -60,6 +113,26 @@ class ServicePeer:
             "logical_session": logical, "expected_physical": physical,
             "sample_request": sample_request})
 
+    def pairing_begin(self, operation, role, *, pairing_code=None, direct=True):
+        payload = {"operation_id": operation, "role": role, "allow_direct_ip_disclosure": direct}
+        if pairing_code is not None:
+            payload["pairing_code"] = pairing_code
+        before = set(getattr(self.service, "_native_pairing_contexts", {}))
+        result = self.port.dispatch("qualification.pairing_begin", payload)
+        if operation not in self.contexts:
+            created = set(self.service._native_pairing_contexts) - before
+            assert len(created) == 1
+            # Observe the actual newly derived context; never derive authority,
+            # write its state or insert an adopted/retired owner in the fixture.
+            self.contexts[operation] = self.service._native_pairing_contexts[created.pop()]
+        return result
+
+    def pairing_status(self, operation):
+        return self.port.dispatch("qualification.pairing_status", {"operation_id": operation})
+
+    def pairing_cancel(self, operation):
+        return self.port.dispatch("qualification.pairing_cancel", {"operation_id": operation})
+
 
 def drive(services, condition, *, timeout=12):
     deadline = monotonic() + timeout
@@ -79,33 +152,33 @@ def drive(services, condition, *, timeout=12):
 
 
 @pytest.fixture
-def manual_carriers(native_pairing, monkeypatch, initiator):
+def manual_carriers(native_pairing, monkeypatch, initiator, tmp_path):
     # No STUN/TURN, mailbox HTTP or off-host packets. Only host-address discovery
     # is constrained; real aiortc/Windows host creation and disposal execute.
     import aioice.ice
     monkeypatch.setattr(aioice.ice, "get_host_addresses", lambda *_a, **_k: ["127.0.0.1"])
     create, _ = native_pairing
-    services, hosts = {}, {}
-    for role in ("windows", "android"):
-        service, *_ = create()
-        service.update_call_settings({**service._call_settings.to_dict(), "stun_urls": [],
-            "turn_url": None, "turn_username": None, "turn_credential": None,
-            "turn_broker_url": None, "turn_broker_consent": False, "relay_only": False})
-        host = WindowsNativeWebRTCHost(service.native_webrtc_event)
-        service._native_host = host
-        services[role], hosts[role] = service, host
-    try:
+    services, hosts, peers = {}, {}, {}
+    with owned_cleanup() as register:
+        for role in ("windows", "android"):
+            service = qualified_service(create, tmp_path / ("mesh-qualification-" + role), register, role)
+            service.update_call_settings({**service._call_settings.to_dict(), "stun_urls": [],
+                "turn_url": None, "turn_username": None, "turn_credential": None,
+                "turn_broker_url": None, "turn_broker_consent": False, "relay_only": False})
+            host = WindowsNativeWebRTCHost(service.native_webrtc_event)
+            register(1, role + " host.shutdown", host.shutdown)
+            service._native_host = host
+            services[role], hosts[role] = service, host
+            peers[role] = ServicePeer(service)
         other = "android" if initiator == "windows" else "windows"
         intents = {role: str(uuid4()) for role in services}
-        offer, answer = services[initiator], services[other]
-        offer.native_pairing_begin(intents[initiator], role="offer", authorized=lambda: True,
-                                   allow_direct_ip_disclosure=True)
-        drive(services, lambda: bool(offer.native_pairing_status(intents[initiator])["pairing_code"]))
-        code = offer.native_pairing_status(intents[initiator])["pairing_code"]
-        answer.native_pairing_begin(intents[other], role="answer", pairing_code=code,
-                                    authorized=lambda: True, allow_direct_ip_disclosure=True)
-        drive(services, lambda: answer.native_pairing_status(intents[other])["state"] == "awaiting_approval")
-        drive(services, lambda: offer.native_pairing_status(intents[initiator])["state"] == "awaiting_approval")
+        offer, answer = peers[initiator], peers[other]
+        offer.pairing_begin(intents[initiator], "offer")
+        drive(services, lambda: bool(offer.pairing_status(intents[initiator])["pairing_code"]))
+        code = offer.pairing_status(intents[initiator])["pairing_code"]
+        answer.pairing_begin(intents[other], "answer", pairing_code=code)
+        drive(services, lambda: answer.pairing_status(intents[other])["state"] == "awaiting_approval")
+        drive(services, lambda: offer.pairing_status(intents[initiator])["state"] == "awaiting_approval")
         contacts = {}
         for role, service in services.items():
             peer = services["android" if role == "windows" else "windows"]
@@ -116,7 +189,7 @@ def manual_carriers(native_pairing, monkeypatch, initiator):
         for role, service in services.items():
             other_role = "android" if role == "windows" else "windows"
             peer = services[other_role]
-            context = service._native_pairing_contexts[intents[role]]
+            context = peers[role].contexts[intents[role]]
             capability = peer._reconnect_profile_for_contact(contacts[other_role])["local_capabilities"]
             service._native_control_receive(context["session"], "mesh-onboarding", json.dumps({
                 "type": "connection_capabilities", "document": capability}))
@@ -134,22 +207,48 @@ def manual_carriers(native_pairing, monkeypatch, initiator):
                 path_known=lambda _: True, recipient_ready=lambda _: True,
                 invitation_hints=lambda: [], shutdown=lambda: True)
         def adopted():
-            return all(service._native_pairing_contexts[intents[role]]["state"] == "transferred"
-                and service._native_carrier_authorized(service._native_pairing_contexts[intents[role]]["session"])
+            return all(peers[role].pairing_status(intents[role])["state"] == "transferred"
+                and service._native_carrier_authorized(peers[role].contexts[intents[role]]["session"])
                 for role, service in services.items())
         drive(services, adopted)
-        peers = {role: ServicePeer(service) for role, service in services.items()}
         controllers = {role: Controller(role, peers[role], None, None, {}) for role in services}
-        sessions = {role: service._native_pairing_contexts[intents[role]]["session"]
-                    for role, service in services.items()}
+        sessions = {role: peer.contexts[intents[role]]["session"] for role, peer in peers.items()}
         physical = {role: services[role]._native_resources.require(session) for role, session in sessions.items()}
-        yield SimpleNamespace(services=services, hosts=hosts, contacts=contacts, peers=peers,
+        yield SimpleNamespace(services=services, hosts=hosts, contacts=contacts, peers=peers, intents=intents,
             controllers=controllers, sessions=sessions, physical=physical, drive=lambda check: drive(services, check))
-    finally:
-        for service in services.values():
-            service.close()
-        for host in hosts.values():
-            host.shutdown()
+
+
+@pytest.mark.parametrize("primary_failure", [False, True])
+def test_fixture_cleanup_attempts_all_real_hosts_and_preserves_failures(request, primary_failure):
+    hosts, attempts = [], []
+    primary = ValueError("controlled setup failure")
+    secondary = OSError("controlled cleanup failure")
+    def fail_cleanup():
+        attempts.append("failing callback")
+        raise secondary
+    def exercise():
+        with owned_cleanup() as register:
+            register(0, "controlled failure", fail_cleanup)
+            for role in ("first", "second"):
+                host = WindowsNativeWebRTCHost(lambda *_: None)
+                request.addfinalizer(host.shutdown)  # Independent backstop if this control fails.
+                hosts.append(host)
+                def close(exact=host, label=role):
+                    attempts.append(label)
+                    exact.shutdown()
+                register(1, role + " host.shutdown", close)
+            if primary_failure:
+                raise primary
+    with pytest.raises(ValueError if primary_failure else ExceptionGroup) as caught:
+        exercise()
+    assert attempts == ["failing callback", "first", "second"]
+    assert all(not host._thread.is_alive() and host._loop.is_closed() for host in hosts)
+    if primary_failure:
+        assert caught.value is primary
+        assert primary.fixture_cleanup_failures == (secondary,)
+        assert any("OSError" in note for note in primary.__notes__)
+    else:
+        assert caught.value.exceptions == (secondary,)
 
 
 @pytest.mark.parametrize("initiator", ["windows", "android"])
@@ -161,6 +260,9 @@ def test_actual_managed_close_guard_cannot_satisfy_controller_zero_leases(manual
         contact = deepcopy(service.store.get("contact", state.contacts[role]))
         before = state.peers[role].inventory()
         assert before["host_accounting"]["active_count"] == 1
+        peer = state.peers[role]
+        assert peer.pairing_cancel(state.intents[role]) == {
+            "operation_id": state.intents[role], "state": "transferred"}
         assert observer.native("native_webrtc_close", session_id=state.sessions[role]) == {"state": "managed"}
         assert observer.retired() is None
         assert service._native_carrier_authorized(state.sessions[role])
@@ -173,6 +275,12 @@ def test_actual_managed_close_guard_cannot_satisfy_controller_zero_leases(manual
         public = ServicePeer(service, private_native=False)
         assert public.request("native.command", {"command": "native_webrtc_close",
             "payload": {"session_id": state.sessions[role]}})["ok"] is False
+        peer.authorized.clear()
+        try:
+            with pytest.raises(ContactNotApproved):
+                peer.pairing_status(state.intents[role])
+        finally:
+            peer.authorized.set()
 
 
 @pytest.mark.parametrize("initiator", ["windows", "android"])
