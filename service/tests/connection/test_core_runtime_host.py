@@ -231,6 +231,26 @@ def test_unlock_completion_failure_reuses_consumed_credential_without_second_ope
     assert len(r["loads"]) == before
 
 
+def test_generic_completion_uncertainty_fences_new_lifecycle_identity(runtime, monkeypatch):
+    r = runtime
+    original = r["meta"].conditional_put_and_delete
+    def fail_completion(expected, records, *args, **kwargs):
+        records = list(records)
+        if records and records[0][2].get("state") == "complete":
+            raise OSError("completion custody remains in lifecycle")
+        return original(expected, records, *args, **kwargs)
+    monkeypatch.setattr(r["meta"], "conditional_put_and_delete", fail_completion)
+    params = {"profile": r["profiles"]["alpha"]}
+    assert r["invoke"]("profile.lock", params, "generic-fenced-original-key")["error"]["code"] == "unavailable"
+    status = r["host"].lifecycle.query()
+    target = {"profile": r["profiles"]["beta"]}
+    assert r["invoke"]("profile.select", target, "generic-overtaking-new-key")["error"]["code"] == "unavailable"
+    assert r["host"].lifecycle.query() == status
+    monkeypatch.setattr(r["meta"], "conditional_put_and_delete", original)
+    assert r["invoke"]("profile.lock", params, "generic-fenced-original-key")["ok"]
+    assert r["invoke"]("profile.select", target, "generic-overtaking-new-key")["ok"]
+
+
 def test_superseded_or_old_host_epoch_receipt_never_reopens(runtime):
     r = runtime
     profile = r["profiles"]["alpha"]
