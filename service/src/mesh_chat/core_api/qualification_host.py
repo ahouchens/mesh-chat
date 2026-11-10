@@ -15,9 +15,11 @@ from uuid import UUID
 
 from ..errors import ContactNotApproved, ValidationError
 from ..connection.diagnostics import validated_pairing_retirement
+from ..native_path_evidence import validate_sample_request
 
 PAIRING_COMMANDS = frozenset({"qualification.pairing_begin", "qualification.pairing_status", "qualification.pairing_cancel"})
-COMMANDS = frozenset({"qualification.inventory", "qualification.path_evidence"}) | PAIRING_COMMANDS
+COMMANDS = frozenset({"qualification.inventory", "qualification.path_evidence",
+                      "qualification.retire_carrier"}) | PAIRING_COMMANDS
 MARKER = ".mesh-qualification-v1"
 _android_service = None
 
@@ -104,20 +106,62 @@ class QualificationControl:
             raise ValidationError("Qualification service is unavailable")
         if command in PAIRING_COMMANDS:
             return self._pairing(service, command, payload)
+        if command == "qualification.retire_carrier":
+            return self._retire_carrier(service, payload)
         if command == "qualification.inventory":
-            if payload:
-                raise ValidationError("Qualification request is invalid")
-            return service.native_webrtc_inspection_resources()
+            if not payload:
+                return service.native_webrtc_inspection_resources()
+            operation = self._retirement_operation(service, payload, {"operation_id", "request_id"})
+            with service._dispatch_lock:
+                result = service.native_webrtc_inspection_resources()
+                result["carrier_retirement"] = service.native_pairing_retirement_observation(
+                    operation, payload["request_id"])
+                if self._pairing_service() is not service:
+                    raise ContactNotApproved("Qualification service changed")
+                return result
         if set(payload) != {"logical_session", "expected_physical", "sample_request"} or any(
             not isinstance(value, str) or not 1 <= len(value) <= 128
             or any(ord(character) < 0x20 for character in value)
             for value in payload.values()
         ):
             raise ValidationError("Qualification request is invalid")
-        from ..native_path_evidence import validate_sample_request
         validate_sample_request(payload["sample_request"])
         return service.native_webrtc_path_evidence(payload["logical_session"], payload["expected_physical"],
                                                  payload["sample_request"])
+
+    def _operation_id(self, service, operation_id):
+        try:
+            if type(operation_id) is not str or str(UUID(operation_id)) != operation_id:
+                raise ValueError
+        except (ValueError, TypeError):
+            raise ValidationError("Qualification pairing operation is invalid") from None
+        digest = service.store.opaque_id("qualification-pairing-operation", self._caller, operation_id)
+        return str(UUID(bytes=bytes.fromhex(digest)[:16]))
+
+    def _retirement_operation(self, service, payload, fields):
+        if set(payload) != fields:
+            raise ValidationError("Qualification retirement request is invalid")
+        validate_sample_request(payload["request_id"])
+        if self._pairing_service() is not service:
+            raise ContactNotApproved("Qualification service changed")
+        return self._operation_id(service, payload["operation_id"])
+
+    def _retire_carrier(self, service, payload):
+        operation = self._retirement_operation(service, payload, {
+            "operation_id", "request_id", "logical_session", "expected_physical",
+            "expected_service_incarnation", "expected_adapter_epoch"})
+        for name in ("expected_service_incarnation", "expected_adapter_epoch"):
+            validate_sample_request(payload[name])
+        if any(type(payload[name]) is not str or not 1 <= len(payload[name]) <= 128
+               or any(not (character.isascii() and (character.isalnum() or character in "_-"))
+                      for character in payload[name])
+               for name in ("logical_session", "expected_physical")):
+            raise ValidationError("Qualification retirement resource is invalid")
+        with service._dispatch_lock:
+            if self._pairing_service() is not service:
+                raise ContactNotApproved("Qualification service changed")
+            return service.native_pairing_retire_carrier(operation, **{
+                name: value for name, value in payload.items() if name != "operation_id"})
 
     def _pairing_service(self):
         service = self._current_service()
@@ -167,9 +211,14 @@ class QualificationControl:
                     return current is bound_service() and current._runtime_incarnation == epoch
                 except Exception:
                     return False
-            result = service.native_pairing_begin(operation_id, role=payload["role"], authorized=authorized,
-                pairing_code=payload.get("pairing_code"),
-                allow_direct_ip_disclosure=payload.get("allow_direct_ip_disclosure", False))
+            with service._dispatch_lock:
+                if self._pairing_service() is not service:
+                    raise ContactNotApproved("Qualification service changed")
+                if service.native_pairing_retirement_pending():
+                    raise ContactNotApproved("Qualification carrier retirement is pending")
+                result = service.native_pairing_begin(operation_id, role=payload["role"], authorized=authorized,
+                    pairing_code=payload.get("pairing_code"),
+                    allow_direct_ip_disclosure=payload.get("allow_direct_ip_disclosure", False))
         elif command == "qualification.pairing_status":
             result = service.native_pairing_qualification_status(operation_id)
         else:

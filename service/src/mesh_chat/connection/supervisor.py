@@ -6,8 +6,8 @@ from threading import RLock
 
 from .diagnostics import Diagnostics, validated_pairing_retirement
 from .model import (
-    Adopted, Cancel, ConnectionKey, ConnectionState, ContextChanged, Desired, Event,
-    Execution, Failed, Failure, HandoffLease, Operation, Phase, Policy, Resource, Result, Retire, Tick, Work,
+    Adopted, Bridge, Cancel, ConnectionKey, ConnectionState, ContextChanged, Desired, Event,
+    Execution, Failed, Failure, Health, HandoffLease, Operation, Phase, Policy, Resource, Result, Retire, Tick, Work,
 )
 from .reducer import transition
 
@@ -64,6 +64,31 @@ class ConnectionSupervisor:
     def snapshot(self, key: ConnectionKey):
         with self._lock:
             return self._states[key]
+
+    def retire_current_carrier(self, key, resource, generation, revision, now):
+        """Compare the current owner and submit its normal retirement atomically."""
+        with self._lock:
+            state = self._states.get(key)
+            if (state is None or state.runtime_epoch != self.runtime_epoch
+                    or key.scope == "pairing" or key in self._retired
+                    or state.generation != generation or state.authority.revision != revision
+                    or not state.authority.authorized or state.desired is not Desired.ENABLED
+                    or state.execution is not Execution.AVAILABLE
+                    or state.carrier is None or state.carrier.resource != resource
+                    or state.carrier.health is not Health.OPEN or state.carrier.bridge is not Bridge.READY
+                    or resource in self._retiring or self._owned_elsewhere(key, resource)
+                    or any(lease.resource == resource for lease in self._handoffs.values())
+                    or (state.negotiation is not None and state.negotiation.phase is not Phase.INSPECT)):
+                return False
+            event = ContextChanged(now, desired=Desired.STOPPED)
+            effects = transition(state, event).effects
+            limit = self.policy.max_actors * 4 + self.policy.max_workers
+            if (len(set(self._control) | set(effects)) > limit
+                    or len(self._retiring | {effect.resource for effect in effects
+                                            if isinstance(effect, Retire)}) > limit):
+                return False
+            self.dispatch(key, event)
+            return True
 
     def snapshots(self):
         with self._lock:
