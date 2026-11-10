@@ -48,6 +48,27 @@ regressions, fixed call-site diagnostics and seven-line test-only clock correcti
 described below. Native pending-action recovery remains unavailable; resource-owner
 retirement and document-bound native authority are still separate prerequisites.
 
+The follow-on diagnostic producer `507a1c7` and consumer `d701905` retain the
+first retirement-causing transition for the exact pairing actor, runtime,
+generation and original source resource. Storage is bounded by registered actors;
+the existing payload-free global ring and ordinary status projection are unchanged.
+Only authenticated private qualification status for `retiring` or `retired`
+exposes `retirement={phase,event,reason}` with strict fixed literals. The controller
+retains actual `pairing_state` and the validated optional `pairing_retirement`
+only for the same active status exception. Missing or stale bindings remain
+unknown; no identifiers, timestamps, exception text, SDP, keys or URLs are exported.
+These observations neither change execution nor prove physical cleanup complete.
+
+The lead reviewed both immutable patches and their tests. C reports 172 focused
+passes, including 32 new diagnostic cases; D reports 133 controller passes and
+186 combined producer/private-port/controller passes, all with zero skips.
+Guarded actual-service controls distinguish invalid offer, native answer failure,
+gather deadline, execution pause and cancellation; first-cause retention survives
+later `ineligible` reconciliation and global-ring eviction. Foreign/stale bindings,
+capacity, successful handoff omission and privacy are covered. Native answer errors
+can map to `invalid_document`, so this reason alone is not malformed-signaling proof.
+Full exact-source qualification of the combined candidate is still required.
+
 The previous shared checkpoint is `a3b6ebc5836128a39bb1cd98bcbca39410f00d42`
 (tree `cfb4d1e92e819193a98f5f62995d0c79fdad3432`). Full manual qualification
 [42736168066](https://github.com/ahouchens/mesh-chat/actions/runs/42736168066)
