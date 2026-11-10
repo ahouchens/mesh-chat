@@ -4,7 +4,54 @@
 
 ### Cold-restart containment: full CI completed; native pairing remains unqualified
 
-The latest completed checkpoint is `5e6d0dac9f9cbee8ebdd986d85a4394dbf7b45c0`
+The latest completed checkpoint is `36466e0245ec9c35d0e7b1bdaf2c544b40c050e0`
+(tree `404089a57be9a1feb8cf1ec830331dc8c3123720`), full run
+[42843336931](https://github.com/ahouchens/mesh-chat/actions/runs/42843336931).
+Fresh local SDK staging, strict policy types, **5,066 required policy/adapter
+cases**, **1,482 Python UI + 12 rendered cases** and **nine Windows boundary
+cases** pass with zero skips. Inventory comparison retains every prior case
+except the explicitly reviewed artifact-budget test rename accompanying the
+signed cold-setup phase; the required selection gains 306 cases net.
+
+CI independently verifies the same 5,066 policy cases, UI boundary reports,
+Windows packaged/installed public-SDK pairing and receipt/lifetime slice,
+**52 Android emulator cases**, **71 JVM cases**, all 17 Android distribution
+hashes, and Linux/Windows **25 transport + 10 recovery + 12 setup cases** each.
+The 72 layout report cases show no overflow; screenshots were not visually
+reviewed. Existing platform, helper-retirement and media limits still apply.
+
+The full gate nevertheless **fails general verification**. Its broader Python
+run reports 6,271 passed, 52 skipped and two setup errors in the independent
+native-retirement composition fixture; this broader count comes from retained
+text, not a complete general-suite XML. Both errors occur before their test
+bodies: the Windows-labeled loopback peer adopts while the Android-labeled peer
+remains in pairing checks. Both labels use Windows native hosts. The trace omits
+the exact rejected readiness condition. Native interoperability is **skipped**
+because its verification prerequisite failed; this run provides no native
+owner-retirement or cold-start acceptance.
+
+Source audit identifies a fixture defect: direct setup consent and injected
+control calls bypass the dispatch serialization used by production entry points,
+allowing concurrent signed-capability read/modify/write effects. Normal native
+control maintenance is already running, so an omitted explicit pump is not an
+established cause. A narrow test-only serialization correction and controlled
+regressions are in progress; the exact historical CI interleaving remains unknown.
+No product timeout, retry, authority or acceptance relaxation is assigned.
+
+Retained `36466e0` / run `42843336931` archive SHA-256 values:
+
+- `selection`: `3ebb98528af0ee7a24fa87a6c1bda38a106d11d1b4717023eac521152a6ac461`
+- `policy`: `a3d53bbf92ccd5ffa0c9ce97fdf6ced6d5417220a3a1931aa3308ef65664b7db`
+- `verification`: `eb435a0816df2c8a68fe85992b120db9cade31a64abd2f6473128223cb19f67d`
+- `desktop`: `3b3b1c368f3a497ea4c84723c1a766e428697d223e6824d32a416c8b8721f084`
+- `native-windows`: `6ddf1f2c72c30b715c2ca174a7805e9c16bb268df55e6e46bd83073b11ee38ac`
+- `android`: `f45f277f24324a9405c71a58df9bfd5aab2a374d58779a8b75c93de986b822e3`
+- `android-debug`: `34cd9af38895ed7d90f13c558b21466fbf3d2cf242f5b4c93127349fa87779af`
+- `direct-linux`: `2396f02ca7d03d5f9951ae2473006227211d83c96aab8cf9930c6a74a45028eb`
+- `direct-windows`: `48a645b3d7deeb3c67a568b568625c09d819e3226a7bf298855a65ff1fb8bcd8`
+- `layout`: `4efc1969063ad0ba9974d5b9b1bffd8a1ae14ee44f498a111b762a4c29cbbbe6`
+
+The preceding completed checkpoint is `5e6d0dac9f9cbee8ebdd986d85a4394dbf7b45c0`
 (tree `eac21be7c638e72e2eb6f65a92adef5821b61f96`). Its first full run
 [42819716492](https://github.com/ahouchens/mesh-chat/actions/runs/42819716492)
 failed installing the Android 35 system image: the SDK installer reported an

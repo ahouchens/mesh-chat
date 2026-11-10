@@ -142,3 +142,10 @@ carriers (`state:managed`); the controller ignores that reply before waiting for
 zero leases. Existing protected owner Stop has durable later-admission consequences.
 The guard, exact-resource custody and strict empty accounting must remain intact;
 no full native or isolated-helper qualification is established by this checkpoint.
+
+Checkpoint `36466e0` full run `42843336931` verifies 5,066 policy cases,
+1,482 Python UI plus 12 rendered cases and the Windows/Android platform suites.
+General verification fails two composition fixture setups before their test
+bodies; native interoperability is skipped. The fixture bypasses production
+serialization during consent/control setup and is being corrected separately.
+This run supplies no packaged owner-retirement or cold-start native acceptance.

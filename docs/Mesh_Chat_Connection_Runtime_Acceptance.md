@@ -20,7 +20,41 @@ and scenario rows below to complete; their named remaining obligations still
 apply, including packaged cross-platform transport and unavailable physical
 qualification.
 
-The latest completed checkpoint is `5e6d0dac9f9cbee8ebdd986d85a4394dbf7b45c0`
+The latest completed checkpoint is `36466e0245ec9c35d0e7b1bdaf2c544b40c050e0`
+(tree `404089a57be9a1feb8cf1ec830331dc8c3123720`), full run
+[42843336931](https://github.com/ahouchens/mesh-chat/actions/runs/42843336931).
+Fresh local SDK staging, strict policy types, **5,066 required policy/adapter
+cases**, **1,482 Python UI + 12 rendered cases** and **nine Windows boundary
+cases** pass with zero skips. Inventory comparison retains every prior case
+except the explicitly reviewed artifact-budget test rename accompanying the
+signed cold-setup phase; the required selection gains 306 cases net.
+
+CI independently verifies the same 5,066 policy cases, UI boundary reports,
+Windows packaged/installed public-SDK pairing and receipt/lifetime slice,
+**52 Android emulator cases**, **71 JVM cases**, all 17 Android distribution
+hashes, and Linux/Windows **25 transport + 10 recovery + 12 setup cases** each.
+The 72 layout report cases show no overflow; screenshots were not visually
+reviewed. Existing platform, helper-retirement and media limits still apply.
+
+The full gate nevertheless **fails general verification**. Its broader Python
+run reports 6,271 passed, 52 skipped and two setup errors in the independent
+native-retirement composition fixture; this broader count comes from retained
+text, not a complete general-suite XML. Both errors occur before their test
+bodies: the Windows-labeled loopback peer adopts while the Android-labeled peer
+remains in pairing checks. Both labels use Windows native hosts. The trace omits
+the exact rejected readiness condition. Native interoperability is **skipped**
+because its verification prerequisite failed; this run provides no native
+owner-retirement or cold-start acceptance.
+
+Source audit identifies a fixture defect: direct setup consent and injected
+control calls bypass the dispatch serialization used by production entry points,
+allowing concurrent signed-capability read/modify/write effects. Normal native
+control maintenance is already running, so an omitted explicit pump is not an
+established cause. A narrow test-only serialization correction and controlled
+regressions are in progress; the exact historical CI interleaving remains unknown.
+No product timeout, retry, authority or acceptance relaxation is assigned.
+
+The preceding completed checkpoint is `5e6d0dac9f9cbee8ebdd986d85a4394dbf7b45c0`
 (tree `eac21be7c638e72e2eb6f65a92adef5821b61f96`). Its first full run
 [42819716492](https://github.com/ahouchens/mesh-chat/actions/runs/42819716492)
 failed installing the Android 35 system image: the SDK installer reported an
