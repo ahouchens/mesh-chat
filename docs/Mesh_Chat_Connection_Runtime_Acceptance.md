@@ -20,6 +20,50 @@ and scenario rows below to complete; their named remaining obligations still
 apply, including packaged cross-platform transport and unavailable physical
 qualification.
 
+The current shared checkpoint is `82aaf19c3671777724d7da5e8cab0e5b2a5d6de2`
+(tree `c489caaa361329d9dd50d1d26590bbe2d691fdd8`). Full manual qualification
+[42770728559](https://github.com/ahouchens/mesh-chat/actions/runs/42770728559)
+completed **failed** in native interoperability. All six families and the native
+`full` workload were selected; duplicate PR run `42770735359` was confirmed
+canceled. No aggregate pass or release/default promotion is claimed.
+
+Every exact-source local gate passed: SDK staging, strict model/reducer types,
+**4,072 policy cases**, **866 Python plus 12 rendered UI cases**, and **nine
+Windows boundary cases**, with zero skips. Policy completed in 410.49 seconds.
+The inventory adds exactly 51 pending-handoff producer cases and 90 controller
+cases, removing none. CI independently verifies the identical 4,072-case policy
+inventory and 866-plus-12 UI results, all passing with zero skips.
+
+Packaged Windows reports, independent SDK bootstrap/pairing/receipts and the
+sidecar binding pass independent validation. The sidecar is 54,599,551 bytes,
+SHA-256 `4abb51d142a5d747f21832120fe2b86d8393c6735fa75faaa9e8be03a3ecf28f`.
+Android verifies **52 emulator cases**, **62 JVM cases** and **17 artifact
+bindings**. Both Linux and Windows direct verify **25 fabric, 10 recovery and
+12 setup cases**, with zero skips. The previous Linux package-install timeout
+did not recur. Layout reports 72 cases without overflow; every archive entry was
+hashed, but PNGs were not retained or visually reviewed. WebView2 probe and direct
+binary hashes remain runner claims. These results do not establish successful
+native credential UI, public-SDK cross-platform delivery, media or physical acceptance.
+
+This native attempt failed before the repaired approval-stage window. Android
+reports `direct_supervisor_owned_pairing_windows`, `PeerFailure/invalid_request`,
+at `negotiate_native_stats`. Windows reports the same scenario and
+`supervisor_pairing_retired` at `pairing_status`, with
+`wait_answer/tick/phase_timeout`. The Android report has no retirement DTO or
+underlying native exception. `NativeUnavailable` is a `ValidationError`; a
+directly raised domain failure through `ServiceNativeCommands` reaches the Core
+session's validation mapping and can become `invalid_request`. That source trace
+does not identify the actual device cause. C and D reproduce a valid stats
+request failing while the pairing reservation is visible before native creation.
+Retirement before or during stats can produce the same code. A narrow follow-up
+is assigned: defer inventory/stats only for an exact `reserved` pairing state,
+under the existing operation identity and wait deadline. Other states, malformed
+metadata, retirement and stats errors preserve their existing behavior. C owns
+the actual Core-path regression; D owns the controller guard and its tests. No
+retry, authority, timeout or evidence relaxation is authorized. The pending-
+adoption repair remains locally proven, not demonstrated as a device fix by
+this earlier-failing run.
+
 The pending-adoption repair is integrated: producer `b268842` and consumer
 `f0da5d6` are combined at `32f6061`. The lead reviewed both complete diffs and
 independently ran **465 focused cases**, all passing with zero skips in 10.29
@@ -33,14 +77,14 @@ Actual path pre/post authority checks and all readiness/traffic evidence remain.
 
 The producer's preliminary full suite had two Git Bash fixture permission
 failures; both passed outside the sandbox without source/assertion changes.
-That preliminary run is not final-source qualification. Integrated SDK staging,
-strict types, complete policy/UI/Windows inventories and full native CI are
-required before accepting the repair. The offline reproduced scheduling gap is
-consistent with the retained native failure, whose exact substage was not
+That preliminary run is not final-source qualification. C subsequently passed
+3,631 final-source connection tests with zero skips. Integrated local gates and
+CI component evidence are recorded above; native acceptance remains open.
+The offline reproduced scheduling gap is consistent with the retained native failure, whose exact substage was not
 recorded; it is not proof of the sole device failure cause. No-handoff recovery
 and automatic pending windows remain outside this narrowly proven contract.
 
-The current shared checkpoint is `994e4b488ba88935569970ac0adfb15c237f621d`
+The previous shared checkpoint is `994e4b488ba88935569970ac0adfb15c237f621d`
 (tree `70c7ce3b052b0338737010bab628fb6b0b153e94`). Full manual qualification
 [42763177698](https://github.com/ahouchens/mesh-chat/actions/runs/42763177698)
 selects all six families and native `full`; duplicate PR run `42763183634` was
@@ -99,7 +143,8 @@ same physical resource. Consent-retirement controls establish valid denial but
 do not explain the initial-direct sequence. The actual CI substage is not retained.
 No-handoff manual/recovered/automatic pending windows lack this exact proof and
 remain unavailable under this narrow repair. C owns the read-only producer and
-D the consumer; implementation is integrated and full qualification remains pending.
+D the consumer; implementation and local qualification are complete, while
+native qualification remains open after the earlier negotiation failure above.
 
 The previous shared checkpoint is `55e6b1924a31b978403555aa6be83487ce86553d`
 (tree `81d4ab8f07cc488d3cab09037226e9a7e6eab5ae`). Full manual qualification
@@ -746,16 +791,16 @@ never described as physical-device qualification.
 | INV14 | `local` | Fair scheduling and capacity tests, including the property corpus. |
 | INV15 | `component` | Committed Stop fences immediately; packaged lifecycle proves the reopened profile keeps its identity and committed preference. |
 | INV16 | `partial` | The shared composition has one owner across foreground/background. Full platform lifecycle parity for every mode remains open. |
-| INV17 | `partial` | Shared-policy UI detach cannot retire a transferred carrier; media-call teardown parity across all modes is not re-qualified. |
+| INV17 | `partial` | Separate call teardown and transferred-carrier protection are implemented. Renderer tests exercise repeated answered audio/video cycles in desktop and Android modes with substituted media and carrier boundaries. Actual WebView2/Android media teardown alongside shared-policy messaging remains unqualified. |
 | INV18 | `local` | Deterministic traces, replay and the seeded simulator corpus. |
 | INV19 | `local` | Failed persistence keeps the in-memory denial and never reports durable success; intent-batch and authority-write regressions. |
 | INV20 | `partial` | The gate rejects failed, canceled, skipped or missing required evidence; publication re-hashes staged assets against that manifest. A branch-build release qualification executed and passed on setup/MSI/APK artifacts; no tag has exercised publication. |
-| INV21 | `partial` | The facade enforces caller, profile, permission and private-event boundaries. Named-pipe consumers add OS access control and executable allowlisting; Binder consumers use signature permission and caller-derived grants. At `733c38b`, the public SDK through normal frozen Windows hosts qualifies fresh profile creation, pairing and two authenticated receipts with key replay and single message records. Android separately qualifies six Binder-consumer cases and two app-owned distribution-only lifecycle/cold-process cases. Cross-platform independent delivery, partitions and successful native credential UI remain open. |
-| INV22 | `partial` | Clients carry no peer policy. Named-pipe and Binder host components exist; exclusive vault ownership is enforced by the runtime. Full packaged multi-client attachment, owner stop and lifecycle qualification remain open. |
+| INV21 | `partial` | Caller/profile/permission/private-event boundaries, pipe OS access control and Binder caller-derived grants are implemented. Exact `82aaf19` Windows distribution-only consumers qualify normal-host pairing and two authenticated receipts with original-key replay and single records. Android verifies six Binder-consumer and two app-owned lifecycle/cold-process cases. Independent cross-platform delivery/partitions and successful native credential confirmation remain open. |
+| INV22 | `partial` | Policy-free SDK attachment and exclusive runtime-owned vault storage are implemented. Remaining packaged evidence must combine concurrent distribution-only clients on one normal runtime, detach/reattach with pending durable work, competing-owner denial and authorized owner shutdown with exact cleanup. |
 | INV23 | `local` | Durable enqueue receipts, conflicting payload rejection and stable logical IDs across restart; acknowledgments never change peer delivery state. |
 | INV24 | `local` | Explicit `resync_required` for gaps, expiry and authority change; the client consumer clears its position and resnapshots. Long-term retention is not promised. |
-| INV25 | `partial` | The compatibility declaration separates public API 1.1, IPC 1 and unchanged peer wire 1; client versions and unsupported-major rejection are tested. Experimental standalone Python/TypeScript artifacts and Kotlin Maven publications are staged. Source-pinned upgrade fixtures rebuild the actual baseline service-carried Python client and TypeScript 0.2 package; they do not invent an earlier standalone Python release. A published support matrix and upgrade window remain undeclared. |
-| INV26 | `partial` | Distribution-only Windows public SDK bootstrap/pairing/receipt checks pass at `733c38b`. Android independently builds from the client/runtime-host Maven publication outside the producer checkout and passes fresh lifecycle plus cold locked-process restart, with 17 distribution/binary hashes bound to the complete Android report. Experimental upgrade/component checks exist. Android peer delivery, successful native credential UI, the complete cross-platform scenario and release support promises remain open. |
+| INV25 | `partial` | Public API 1.1, IPC 1 and peer wire 1 are separated; incompatible-major refusal and source-pinned baseline upgrade fixtures execute. Experimental Python/TypeScript archives and Kotlin publications have staged/package evidence. Supported SDK/runtime/package pairs and a bounded upgrade/data window remain undeclared and require exact installed-pair qualification. |
+| INV26 | `partial` | Exact `82aaf19` qualifies Windows distribution-only normal-host bootstrap/pairing/receipts and Android independent app-owned lifecycle/cold-process startup with 17 artifact bindings. Android independent peer delivery, successful native credential confirmation, the complete cross-platform scenario and release support promises remain open; distribution assembly is not a supported-release commitment. |
 
 ## Required scenarios
 
@@ -777,16 +822,16 @@ never described as physical-device qualification.
 | SC14 | `local` | Delayed attachment and missing path are bounded with truthful readiness. |
 | SC15 | `component` | Lost receipts, duplicate packets and restart preserve one visible message per logical ID in packaged runs. |
 | SC16 | `partial` | Policy and JNI queues enforce budgets and quarantine; a packaged saturation run is absent. |
-| SC17 | `partial` | Packaged pairing cancellation and unapproved-restart checks exist, and native handshakes now retire exactly at offer, acceptance and answer phases. Full legacy media-call and pairing-closure re-qualification against the shared policy remains open. |
+| SC17 | `partial` | Pairing cancellation, unapproved restart, native phase retirement and renderer dialog-dismissal/media-cycle regressions exist. Real WebView2/Android audio/video plus adopted shared-policy messaging and authenticated receipts across hangup, refresh failure and pairing closure remain unqualified. |
 | SC18 | `partial` | Signed fixtures and existing peers still interoperate; no explicit wire-version matrix. |
 | SC19 | `local` | Persistence failure during intent or adoption bookkeeping is tested for safe in-memory behavior. |
 | SC20 | `workflow` | The final gate fails on missing, skipped, canceled or stale required evidence for the exact source. |
-| SC21 | `open` | Independent packaged consumers can be built and exercised in CI/emulation, and two independent Reticulum processes now exchange durable messages/receipts over the native DataChannel under the legacy bridge policy. Full cross-platform messaging/receipts on production headless transports remain implementation and qualification work; physical hardware is not a prerequisite for this automated scenario. |
+| SC21 | `open` | The shared-supervisor Windows public SDK pair/receipt scenario passes on exact `82aaf19`; Android independently qualifies app-owned lifecycle. A complete installed Windows–Android SDK/API-only message/receipt, restart, partition and current-authority scenario remains open. Private native qualification calls and historical legacy-bridge traffic do not substitute for this automated public-consumer boundary; physical hardware is not a prerequisite. |
 | SC22 | `component` | Wrong caller, profile/scope and private-control attempts are rejected before effects in facade tests. |
 | SC23 | `local` | Lost reply, timeout and duplicate request after restart resolve by idempotency key; conflicting payloads fail. |
 | SC24 | `local` | Bounded replay, explicit gaps, cursor expiry and consumer deduplication are covered by facade and client tests. |
-| SC25 | `partial` | Declared experimental client versions, incompatible-major rejection and source-pinned baseline upgrade fixtures execute in the required component suite. No supported release SDK/API/package matrix or upgrade window is published; component staging is not a support commitment. |
-| SC26 | `partial` | Detach does not stop the runtime; the owner can now request a stop that sets the shutdown event and closes the host stream after the reply, but process exit and packaged multi-client evidence remain unqualified. The Windows endpoint serves a bounded number of concurrent local clients. |
+| SC25 | `partial` | Declared experimental clients, incompatible-major refusal and actual source-pinned baseline upgrade fixtures execute. Supported runtime/SDK/package pairs, exclusions and a bounded upgrade/data window remain undeclared; those exact pairs require installed qualification. A release tag does not provide missing automated pair coverage. |
+| SC26 | `partial` | Exact `82aaf19` frozen Windows reports prove clean process exits; Android proves SDK detach/rebind, runtime shutdown/restart and cold locked-process lifecycle. Combined packaged concurrent-client/pending-work/reattach, competing-owner denial and final resource-release evidence remains open. Preserve trusted-launcher EOF and Android runtime shutdown ownership; ordinary client grants must not be widened to stop the application. |
 
 ## Completion boundaries
 
@@ -794,7 +839,7 @@ never described as physical-device qualification.
 | --- | --- | --- |
 | Shared policy complete | `partial` | One owner drives the experimental Android and desktop compositions, but manual-pairing parity, Windows-and-Android interoperability and legacy-loop removal are open. |
 | Headless messaging complete | `partial` | Android native transport and native Windows DataChannel implementation exist. Historical native Windows durable-message and fault components use legacy bridge policy; shared-supervisor promotion, cross-platform interoperability, the complete impaired fault/receipt matrix and physical acceptance remain open. |
-| External integration complete (M5) | `partial` | Authenticated host components and experimental clients exist. Supported packages, complete independent messaging consumers, UI migration and compatibility/upgrade qualification remain open. |
+| External integration complete (M5) | `partial` | Authenticated hosts, experimental clients, direct/group composer facade migration, profile generation guards and unused-wrapper removal are implemented with scoped evidence. Remaining work includes transitional renderer policy/bridge loops, private pending-action UI/native recovery binding, actual media coexistence, complete cross-platform public consumers and declared compatibility/upgrade support. |
 | Release gating complete | `partial` | Publication already requires exact-artifact aggregation. Branch-build qualification passed; tagged publication and the supported-pair matrix remain open. |
 
 ## Physical checklist

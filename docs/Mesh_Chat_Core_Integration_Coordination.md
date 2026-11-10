@@ -11,6 +11,50 @@ reports. Exact evidence and limits are in the ledger. Wave 2 is activated below.
 Existing human authorization covers continued implementation, integration and
 worker follow-ups without another permission request.
 
+The current shared checkpoint is `82aaf19c3671777724d7da5e8cab0e5b2a5d6de2`
+(tree `c489caaa361329d9dd50d1d26590bbe2d691fdd8`). Full manual qualification
+[42770728559](https://github.com/ahouchens/mesh-chat/actions/runs/42770728559)
+completed **failed** in native interoperability. All six families and the native
+`full` workload were selected; duplicate PR run `42770735359` was confirmed
+canceled. No aggregate pass or release/default promotion is claimed.
+
+Every exact-source local gate passed: SDK staging, strict model/reducer types,
+**4,072 policy cases**, **866 Python plus 12 rendered UI cases**, and **nine
+Windows boundary cases**, with zero skips. Policy completed in 410.49 seconds.
+The inventory adds exactly 51 pending-handoff producer cases and 90 controller
+cases, removing none. CI independently verifies the identical 4,072-case policy
+inventory and 866-plus-12 UI results, all passing with zero skips.
+
+Packaged Windows reports, independent SDK bootstrap/pairing/receipts and the
+sidecar binding pass independent validation. The sidecar is 54,599,551 bytes,
+SHA-256 `4abb51d142a5d747f21832120fe2b86d8393c6735fa75faaa9e8be03a3ecf28f`.
+Android verifies **52 emulator cases**, **62 JVM cases** and **17 artifact
+bindings**. Both Linux and Windows direct verify **25 fabric, 10 recovery and
+12 setup cases**, with zero skips. The previous Linux package-install timeout
+did not recur. Layout reports 72 cases without overflow; every archive entry was
+hashed, but PNGs were not retained or visually reviewed. WebView2 probe and direct
+binary hashes remain runner claims. These results do not establish successful
+native credential UI, public-SDK cross-platform delivery, media or physical acceptance.
+
+This native attempt failed before the repaired approval-stage window. Android
+reports `direct_supervisor_owned_pairing_windows`, `PeerFailure/invalid_request`,
+at `negotiate_native_stats`. Windows reports the same scenario and
+`supervisor_pairing_retired` at `pairing_status`, with
+`wait_answer/tick/phase_timeout`. The Android report has no retirement DTO or
+underlying native exception. `NativeUnavailable` is a `ValidationError`; a
+directly raised domain failure through `ServiceNativeCommands` reaches the Core
+session's validation mapping and can become `invalid_request`. That source trace
+does not identify the actual device cause. C and D reproduce a valid stats
+request failing while the pairing reservation is visible before native creation.
+Retirement before or during stats can produce the same code. A narrow follow-up
+is assigned: defer inventory/stats only for an exact `reserved` pairing state,
+under the existing operation identity and wait deadline. Other states, malformed
+metadata, retirement and stats errors preserve their existing behavior. C owns
+the actual Core-path regression; D owns the controller guard and its tests. No
+retry, authority, timeout or evidence relaxation is authorized. The pending-
+adoption repair remains locally proven, not demonstrated as a device fix by
+this earlier-failing run.
+
 The pending-adoption repair is integrated: producer `b268842` and consumer
 `f0da5d6` are combined at `32f6061`. The lead reviewed both complete diffs and
 independently ran **465 focused cases**, all passing with zero skips in 10.29
@@ -24,14 +68,14 @@ Actual path pre/post authority checks and all readiness/traffic evidence remain.
 
 The producer's preliminary full suite had two Git Bash fixture permission
 failures; both passed outside the sandbox without source/assertion changes.
-That preliminary run is not final-source qualification. Integrated SDK staging,
-strict types, complete policy/UI/Windows inventories and full native CI are
-required before accepting the repair. The offline reproduced scheduling gap is
-consistent with the retained native failure, whose exact substage was not
+That preliminary run is not final-source qualification. C subsequently passed
+3,631 final-source connection tests with zero skips. Integrated local gates and
+CI component evidence are recorded above; native acceptance remains open.
+The offline reproduced scheduling gap is consistent with the retained native failure, whose exact substage was not
 recorded; it is not proof of the sole device failure cause. No-handoff recovery
 and automatic pending windows remain outside this narrowly proven contract.
 
-The current shared checkpoint is `994e4b488ba88935569970ac0adfb15c237f621d`
+The previous shared checkpoint is `994e4b488ba88935569970ac0adfb15c237f621d`
 (tree `70c7ce3b052b0338737010bab628fb6b0b153e94`). Full manual qualification
 [42763177698](https://github.com/ahouchens/mesh-chat/actions/runs/42763177698)
 selects all six families and native `full`; duplicate PR run `42763183634` was
@@ -90,7 +134,8 @@ same physical resource. Consent-retirement controls establish valid denial but
 do not explain the initial-direct sequence. The actual CI substage is not retained.
 No-handoff manual/recovered/automatic pending windows lack this exact proof and
 remain unavailable under this narrow repair. C owns the read-only producer and
-D the consumer; implementation is integrated and full qualification remains pending.
+D the consumer; implementation and local qualification are complete, while
+native qualification remains open after the earlier negotiation failure above.
 
 The previous shared checkpoint is `55e6b1924a31b978403555aa6be83487ce86553d`
 (tree `81d4ab8f07cc488d3cab09037226e9a7e6eab5ae`). Full manual qualification
