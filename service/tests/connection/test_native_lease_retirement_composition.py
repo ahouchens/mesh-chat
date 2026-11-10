@@ -3,7 +3,7 @@
 Contact approval rows and Reticulum registration/path are explicit models;
 native_pairing disables real Reticulum networking. These controls do not execute
 Controller.path_case/exchange, establish message receipts, or qualify Android or
-packaged transports. The future per-case retirement port is not faked here.
+packaged transports. Per-case retirement uses the actual private product port.
 """
 import asyncio
 import base64
@@ -19,19 +19,22 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-import RNS
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 from native_interop_controller import Controller
+from native_interop_peers import retirement_correlation, retirement_payload
+from mesh_chat.carrier_journal import CarrierBinding, CarrierJournal
 from mesh_chat.core_api.composition import bind_service_session
 from mesh_chat.core_api.qualification_host import (
     QualificationControl, mark_initialized_profile, reserve_fresh_profile,
 )
 from mesh_chat.core_api.session import Grant
-from mesh_chat.errors import ContactNotApproved
+from mesh_chat.errors import ContactNotApproved, NativeUnavailable, ValidationError
 from mesh_chat.native_windows_webrtc import WindowsNativeWebRTCHost
+from mesh_chat.native_carrier_checkpoint import _binding_context
 from test_pairing_runtime import native_pairing
 from test_reconnect_service import _add_contact
+from test_webrtc_interface import reticulum
 
 
 @contextmanager
@@ -105,8 +108,14 @@ class ServicePeer:
         assert reply["ok"], reply.get("error", {}).get("code")
         return reply["result"]
 
-    def inventory(self):
-        return self.port.dispatch("qualification.inventory", {})
+    def inventory(self, *, operation_id=None, request_id=None):
+        return self.port.dispatch("qualification.inventory", retirement_correlation(operation_id, request_id))
+
+    def retire_carrier(self, operation_id, request_id, logical_session, expected_physical,
+                       expected_service_incarnation, expected_adapter_epoch):
+        return self.port.dispatch("qualification.retire_carrier", retirement_payload(
+            operation_id, request_id, logical_session, expected_physical,
+            expected_service_incarnation, expected_adapter_epoch))
 
     def path(self, logical, physical, sample_request):
         return self.port.dispatch("qualification.path_evidence", {
@@ -137,7 +146,8 @@ class ServicePeer:
 def drive(services, condition, *, timeout=12):
     deadline = monotonic() + timeout
     trace = []
-    while not condition() and monotonic() < deadline:
+    result = condition()
+    while not result and monotonic() < deadline:
         for service in services.values():
             service._connection_runtime.step()
         current = {role: [(state.reason, state.desired.value,
@@ -147,12 +157,111 @@ def drive(services, condition, *, timeout=12):
             trace.append(current)
             trace = trace[-10:]
         Event().wait(0.002)
-    if not condition():
+        result = condition()
+    if not result:
         raise AssertionError(json.dumps(trace))
+    return result
+
+
+def begin_manual_case(services, peers, initiator):
+    other = "android" if initiator == "windows" else "windows"
+    intents = {role: str(uuid4()) for role in services}
+    offer, answer = peers[initiator], peers[other]
+    offer.pairing_begin(intents[initiator], "offer")
+    code = drive(services, lambda: offer.pairing_status(intents[initiator])["pairing_code"])
+    answer.pairing_begin(intents[other], "answer", pairing_code=code)
+    drive(services, lambda: answer.pairing_status(intents[other])["state"] == "awaiting_approval")
+    drive(services, lambda: offer.pairing_status(intents[initiator])["state"] == "awaiting_approval")
+    return intents
+
+
+def finish_manual_case(state, intents):
+    for role, service in state.services.items():
+        other = "android" if role == "windows" else "windows"
+        capability = state.services[other]._reconnect_profile_for_contact(state.contacts[other])["local_capabilities"]
+        context = state.peers[role].contexts[intents[role]]
+        service._native_control_receive(context["session"], "mesh-onboarding", json.dumps({
+            "type": "connection_capabilities", "document": capability}))
+    def adopted():
+        return all(state.peers[role].pairing_status(intents[role])["state"] == "transferred"
+            and service._native_carrier_authorized(state.peers[role].contexts[intents[role]]["session"])
+            for role, service in state.services.items())
+    state.drive(adopted)
+    state.intents = intents
+    state.sessions = {role: peer.contexts[intents[role]]["session"] for role, peer in state.peers.items()}
+    state.physical = {role: state.services[role]._native_resources.require(session)
+                      for role, session in state.sessions.items()}
+
+
+def manual_identity(state):
+    result = {}
+    for role, service in state.services.items():
+        contact = service.store.get("contact", state.contacts[role])
+        profile = service._reconnect_profile_for_contact(state.contacts[role])
+        result[role] = (service._identity.get_public_key(), contact["id"], contact["destination_hash"],
+            contact["trust"], *(profile[name] for name in (
+                "id", "local_device_id", "remote_device_id", "auto_reconnect", "remote_auto_reconnect",
+                "active", "state")))
+    return result
+
+
+def retirement_requests(state):
+    requests = {}
+    for role, observer in state.controllers.items():
+        # Genuine post-adoption inspection populates production adapter sequence
+        # provenance. Neither the service evidence nor owner state is replaced.
+        sample = state.drive(lambda: observer.observe(state.sessions[role], ready=True, scenario="direct"))
+        requests[role] = {"operation_id": state.intents[role], "request_id": uuid4().hex,
+            "logical_session": sample["logical_session"], "expected_physical": sample["resource"],
+            "expected_service_incarnation": sample["service_incarnation"],
+            "expected_adapter_epoch": sample["adapter_epoch"]}
+        state.retirement_scopes[requests[role]["request_id"]] = (
+            sample["service_incarnation"], sample["profile_incarnation"])
+    return requests
+
+
+def request_retirement(state, requests):
+    for role, payload in requests.items():
+        assert state.peers[role].retire_carrier(**payload) == {
+            "request_id": payload["request_id"], "state": "pending"}
+
+
+def retirement_observation(state, role, payload):
+    return state.peers[role].inventory(operation_id=payload["operation_id"],
+                                     request_id=payload["request_id"])["carrier_retirement"]
+
+
+def correlated_retired(state, role, payload):
+    service, profile = state.retirement_scopes[payload["request_id"]]
+    return state.controllers[role].retired(operation_id=payload["operation_id"],
+        request_id=payload["request_id"], expected_service=service, expected_profile=profile)
+
+
+def await_retirement(state, requests):
+    def acknowledged_and_empty():
+        return all(correlated_retired(state, role, payload) is not None for role, payload in requests.items())
+    state.drive(acknowledged_and_empty)
+
+
+@contextmanager
+def delayed_native_close(state, role, monkeypatch):
+    pc = state.hosts[role]._sessions[state.physical[role]].pc
+    close = pc.close
+    entered, release = Event(), Event()
+    async def gated_close():
+        entered.set()
+        while not release.is_set():
+            await asyncio.sleep(0.002)
+        await close()
+    monkeypatch.setattr(pc, "close", gated_close)
+    try:
+        yield entered
+    finally:
+        release.set()
 
 
 @pytest.fixture
-def manual_carriers(native_pairing, monkeypatch, initiator, tmp_path):
+def manual_carriers(native_pairing, monkeypatch, initiator, tmp_path, reticulum):
     # No STUN/TURN, mailbox HTTP or off-host packets. Only host-address discovery
     # is constrained; real aiortc/Windows host creation and disposal execute.
     import aioice.ice
@@ -170,15 +279,7 @@ def manual_carriers(native_pairing, monkeypatch, initiator, tmp_path):
             service._native_host = host
             services[role], hosts[role] = service, host
             peers[role] = ServicePeer(service)
-        other = "android" if initiator == "windows" else "windows"
-        intents = {role: str(uuid4()) for role in services}
-        offer, answer = peers[initiator], peers[other]
-        offer.pairing_begin(intents[initiator], "offer")
-        drive(services, lambda: bool(offer.pairing_status(intents[initiator])["pairing_code"]))
-        code = offer.pairing_status(intents[initiator])["pairing_code"]
-        answer.pairing_begin(intents[other], "answer", pairing_code=code)
-        drive(services, lambda: answer.pairing_status(intents[other])["state"] == "awaiting_approval")
-        drive(services, lambda: offer.pairing_status(intents[initiator])["state"] == "awaiting_approval")
+        intents = begin_manual_case(services, peers, initiator)
         contacts = {}
         for role, service in services.items():
             peer = services["android" if role == "windows" else "windows"]
@@ -186,36 +287,20 @@ def manual_carriers(native_pairing, monkeypatch, initiator, tmp_path):
             _add_contact(service, contact, peer._identity, peer._require_profile()["destination_hash"])
             service.reconnect_consent_set(contact, False, True)
             contacts[role] = contact
-        for role, service in services.items():
-            other_role = "android" if role == "windows" else "windows"
-            peer = services[other_role]
-            context = peers[role].contexts[intents[role]]
-            capability = peer._reconnect_profile_for_contact(contacts[other_role])["local_capabilities"]
-            service._native_control_receive(context["session"], "mesh-onboarding", json.dumps({
-                "type": "connection_capabilities", "document": capability}))
         # Model the external network/Reticulum registration boundary only after
         # approval, so no isolated contact-bootstrap worker is allocated. Real
         # service bridge creation, attachment and owner readiness still execute.
-        original_interfaces = RNS.Transport.interfaces
-        monkeypatch.setattr(RNS.Transport, "interfaces", list(original_interfaces))
-        def add_interface(interface, **_):
-            RNS.Transport.interfaces.append(interface)
         for service in services.values():
             service.network = SimpleNamespace(
                 destination_hash=bytes.fromhex(service._require_profile()["destination_hash"]),
-                reticulum=SimpleNamespace(_add_interface=add_interface), reannounce=lambda: None,
+                reticulum=reticulum, reannounce=lambda: None,
                 path_known=lambda _: True, recipient_ready=lambda _: True,
                 invitation_hints=lambda: [], shutdown=lambda: True)
-        def adopted():
-            return all(peers[role].pairing_status(intents[role])["state"] == "transferred"
-                and service._native_carrier_authorized(peers[role].contexts[intents[role]]["session"])
-                for role, service in services.items())
-        drive(services, adopted)
         controllers = {role: Controller(role, peers[role], None, None, {}) for role in services}
-        sessions = {role: peer.contexts[intents[role]]["session"] for role, peer in peers.items()}
-        physical = {role: services[role]._native_resources.require(session) for role, session in sessions.items()}
-        yield SimpleNamespace(services=services, hosts=hosts, contacts=contacts, peers=peers, intents=intents,
-            controllers=controllers, sessions=sessions, physical=physical, drive=lambda check: drive(services, check))
+        state = SimpleNamespace(services=services, hosts=hosts, contacts=contacts, peers=peers,
+            controllers=controllers, retirement_scopes={}, drive=lambda check: drive(services, check))
+        finish_manual_case(state, intents)
+        yield state
 
 
 @pytest.mark.parametrize("primary_failure", [False, True])
@@ -316,3 +401,139 @@ def test_owner_stop_waits_exact_disposal_and_start_does_not_invent_auto_consent(
     assert profile["state"] == "stopped" and profile["active"] is False
     assert profile["auto_reconnect"] is False and profile["remote_auto_reconnect"] is False
     assert observer.retired() is not None
+
+
+def import_cold_capabilities_after_manual_zero(state):
+    """Signed storage continuity only; no cold process/delivery claim."""
+    documents = {}
+    for role, observer in state.controllers.items():
+        assert observer.retired() is not None
+        result = observer.native("reconnect_consent_set", contact_id=state.contacts[role],
+            auto_reconnect=True, allow_direct_ip_disclosure=True)
+        assert result["native_shared"] is False  # No carrier exists to deliver it.
+        documents[role] = result["capabilities"]
+    for role, observer in state.controllers.items():
+        other = "android" if role == "windows" else "windows"
+        observer.native("reconnect_capabilities_store", document=documents[other],
+            expected_contact_id=state.contacts[role],
+            expected_peer_destination=state.services[other]._require_profile()["destination_hash"])
+        profile = state.services[role]._reconnect_profile_for_contact(state.contacts[role])
+        assert profile["auto_reconnect"] is True and profile["remote_auto_reconnect"] is True
+        assert state.services[role]._connection_runtime.permits_recovery(profile)
+        assert observer.retired() is not None
+
+
+@pytest.mark.parametrize("initiator", ["windows", "android"])
+def test_two_manual_cases_reverse_initiator_and_old_request_cannot_retire_replacement(manual_carriers, initiator):
+    state = manual_carriers
+    first = retirement_requests(state)
+    identity = manual_identity(state)
+    request_retirement(state, first)
+    await_retirement(state, first)
+    assert manual_identity(state) == identity
+
+    other = "android" if initiator == "windows" else "windows"
+    finish_manual_case(state, begin_manual_case(state.services, state.peers, other))
+    assert manual_identity(state) == identity
+    for role, peer in state.peers.items():
+        assert state.intents[role] != first[role]["operation_id"]
+        assert state.physical[role] != first[role]["expected_physical"]
+        before = peer.inventory()["host_accounting"]
+        assert before["active_count"] == 1
+        assert peer.retire_carrier(**first[role]) == {
+            "request_id": first[role]["request_id"], "state": "acknowledged"}
+        assert correlated_retired(state, role, first[role]) is None
+        with pytest.raises(ValidationError):
+            peer.retire_carrier(**{**first[role], "expected_physical": state.physical[role]})
+        with pytest.raises(NativeUnavailable):
+            peer.retire_carrier(**{**first[role], "operation_id": state.intents[role], "request_id": uuid4().hex})
+        assert peer.pairing_cancel(state.intents[role])["state"] == "transferred"
+        assert state.controllers[role].native("native_webrtc_close", session_id=state.sessions[role]) == {"state": "managed"}
+        assert state.services[role]._native_carrier_authorized(state.sessions[role])
+        assert peer.inventory()["host_accounting"] == before
+    final = retirement_requests(state)
+    request_retirement(state, final)
+    await_retirement(state, final)
+    assert manual_identity(state) == identity
+    import_cold_capabilities_after_manual_zero(state)
+
+
+@pytest.mark.parametrize("initiator", ["windows", "android"])
+def test_private_ack_and_global_zero_wait_for_exact_native_disposal(manual_carriers, monkeypatch, initiator):
+    state = manual_carriers
+    requests = retirement_requests(state)
+    with delayed_native_close(state, initiator, monkeypatch) as entered:
+        request_retirement(state, requests)
+        state.drive(entered.is_set)
+        payload = requests[initiator]
+        assert retirement_observation(state, initiator, payload) == {
+            "request_id": payload["request_id"], "state": "pending"}
+        assert correlated_retired(state, initiator, payload) is None
+        counts = state.peers[initiator].inventory()["host_accounting"]
+        assert counts["reserved_count"] == counts["allocated_count"] == counts["retiring_count"] == 1
+        with pytest.raises(ContactNotApproved):
+            state.peers[initiator].pairing_begin(str(uuid4()), "offer")
+    await_retirement(state, requests)
+
+
+@pytest.mark.parametrize("initiator", ["windows", "android"])
+def test_real_vault_journal_failure_cannot_be_acknowledged_by_native_zero(manual_carriers, monkeypatch, initiator):
+    state = manual_carriers
+    requests = retirement_requests(state)
+    service = state.services[initiator]
+    # This host has no recovery-inventory port, so its normal journal is None.
+    # Configure a REAL sealed journal with the actual current binding to exercise
+    # storage-failure semantics; this does not claim checkpoint inventory proof.
+    context = _binding_context(service, state.sessions[initiator])
+    journal = CarrierJournal(service.store)
+    binding = CarrierBinding(**{**context, "adapter_epoch": requests[initiator]["expected_adapter_epoch"]})
+    journal.save(binding, journal.revision())
+    monkeypatch.setattr(service, "_carrier_journal", journal)
+    update = service.store.update_record
+    failed, writable, attempts = Event(), Event(), []
+    def update_record(kind, key, change):
+        if (kind, key) == ("native_carrier_recovery", "current"):
+            attempts.append(True)
+            if not writable.is_set():
+                failed.set()
+                raise OSError("Controlled protected journal write failure")
+        return update(kind, key, change)
+    monkeypatch.setattr(service.store, "update_record", update_record)
+    try:
+        request_retirement(state, requests)
+        state.drive(lambda: failed.is_set() and state.controllers[initiator].retired() is not None)
+        assert journal.bindings() == (binding,)
+        assert retirement_observation(state, initiator, requests[initiator])["state"] == "pending"
+        assert correlated_retired(state, initiator, requests[initiator]) is None
+    finally:
+        writable.set()
+    await_retirement(state, requests)  # Real unchanged retry cadence; no clock jump.
+    assert len(attempts) >= 2 and journal.bindings() == ()
+
+
+@pytest.mark.parametrize("initiator", ["windows", "android"])
+@pytest.mark.parametrize("denial", ["stop", "quarantine"])
+def test_transient_retirement_never_clears_real_owner_denial(manual_carriers, initiator, denial):
+    state = manual_carriers
+    requests = retirement_requests(state)
+    service = state.services[initiator]
+    request_retirement(state, requests)
+    if denial == "stop":
+        state.controllers[initiator].native("reconnect_stop", contact_id=state.contacts[initiator])
+        await_retirement(state, requests)
+        state.controllers[initiator].native("reconnect_start", contact_id=state.contacts[initiator])
+    else:
+        service._connection_runtime.quarantine()
+        # Quarantine denies private inventory itself: inspect actual host leases
+        # for cleanup only, without manufacturing an authorized controller ack.
+        state.drive(lambda: all(json.loads(host.resourceAccounting())["result"]["reserved_count"] == 0
+                                for host in state.hosts.values()))
+        with pytest.raises(NativeUnavailable):
+            state.controllers[initiator].retired()
+        with pytest.raises((ContactNotApproved, NativeUnavailable)):
+            state.peers[initiator].pairing_begin(str(uuid4()), "offer")
+    profile = service._reconnect_profile_for_contact(state.contacts[initiator])
+    assert profile["auto_reconnect"] is False and profile["remote_auto_reconnect"] is False
+    assert not service._connection_runtime.permits_recovery(profile)
+    if denial == "stop":
+        assert profile["state"] == "stopped" and profile["active"] is False
