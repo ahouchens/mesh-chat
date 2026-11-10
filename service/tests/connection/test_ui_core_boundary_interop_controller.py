@@ -1,7 +1,9 @@
 """Controller/evidence component checks; synthetic reports are never CI proof."""
 
 from pathlib import Path
+import json
 import sys
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -211,3 +213,133 @@ def test_workload_cannot_be_relabelled_or_substituted_for_the_other_matrix(mode)
                       evidence_level=evidence.required_workload(other)["level"])
     with pytest.raises(ValueError):
         evidence.verify_pair(*reports, "a" * 40, "b" * 40, workload=other)
+
+
+@pytest.mark.parametrize("role,fault,site,error_type", [
+    ("android", "negotiate_settings_update", "negotiate_settings_update", "PeerFailure"),
+    ("windows", "pairing_offer_begin", "pairing_offer_begin", "PeerFailure"),
+    ("android", "pairing_answer_begin", "pairing_answer_begin", "PeerFailure"),
+    ("windows", "pairing_status", "pairing_status", "PeerFailure"),
+    ("windows", "rendezvous_publish", "rendezvous_publish", "PeerFailure"),
+    ("android", "rendezvous_receive", "rendezvous_receive", "PeerFailure"),
+    ("android", "negotiate_inventory", "negotiate_inventory", "PeerFailure"),
+    ("android", "negotiate_native_stats", "negotiate_native_stats", "PeerFailure"),
+    ("windows", "offer_identity", "pairing_offer_begin", "PeerFailure"),
+    ("android", "answer_identity", "pairing_answer_begin", "PeerFailure"),
+    ("windows", "status_retired", "pairing_status", "PeerFailure"),
+    ("android", "inventory_shape", "negotiate_inventory", "KeyError"),
+    ("android", "stats_shape", "negotiate_native_stats", "AttributeError"),
+    ("windows", "publish_validation", "rendezvous_publish", "ValueError"),
+    ("android", "receive_validation", "rendezvous_receive", "ValueError"),
+    ("windows", "before_any_call", None, "ValueError"),
+    ("windows", "after_success", None, "ValueError"),
+    ("android", "after_success", None, "ValueError"),
+    ("windows", "caught_then_unrelated", None, "ValueError"),
+])
+def test_actual_failure_report_selects_only_active_literal_call_site(tmp_path, monkeypatch, capsys, role, fault, site, error_type):
+    # Actual main/negotiate/wait/report flow, synthetic peer/artifact boundaries.
+    # No native process, network, service allocation or successful evidence claim.
+    import connection_ci
+    events = []
+    def fail(name):
+        if fault == name or (fault == "caught_then_unrelated" and name == "negotiate_settings_update"):
+            raise controller.PeerFailure("invalid_request")
+
+    class Peer:
+        process = None
+        def core(self, operation, params, key=None):
+            assert key is None
+            if operation == "call.settings_update":
+                events.append("settings")
+                fail("negotiate_settings_update")
+                return {}
+            assert operation == "native.command" and params == {
+                "command": "native_webrtc_stats", "payload": {"session_id": "PRIVATE_LOGICAL"}}
+            events.append("stats")
+            fail("negotiate_native_stats")
+            return None if fault == "stats_shape" else {"data_channel_state": "open"}
+        def pairing_begin(self, operation, pairing_role, **kwargs):
+            self.operation = operation
+            events.append("begin_" + pairing_role)
+            assert kwargs["direct"] is True
+            if pairing_role == "answer": assert kwargs["pairing_code"] == "PRIVATE_SIGNED_CODE"
+            fail("pairing_" + pairing_role + "_begin")
+            return {"operation_id": "PRIVATE_OTHER_ID" if fault == pairing_role + "_identity" else operation}
+        def pairing_status(self, operation):
+            events.append("status")
+            fail("pairing_status")
+            return {"operation_id": operation, "state": "retired" if fault == "status_retired" else "offer_ready",
+                    "pairing_code": "PRIVATE_SIGNED_CODE"}
+        def inventory(self):
+            events.append("inventory")
+            fail("negotiate_inventory")
+            return {"resources": [{}] if fault == "inventory_shape" else [{"logical_session": "PRIVATE_LOGICAL"}]}
+
+    class Transport:
+        def publish(self, *args):
+            events.append("publish")
+            fail("rendezvous_publish")
+        def wait(self, partner, phase, *, timeout):
+            assert partner == "windows" and phase == "offer" and timeout == 180
+            events.append("receive")
+            fail("rendezvous_receive")
+            return {"shareable": "PRIVATE_SIGNED_CODE"}
+        def close(self): pass
+
+    class Rendezvous:
+        def seal(self, phase, value):
+            if fault == "publish_validation": raise ValueError("PRIVATE_URL/SDP/KEY publish")
+            return value
+        def open(self, phase, value):
+            if fault == "receive_validation": raise ValueError("PRIVATE_URL/SDP/KEY receive")
+            return value
+        def close(self): pass
+
+    def negotiate_only(instance):
+        instance.profile = "PRIVATE_PROFILE"
+        instance.default_call_settings = {}
+        instance.broker_ice = {"iceServers": [] if fault == "before_any_call" else [{"urls": ["stun:PRIVATE_URL"]}]}
+        if fault == "caught_then_unrelated":
+            with pytest.raises(controller.PeerFailure): instance.negotiate("direct", "windows")
+        else:
+            instance.negotiate("direct", "windows")
+        error = ValueError("PRIVATE_LATER_EXCEPTION/SDP/KEY")
+        error.failure_site = "PRIVATE_CALLER_SUPPLIED_SITE"
+        raise error
+
+    context = {"source_commit": "a" * 40}
+    monkeypatch.setattr(controller, "source_identity", lambda _: ("a" * 40, "b" * 40))
+    monkeypatch.setattr(connection_ci, "current_plan", lambda: {"native_workload": "full"})
+    monkeypatch.setattr(controller, "context_from_environment", lambda: context)
+    monkeypatch.setattr(controller, "binding", lambda *_: (Path("unused.exe"), {}))
+    monkeypatch.setattr(controller, "outbound_services", lambda: {})
+    monkeypatch.setattr(controller, "android_environment", lambda: {})
+    monkeypatch.setattr(controller, "AndroidEmulator", lambda: SimpleNamespace(start=lambda *_: None, close=lambda: None))
+    monkeypatch.setattr(controller, "WindowsPeer", lambda *_: Peer())
+    monkeypatch.setattr(controller, "AndroidPeer", lambda *_: Peer())
+    monkeypatch.setattr(controller, "GithubArtifacts", lambda *_: Transport())
+    monkeypatch.setattr(controller, "Rendezvous", lambda *_: Rendezvous())
+    monkeypatch.setattr(controller.Controller, "run", negotiate_only)
+    output = tmp_path / "failure.json"
+    monkeypatch.setattr(sys, "argv", ["native_interop_controller", "--role", role, "--expected-source", "a" * 40,
+                                      "--workload", "full", "--output", str(output)])
+    assert controller.main() == 1
+    record = json.loads(output.read_text())
+    assert record["passed"] is False and record["phase"] == "direct_supervisor_owned_pairing_windows"
+    assert record["workload"] == "full" and record["failure_type"] == error_type
+    if site is None: assert "failure_site" not in record
+    else: assert record["failure_site"] == site and site in controller.FAILURE_SITES
+    fields = {"v", "passed", "evidence_level", "role", "scope", "workload", "phase", "failure_type"}
+    if error_type == "PeerFailure":
+        fields.add("error_code")
+        expected_code = ("invalid_pairing_identity" if fault in {"offer_identity", "answer_identity"}
+                         else "supervisor_pairing_retired" if fault == "status_retired" else "invalid_request")
+        assert record["error_code"] == expected_code
+    if site is not None: fields.add("failure_site")
+    assert set(record) == fields
+    success_path = (["settings", "begin_offer", "status", "publish", "status", "inventory", "stats"] if role == "windows"
+                    else ["settings", "receive", "begin_answer", "status", "inventory", "stats"])
+    assert events == success_path[:len(events)]  # No added/reordered/repeated requests.
+    if fault == "after_success": assert events == success_path
+    captured = capsys.readouterr()
+    assert "PRIVATE_" not in output.read_text() + captured.out + captured.err

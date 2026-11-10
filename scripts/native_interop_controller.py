@@ -1,6 +1,7 @@
 """Concurrent actual packaged peers; artifacts carry encrypted setup/control only."""
 
 import argparse
+from contextlib import contextmanager
 import hashlib
 import json
 import os
@@ -21,6 +22,8 @@ from native_interop_workload import workload as required_workload
 from test_packaged_lifecycle import source_identity
 
 OFFERS = {"direct": "offer", **{name: "offer_" + name for name in SCENARIOS[1:5]}}
+FAILURE_SITES = frozenset({"negotiate_settings_update", "pairing_offer_begin", "pairing_answer_begin",
+    "pairing_status", "rendezvous_receive", "rendezvous_publish", "negotiate_inventory", "negotiate_native_stats"})
 
 
 def selected_ice(value, scenario):
@@ -76,7 +79,27 @@ class Controller:
         self.profile = self.contact = None
         self.identity = None
         self.pairing = None
+        self._operation_failure: tuple[Exception, str] | None = None
         self.workload = required_workload(workload)
+
+    @contextmanager
+    def _failure_scope(self, site):
+        if site not in FAILURE_SITES:
+            raise ValueError("Unknown native diagnostic site")
+        self._operation_failure = None
+        try:
+            yield
+        except Exception as error:
+            # Keep exception identity only in RAM. A later, unrelated error
+            # must not inherit the label of a previous call or caught failure.
+            self._operation_failure = error, site
+            raise
+        else:
+            self._operation_failure = None
+
+    def failure_site(self, error):
+        observed = self._operation_failure
+        return observed[1] if observed is not None and observed[0] is error and observed[1] in FAILURE_SITES else None
 
     def wait(self, action, *, timeout=90, interval=0.25):
         deadline = min(self.deadline, time.monotonic() + timeout)
@@ -97,10 +120,12 @@ class Controller:
         return self.core("application.snapshot")
 
     def publish(self, phase, value):
-        self.transport.publish(phase, self.rendezvous.seal(phase, value))
+        with self._failure_scope("rendezvous_publish"):
+            self.transport.publish(phase, self.rendezvous.seal(phase, value))
 
     def receive(self, phase):
-        return self.rendezvous.open(phase, self.transport.wait(self.partner, phase, timeout=180))
+        with self._failure_scope("rendezvous_receive"):
+            return self.rendezvous.open(phase, self.transport.wait(self.partner, phase, timeout=180))
 
     def initialize(self):
         from mesh_chat.call_settings import DEFAULT_SIGNAL_MAILBOX_URL, DEFAULT_TURN_BROKER_URL, DEFAULT_STUN_URLS
@@ -125,12 +150,13 @@ class Controller:
         self.broker_ice = self.core("call.ice_servers", {"profile": self.profile})["ice"]
 
     def pairing_status(self):
-        value = self.peer.pairing_status(self.pairing)
-        if value.get("operation_id") != self.pairing:
-            raise PeerFailure("invalid_pairing_identity")
-        if value.get("state") in {"retired", "retiring"}:
-            raise PeerFailure("supervisor_pairing_retired")
-        return value
+        with self._failure_scope("pairing_status"):
+            value = self.peer.pairing_status(self.pairing)
+            if value.get("operation_id") != self.pairing:
+                raise PeerFailure("invalid_pairing_identity")
+            if value.get("state") in {"retired", "retiring"}:
+                raise PeerFailure("supervisor_pairing_retired")
+            return value
 
     def negotiate(self, scenario, initiator):
         self.phase = scenario + "_supervisor_owned_pairing_" + initiator
@@ -140,23 +166,28 @@ class Controller:
             "stun_urls": server["urls"] if scenario == "direct" else [], "turn_url": turn_url,
             "turn_username": server.get("username"), "turn_credential": server.get("credential"),
             "relay_only": scenario != "direct"}
-        self.core("call.settings_update", {"profile": self.profile, "settings": settings})
+        with self._failure_scope("negotiate_settings_update"):
+            self.core("call.settings_update", {"profile": self.profile, "settings": settings})
         self.pairing = str(uuid4())
         if self.role == initiator:
-            admitted = self.peer.pairing_begin(self.pairing, "offer", direct=scenario == "direct")
-            if admitted.get("operation_id") != self.pairing: raise PeerFailure("invalid_pairing_identity")
+            with self._failure_scope("pairing_offer_begin"):
+                admitted = self.peer.pairing_begin(self.pairing, "offer", direct=scenario == "direct")
+                if admitted.get("operation_id") != self.pairing: raise PeerFailure("invalid_pairing_identity")
             code = self.wait(lambda: self.pairing_status().get("pairing_code"), timeout=120)
             self.publish(OFFERS[scenario], {"shareable": code})
         else:
             code = self.receive(OFFERS[scenario])["shareable"]
-            admitted = self.peer.pairing_begin(self.pairing, "answer", pairing_code=code, direct=scenario == "direct")
-            if admitted.get("operation_id") != self.pairing: raise PeerFailure("invalid_pairing_identity")
+            with self._failure_scope("pairing_answer_begin"):
+                admitted = self.peer.pairing_begin(self.pairing, "answer", pairing_code=code, direct=scenario == "direct")
+                if admitted.get("operation_id") != self.pairing: raise PeerFailure("invalid_pairing_identity")
         def open_session():
             self.pairing_status()
-            resources = self.peer.inventory()["resources"]
-            if len(resources) != 1: return None
-            logical = resources[0]["logical_session"]
-            return logical if self.native("native_webrtc_stats", session_id=logical).get("data_channel_state") == "open" else None
+            with self._failure_scope("negotiate_inventory"):
+                resources = self.peer.inventory()["resources"]
+                if len(resources) != 1: return None
+                logical = resources[0]["logical_session"]
+            with self._failure_scope("negotiate_native_stats"):
+                return logical if self.native("native_webrtc_stats", session_id=logical).get("data_channel_state") == "open" else None
         session = self.wait(open_session, timeout=120)
         return session, turn_url
 
@@ -434,6 +465,9 @@ def main():
                   "phase": controller.phase if controller is not None else phase, "failure_type": type(error).__name__}
         if isinstance(error, PeerFailure): result["error_code"] = error.code
         elif isinstance(getattr(error, "code", None), str): result["error_code"] = PeerFailure(error.code).code
+        if controller is not None:
+            site = controller.failure_site(error)
+            if site is not None: result["failure_site"] = site
     finally:
         if peer is not None and peer.process is not None:
             try: peer.stop(crash=True)
