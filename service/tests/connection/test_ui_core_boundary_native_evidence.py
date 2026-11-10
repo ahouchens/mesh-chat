@@ -2,14 +2,66 @@
 
 import importlib
 import json
+import os
 from pathlib import Path
+import subprocess
 import sys
+import tempfile
 from types import SimpleNamespace
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 import native_windows_evidence as native
+
+
+@pytest.mark.parametrize("fault", ["none", "tracked_source", "unrelated_untracked", "adjacent_host_source", "wrong_revision"])
+def test_downloaded_android_host_repository_preserves_exact_clean_source_binding(monkeypatch, fault):
+    import test_packaged_lifecycle as packaged
+    ignore = (Path(__file__).resolve().parents[3] / ".gitignore").read_bytes()
+    # Exact25 members observed in Android artifact13724901774 / source733c38b;
+    # bytes are tiny stand-ins, never claimed as build/artifact verification.
+    base = "plugins/tauri-plugin-mesh-runtime/android/runtime-host/build/repository/com/meshchat/core-runtime-host"
+    paths = [f"{base}/0.3.0-experimental/core-runtime-host-0.3.0-experimental{suffix}{checksum}"
+             for suffix in ("-sources.jar", ".aar", ".module", ".pom")
+             for checksum in ("", ".md5", ".sha1", ".sha256", ".sha512")]
+    paths += [f"{base}/maven-metadata.xml{checksum}" for checksum in ("", ".md5", ".sha1", ".sha256", ".sha512")]
+    # A short external temp path also keeps exact Maven filenames below Windows MAX_PATH.
+    with tempfile.TemporaryDirectory(prefix="ms-") as directory:
+        root = Path(directory)
+        monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+        monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+        def git(*args):
+            return subprocess.check_output(["git", *args], cwd=root, text=True).strip()
+        git("init", "--quiet")
+        (root / ".gitignore").write_bytes(ignore)
+        source = root / "source.py"
+        source.write_text("tracked source\n")
+        git("add", ".gitignore", "source.py")
+        git("-c", "user.name=Qualification Test", "-c", "user.email=qualification@example.invalid",
+            "commit", "--quiet", "-m", "isolated source")
+        expected = git("rev-parse", "HEAD")
+        tree = git("rev-parse", "HEAD^{tree}")
+        monkeypatch.setattr(packaged, "ROOT", root)
+        assert packaged.source_identity(expected) == (expected, tree)
+        for name in paths:
+            target = root / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"synthetic downloaded output")
+        assert len(paths) == 25
+        # Exercise the actual guard, not a mocked status or relaxed path filter.
+        assert packaged.source_identity(expected) == (expected, tree)
+        if fault == "none": return
+        if fault == "tracked_source": source.write_text("modified source\n")
+        elif fault == "wrong_revision": expected = "0" * 40
+        else:
+            name = ("unrelated.txt" if fault == "unrelated_untracked"
+                    else "plugins/tauri-plugin-mesh-runtime/android/runtime-host/src/main/unexpected.kt")
+            target = root / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("untracked source\n")
+        with pytest.raises(RuntimeError, match="exact clean source revision"):
+            packaged.source_identity(expected)
 
 
 def report(kind):
