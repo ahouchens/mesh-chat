@@ -11,6 +11,22 @@ reports. Exact evidence and limits are in the ledger. Wave 2 is activated below.
 Existing human authorization covers continued implementation, integration and
 worker follow-ups without another permission request.
 
+The reserved-creation follow-up is integrated: controller `a872e7f` and
+allocation regressions `a92e69a` are combined at `24f0b1b`. The lead
+reviewed the changes and independently ran **522 focused cases**, all passing
+with zero skips. The controller inventory now contains 287 cases, and the new
+allocation-observation module contains 11 cases through the actual Core
+request, native adapter and service lifecycle boundaries with explicitly modeled
+native/mailbox effects. These are offline component results, not device evidence.
+
+The guard reuses the existing operation-bound pairing status call. Only an exact
+string `reserved` defers inventory and stats through the unchanged wait. Other
+states and malformed metadata preserve their original behavior; retirement,
+foreign operation identity and stats failures still propagate. No extra RPC,
+exception retry, owner, timer, authority grant or public contract is introduced.
+Stats success still does not establish approval, attachment or messaging readiness.
+Exact-source local and full CI qualification of this follow-up is required.
+
 The current shared checkpoint is `82aaf19c3671777724d7da5e8cab0e5b2a5d6de2`
 (tree `c489caaa361329d9dd50d1d26590bbe2d691fdd8`). Full manual qualification
 [42770728559](https://github.com/ahouchens/mesh-chat/actions/runs/42770728559)
