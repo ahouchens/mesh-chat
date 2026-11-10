@@ -1,6 +1,7 @@
 """Controller/evidence component checks; synthetic reports are never CI proof."""
 
 from pathlib import Path
+import copy
 import json
 import subprocess
 import sys
@@ -16,6 +17,163 @@ from native_interop_rendezvous import APPROVAL_PHASES, OFFER_PHASES, checked_pay
 from test_ui_core_boundary_interop_peers import (
     ANDROID_ENVIRONMENT_SITES, ANDROID_START_SITES, assert_android_cleaned, scripted_android,
 )
+from test_ui_core_boundary_interop_evidence import sample
+
+
+@pytest.fixture
+def path_observer(monkeypatch, sample):
+    """Actual observe/wait/Samples; only private peer calls and time are scripted."""
+    value, inventory = sample
+    state = SimpleNamespace(now=10.0, events=[], sleeps=[], on_sleep=None, error=None, value=value,
+        inventory=inventory, sequence=0)
+    state.inventory["resources"][0]["owner_state"] = "authorized"
+    def discover():
+        state.events.append("inventory")
+        return copy.deepcopy(state.inventory)
+    def path(logical, physical):
+        state.events.append(("path", logical, physical))
+        if state.error is not None: raise state.error
+        state.sequence += 1
+        result = copy.deepcopy(state.value)
+        result.update(sample_sequence=state.sequence, sampled_at_ms=int((100 + state.now - 10) * 1000))
+        return result
+    def sleep(seconds):
+        state.sleeps.append(seconds)
+        state.now += seconds
+        if state.on_sleep is not None: state.on_sleep()
+    monkeypatch.setattr(controller, "time", SimpleNamespace(monotonic=lambda: state.now, sleep=sleep))
+    instance = controller.Controller("android", SimpleNamespace(inventory=discover, path=path), None, None, {})
+    instance.samples = evidence.Samples(clock=lambda: 100 + state.now - 10, monotonic=lambda: state.now)
+    state.controller = instance
+    return state
+
+
+class PendingState(str):
+    pass
+
+
+OWNER_STATE_VALUES = [None, False, True, 0, 1, [], {}, "unknown", "PENDING_ADOPTION",
+    "unadopted", "unavailable", "authorized", PendingState("pending_adoption")]
+
+
+@pytest.mark.parametrize("logical", [None, "logical"])
+def test_unique_pending_adoption_waits_then_samples_same_physical_resource(path_observer, logical):
+    state = path_observer
+    state.inventory["resources"][0]["owner_state"] = "pending_adoption"
+    def adopt(): state.inventory["resources"][0]["owner_state"] = "authorized"
+    state.on_sleep = adopt
+    result = state.controller.wait(lambda: state.controller.observe(logical, ready=True, scenario="turn_udp"), timeout=120)
+    assert result["logical_session"] == "logical" and result["resource"] == "physical"
+    assert state.events == ["inventory", "inventory", ("path", "logical", "physical")]
+    assert state.sleeps == [0.25] and state.sequence == 1
+    assert state.controller.samples.previous == {("service", "physical", "a" * 32): 1}
+
+
+@pytest.mark.parametrize("owner_state", ["missing", *OWNER_STATE_VALUES, "pending_adoption"])
+@pytest.mark.parametrize("ready", [False, True])
+@pytest.mark.parametrize("denial", ["contact", "native"])
+def test_only_strict_pending_hint_defers_other_metadata_preserves_exact_path_error(path_observer, owner_state, ready, denial):
+    from mesh_chat.errors import NativeUnavailable
+    state = path_observer
+    row = state.inventory["resources"][0]
+    if owner_state == "missing": row.pop("owner_state")
+    else: row["owner_state"] = owner_state
+    state.error = controller.PeerFailure("contact_not_approved") if denial == "contact" else NativeUnavailable("private sample unavailable")
+    if ready and type(owner_state) is str and owner_state == "pending_adoption":
+        assert state.controller.observe("logical", ready=ready) is None
+        assert state.events == ["inventory"]
+    else:
+        with pytest.raises(type(state.error)) as failure:
+            state.controller.observe("logical", ready=ready)
+        assert failure.value is state.error
+        assert state.events == ["inventory", ("path", "logical", "physical")]
+    assert state.sleeps == [] and state.controller.samples.previous == {}
+
+
+@pytest.mark.parametrize("owner_state", ["missing", *OWNER_STATE_VALUES])
+def test_nonpending_metadata_keeps_original_successful_sampling(path_observer, owner_state):
+    state = path_observer
+    if owner_state == "missing": state.inventory["resources"][0].pop("owner_state")
+    else: state.inventory["resources"][0]["owner_state"] = owner_state
+    result = state.controller.observe("logical", scenario="turn_udp")
+    assert result["resource"] == "physical"
+    assert state.events == ["inventory", ("path", "logical", "physical")] and state.sleeps == []
+
+
+def test_ready_false_still_samples_pending_unadopted_path(path_observer):
+    state = path_observer
+    state.inventory["resources"][0].update(adopted=False, owner_state="pending_adoption")
+    state.value.update(adopted=False, attached=False, messaging_ready=False)
+    assert state.controller.observe("logical", ready=False)["adopted"] is False
+    assert state.events == ["inventory", ("path", "logical", "physical")]
+
+
+@pytest.mark.parametrize("requested,pending_logical,expected", [
+    ("logical", "logical", ["inventory"]),
+    ("logical", "other", ["inventory", ("path", "logical", "physical")]),
+    ("absent", "logical", ["inventory"]),
+])
+def test_pending_hint_is_considered_only_after_exact_logical_filter(path_observer, requested, pending_logical, expected):
+    state = path_observer
+    state.inventory["resources"].append(dict(logical_session="other", physical_resource="other-physical", adopted=True, owner_state="authorized"))
+    next(row for row in state.inventory["resources"] if row["logical_session"] == pending_logical)["owner_state"] = "pending_adoption"
+    result = state.controller.observe(requested)
+    assert (result is not None) == (requested == "logical" and pending_logical == "other")
+    assert state.events == expected
+
+
+@pytest.mark.parametrize("requested,second_logical", [(None, "other"), ("logical", "logical")])
+def test_ambiguous_matching_pending_row_keeps_original_path_and_denial(path_observer, requested, second_logical):
+    state = path_observer
+    state.inventory["resources"][0]["owner_state"] = "pending_adoption"
+    state.inventory["resources"].append(dict(logical_session=second_logical, physical_resource="other-physical", adopted=True, owner_state="authorized"))
+    state.error = controller.PeerFailure("contact_not_approved")
+    with pytest.raises(controller.PeerFailure) as failure:
+        state.controller.observe(requested)
+    assert failure.value is state.error
+    assert state.events == ["inventory", ("path", "logical", "physical")]
+
+
+@pytest.mark.parametrize("remaining,polls", [(120, 480), (0.5, 2)])
+def test_pending_adoption_uses_original_poll_and_deadline_without_path_rpc(path_observer, remaining, polls):
+    state = path_observer
+    state.inventory["resources"][0]["owner_state"] = "pending_adoption"
+    if remaining < 120: state.controller.deadline = state.now + remaining
+    with pytest.raises(controller.PeerFailure) as failure:
+        state.controller.wait(lambda: state.controller.observe("logical"), timeout=120)
+    assert failure.value.code == "scenario_deadline"
+    assert state.now == 10 + remaining and state.sleeps == [0.25] * polls
+    assert state.events == ["inventory"] * polls and state.controller.samples.previous == {}
+
+
+def test_pending_then_revoked_is_not_cached_or_swallowed(path_observer):
+    state = path_observer
+    state.inventory["resources"][0]["owner_state"] = "pending_adoption"
+    def revoke():
+        state.inventory["resources"][0]["owner_state"] = "unavailable"
+        state.error = controller.PeerFailure("contact_not_approved")
+    state.on_sleep = revoke
+    with pytest.raises(controller.PeerFailure) as failure:
+        state.controller.wait(lambda: state.controller.observe("logical"), timeout=120)
+    assert failure.value is state.error
+    assert state.events == ["inventory", "inventory", ("path", "logical", "physical")]
+    assert state.sleeps == [0.25] and state.controller.samples.previous == {}
+
+
+@pytest.mark.parametrize("field", ["adopted", "attached", "messaging_ready", "status"])
+def test_authorized_inventory_does_not_replace_actual_selected_path_readiness(path_observer, field):
+    state = path_observer
+    state.value[field] = "unsupported" if field == "status" else False
+    assert state.controller.observe("logical", ready=True) is None
+    assert state.events == ["inventory", ("path", "logical", "physical")]
+    assert state.controller.samples.previous == {} and state.sleeps == []
+
+
+def test_empty_inventory_still_returns_no_sample(path_observer):
+    state = path_observer
+    state.inventory["resources"] = []
+    assert state.controller.observe() is None
+    assert state.events == ["inventory"] and state.controller.samples.previous == {}
 
 
 def run_android_preflight_report(tmp_path, monkeypatch, capsys, *, site=None, fault=None):
