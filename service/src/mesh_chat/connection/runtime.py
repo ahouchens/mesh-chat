@@ -110,6 +110,19 @@ class ConnectionRuntime:
         with self._lock:
             return not self._stop.is_set() and not self._is_fenced(connection_key(profile), profile)
 
+    def pending_handoff_adoption(self, profile_id, resource):
+        """Private read-only qualification hint, never a carrier permission."""
+        with self._lock:
+            keys = self._profile_keys.get(profile_id, ())
+            if len(keys) != 1:
+                return False
+            key = next(iter(keys))
+            profile = self._profile_values.get(key)
+            if (profile is None or profile.get("id") != profile_id or key.profile_id != profile_id
+                    or self._is_fenced(key, profile)):
+                return False
+            return self.owner.pending_handoff_adoption(key, resource, self.now())
+
     def permits_native_work(self):
         """Private adapter admission, including work before a profile exists."""
         with self._lock:

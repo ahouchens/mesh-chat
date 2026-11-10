@@ -62,7 +62,8 @@ def inspection(profile_runtime):
 def test_private_inventory_and_evidence_bind_resource_profile_and_owner_without_public_command(inspection):
     service, _, physical = inspection
     inventory = service.native_webrtc_inspection_resources()
-    assert inventory["resources"] == [{"logical_session": "current", "physical_resource": physical, "adopted": False}]
+    assert inventory["resources"] == [{"logical_session": "current", "physical_resource": physical,
+                                      "adopted": False, "owner_state": "unadopted"}]
     value = service.native_webrtc_path_evidence("current", physical)
     assert value["qualification_only"] and value["resource"] == physical
     assert value["service_incarnation"] == inventory["service_incarnation"]
