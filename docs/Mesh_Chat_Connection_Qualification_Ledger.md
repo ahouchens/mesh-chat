@@ -79,8 +79,8 @@ Unknown causes stay unclassified; cleanup replacement uses its own exception.
 This is component evidence, not native qualification or a fix for the race.
 
 The independently reviewed private v2 preparation/completion/commit contract is
-now frozen for implementation. After successful measurements and fault cleanup,
-each role prepares its exact fresh transferred owner without disposal, publishes
+implemented at the common checkpoint below. After successful measurements and
+fault cleanup, each role prepares its exact fresh transferred owner without disposal, publishes
 then receives one sealed `case_complete_<scenario>_<initiator>` marker with exact
 `{completed:true}`, commits the same request, and requires real exact owner/native
 cleanup proof plus fresh clearance and independent global zero. Preparation
@@ -93,10 +93,33 @@ historical receipts cannot admit or retire a later generation or satisfy its non
 
 The new marker budget is 17 Windows/15 Android uploads including reports for the
 full workload and eight per role for quick; the run inventory cap remains 100.
-The producer and consumer implementations and independent composition proof are
-pending. No public SDK/grant, JNI/host protocol, timeout, retry-budget, kernel-drop,
-receipt or global-zero relaxation is assigned. Bootstrap retirement remains
+Producer `3172d02` and consumer `b3751ae` are integrated unchanged at `6459710`,
+after independent source reviews with no actionable findings. Producer evidence
+contains **445 passing component cases**, strict model/reducer types and four
+meaningful safeguard-removal failures. Consumer evidence contains **998 passing
+cases**, preserving 895 prior cases (16 explicit uploader-vector renames) and
+adding 103. Its two actual controllers independently gate the slow final sample
+or fault cleanup; native, kernel, receipt and cleanup boundaries remain scripted.
+The producer exercises actual service/owner/private-dispatch paths with modeled
+native callbacks. Neither focused suite establishes real native completion.
+Independent real composition on the common implementation and fresh full
+qualification remain pending. No public SDK/grant, JNI/host protocol, timeout,
+retry-budget, kernel-drop, receipt or global-zero relaxation is assigned. Bootstrap retirement remains
 deferred until full native qualification.
+
+Retained producer XML SHA-256 is
+`c87c35c3656a693b9bd4911699d9f5db25ec98ef5b9f6cca760eec911532da47`;
+its exact 445-case inventory is
+`bcd04589ab00fc1870ba7d287a79be82ac6b445e6c0a272bf4f8f481c23a3cc8`.
+Consumer XML SHA-256 is
+`460a8b87743a7b6f7cbee312256fcd9f34c344b0478eb8f58ce76e45071da638`;
+its exact 998-case inventory is
+`48f5f233bcf6b0e759ea726eda48d164d90cff6136b5bee759038a440193a8a2`.
+Root verified all 21 changed source blobs and the retained artifacts. Four
+producer mutations fail when replacement protection, positive native receipt,
+fresh contact comparison or current adapter epoch checks are removed. These
+sources were restored before the final producer run. Intermediate fixture and
+launcher failures remain retained separately; none count as passing evidence.
 
 Retained diagnostic XML SHA-256 is
 `263f4ab12da8f6bb31226ed5fccb2390dcd3902f8ac64b8ebea77fec32f9341d`;

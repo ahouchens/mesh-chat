@@ -95,8 +95,8 @@ Unknown causes stay unclassified; cleanup replacement uses its own exception.
 This is component evidence, not native qualification or a fix for the race.
 
 The independently reviewed private v2 preparation/completion/commit contract is
-now frozen for implementation. After successful measurements and fault cleanup,
-each role prepares its exact fresh transferred owner without disposal, publishes
+implemented at the common checkpoint below. After successful measurements and
+fault cleanup, each role prepares its exact fresh transferred owner without disposal, publishes
 then receives one sealed `case_complete_<scenario>_<initiator>` marker with exact
 `{completed:true}`, commits the same request, and requires real exact owner/native
 cleanup proof plus fresh clearance and independent global zero. Preparation
@@ -109,9 +109,18 @@ historical receipts cannot admit or retire a later generation or satisfy its non
 
 The new marker budget is 17 Windows/15 Android uploads including reports for the
 full workload and eight per role for quick; the run inventory cap remains 100.
-The producer and consumer implementations and independent composition proof are
-pending. No public SDK/grant, JNI/host protocol, timeout, retry-budget, kernel-drop,
-receipt or global-zero relaxation is assigned. Bootstrap retirement remains
+Producer `3172d02` and consumer `b3751ae` are integrated unchanged at `6459710`,
+after independent source reviews with no actionable findings. Producer evidence
+contains **445 passing component cases**, strict model/reducer types and four
+meaningful safeguard-removal failures. Consumer evidence contains **998 passing
+cases**, preserving 895 prior cases (16 explicit uploader-vector renames) and
+adding 103. Its two actual controllers independently gate the slow final sample
+or fault cleanup; native, kernel, receipt and cleanup boundaries remain scripted.
+The producer exercises actual service/owner/private-dispatch paths with modeled
+native callbacks. Neither focused suite establishes real native completion.
+Independent real composition on the common implementation and fresh full
+qualification remain pending. No public SDK/grant, JNI/host protocol, timeout,
+retry-budget, kernel-drop, receipt or global-zero relaxation is assigned. Bootstrap retirement remains
 deferred until full native qualification.
 
 The preceding completed checkpoint is `36466e0245ec9c35d0e7b1bdaf2c544b40c050e0`

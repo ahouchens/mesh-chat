@@ -54,45 +54,40 @@ controller memory/fault correlation; export only categories, availability,
 hashes and truthful counters. Never export SDP, credentials, bearer documents,
 vault keys or raw addresses. Unit admission tests are not packaged OS evidence.
 
-The owner-retirement follow-up is implemented and source-reviewed, but full native
-qualification is pending. Its private
-`qualification.retire_carrier` request has exactly `operation_id`, `request_id`,
-`logical_session`, `expected_physical`, `expected_service_incarnation` and
-`expected_adapter_epoch`. The pairing operation identifies this caller's existing
+The private v2 owner-retirement producer `3172d02` and controller `b3751ae`
+are implemented and source-reviewed together at `6459710`. Independent real
+composition and full native qualification remain pending. The
+`qualification.retire_carrier` request has exactly `action`, `operation_id`,
+`request_id`, `logical_session`, `expected_physical`,
+`expected_service_incarnation` and `expected_adapter_epoch`. Action is exactly
+`prepare` or `commit`; missing/unknown actions reject, with no legacy fallback
+or wire abort. The pairing operation identifies this caller's existing
 transferred case; request and epoch values compare against current trusted state
 and do not confer authority. The request nonce is 32 lowercase hexadecimal
 characters. Current synthetic-profile/key, caller, service, identity, host and
 owner bindings are rechecked. Source/run verification remains in the trusted
 controller launch; the profile marker does not attest a source SHA or run.
 
-An accepted request installs a temporary owner hold and invokes normal supervisor
-retirement. It does not persist Stop, change consent, bypass the managed-close
-guard or call native disposal directly. Failed cleanup retains the hold and
-existing retry behavior. Only a real successful cleanup completion followed by
-fresh, revision-checked removal of the old bindings may clear that hold; real
-Stop, quarantine and authority-change fences remain independent.
+After all local measurements and successful fault cleanup, both peers prepare,
+publish then receive their exact sealed case completion marker, and commit the
+same immutable tuple and nonce. First preparation returns
+`{request_id,state:"prepared"}` without disposing the current carrier. First
+commit returns `pending`, even if normal failure cleanup has already completed.
+Correlated inventory accepts exactly `{operation_id,request_id}` and returns the
+ordinary inventory plus `carrier_retirement:{request_id,state}`. It may report
+`prepared` before commit; postcommit polling accepts only `pending` or
+`acknowledged`. Ordinary inventory `{}` remains unchanged.
 
-Existing inventory polls may use exactly `{operation_id,request_id}` to obtain
-the ordinary inventory plus `carrier_retirement:{request_id,state}`. State is
-`pending` or `acknowledged`; ordinary inventory `{}` remains unchanged. Per-case
+Commit invokes normal supervisor retirement without persisting Stop, changing
+consent, bypassing the managed-close guard or directly calling native disposal.
+Failed cleanup retains the existing exact-resource retry behavior. Per-case
 success requires matching acknowledgment in the same service/profile scope,
 empty logical inventory and complete zero native lease counts. The retained
-case records `owner_retirement_acknowledged:true`, not the private request or
-resource identifiers. No additional poll, deadline or retry is introduced.
-Terminal cleanup instead uses the current scoped Core `connection.stop`, followed
-by the same zero-accounting checks and normal host shutdown. Its desired-state
-reply is not cleanup completion. Full native qualification remains required.
-
-The replacement private v2 contract is frozen; its producer and controller
-implementations are pending integration. It adds required `action` with only
-`prepare` or `commit` to that exact request shape. Missing/unknown actions reject;
-there is no implicit legacy request or wire abort. Preparation returns
-`{request_id,state:"prepared"}` without disposing the current carrier. After all
-local measurements and successful fault cleanup, both peers prepare, publish
-then receive their exact sealed case completion marker, and commit the same
-immutable tuple and nonce. First commit returns `pending`, even if cleanup has
-already completed. Correlated inventory can report `prepared` before commit;
-postcommit controller polling accepts only `pending` or `acknowledged`.
+case records `owner_retirement_acknowledged:true`, not private request or resource
+identifiers. Existing polling, deadlines and retry budgets remain unchanged.
+Terminal cleanup uses the current scoped Core `connection.stop`, followed by the
+same zero-accounting checks and normal host shutdown. Its desired-state reply
+is not cleanup completion.
 
 Preparation preserves current traffic and health inspection, permits normal
 failure cleanup and rejects replacement admission. Only a fresh transferred
@@ -130,8 +125,10 @@ Publishing alone is insufficient. Capability plaintext contains credentials and
 must not appear in retained reports or logs. Manual cases keep consent disabled;
 the cold-start workload, deadlines and receipt requirements remain unchanged.
 
-This adds one setup artifact per role: full Windows uses ten setup artifacts plus
-one final report, Android eight plus one; quick mode uses four plus one each.
+Before case-completion markers, cold-start setup alone added one setup artifact
+per role (Windows ten setup artifacts plus one report, Android eight plus one;
+quick four plus one each). With the six full/three quick completion markers,
+the current totals are the 17/15 full and eight/eight quick counts above.
 The run inventory bound remains 100. GitHub's
 [artifact platform release](https://github.blog/changelog/2024-02-12-github-actions-artifacts-v4-is-now-generally-available/)
 and [current upload action documentation](https://github.com/actions/upload-artifact#number-of-artifacts)

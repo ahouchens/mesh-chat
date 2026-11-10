@@ -52,8 +52,11 @@ are reviewed and integrated, with 739 focused component cases passing (667 prior
 cases preserved plus 72 new) and three meaningful original-source failures.
 An original two-controller reproduction demonstrates measurement/cleanup
 overtaking under scripted native boundaries; it does not identify the CI cause.
-The private prepare/completion/commit replacement contract is frozen, with
-implementation, real composition proof and full qualification still pending.
+The private prepare/completion/commit producer `3172d02` and consumer `b3751ae`
+are reviewed and integrated at `6459710`, with 445 producer component cases and
+998 consumer cases passing. Native callbacks and controller/native boundaries
+are modeled in those focused suites. Independent real composition and fresh
+full qualification remain pending.
 No public API/grant, timeout, authority or negative-control relaxation is assigned.
 
 Checkpoint `36466e0` full run `42843336931` again verifies the installed Windows
