@@ -31,9 +31,12 @@ Checkpoint `5e6d0da` full repeat `42824231976` passes the same installed Windows
 public pairing/receipt/lifetime slice plus the Android and other component suites.
 Both actual native peers fail later at a direct-case native lease-retirement
 deadline. The controller requests a compatibility close which deliberately returns
-managed for an adopted supervisor-owned carrier. Owner-correct retirement and
-later-case admission require review; the guard and strict zero-lease acceptance
-remain unchanged. No full cross-platform or isolated-helper acceptance follows.
+managed for an adopted supervisor-owned carrier. The reviewed follow-up adds
+private owner retirement with correlated cleanup acknowledgment and later-case
+admission, plus signed cold-start consent exchange after the final manual zero
+gate. The public API, managed-close guard and strict zero-lease acceptance remain
+unchanged. Combined qualification is pending; no full cross-platform or
+isolated-helper acceptance follows from the component tests.
 
 ## Gaps observed when this proposal was written
 

@@ -55,10 +55,25 @@ carrier but also persists a stopped profile/contact fence; restarting a later
 manual case therefore needs a coherent, reviewed admission contract. A simple
 command substitution or raw-close bypass is insufficient.
 
-Product/controller audits and independent composition/contract review are active.
-No native disposal fix, consent change, timeout increase or acceptance weakening
-is assigned. SC26 remains partial. The separately accepted isolated-helper
-retirement design remains production-unassigned pending full native qualification.
+The reviewed follow-up implements private, current-owner carrier retirement
+(`b4cd5a6`, corrected by `b06f26c`) and correlated controller acknowledgment
+(`95005ca`). Successful cleanup and a fresh, revision-checked absence projection
+clear only the temporary hold. Permanent Stop, quarantine and authority fences
+remain independent; uncached handoff targets now carry their trusted contact
+association into the atomic fence check. The managed-close guard is unchanged.
+Each manual case requires both owner acknowledgment and the original global zero
+accounting. Terminal cleanup uses the current scoped Core Stop (`7182e58`).
+
+The separately reviewed `a093ca8` exchanges the existing signed cold-start
+consent documents in a distinct sealed setup phase after the last manual zero
+gate. Both peers publish before receiving; each imports through the existing
+product validator and checks unchanged association and mutual consent before its
+own first crash. Manual consent, workload, receipts and deadlines are unchanged.
+Root verified 737 controller cases, 343 contact-fence follow-up cases and 691
+cold-setup cases, including their failing pre-change regressions. These overlapping
+component suites are not an aggregate qualification count. Independent sequential
+composition and combined exact-source local/full native qualification are still
+pending. SC26 remains partial; isolated-helper retirement remains deferred.
 
 The rendezvous diagnostic follow-up integrates `bdd2ff6` and `b0888ec` at
 `b8d77e6`. It records fixed stage/reason labels at known transport origins,

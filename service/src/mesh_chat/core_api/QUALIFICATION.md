@@ -54,7 +54,8 @@ controller memory/fault correlation; export only categories, availability,
 hashes and truthful counters. Never export SDP, credentials, bearer documents,
 vault keys or raw addresses. Unit admission tests are not packaged OS evidence.
 
-The owner-retirement follow-up is assigned, not yet qualified. Its private
+The owner-retirement follow-up is implemented and source-reviewed, but full native
+qualification is pending. Its private
 `qualification.retire_carrier` request has exactly `operation_id`, `request_id`,
 `logical_session`, `expected_physical`, `expected_service_incarnation` and
 `expected_adapter_epoch`. The pairing operation identifies this caller's existing
@@ -82,7 +83,7 @@ Terminal cleanup instead uses the current scoped Core `connection.stop`, followe
 by the same zero-accounting checks and normal host shutdown. Its desired-state
 reply is not cleanup completion. Full native qualification remains required.
 
-The cold-start setup follow-up is also assigned. After the final manual
+The cold-start setup follow-up is implemented and source-reviewed. After the final manual
 acknowledgment/zero gate, each peer performs the existing local auto-reconnect
 consent update, publishes its returned signed capabilities in the sealed
 `reconnect_capabilities` setup phase, then receives and imports the peer's document.
