@@ -322,6 +322,15 @@ def install_synthetic_manual_path(owner):
     return executor, original
 
 
+def native_allocation_retired(service, session, physical):
+    """Routing removal alone does not acknowledge exact native disposal."""
+    with service._dispatch_lock, service._native_webrtc_lock:
+        return (session not in service._native_webrtc_live
+                and session not in service._native_webrtc_creating
+                and service._native_resources.physical(session) is None
+                and service._native_resources.resolve(physical) is None)
+
+
 def verify_native_startup_retention(service, owner, native, local_id, remote_id):
     """Delay attachment at its port; real JNI packets must survive until RNS registration."""
     import base64
@@ -479,8 +488,8 @@ def run_manual_native_adoption(automatic=True):
                    "Re-registered bridge did not regain path readiness", 10)
         assert service._native_resources.require(local_id) == local_physical
         service.reconnect_stop(contact_id)
-        wait_until(lambda: local_id not in service._native_webrtc_live,
-                   "Stop did not retire the adopted native carrier", 10)
+        wait_until(lambda: native_allocation_retired(service, local_id, local_physical),
+                   "Stop did not finish exact native carrier retirement", 10)
         service.native_webrtc_offer(local_id, ice, channels)
         replacement = service._native_resources.require(local_id)
         assert replacement != local_physical
