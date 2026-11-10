@@ -20,7 +20,40 @@ and scenario rows below to complete; their named remaining obligations still
 apply, including packaged cross-platform transport and unavailable physical
 qualification.
 
-The current shared checkpoint is `733c38b0d084435557ae1d40e640038c8f3e1aa2`
+The current shared checkpoint is `a3b6ebc5836128a39bb1cd98bcbca39410f00d42`
+(tree `cfb4d1e92e819193a98f5f62995d0c79fdad3432`). Full manual qualification
+[42736168066](https://github.com/ahouchens/mesh-chat/actions/runs/42736168066)
+is active. Retained selection confirms all six families and native workload
+`full`; duplicate PR run `42736166905` was canceled. Exact SDK staging and strict
+policy types pass locally, followed by **3,739 required policy cases**, **675
+Python plus 12 rendered UI cases**, and **nine Windows components**, all with
+zero skips. The policy run takes 437.19s and includes all six installed-SDK
+cases omitted from workers' earlier focused runs, plus all 19 independent
+profile-recovery cases. The lead separately checked those cases in the XML.
+
+This source integrates B's unused internal-wrapper cleanup, C's pure exact
+lifecycle-completion lookup, A's sealed private recovery ledger and admission
+correction, D's independent regressions and the narrow Android generated-output
+ignore repair. Independent review reproduced invalid non-selected lock/unlock
+requests stranding later valid actions; correction `874db1a` rejects those new
+requests before admission. Proven fresh pre-effect denial releases custody;
+denial after an earlier uncertain effect preserves it until explicit recovery.
+
+The first local attempt exhausted disk: 675 Python UI cases passed, six rendered
+cases failed with database/disk-full errors, and policy execution aborted. Those
+logs and reports are retained. Lossless compression of verified worktree files
+preserved content hashes/Git state; the complete repeated gates above pass.
+No source or evidence deletion was used to change a result.
+
+Native pending-action recovery remains unavailable. C's reviewed direct-JNI
+design can share native Started/dispatch authority, but document-bound ingress
+and reply delivery remain separate prerequisites. No native wiring, successful
+OS authentication, renderer-crash recovery, public capability expansion or
+release/default promotion is inferred from these component passes. A/D also
+review whether old-host uncertain generic receipts can strand fresh-host actions;
+that cold-restart compatibility question is not yet resolved or accepted.
+
+The previous shared checkpoint is `733c38b0d084435557ae1d40e640038c8f3e1aa2`
 (tree `c6f51445f0049b42b95138c2c168ee5394475c22`). Full manual qualification
 [42728488792](https://github.com/ahouchens/mesh-chat/actions/runs/42728488792)
 completed failed at 01:04:44 UTC on November 10. Retained selection confirms all six families and native workload
