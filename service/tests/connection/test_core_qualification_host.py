@@ -66,8 +66,8 @@ def test_inspector_resolves_current_service_each_call_and_forwards_exact_resourc
     current = [first]
     port = QualificationControl(lambda: current[0])
     assert port.dispatch("qualification.inventory", {}) == {"resources": []}
-    assert port.dispatch("qualification.path_evidence", {"logical_session": "logical", "expected_physical": "physical"}) == {"status": "unavailable"}
-    assert calls == [("logical", "physical")]
+    assert port.dispatch("qualification.path_evidence", {"logical_session": "logical", "expected_physical": "physical", "sample_request": "1" * 32}) == {"status": "unavailable"}
+    assert calls == [("logical", "physical", "1" * 32)]
     first._shutdown.set()
     with pytest.raises(ValidationError):
         port.dispatch("qualification.inventory", {})
@@ -78,11 +78,25 @@ def test_inspector_resolves_current_service_each_call_and_forwards_exact_resourc
 
 @pytest.mark.parametrize("command,payload", [("native.command", {}), ("qualification.inventory", {"caller": "owner"}),
     ("qualification.path_evidence", {"logical_session": "logical"}),
-    ("qualification.path_evidence", {"logical_session": "x" * 129, "expected_physical": "physical"})])
+    ("qualification.path_evidence", {"logical_session": "logical", "expected_physical": "physical"}),
+    ("qualification.path_evidence", {"logical_session": "logical", "expected_physical": "physical",
+                                    "sample_request": "1" * 32, "sampled_at_ms": 0}),
+    ("qualification.path_evidence", {"logical_session": "x" * 129, "expected_physical": "physical", "sample_request": "1" * 32})])
 def test_inspector_refuses_unknown_or_unbounded_input_before_native_call(command, payload):
     service = SimpleNamespace(_shutdown=threading.Event())
     with pytest.raises(ValidationError):
         QualificationControl(lambda: service).dispatch(command, payload)
+
+
+@pytest.mark.parametrize("sample_request", [None, True, 1, [], {}, "", "1" * 31, "1" * 33, "A" * 32, "g" * 32])
+def test_private_sample_request_must_be_exact_lower_hex_before_native_call(sample_request):
+    calls = []
+    service = SimpleNamespace(_shutdown=threading.Event(),
+        native_webrtc_path_evidence=lambda *args: calls.append(args))
+    with pytest.raises(ValidationError):
+        QualificationControl(lambda: service).dispatch("qualification.path_evidence", {
+            "logical_session": "logical", "expected_physical": "physical", "sample_request": sample_request})
+    assert calls == []
 
 
 def test_public_owner_cannot_discover_or_invoke_private_qualification(host):

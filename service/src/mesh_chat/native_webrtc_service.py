@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import queue
 import threading
 import time
@@ -673,10 +674,11 @@ class NativeWebRTCServiceMixin(NativePairingServiceMixin, NativeWebRTCControlMix
             stats["session_id"] = session_id
         return stats
 
-    def native_webrtc_path_evidence(self, logical_session: str, expected_physical: str) -> dict[str, Any]:
+    def native_webrtc_path_evidence(self, logical_session: str, expected_physical: str, sample_request: str) -> dict[str, Any]:
         """Private qualification port. Never register in a JSON command table."""
         from hashlib import sha256
-        from .native_path_evidence import MAX_BYTES, SAMPLE_TIMEOUT, validate_observation
+        from .native_path_evidence import MAX_BYTES, SAMPLE_TIMEOUT, validate_observation, validate_sample_request
+        validate_sample_request(sample_request)
         if (not isinstance(logical_session, str) or not 1 <= len(logical_session) <= 128
                 or not isinstance(expected_physical, str) or not 1 <= len(expected_physical) <= 128):
             raise ValidationError("Native inspection resource is invalid")
@@ -693,15 +695,16 @@ class NativeWebRTCServiceMixin(NativePairingServiceMixin, NativeWebRTCControlMix
             if not callable(inspect):
                 raise NativeUnavailable("Native path inspection is unsupported")
         started = time.monotonic()
-        raw = inspect(expected_physical)
+        raw = inspect(expected_physical, sample_request)
         elapsed = time.monotonic() - started
-        if not isinstance(raw, str) or len(raw.encode("utf-8")) > MAX_BYTES or elapsed > SAMPLE_TIMEOUT + 0.25:
+        if (not isinstance(raw, str) or len(raw.encode("utf-8")) > MAX_BYTES
+                or not math.isfinite(elapsed) or elapsed < 0 or elapsed > SAMPLE_TIMEOUT + 0.25):
             raise NativeUnavailable("Native path inspection exceeded its budget")
         try:
             envelope = json.loads(raw)
             if not isinstance(envelope, dict) or envelope.get("ok") is not True:
                 raise ValueError
-            value = validate_observation(envelope.get("result"), expected_physical)
+            value = validate_observation(envelope.get("result"), expected_physical, sample_request)
         except (ValueError, TypeError) as error:
             raise NativeUnavailable("Native path inspection is unavailable") from error
         with self._dispatch_lock, self._native_webrtc_lock:

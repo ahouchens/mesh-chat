@@ -108,13 +108,16 @@ class QualificationControl:
             if payload:
                 raise ValidationError("Qualification request is invalid")
             return service.native_webrtc_inspection_resources()
-        if set(payload) != {"logical_session", "expected_physical"} or any(
+        if set(payload) != {"logical_session", "expected_physical", "sample_request"} or any(
             not isinstance(value, str) or not 1 <= len(value) <= 128
             or any(ord(character) < 0x20 for character in value)
             for value in payload.values()
         ):
             raise ValidationError("Qualification request is invalid")
-        return service.native_webrtc_path_evidence(payload["logical_session"], payload["expected_physical"])
+        from ..native_path_evidence import validate_sample_request
+        validate_sample_request(payload["sample_request"])
+        return service.native_webrtc_path_evidence(payload["logical_session"], payload["expected_physical"],
+                                                 payload["sample_request"])
 
     def _pairing_service(self):
         service = self._current_service()

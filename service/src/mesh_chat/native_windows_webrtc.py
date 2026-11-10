@@ -22,7 +22,7 @@ from importlib.metadata import version
 from uuid import uuid4
 
 from aiortc import RTCConfiguration, RTCIceServer, RTCPeerConnection, RTCSessionDescription
-from .native_path_evidence import SAMPLE_TIMEOUT, candidate, endpoint, observation, pair_token, validate_observation
+from .native_path_evidence import SAMPLE_TIMEOUT, candidate, endpoint, observation, pair_token, validate_observation, validate_sample_request
 
 MESSAGE_LIMIT = 1064
 CONTROL_LIMIT = 65_536
@@ -487,16 +487,18 @@ class WindowsNativeWebRTCHost:
         except Exception:
             return _error("native_webrtc_stats_failed")
 
-    def pathEvidence(self, resource):
+    def pathEvidence(self, resource, sample_request):
         """Private current mechanism evidence, separate from ordinary stats."""
         coroutine = token = None
         try:
+            validate_sample_request(sample_request)
+            started_ns = time.monotonic_ns()
             session = self._require(resource)
             with self._lock:
                 if resource in self._sampling:
                     raise _HostFailure("native_webrtc_inspection_busy")
                 token = self._sampling[resource] = object()
-            coroutine = self._path_evidence(session, token)
+            coroutine = self._path_evidence(session, token, sample_request, started_ns)
             return self._submit(coroutine, timeout=SAMPLE_TIMEOUT)
         except _HostFailure as failure:
             if failure.code != "native_webrtc_timeout":
@@ -514,11 +516,15 @@ class WindowsNativeWebRTCHost:
                 if self._sampling.get(resource) is token:
                     self._sampling.pop(resource, None)
 
-    async def _path_evidence(self, session, token):
+    async def _path_evidence(self, session, token, sample_request, started_ns):
         try:
-            if not self._current(session):
-                raise _HostFailure("native_webrtc_session_missing")
+            with self._lock:
+                if not self._current(session) or self._sampling.get(session.resource) is not token:
+                    raise _HostFailure("native_webrtc_session_missing")
+            captured_ns = time.monotonic_ns()
+            sampled_at_ms = captured_ns // 1_000_000
             session.sample_sequence += 1
+            sequence = session.sample_sequence
             pc = session.pc
             ice_state = str(pc.iceConnectionState).lower()
             dtls = getattr(getattr(pc, "sctp", None), "transport", None)
@@ -535,17 +541,27 @@ class WindowsNativeWebRTCHost:
                 elif set(nominated) == {1}:
                     pair = self._selected_pair(session, nominated[1])
                     status = "selected" if pair is not None else "unavailable"
-            value = observation(session.resource, self._adapter_epoch, session.sample_sequence,
-                int(time.monotonic() * 1000), status=status, ice_state=ice_state,
+            value = observation(session.resource, self._adapter_epoch, sequence,
+                sampled_at_ms, sample_request=sample_request, status=status, ice_state=ice_state,
                 dtls_state=str(getattr(dtls, "state", "unknown")).lower(),
                 channel_state=(session.channels["mesh-reticulum"].readyState
                                if "mesh-reticulum" in session.channels else "missing"), pair=pair,
                 application={key: getattr(session, key) for key in (
                     "enqueued_packets", "enqueued_controls", "enqueued_bytes",
                     "received_packets", "received_controls", "received_bytes")})
-            if not self._current(session):
-                raise _HostFailure("native_webrtc_session_missing")
-            return json.dumps({"ok": True, "result": validate_observation(value, session.resource)}, separators=(",", ":"))
+            value = validate_observation(value, session.resource, sample_request)
+            raw = json.dumps({"ok": True, "result": value}, separators=(",", ":"))
+            with self._lock:
+                if not self._current(session) or self._sampling.get(session.resource) is not token:
+                    raise _HostFailure("native_webrtc_session_missing")
+            now_ns = time.monotonic_ns()
+            if (value["sampled_at_ms"] != sampled_at_ms
+                    or value["adapter_epoch"] != self._adapter_epoch or value["sample_sequence"] != sequence
+                    or not 0 <= captured_ns - started_ns <= int(SAMPLE_TIMEOUT * 1_000_000_000)
+                    or not 0 <= now_ns - captured_ns <= int(SAMPLE_TIMEOUT * 1_000_000_000)
+                    or not 0 <= now_ns - started_ns <= int(SAMPLE_TIMEOUT * 1_000_000_000)):
+                raise _HostFailure("native_webrtc_inspection_stale")
+            return raw
         finally:
             with self._lock:
                 if self._sampling.get(session.resource) is token:

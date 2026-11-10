@@ -5,7 +5,10 @@ import asyncio
 import json
 import queue
 import time
-from threading import Event, Thread
+import socket
+from threading import Event, Thread, RLock
+from types import SimpleNamespace
+import urllib.request
 
 import pytest
 
@@ -13,6 +16,137 @@ aiortc = pytest.importorskip("aiortc")
 
 from mesh_chat.native_windows_webrtc import WindowsNativeWebRTCHost
 from mesh_chat.native_windows_webrtc import _HostFailure
+
+
+def finish_sample(coroutine):
+    """Execute the actual non-yielding sampling coroutine without native I/O."""
+    try:
+        coroutine.send(None)
+    except StopIteration as completed:
+        return completed.value
+    raise AssertionError("Sampling coroutine unexpectedly suspended")
+
+
+@pytest.fixture
+def private_sampler(monkeypatch):
+    from mesh_chat import native_windows_webrtc as module
+    attempts = []
+    def denied(*args, **kwargs):
+        attempts.append(True)
+        raise AssertionError("Offline native sampler attempted external I/O")
+    monkeypatch.setattr(socket.socket, "connect", denied)
+    monkeypatch.setattr(socket.socket, "connect_ex", denied)
+    monkeypatch.setattr(socket, "create_connection", denied)
+    monkeypatch.setattr(urllib.request.OpenerDirector, "open", denied)
+    clock = {"now": 10_000_000_000, "ticks": []}
+    def now():
+        return clock["ticks"].pop(0) if clock["ticks"] else clock["now"]
+    monkeypatch.setattr(module, "time", SimpleNamespace(monotonic_ns=now))
+    instance = object.__new__(WindowsNativeWebRTCHost)
+    instance._lock, instance._sampling = RLock(), {}
+    instance._adapter_epoch = "a" * 32
+    session = SimpleNamespace(resource="peer", closed=False, sample_sequence=0,
+        pc=SimpleNamespace(iceConnectionState="new", sctp=None), channels={},
+        enqueued_packets=0, enqueued_controls=0, enqueued_bytes=0,
+        received_packets=0, received_controls=0, received_bytes=0)
+    instance._sessions = {"peer": session}
+    instance._submit = lambda coroutine, **kwargs: finish_sample(coroutine)
+    yield instance, module, clock
+    assert attempts == []
+
+
+@pytest.mark.parametrize("origin", [10_000_000_000, 9_000_000_000_000_000, 1_000_000_000_000_000_000])
+def test_private_sample_actual_coroutine_echoes_request_without_wall_clock(private_sampler, origin):
+    instance, _, clock = private_sampler
+    clock["now"] = origin
+    first = json.loads(instance.pathEvidence("peer", "1" * 32))["result"]
+    second = json.loads(instance.pathEvidence("peer", "2" * 32))["result"]
+    assert first["sample_request"] == "1" * 32 and second["sample_request"] == "2" * 32
+    assert first["sampled_at_ms"] == origin // 1_000_000
+    assert second["sample_sequence"] == first["sample_sequence"] + 1
+    assert not instance._sampling
+
+
+@pytest.mark.parametrize("start,capture,end,valid", [
+    (10_000_000_000, 10_000_000_000, 12_000_000_000, True),
+    (10_000_000_000, 10_000_000_000, 12_000_000_001, False),
+    (10_000_000_001, 10_000_000_000, 10_000_000_002, False),
+    (10_000_000_000, 10_000_000_001, 10_000_000_000, False),
+    (10_000_000_000, 12_000_000_001, 12_000_000_001, False),
+])
+def test_private_sample_enforces_full_resolution_invocation_capture_window(private_sampler, start, capture, end, valid):
+    instance, _, clock = private_sampler
+    clock["ticks"] = [start, capture, end]
+    result = json.loads(instance.pathEvidence("peer", "1" * 32))
+    assert result["ok"] is valid
+    assert not instance._sampling
+
+
+@pytest.mark.parametrize("fault", ["request", "missing_request", "old_timestamp", "future_timestamp", "epoch", "sequence"])
+def test_private_sample_original_observation_cannot_be_relabelled(private_sampler, monkeypatch, fault):
+    instance, module, _ = private_sampler
+    original = module.observation
+    def corrupted(*args, **kwargs):
+        value = original(*args, **kwargs)
+        if fault == "request": value["sample_request"] = "2" * 32
+        elif fault == "missing_request": value.pop("sample_request")
+        elif fault == "old_timestamp": value["sampled_at_ms"] -= 2001
+        elif fault == "future_timestamp": value["sampled_at_ms"] += 1
+        elif fault == "epoch": value["adapter_epoch"] = "b" * 32
+        elif fault == "sequence": value["sample_sequence"] += 1
+        return value
+    monkeypatch.setattr(module, "observation", corrupted)
+    assert json.loads(instance.pathEvidence("peer", "1" * 32))["ok"] is False
+    assert not instance._sampling
+
+
+def test_private_sample_cached_timestamp_cannot_borrow_fresh_challenge(private_sampler, monkeypatch):
+    instance, module, clock = private_sampler
+    cached = json.loads(instance.pathEvidence("peer", "1" * 32))["result"]
+    clock["now"] += 3_000_000_000
+    def replay(*args, **kwargs):
+        return {**cached, "sample_request": kwargs["sample_request"], "sample_sequence": args[2]}
+    monkeypatch.setattr(module, "observation", replay)
+    assert json.loads(instance.pathEvidence("peer", "2" * 32))["ok"] is False
+
+
+def test_private_sample_timed_out_inflight_request_cannot_answer_next_call(private_sampler):
+    instance, _, clock = private_sampler
+    pending = []
+    original = instance._submit
+    def hold(coroutine, **kwargs):
+        pending.append(coroutine)
+        raise _HostFailure("native_webrtc_timeout")
+    instance._submit = hold
+    assert json.loads(instance.pathEvidence("peer", "1" * 32))["error"] == "native_webrtc_timeout"
+    assert json.loads(instance.pathEvidence("peer", "2" * 32))["error"] == "native_webrtc_inspection_busy"
+    assert len(pending) == 1
+    clock["now"] += 2_000_000_001
+    with pytest.raises(_HostFailure, match="native_webrtc_inspection_stale"):
+        finish_sample(pending[0])
+    assert not instance._sampling
+    instance._submit = original
+    value = json.loads(instance.pathEvidence("peer", "3" * 32))["result"]
+    assert value["sample_request"] == "3" * 32 and value["sample_sequence"] == 2
+
+
+def test_private_sample_foreign_sampling_token_is_never_released(private_sampler, monkeypatch):
+    instance, module, _ = private_sampler
+    original, foreign = module.observation, object()
+    def replace_token(*args, **kwargs):
+        value = original(*args, **kwargs)
+        instance._sampling["peer"] = foreign
+        return value
+    monkeypatch.setattr(module, "observation", replace_token)
+    assert json.loads(instance.pathEvidence("peer", "1" * 32))["ok"] is False
+    assert instance._sampling["peer"] is foreign
+
+
+@pytest.mark.parametrize("sample_request", [None, True, 1, [], "", "A" * 32, "1" * 31, "1" * 33])
+def test_private_sample_invalid_request_never_enters_sampling_custody(private_sampler, sample_request):
+    instance, _, _ = private_sampler
+    assert json.loads(instance.pathEvidence("peer", sample_request))["ok"] is False
+    assert not instance._sampling and instance._sessions["peer"].sample_sequence == 0
 
 
 ICE = {"iceServers": [], "iceTransportPolicy": "all"}
@@ -75,8 +209,8 @@ def test_native_host_exchanges_binary_packets_and_controls():
         assert stats["ok"] and stats["result"]["data_channel_state"] == "open"
         assert stats["result"]["received_packets"] == 1
         assert json.loads(right.stats("right"))["result"]["received_controls"] == 0
-        left_path = json.loads(left.pathEvidence("left"))["result"]
-        right_path = json.loads(right.pathEvidence("right"))["result"]
+        left_path = json.loads(left.pathEvidence("left", "1" * 32))["result"]
+        right_path = json.loads(right.pathEvidence("right", "2" * 32))["result"]
         assert left_path["status"] == right_path["status"] == "selected"
         assert left_path["pair"]["local"] == right_path["pair"]["remote"]
         assert left_path["pair"]["remote"] == right_path["pair"]["local"]
@@ -96,7 +230,7 @@ def test_close_is_exact_and_reports_closed_once():
         left.close("left")
         wait_for(left_events, lambda event: event == ("closed", "left", ""))
         assert json.loads(left.stats("left"))["error"] == "native_webrtc_session_missing"
-        assert json.loads(left.pathEvidence("left"))["error"] == "native_webrtc_session_missing"
+        assert json.loads(left.pathEvidence("left", "1" * 32))["error"] == "native_webrtc_session_missing"
         deadline = time.monotonic() + 5
         while right.send("right", b"after close") is not False:
             assert time.monotonic() < deadline, "remote session never observed closure"
@@ -131,11 +265,11 @@ def test_inspection_submission_failure_closes_unscheduled_coroutine_and_releases
             captured.append(coroutine)
             raise _HostFailure("native_webrtc_unavailable")
         monkeypatch.setattr(instance, "_submit", unavailable)
-        assert json.loads(instance.pathEvidence("peer"))["error"] == "native_webrtc_unavailable"
+        assert json.loads(instance.pathEvidence("peer", "1" * 32))["error"] == "native_webrtc_unavailable"
         assert inspect.getcoroutinestate(captured[0]) == inspect.CORO_CLOSED
         assert not instance._sampling
         monkeypatch.setattr(instance, "_submit", original)
-        assert json.loads(instance.pathEvidence("peer"))["ok"]
+        assert json.loads(instance.pathEvidence("peer", "1" * 32))["ok"]
     finally:
         monkeypatch.undo()
         instance.shutdown()
@@ -152,13 +286,13 @@ def test_inspection_timeout_retains_slot_until_actual_pending_sample_finishes(mo
             captured.append(coroutine)
             raise _HostFailure("native_webrtc_timeout")
         monkeypatch.setattr(instance, "_submit", pending)
-        assert json.loads(instance.pathEvidence("peer"))["error"] == "native_webrtc_timeout"
-        assert json.loads(instance.pathEvidence("peer"))["error"] == "native_webrtc_inspection_busy"
+        assert json.loads(instance.pathEvidence("peer", "1" * 32))["error"] == "native_webrtc_timeout"
+        assert json.loads(instance.pathEvidence("peer", "1" * 32))["error"] == "native_webrtc_inspection_busy"
         assert len(captured) == 1
         monkeypatch.setattr(instance, "_submit", original)
         assert json.loads(original(captured[0]))["ok"]
         assert not instance._sampling
-        assert json.loads(instance.pathEvidence("peer"))["ok"]
+        assert json.loads(instance.pathEvidence("peer", "1" * 32))["ok"]
     finally:
         monkeypatch.undo()
         instance.shutdown()

@@ -73,7 +73,7 @@ object NativeWebRtcHost {
         val enqueuedControls = AtomicLong()
         val enqueuedBytes = AtomicLong()
         val sampleSequence = AtomicLong()
-        val sampling = AtomicBoolean()
+        val sampling = AtomicReference<Any?>(null)
         val retirement = Any()
         val registeredChannels = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<DataChannel, Boolean>())
         val disposal = NativePeerDisposal<DataChannel>(
@@ -94,6 +94,7 @@ object NativeWebRtcHost {
         })
     private val reservations = NativeSessionReservations(MAX_SESSIONS)
     private val adapterEpoch = UUID.randomUUID().toString().replace("-", "")
+    private val sampleClockOriginNanos = System.nanoTime()
     private val mainHandler = Handler(Looper.getMainLooper())
     @Volatile private var factory: PeerConnectionFactory? = null
     @Volatile private var initialized = false
@@ -408,51 +409,50 @@ object NativeWebRtcHost {
 
     /** Trusted qualification only; absent stats never imply a selected path. */
     @JvmStatic
-    fun pathEvidence(sessionId: String): String {
+    fun pathEvidence(sessionId: String, sampleRequest: String): String {
+        if (!NativePathEvidence.validRequest(sampleRequest)) return error("native_webrtc_inspection_failed")
+        val startedNanos = System.nanoTime()
         if (Looper.myLooper() == Looper.getMainLooper()) return error("native_webrtc_inspection_wrong_thread")
         val session = sessions[sessionId] ?: return error("native_webrtc_session_missing")
         if (!isCurrent(session)) return error("native_webrtc_session_missing")
-        if (!session.sampling.compareAndSet(false, true)) return error("native_webrtc_inspection_busy")
-        val done = CountDownLatch(1)
-        val result = AtomicReference<String>()
+        val samplingToken = Any()
+        if (!session.sampling.compareAndSet(null, samplingToken)) return error("native_webrtc_inspection_busy")
+        val invocation = NativePathEvidence.SamplingInvocation(sampleRequest, sampleClockOriginNanos,
+            startedNanos, session.sampling, samplingToken, { isCurrent(session) }, { System.nanoTime() })
         try {
             synchronized(session) {
                 if (!isCurrent(session)) {
-                    session.sampling.set(false)
+                    session.sampling.compareAndSet(samplingToken, null)
                     return error("native_webrtc_session_missing")
                 }
                 session.pc.getStats { report ->
-                    try {
+                    invocation.collect { capturedNanos ->
                         synchronized(session) {
-                            if (isCurrent(session)) {
-                                val application = JSONObject()
-                                    .put("enqueued_packets", session.enqueuedPackets.get())
-                                    .put("enqueued_controls", session.enqueuedControls.get())
-                                    .put("enqueued_bytes", session.enqueuedBytes.get())
-                                    .put("received_packets", session.receivedPackets.get())
-                                    .put("received_controls", session.receivedControls.get())
-                                    .put("received_bytes", session.receivedBytes.get())
-                                val value = NativePathEvidence.sample(sessionId, adapterEpoch,
-                                    session.sampleSequence.incrementAndGet(), System.nanoTime() / 1_000_000,
-                                    session.pc.iceConnectionState().name.lowercase(),
-                                    session.channels["mesh-reticulum"]?.state()?.name?.lowercase() ?: "missing",
-                                    report.statsMap, application)
-                                result.set(JSONObject().put("ok", true).put("result", value).toString())
-                            }
+                            check(isCurrent(session) && session.sampling.get() === samplingToken)
+                            val sequence = session.sampleSequence.incrementAndGet()
+                            val application = JSONObject()
+                                .put("enqueued_packets", session.enqueuedPackets.get())
+                                .put("enqueued_controls", session.enqueuedControls.get())
+                                .put("enqueued_bytes", session.enqueuedBytes.get())
+                                .put("received_packets", session.receivedPackets.get())
+                                .put("received_controls", session.receivedControls.get())
+                                .put("received_bytes", session.receivedBytes.get())
+                            val value = NativePathEvidence.sample(sessionId, adapterEpoch, sequence,
+                                NativePathEvidence.sampledAt(sampleClockOriginNanos, capturedNanos), sampleRequest,
+                                session.pc.iceConnectionState().name.lowercase(),
+                                session.channels["mesh-reticulum"]?.state()?.name?.lowercase() ?: "missing",
+                                report.statsMap, application)
+                            check(value.opt("resource") == sessionId && value.opt("adapter_epoch") == adapterEpoch &&
+                                value.opt("sample_sequence") == sequence)
+                            value
                         }
-                    } catch (_: Throwable) {
-                        result.set(error("native_webrtc_inspection_failed"))
-                    } finally {
-                        session.sampling.set(false)
-                        done.countDown()
                     }
                 }
             }
-            // A timed-out callback keeps its single sampling slot until it
-            // actually completes; callers cannot queue unbounded native jobs.
-            if (!done.await(2, TimeUnit.SECONDS)) return error("native_webrtc_inspection_timeout")
+            // Timeout leaves custody with the original callback until it finishes.
+            if (!invocation.await()) return error("native_webrtc_inspection_timeout")
             if (!isCurrent(session)) return error("native_webrtc_session_missing")
-            return result.get() ?: error("native_webrtc_session_missing")
+            return invocation.response() ?: error("native_webrtc_inspection_failed")
         } catch (_: Throwable) {
             return error("native_webrtc_inspection_failed")
         }
@@ -879,8 +879,71 @@ object NativeWebRtcHost {
 internal object NativePathEvidence {
     private const val MAX_INTEGER = 9007199254740991L
 
-    fun sample(resource: String, epoch: String, sequence: Long, sampledAt: Long,
+    class SamplingInvocation(private val request: String, private val originNanos: Long,
+                             private val startedNanos: Long, private val slot: AtomicReference<Any?>,
+                             private val token: Any, private val current: () -> Boolean,
+                             private val clock: () -> Long) {
+        private val claimed = AtomicBoolean()
+        private val done = CountDownLatch(1)
+        private val result = AtomicReference<String>()
+        private val capture = AtomicReference<Long>()
+
+        fun collect(build: (Long) -> JSONObject) {
+            if (!claimed.compareAndSet(false, true)) return
+            try {
+                check(current() && slot.get() === token)
+                val captured = clock()
+                val value = build(captured)
+                val raw = JSONObject().put("ok", true).put("result", value).toString()
+                check(current() && slot.get() === token &&
+                    NativePathEvidence.fresh(value, request, originNanos, startedNanos, captured, clock()))
+                capture.set(captured)
+                result.set(raw)
+            } catch (_: Throwable) {
+                // A failed original capture never publishes a successful sample.
+            } finally {
+                slot.compareAndSet(token, null)
+                done.countDown()
+            }
+        }
+
+        fun isComplete(): Boolean = done.count == 0L
+        fun await(): Boolean = done.await(2, TimeUnit.SECONDS)
+
+        fun response(): String? {
+            if (!isComplete() || !current()) return null
+            val captured = capture.get() ?: return null
+            val raw = result.get() ?: return null
+            return if (NativePathEvidence.fresh(JSONObject(raw).getJSONObject("result"), request, originNanos,
+                    startedNanos, captured, clock())) raw else null
+        }
+    }
+
+    fun validRequest(request: String): Boolean = request.length == 32 &&
+        request.all { it in '0'..'9' || it in 'a'..'f' }
+
+    fun sampledAt(originNanos: Long, capturedNanos: Long): Long {
+        val relative = capturedNanos - originNanos
+        require(relative >= 0)
+        return relative / 1_000_000
+    }
+
+    fun fresh(value: JSONObject, request: String, originNanos: Long, startedNanos: Long,
+              capturedNanos: Long, nowNanos: Long): Boolean {
+        val timestamp = value.opt("sampled_at_ms")
+        val echoed = value.opt("sample_request")
+        if (!validRequest(request) || echoed !is String || echoed != request ||
+            (timestamp !is Long && timestamp !is Int)) return false
+        val sampled = (timestamp as Number).toLong()
+        val relative = capturedNanos - originNanos
+        return relative >= 0 && capturedNanos - startedNanos in 0..2_000_000_000L &&
+            sampled in 0..MAX_INTEGER && sampled == relative / 1_000_000 &&
+            nowNanos - capturedNanos in 0..2_000_000_000L && nowNanos - startedNanos in 0..2_000_000_000L
+    }
+
+    fun sample(resource: String, epoch: String, sequence: Long, sampledAt: Long, sampleRequest: String,
                ice: String, channel: String, stats: Map<String, RTCStats>, application: JSONObject): JSONObject {
+        require(validRequest(sampleRequest) && sampledAt in 0..MAX_INTEGER)
         val transports = stats.values.filter { it.type == "transport" }
         val selected = transports.mapNotNull { it.members["selectedCandidatePairId"] as? String }.toSet()
         val transport = transports.singleOrNull { it.members["selectedCandidatePairId"] == selected.singleOrNull() }
@@ -898,7 +961,7 @@ internal object NativePathEvidence {
         val dtls = (transport?.members?.get("dtlsState") as? String)?.lowercase()
             ?.takeIf { it in setOf("new", "connecting", "connected", "closed", "failed") } ?: "unknown"
         return JSONObject().put("v", 1).put("resource", resource).put("adapter_epoch", epoch)
-            .put("sample_sequence", sequence).put("sampled_at_ms", sampledAt)
+            .put("sample_sequence", sequence).put("sampled_at_ms", sampledAt).put("sample_request", sampleRequest)
             .put("status", status).put("ice_state", ice).put("dtls_state", dtls).put("channel_state", channel)
             .put("pair", pair ?: JSONObject.NULL).put("application", application).put("availability", availability)
             .also { require(it.toString().toByteArray(Charsets.UTF_8).size <= 16 * 1024) }
