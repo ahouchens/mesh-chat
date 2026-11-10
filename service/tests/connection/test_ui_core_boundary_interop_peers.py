@@ -723,3 +723,73 @@ def test_packaged_drivers_do_not_construct_a_source_service_or_import_vault():
     assert 'qualification.callAttr("android_initialize"' in android
     assert "CoreApiBridge.typedCommand" in android
     assert "_start_network" not in android and 'store.put(' not in android
+
+
+CORE_FAILURE_OBSERVATION = {"v": 1, "operation": "ice_servers", "stage": "tls_context",
+    "category": "unexpected", "cause": "file_not_found"}
+
+
+def test_actual_android_internal_reply_retains_only_same_failure_observation():
+    peer = peers.AndroidPeer(b"k" * 32)
+    response = BytesIO(peers.encode({"id": "qualification:1", "ok": False, "error": {"code": "internal"},
+        "core_failure_observation": CORE_FAILURE_OBSERVATION}))
+    class Socket:
+        def settimeout(self, value): assert 0 < value <= 60
+        def sendall(self, value): pass
+        def recv(self, count): return response.read(count)
+    peer.socket = Socket()
+    with pytest.raises(peers.PeerFailure) as failure:
+        peer.core("call.ice_servers")
+    provider = getattr(peer, "core_failure_observation", lambda _: None)
+    assert provider(failure.value) == CORE_FAILURE_OBSERVATION
+    assert provider(peers.PeerFailure("internal")) is None
+
+
+def observed_android_reply(peer, value):
+    response = BytesIO(peers.encode(value))
+    class Socket:
+        def settimeout(self, timeout): assert 0 < timeout <= 60
+        def sendall(self, data): assert peers.receive(BytesIO(data).read)["action"] == "core"
+        def recv(self, count): return response.read(count)
+    peer.socket = Socket()
+    with pytest.raises(peers.PeerFailure) as failure:
+        peer.core("call.ice_servers")
+    return failure.value
+
+
+@pytest.mark.parametrize("mutation", [
+    {"core_failure_observation": {**CORE_FAILURE_OBSERVATION, "secret": "PRIVATE_CREDENTIAL"}},
+    {"core_failure_observation": {**CORE_FAILURE_OBSERVATION, "cause": "PRIVATE_CREDENTIAL"}},
+    {"core_failure_observation": {**CORE_FAILURE_OBSERVATION, "category": "response_encoding"}},
+    {"core_failure_observation": {**CORE_FAILURE_OBSERVATION, "stage": "not_a_stage"}},
+    {"error": {"code": "invalid_request"}},
+    {"id": "unrelated"},
+])
+def test_actual_android_reply_rejects_unrelated_or_invalid_core_observation(mutation):
+    peer = peers.AndroidPeer(b"k" * 32)
+    reply = {"id": "qualification:1", "ok": False, "error": {"code": "internal"},
+        "core_failure_observation": CORE_FAILURE_OBSERVATION, **mutation}
+    error = observed_android_reply(peer, reply)
+    assert peer.core_failure_observation(error) is None
+
+
+def test_android_core_observation_is_cleared_by_next_actual_request():
+    peer = peers.AndroidPeer(b"k" * 32)
+    first = observed_android_reply(peer, {"id": "qualification:1", "ok": False,
+        "error": {"code": "internal"}, "core_failure_observation": CORE_FAILURE_OBSERVATION})
+    assert peer.core_failure_observation(first) == CORE_FAILURE_OBSERVATION
+    response = BytesIO(peers.encode({"id": "qualification:2", "ok": True, "result": {}}))
+    class Socket:
+        def settimeout(self, timeout): assert 0 < timeout <= 60
+        def sendall(self, data): assert peers.receive(BytesIO(data).read)["action"] == "inspect"
+        def recv(self, count): return response.read(count)
+    peer.socket = Socket()
+    assert peer.inventory() == {}
+    assert peer.core_failure_observation(first) is None
+
+
+def test_nonmapping_android_reply_preserves_protocol_error():
+    peer = peers.AndroidPeer(b"k" * 32)
+    error = observed_android_reply(peer, ["PRIVATE_CREDENTIAL"])
+    assert error.code == "invalid_peer_frame"
+    assert peer.core_failure_observation(error) is None

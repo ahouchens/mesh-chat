@@ -35,6 +35,8 @@ class PackagedNativeInteropBoundaryTest {
         var initialized = false
         var finished = false
         var authenticated = false
+        var qualificationBinding: String? = null
+        var bindingObserved = false
         val parent = context.filesDir.resolve("native-interop").canonicalFile
         check(parent.mkdirs() || parent.isDirectory)
         ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { server ->
@@ -65,6 +67,8 @@ class PackagedNativeInteropBoundaryTest {
                                 reply = JSONObject().put("ok", true).put("result", JSONObject().put("authenticated", true))
                             } else when (action) {
                                 "initialize" -> {
+                                    qualificationBinding = null
+                                    bindingObserved = false
                                     check(!initialized && payload.keys().asSequence().toSet() == setOf("directory_id", "vault_key"))
                                     val leaf = payload.getString("directory_id")
                                     check(leaf.matches(Regex("[a-f0-9]{32}")))
@@ -82,13 +86,37 @@ class PackagedNativeInteropBoundaryTest {
                                     val request = JSONObject().put("action", "request").put("payload", JSONObject()
                                         .put("operation", payload.getString("operation")).put("params", payload.getJSONObject("params"))
                                         .put("idempotencyKey", payload.get("idempotency_key")))
-                                    reply = JSONObject(CoreApiBridge.typedCommand(context, request.toString()))
+                                    val binding = qualificationBinding
+                                    val observer = if (binding == null) null else try {
+                                        Class.forName("com.meshchat.runtime.CoreFailureObservation")
+                                            .getDeclaredMethod("typedCommand", android.content.Context::class.java,
+                                                String::class.java, String::class.java).apply { isAccessible = true }
+                                    } catch (_: Exception) { null }
+                                    reply = JSONObject(if (observer == null) CoreApiBridge.typedCommand(context, request.toString())
+                                        else (observer.invoke(null, context, request.toString(), binding)
+                                            ?: error("Observation entry returned no reply")).toString())
                                 }
                                 "inspect" -> {
                                     check(initialized && payload.keys().asSequence().toSet() == setOf("command", "payload"))
                                     reply = JSONObject(qualification.callAttr("android_control", payload.toString()).toString())
+                                    if (payload.opt("command") == "qualification.inventory" && reply.opt("ok") == true) {
+                                        val result = reply.optJSONObject("result")
+                                        val service = result?.opt("service_incarnation") as? String
+                                        val profile = result?.opt("profile_incarnation") as? String
+                                        val candidate = if (service?.matches(Regex("[a-f0-9]{32}")) == true &&
+                                            profile?.matches(Regex("[a-f0-9]{32}")) == true) service + profile else null
+                                        if (!bindingObserved && payload.getJSONObject("payload").length() == 0) {
+                                            bindingObserved = true
+                                            val counts = result?.optJSONObject("host_accounting")
+                                            val empty = result?.optJSONArray("resources")?.length() == 0 && counts?.opt("complete") == true &&
+                                                listOf("reserved_count", "creating_count", "allocated_count", "active_count", "retiring_count")
+                                                    .all { counts?.opt(it) == 0 }
+                                            qualificationBinding = candidate.takeIf { empty }
+                                        } else if (candidate != qualificationBinding) qualificationBinding = null
+                                    }
                                 }
                                 "finish" -> {
+                                    qualificationBinding = null
                                     check(initialized && payload.keys().asSequence().toSet() == setOf("delete_profile"))
                                     val closed = JSONObject(mobile.callAttr("shutdown").toString())
                                     check(closed.getBoolean("ok"))

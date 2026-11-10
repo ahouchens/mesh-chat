@@ -34,14 +34,18 @@ internal class CoreHostClient(private val exchange: (ByteArray) -> ByteArray) {
             val admissionFailure = response.has("request_id") && response.isNull("request_id") &&
                 code in setOf("forbidden", "invalid_request", "resource_exhausted", "unavailable")
             if (!correlated && !admissionFailure) throw CoreHostFailure("protocol")
-            throw CoreHostFailure(error)
+            val correlation = if (correlated && code == "internal" && operation in CoreFailureValues.stages)
+                CoreFailureCorrelation(requestId, operation, code, this) else null
+            throw CoreHostFailure(error, correlation)
         }
         if (!correlated || response.opt("ok") != true) throw CoreHostFailure("protocol")
-        return response.optJSONObject("result") ?: throw CoreHostFailure("protocol")
+        val result = response.optJSONObject("result") ?: throw CoreHostFailure("protocol")
+        CoreObservationContext.succeeded(this)
+        return result
     }
 }
 
-internal class CoreHostFailure(val error: JSONObject) : Exception(error.optString("code")) {
+internal class CoreHostFailure(val error: JSONObject, val correlation: CoreFailureCorrelation? = null) : Exception(error.optString("code")) {
     constructor(code: String) : this(JSONObject().put("code", code).put("retry_after_ms", JSONObject.NULL))
 }
 
