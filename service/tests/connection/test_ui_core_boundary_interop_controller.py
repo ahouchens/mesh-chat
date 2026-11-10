@@ -173,6 +173,320 @@ def test_terminal_stop_cannot_turn_unavailable_accounting_into_zero(tmp_path, mo
     assert "execution" not in run.record
 
 
+def carrier_inventory(*, state="acknowledged", request_id="ECHO", resources=False, active=0, retiring=0):
+    return {**terminal_inventory(resources=resources, active=active, retiring=retiring),
+        "service_incarnation": "b" * 32, "profile_incarnation": "c" * 32,
+        "carrier_retirement": {"request_id": request_id, "state": state}}
+
+
+def retirement_case(monkeypatch, sample, *, role="windows", polls=None, reply=None, remaining=3000, request_error=None):
+    """Actual path_case/wait/retired; ready path/receipt and private peer doubles."""
+    original, _ = sample
+    state = SimpleNamespace(now=0.0, events=[], requests=[], inventories=[], random_draws=[], case_index=0,
+                            observation=0, reads=0, current=None, request_error=request_error)
+    templates = polls if polls is not None else [carrier_inventory(state="pending"),
+        carrier_inventory(retiring=1), carrier_inventory()]
+    class Peer:
+        def core(self, operation, params, key=None):
+            assert operation == "native.command" and params["command"] == "native_webrtc_close"
+            state.events.append("compatibility_close")
+            return {"state": "managed"}
+        def pairing_status(self, operation): return {"operation_id": operation, "state": "transferred"}
+        def pairing_cancel(self, operation): return {"operation_id": operation, "state": "transferred"}
+        def retire_carrier(self, operation_id, request_id, logical_session, expected_physical,
+                           expected_service_incarnation, expected_adapter_epoch):
+            state.requests.append({"operation_id": operation_id, "request_id": request_id,
+                "logical_session": logical_session, "expected_physical": expected_physical,
+                "expected_service_incarnation": expected_service_incarnation, "expected_adapter_epoch": expected_adapter_epoch})
+            state.reads = 0
+            if state.request_error is not None: raise state.request_error
+            if remaining == 0: state.now = state.controller.deadline  # Admission consumed the last global budget.
+            value = copy.deepcopy(reply if reply is not None else {"request_id": "ECHO", "state": "pending"})
+            if isinstance(value, dict) and value.get("request_id") == "ECHO": value["request_id"] = request_id
+            return value
+        def inventory(self, *, operation_id=None, request_id=None):
+            state.inventories.append((operation_id, request_id))
+            state.reads += 1
+            if not state.requests: return carrier_inventory(resources=True, active=1)
+            assert operation_id == state.requests[-1]["operation_id"] and request_id == state.requests[-1]["request_id"]
+            value = copy.deepcopy(templates[min(state.reads - 1, len(templates) - 1)])
+            echo = value.get("carrier_retirement")
+            if isinstance(echo, dict) and echo.get("request_id") == "ECHO": echo["request_id"] = request_id
+            return value
+    def sleep(seconds):
+        assert seconds == 0.25
+        state.events.append("sleep")
+        state.now += seconds
+    def random_bytes(size):
+        state.random_draws.append(size)
+        return bytes([(0xdd + 17 * (len(state.random_draws) - 1)) % 256]) * size
+    monkeypatch.setattr(controller, "time", SimpleNamespace(monotonic=lambda: state.now, sleep=sleep))
+    monkeypatch.setattr(controller.os, "urandom", random_bytes)
+    instance = controller.Controller(role, Peer(), None, None, {})
+    instance.contact = {"id": "PRIVATE_CONTACT", "core_handle": "PRIVATE_HANDLE"}
+    instance.deadline = remaining if remaining > 0 else 3000
+    def negotiate(scenario, initiator):
+        state.case_index += 1
+        state.observation = 0
+        instance.pairing = f"00000000-0000-4000-8000-{state.case_index:012x}"
+        state.current = copy.deepcopy(original)
+        state.current.update(service_incarnation="b" * 32, profile_incarnation="c" * 32,
+            logical_session=f"PRIVATE_LOGICAL_{state.case_index}", resource=f"PRIVATE_PHYSICAL_{state.case_index}")
+        return state.current["logical_session"], None
+    def observe(*args, **kwargs):
+        state.observation += 1
+        value = copy.deepcopy(state.current)
+        value["sample_sequence"] = state.observation
+        if state.observation >= 3: value["application"] = dict.fromkeys(evidence.APPLICATION, 1)
+        return value
+    instance.negotiate, instance.observe = negotiate, observe
+    instance.exchange = lambda *_args, **_kwargs: ({"outbound": "1" * 64, "inbound": "2" * 64,
+        "authenticated_receipt": True, "inbound_records": 1, "outbound_records": 1, "receipt_roundtrip_ms": 1}, "PRIVATE_MESSAGE")
+    state.controller = instance
+    return state
+
+
+def test_per_case_owner_request_and_acknowledgment_precede_zero_evidence(monkeypatch, sample):
+    state = retirement_case(monkeypatch, sample)
+    state.controller.path_case("direct", "windows")
+    assert len(state.requests) == 1 and "compatibility_close" not in state.events
+    assert state.controller.cases[-1]["owner_retirement_acknowledged"] is True
+    assert state.controller.cases[-1]["retired_host_accounting"] == terminal_inventory()["host_accounting"]
+    assert state.events == ["sleep", "sleep"] and state.random_draws == [16]
+
+
+@pytest.mark.parametrize("role", ["windows", "android"])
+def test_each_manual_case_uses_fresh_nonce_and_exact_current_sample_target(monkeypatch, sample, role):
+    state = retirement_case(monkeypatch, sample, role=role)
+    state.controller.path_case("direct", "windows")
+    state.controller.path_case("direct", "android")
+    assert state.random_draws == [16, 16] and len(state.requests) == 2
+    for index, request in enumerate(state.requests, 1):
+        assert request == {"operation_id": f"00000000-0000-4000-8000-{index:012x}",
+            "request_id": ("d" if index == 1 else "e") * 32, "logical_session": f"PRIVATE_LOGICAL_{index}",
+            "expected_physical": f"PRIVATE_PHYSICAL_{index}", "expected_service_incarnation": "b" * 32,
+            "expected_adapter_epoch": "a" * 32}
+    assert state.inventories == [(request["operation_id"], request["request_id"])
+                                 for request in state.requests for _ in range(3)]
+    assert all(case["owner_retirement_acknowledged"] is True for case in state.controller.cases)
+    encoded = json.dumps(state.controller.cases)
+    assert "request_id" not in encoded and "PRIVATE" not in encoded
+    assert all(value not in encoded for request in state.requests for value in request.values())
+
+
+@pytest.mark.parametrize("reply", [
+    pytest.param(value, id=label) for label, value in (
+        ("missing", {}), ("type", []), ("wrong-request", {"request_id": "0" * 32, "state": "pending"}),
+        ("immediate-ack", {"request_id": "ECHO", "state": "acknowledged"}),
+        ("unknown-state", {"request_id": "ECHO", "state": "retired"}),
+        ("state-type", {"request_id": "ECHO", "state": True}),
+        ("extra", {"request_id": "ECHO", "state": "pending", "resource": "PRIVATE_RESOURCE"}),
+    )
+])
+def test_first_retirement_reply_cannot_supply_cleanup_ack_or_wrong_identity(monkeypatch, sample, reply):
+    state = retirement_case(monkeypatch, sample, reply=reply)
+    with pytest.raises(controller.PeerFailure) as caught: state.controller.path_case("direct", "windows")
+    assert caught.value.code == "invalid_carrier_retirement_reply"
+    assert len(state.requests) == 1 and state.inventories == []
+    assert "owner_retirement_acknowledged" not in state.controller.cases[-1]
+    assert "PRIVATE" not in str(caught.value)
+
+
+@pytest.mark.parametrize("echo", [
+    pytest.param(value, id=label) for label, value in (
+        ("missing", None), ("array", []), ("wrong-request", {"request_id": "0" * 32, "state": "acknowledged"}),
+        ("request-type", {"request_id": True, "state": "acknowledged"}),
+        ("unknown", {"request_id": "ECHO", "state": "retired"}),
+        ("state-type", {"request_id": "ECHO", "state": True}),
+        ("extra", {"request_id": "ECHO", "state": "acknowledged", "physical": "PRIVATE_RESOURCE"}),
+    )
+])
+def test_correlated_inventory_requires_exact_request_and_known_ack_state(monkeypatch, sample, echo):
+    inventory = carrier_inventory()
+    if echo is None: inventory.pop("carrier_retirement")
+    else: inventory["carrier_retirement"] = echo
+    state = retirement_case(monkeypatch, sample, polls=[inventory])
+    with pytest.raises(controller.PeerFailure) as caught: state.controller.path_case("direct", "windows")
+    assert caught.value.code == "invalid_carrier_retirement_reply"
+    assert len(state.requests) == len(state.inventories) == 1 and state.events == []
+    assert "owner_retirement_acknowledged" not in state.controller.cases[-1]
+
+
+@pytest.mark.parametrize("field,value", [("service_incarnation", "f" * 32), ("profile_incarnation", "f" * 32),
+                                        ("service_incarnation", None), ("profile_incarnation", True)])
+def test_ack_from_changed_or_missing_scope_cannot_satisfy_retirement(monkeypatch, sample, field, value):
+    inventory = carrier_inventory()
+    inventory[field] = value
+    state = retirement_case(monkeypatch, sample, polls=[inventory])
+    with pytest.raises(controller.PeerFailure) as caught: state.controller.path_case("direct", "windows")
+    assert caught.value.code == "carrier_retirement_scope_changed"
+    assert len(state.inventories) == 1 and "owner_retirement_acknowledged" not in state.controller.cases[-1]
+
+
+@pytest.mark.parametrize("inventory", [
+    pytest.param(carrier_inventory(state="pending"), id="pending-with-zero"),
+    pytest.param(carrier_inventory(resources=True), id="ack-with-logical-resource"),
+    pytest.param(carrier_inventory(active=1), id="ack-with-active-native"),
+    pytest.param(carrier_inventory(retiring=1), id="ack-with-retiring-native"),
+])
+def test_acknowledgment_and_global_zero_are_independent_wait_requirements(monkeypatch, sample, inventory):
+    state = retirement_case(monkeypatch, sample, polls=[inventory], remaining=0.5)
+    with pytest.raises(controller.PeerFailure) as caught: state.controller.path_case("direct", "windows")
+    assert caught.value.code == "scenario_deadline" and len(state.requests) == 1
+    assert len(state.inventories) == 2 and state.events == ["sleep", "sleep"] and state.now == 0.5
+    assert "owner_retirement_acknowledged" not in state.controller.cases[-1]
+
+
+@pytest.mark.parametrize("fault", ["counts_unavailable", "resources_type"])
+def test_correlated_retirement_does_not_turn_unknown_observation_into_zero(monkeypatch, sample, fault):
+    inventory = carrier_inventory()
+    if fault == "counts_unavailable": inventory["host_accounting"]["complete"] = False
+    else: inventory["resources"] = None
+    state = retirement_case(monkeypatch, sample, polls=[inventory])
+    with pytest.raises(ValueError if fault == "counts_unavailable" else controller.PeerFailure):
+        state.controller.path_case("direct", "windows")
+    assert "owner_retirement_acknowledged" not in state.controller.cases[-1]
+
+
+def test_retirement_request_error_keeps_exact_exception_without_retry_or_poll(monkeypatch, sample):
+    error = controller.PeerFailure("forbidden")
+    state = retirement_case(monkeypatch, sample, request_error=error)
+    with pytest.raises(controller.PeerFailure) as caught: state.controller.path_case("direct", "windows")
+    assert caught.value is error and len(state.requests) == 1 and state.inventories == []
+    assert state.controller.phase == "direct_native_lease_retirement"
+
+
+def test_previous_case_acknowledgment_cannot_satisfy_new_case(monkeypatch, sample):
+    templates = [carrier_inventory()]
+    state = retirement_case(monkeypatch, sample, polls=templates)
+    state.controller.path_case("direct", "windows")
+    templates[0]["carrier_retirement"]["request_id"] = state.requests[0]["request_id"]
+    with pytest.raises(controller.PeerFailure) as caught: state.controller.path_case("direct", "android")
+    assert caught.value.code == "invalid_carrier_retirement_reply" and len(state.requests) == 2
+    assert state.controller.cases[0]["owner_retirement_acknowledged"] is True
+    assert "owner_retirement_acknowledged" not in state.controller.cases[1]
+
+
+def run_carrier_failure_report(tmp_path, monkeypatch, capsys, sample, *, remaining=0.5, fault="", polls=None):
+    """Actual main plus case retirement, inert binding and earlier path/receipt effects."""
+    import connection_ci
+    state = retirement_case(monkeypatch, sample, remaining=remaining,
+        polls=polls if polls is not None else [carrier_inventory(state="pending")])
+    peer = state.controller.peer
+    peer.process = SimpleNamespace(pid=17)
+    def stop(**kwargs):
+        assert kwargs == {"crash": True}
+        state.events.append("host_cleanup")
+        peer.process = None
+        if fault == "cleanup": raise ValueError("PRIVATE_CLEANUP")
+    peer.stop = stop
+    def execute():
+        try: state.controller.path_case("direct", "windows")
+        except Exception as error:
+            state.original_error = error
+            if fault == "foreign": raise controller.PeerFailure("forbidden")
+            if fault == "malformed": state.controller._retirement_failure[1]["request_id"] = "PRIVATE_REQUEST"
+            raise
+    state.controller.run = execute
+    if fault == "observer":
+        def broken(*args): raise ValueError("PRIVATE_OBSERVER")
+        monkeypatch.setattr(state.controller, "_retirement_poll_observation", broken)
+    if fault == "projection":
+        def broken(value): raise ValueError("PRIVATE_PROJECTION")
+        monkeypatch.setattr(controller, "retirement_failure_snapshot", broken)
+    monkeypatch.setattr(controller, "Controller", lambda *_args, **_kwargs: state.controller)
+    monkeypatch.setattr(controller, "source_identity", lambda _: ("a" * 40, "b" * 40))
+    monkeypatch.setattr(connection_ci, "current_plan", lambda: {"native_workload": "full"})
+    monkeypatch.setattr(controller, "context_from_environment", lambda: {"source_commit": "a" * 40})
+    monkeypatch.setattr(controller, "binding", lambda *_: (None, {}))
+    monkeypatch.setattr(controller, "outbound_services", lambda: {})
+    monkeypatch.setattr(controller, "WindowsPeer", lambda *_: peer)
+    monkeypatch.setattr(controller, "GithubArtifacts", lambda *_: SimpleNamespace(close=lambda: None))
+    monkeypatch.setattr(controller, "Rendezvous", lambda *_: SimpleNamespace(close=lambda: None))
+    output = tmp_path / "carrier.json"
+    monkeypatch.setattr(sys, "argv", ["controller", "--role", "windows", "--workload", "full", "--expected-source", "a" * 40, "--output", str(output)])
+    code = controller.main()
+    captured = capsys.readouterr()
+    return SimpleNamespace(record=json.loads(output.read_text()), code=code, state=state,
+                           output=output.read_text() + captured.out + captured.err)
+
+
+@pytest.mark.parametrize("remaining,polls", [(0, 0), (0.5, 2)])
+def test_retirement_report_retains_only_last_valid_existing_poll(tmp_path, monkeypatch, capsys, sample, remaining, polls):
+    run = run_carrier_failure_report(tmp_path, monkeypatch, capsys, sample, remaining=remaining)
+    assert run.code == 1 and run.record["error_code"] == "scenario_deadline"
+    context = run.record["carrier_retirement_failure"]
+    assert context == {"scenario": "direct", "initiator": "windows", "stage": "poll", "polls": polls,
+        "polls_capped": False, "last_observation": ({"state": "pending", "resource_count": 0,
+            "resources_capped": False, "counts": dict.fromkeys(controller.RETIREMENT_COUNTS, 0)} if polls else None)}
+    assert run.state.controller.failure_retirement(run.state.original_error) == {"carrier_retirement_failure": context}
+    assert len(run.state.requests) == 1 and len(run.state.inventories) == polls
+    assert "PRIVATE" not in run.output and "request_id" not in run.output
+    assert all(value not in run.output for value in run.state.requests[0].values())
+
+
+@pytest.mark.parametrize("fault", ["foreign", "observer", "projection", "malformed", "cleanup"])
+def test_retirement_failure_context_is_best_effort_same_error_only(tmp_path, monkeypatch, capsys, sample, fault):
+    run = run_carrier_failure_report(tmp_path, monkeypatch, capsys, sample, fault=fault)
+    assert run.code == 1 and run.record["failure_type"] == "PeerFailure"
+    assert run.record["phase"] == "direct_native_lease_retirement"
+    assert run.record["error_code"] == ("forbidden" if fault == "foreign" else "scenario_deadline")
+    assert ("carrier_retirement_failure" in run.record) is (fault == "cleanup")
+    assert run.record.get("cleanup_failed", False) is (fault == "cleanup")
+    assert "host_cleanup" in run.state.events and len(run.state.inventories) == 2
+    assert "PRIVATE" not in run.output
+
+
+def test_retirement_diagnostics_clear_after_next_case_success(monkeypatch, sample):
+    error = controller.PeerFailure("forbidden")
+    state = retirement_case(monkeypatch, sample, request_error=error)
+    with pytest.raises(controller.PeerFailure): state.controller.path_case("direct", "windows")
+    context = state.controller.failure_retirement(error)["carrier_retirement_failure"]
+    assert context == {"scenario": "direct", "initiator": "windows", "stage": "request", "polls": 0,
+                       "polls_capped": False, "last_observation": None}
+    assert state.controller.failure_retirement(controller.PeerFailure("forbidden")) == {}
+    state.request_error = None
+    state.controller.path_case("direct", "android")
+    assert state.controller.failure_retirement(error) == {} and state.controller._retirement_context is None
+
+
+def test_retirement_failure_resource_observation_is_capped_without_raw_rows(tmp_path, monkeypatch, capsys, sample):
+    inventory = carrier_inventory(active=1)
+    inventory["resources"] = [{"logical_session": "PRIVATE_OTHER", "physical_resource": "PRIVATE_RESOURCE"}] * 20
+    run = run_carrier_failure_report(tmp_path, monkeypatch, capsys, sample, polls=[inventory])
+    last = run.record["carrier_retirement_failure"]["last_observation"]
+    assert last["resource_count"] == 16 and last["resources_capped"] is True
+    assert last["state"] == "acknowledged" and last["counts"]["active_count"] == 1
+    assert "PRIVATE" not in run.output
+
+
+@pytest.mark.parametrize("field,value", [("scenario", "PRIVATE_CASE"), ("initiator", []), ("stage", "cleanup"),
+                                       ("polls", True), ("polls", 129), ("polls_capped", "true")])
+def test_unknown_or_malformed_retirement_failure_snapshot_is_omitted(monkeypatch, sample, field, value):
+    error = controller.PeerFailure("forbidden")
+    state = retirement_case(monkeypatch, sample, request_error=error)
+    with pytest.raises(controller.PeerFailure): state.controller.path_case("direct", "windows")
+    state.controller._retirement_failure[1][field] = value
+    assert state.controller.failure_retirement(error) == {}
+
+
+@pytest.mark.parametrize("fault", ["state", "resource_bool", "resource_limit", "resource_cap", "count_bool", "count_limit", "raw_id", "no_poll"])
+def test_retirement_failure_last_observation_rejects_poison_and_unbounded_values(monkeypatch, sample, fault):
+    state = retirement_case(monkeypatch, sample, polls=[carrier_inventory(state="pending")], remaining=0.5)
+    with pytest.raises(controller.PeerFailure) as caught: state.controller.path_case("direct", "windows")
+    snapshot = state.controller._retirement_failure[1]
+    last = snapshot["last_observation"]
+    if fault == "state": last["state"] = "PRIVATE_STATE"
+    elif fault == "resource_bool": last["resource_count"] = True
+    elif fault == "resource_limit": last["resource_count"] = 17
+    elif fault == "resource_cap": last["resources_capped"] = True
+    elif fault == "count_bool": last["counts"]["active_count"] = True
+    elif fault == "count_limit": last["counts"]["active_count"] = 17
+    elif fault == "raw_id": last["resource"] = "PRIVATE_RESOURCE"
+    else: snapshot["polls"] = 0
+    assert state.controller.failure_retirement(caught.value) == {}
+
+
 @pytest.fixture
 def path_observer(monkeypatch, sample):
     """Actual observe/wait/Samples; only private peer calls and time are scripted."""
@@ -1047,7 +1361,8 @@ def interop_reports(source="a" * 40, tree="b" * 40, android_artifacts=None, *, w
                 "state": "transferred", "transferred_cancel_preserves_carrier": True}, "before": before, "after": after,
                 "native_delta": {name: 1 for name in evidence.APPLICATION},
                 "messages": [message(f"{case_id}:{index}", role) for index in range(20 if name == "impaired" else 1)],
-                "impairment": impairment, "negative": negative, "retired_host_accounting": counts()})
+                "impairment": impairment, "negative": negative, "retired_host_accounting": counts(),
+                "owner_retirement_acknowledged": True})
         for index in range(plan["iterations"]):
             generation = index // 10 + 1
             service = role + str(generation)

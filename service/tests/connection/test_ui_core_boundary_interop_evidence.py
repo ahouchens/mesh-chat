@@ -14,6 +14,34 @@ from mesh_chat.native_path_evidence import candidate, pair_token
 REQUEST = "c" * 32
 
 
+def test_zero_native_counts_cannot_replace_positive_owner_retirement_acknowledgment():
+    from test_ui_core_boundary_interop_controller import interop_reports
+    windows, android = interop_reports()
+    for report in (windows, android):
+        for case in report["execution"]["scenarios"]: case.pop("owner_retirement_acknowledged", None)
+    with pytest.raises(ValueError): evidence.verify_pair(windows, android, "a" * 40, "b" * 40)
+
+
+@pytest.mark.parametrize("role", [0, 1])
+@pytest.mark.parametrize("case_index", range(6))
+def test_every_case_requires_its_own_retained_owner_ack(role, case_index):
+    from test_ui_core_boundary_interop_controller import interop_reports
+    reports = interop_reports()
+    reports[role]["execution"]["scenarios"][case_index].pop("owner_retirement_acknowledged")
+    with pytest.raises(ValueError): evidence.verify_pair(*reports, "a" * 40, "b" * 40)
+
+
+@pytest.mark.parametrize("case_index,value", [(0, False), (1, None), (2, 0), (3, 1), (4, "true"), (5, {}), (5, [])])
+def test_retained_owner_ack_requires_exact_true_and_contains_no_correlation_ids(case_index, value):
+    from test_ui_core_boundary_interop_controller import interop_reports
+    reports = interop_reports()
+    reports[0]["execution"]["scenarios"][case_index]["owner_retirement_acknowledged"] = value
+    with pytest.raises(ValueError): evidence.verify_pair(*reports, "a" * 40, "b" * 40)
+    reports = interop_reports()
+    reports[0]["execution"]["scenarios"][case_index]["request_id"] = "PRIVATE_REQUEST"
+    with pytest.raises(ValueError): evidence.verify_pair(*reports, "a" * 40, "b" * 40)
+
+
 @pytest.fixture
 def sample():
     local = candidate("192.0.2.1", 1234, "relay", "udp")

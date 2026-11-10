@@ -254,7 +254,8 @@ def verify_report(record, source, tree, role, *, workload="full"):
     identities = set()
     for case in cases:
         scenario = case["scenario"]
-        _require(set(case) == {"scenario", "initiator", "supervisor_pairing", "before", "after", "native_delta", "messages", "impairment", "negative", "retired_host_accounting"}, "Native case contains unexpected or missing fields")
+        _require(set(case) == {"scenario", "initiator", "supervisor_pairing", "before", "after", "native_delta", "messages", "impairment", "negative", "retired_host_accounting", "owner_retirement_acknowledged"}, "Native case contains unexpected or missing fields")
+        _require(case["owner_retirement_acknowledged"] is True, "Native case lacks positive owner retirement acknowledgment")
         pairing = case["supervisor_pairing"]
         _require(isinstance(pairing, dict) and set(pairing) == {"operation", "role", "state", "transferred_cancel_preserves_carrier"}
             and token(pairing["operation"], 64) and pairing["role"] == ("offer" if role == case["initiator"] else "answer")

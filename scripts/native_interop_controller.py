@@ -32,6 +32,40 @@ FAILURE_SUBSTAGES = frozenset({
     "adopted_observation", "transferred_cancel", "transferred_cancel_check", "post_cancel_observation",
     "carrier_identity_check", "path_inventory", "path_read", "path_validation",
 })
+RETIREMENT_COUNTS = ("reserved_count", "creating_count", "allocated_count", "active_count", "retiring_count")
+
+
+def retirement_failure_snapshot(value):
+    fields = {"scenario", "initiator", "stage", "polls", "polls_capped", "last_observation"}
+    if (type(value) is not dict or set(value) != fields
+            or type(value["scenario"]) is not str or value["scenario"] not in SCENARIOS[:5]
+            or type(value["initiator"]) is not str or value["initiator"] not in {"windows", "android"}
+            or type(value["stage"]) is not str or value["stage"] not in {"request", "poll"}
+            or type(value["polls"]) is not int or not 0 <= value["polls"] <= 128
+            or type(value["polls_capped"]) is not bool or (value["polls_capped"] and value["polls"] != 128)):
+        return None
+    last = value["last_observation"]
+    if value["stage"] == "request" and (value["polls"] != 0 or last is not None): return None
+    if last is not None:
+        if (value["polls"] == 0 or type(last) is not dict
+                or set(last) != {"state", "resource_count", "resources_capped", "counts"}
+                or type(last["state"]) is not str or last["state"] not in {"pending", "acknowledged"}
+                or type(last["resource_count"]) is not int or not 0 <= last["resource_count"] <= 16
+                or type(last["resources_capped"]) is not bool or (last["resources_capped"] and last["resource_count"] != 16)
+                or type(last["counts"]) is not dict or set(last["counts"]) != set(RETIREMENT_COUNTS)
+                or any(type(number) is not int or not 0 <= number <= 16 for number in last["counts"].values())):
+            return None
+        last = {**last, "counts": dict(last["counts"])}
+    return {**value, "last_observation": last}
+
+
+def carrier_retirement_state(value, request_id, *, admission=False):
+    if (type(value) is not dict or set(value) != {"request_id", "state"}
+            or type(value["request_id"]) is not str or value["request_id"] != request_id
+            or type(value["state"]) is not str
+            or value["state"] not in ({"pending"} if admission else {"pending", "acknowledged"})):
+        raise PeerFailure("invalid_carrier_retirement_reply")
+    return value["state"]
 
 
 def selected_ice(value, scenario):
@@ -90,6 +124,7 @@ class Controller:
         self._operation_failure: tuple[Exception, str] | None = None
         self._pairing_failure: tuple[Exception, str, dict[str, str] | None] | None = None
         self._substage_failure: tuple[Exception, str] | None = None
+        self._retirement_context = self._retirement_failure = None
         self.workload = required_workload(workload)
 
     @contextmanager
@@ -99,6 +134,7 @@ class Controller:
         self._operation_failure = None
         self._pairing_failure = None
         self._substage_failure = None
+        self._retirement_failure = None
         try:
             yield
         except Exception as error:
@@ -141,6 +177,25 @@ class Controller:
     def failure_site(self, error):
         observed = self._operation_failure
         return observed[1] if observed is not None and observed[0] is error and observed[1] in FAILURE_SITES else None
+
+    def failure_retirement(self, error):
+        try:
+            observed = self._retirement_failure
+            if observed is None or observed[0] is not error: return {}
+            selected = retirement_failure_snapshot(observed[1])
+            return {"carrier_retirement_failure": selected} if selected is not None else {}
+        except Exception:
+            return {}
+
+    def _retirement_poll_observation(self, state=None, resources=None, counts=None):
+        context = self._retirement_context
+        if context is None: return
+        if state is None:
+            if context["polls"] == 128: context["polls_capped"] = True
+            else: context["polls"] += 1
+        else:
+            context["last_observation"] = {"state": state, "resource_count": min(len(resources), 16),
+                "resources_capped": len(resources) > 16, "counts": {name: counts[name] for name in RETIREMENT_COUNTS}}
 
     def failure_rendezvous(self, error):
         if type(error) is not RendezvousUnavailable or self.failure_site(error) != "rendezvous_receive":
@@ -260,10 +315,27 @@ class Controller:
             return values[0]
         return None
 
-    def retired(self):
-        inventory = self.peer.inventory()
+    def retired(self, *, operation_id=None, request_id=None, expected_service=None, expected_profile=None):
+        correlated = operation_id is not None or request_id is not None
+        if correlated:
+            try: self._retirement_poll_observation()
+            except Exception: self._retirement_context = None
+            inventory = self.peer.inventory(operation_id=operation_id, request_id=request_id)
+            if (type(inventory) is not dict or type(inventory.get("service_incarnation")) is not str
+                    or type(inventory.get("profile_incarnation")) is not str
+                    or inventory["service_incarnation"] != expected_service or inventory["profile_incarnation"] != expected_profile):
+                raise PeerFailure("carrier_retirement_scope_changed")
+            state = carrier_retirement_state(inventory.get("carrier_retirement"), request_id)
+            if type(inventory.get("resources")) is not list:
+                raise PeerFailure("invalid_carrier_retirement_inventory")
+        else:
+            inventory = self.peer.inventory()
         counts = accounting(inventory.get("host_accounting"))
-        if inventory["resources"] or any(counts[name] for name in ("reserved_count", "creating_count", "allocated_count", "active_count", "retiring_count")):
+        if correlated:
+            try: self._retirement_poll_observation(state, inventory["resources"], counts)
+            except Exception: self._retirement_context = None
+        if (inventory["resources"] or any(counts[name] for name in RETIREMENT_COUNTS)
+                or (correlated and state != "acknowledged")):
             return None
         return accounting(counts, empty=True)
 
@@ -387,6 +459,7 @@ class Controller:
                 "outbound": digest(outbound[0]["id"]), "inbound": digest(inbound[0]["id"])}
 
     def path_case(self, scenario, initiator):
+        self._retirement_context = self._retirement_failure = None
         session, url = self.negotiate(scenario, initiator)
         if self.contact is None: self.pair(session, initiator)
         with self._substage("transferred_status_wait"):
@@ -433,8 +506,29 @@ class Controller:
         finally:
             if fault is not None: fault.close()
         self.phase = scenario + "_native_lease_retirement"
-        self.native("native_webrtc_close", session_id=session)
-        self.cases[-1]["retired_host_accounting"] = self.wait(self.retired, timeout=30)
+        self._retirement_context = {"scenario": scenario, "initiator": initiator, "stage": "request",
+            "polls": 0, "polls_capped": False, "last_observation": None}
+        try:
+            operation_id, request_id = self.pairing, os.urandom(16).hex()
+            expected_service, expected_profile = after["service_incarnation"], after["profile_incarnation"]
+            reply = self.peer.retire_carrier(operation_id, request_id, after["logical_session"], after["resource"],
+                expected_service, after["adapter_epoch"])
+            carrier_retirement_state(reply, request_id, admission=True)
+            self._retirement_context["stage"] = "poll"
+            self.cases[-1]["retired_host_accounting"] = self.wait(lambda: self.retired(
+                operation_id=operation_id, request_id=request_id, expected_service=expected_service,
+                expected_profile=expected_profile), timeout=30)
+            self.cases[-1]["owner_retirement_acknowledged"] = True
+        except Exception as error:
+            try:
+                selected = retirement_failure_snapshot(self._retirement_context)
+                if selected is not None: self._retirement_failure = error, selected
+            except Exception: self._retirement_failure = None
+            raise
+        else:
+            self._retirement_failure = None
+        finally:
+            self._retirement_context = None
 
     def cold_starts(self):
         self.phase = "cold_start_receipts"
@@ -563,6 +657,7 @@ def main():
             result.update(controller.failure_pairing(error))
             result.update(controller.failure_observation(error))
             result.update(controller.failure_rendezvous(error))
+            result.update(controller.failure_retirement(error))
     finally:
         if peer is not None and peer.process is not None:
             try: peer.stop(crash=True)
