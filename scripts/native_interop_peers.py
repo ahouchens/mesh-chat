@@ -21,6 +21,7 @@ import time
 from uuid import UUID, uuid4
 
 from native_interop_diagnostics import PreflightDiagnostics
+from native_interop_core_observation import core_failure_observation
 
 ROOT = Path(__file__).resolve().parents[1]
 MAX_FRAME = 4 * 1024 * 1024
@@ -333,6 +334,7 @@ class AndroidPeer:
         self.process = self.socket = None
         self.forward = None
         self._sequence = 0
+        self._core_failure = None
         self.processes_started, self.clean_exits, self.forced_exits = 0, 0, 0
 
     def _adb(self, *args):
@@ -374,6 +376,7 @@ class AndroidPeer:
             raise PeerFailure("android_host_start_failed") from None
 
     def _request(self, action, payload=None):
+        self._core_failure = None
         if self.socket is None:
             raise PeerFailure("peer_not_started")
         self._sequence += 1
@@ -388,12 +391,26 @@ class AndroidPeer:
             return self.socket.recv(count)
         try:
             self.socket.sendall(encode({"id": identifier, "action": action, "payload": payload or {}}))
-            return checked_reply(receive(read), identifier)
+            value = receive(read)
+            try:
+                return checked_reply(value, identifier)
+            except PeerFailure as error:
+                if (action == "core" and error.code == "internal" and type(value) is dict and value.get("id") == identifier
+                        and value.get("ok") is False):
+                    selected = core_failure_observation(value.get("core_failure_observation"))
+                    if selected is not None: self._core_failure = error, selected
+                raise
         except TimeoutError:
             raise PeerFailure("peer_deadline") from None
 
     def core(self, operation, params=None, key=None):
         return self._request("core", {"operation": operation, "params": params or {}, "idempotency_key": key})
+
+    def core_failure_observation(self, error):
+        observed = self._core_failure
+        if (observed is not None and type(error) is PeerFailure and error.code == "internal" and observed[0] is error):
+            return core_failure_observation(observed[1])
+        return None
 
     def inventory(self, *, operation_id=None, request_id=None):
         return self._request("inspect", {"command": "qualification.inventory",
@@ -420,6 +437,7 @@ class AndroidPeer:
         return self._request("inspect", {"command": "qualification.pairing_cancel", "payload": {"operation_id": operation_id}})
 
     def stop(self, *, crash=False, delete_profile=False):
+        self._core_failure = None
         process = self.process
         if process is None:
             return

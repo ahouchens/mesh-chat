@@ -18,6 +18,7 @@ object CoreApiBridge {
     private var bound: IMeshCoreApi? = null
     private var client: CoreClient? = null
     private var hostClient: CoreHostClient? = null
+    private val observationPublication = CoreObservationPublication()
     private val exchangeLock = Any()
     private var bindingRequested = false
     private var applicationContext: Context? = null
@@ -26,6 +27,7 @@ object CoreApiBridge {
 
     /** A publication changes capability availability; invalidate caches, never replay. */
     fun runtimeRebound() = synchronized(lock) {
+        observationPublication.invalidate()
         client = null
         hostClient = null
     }
@@ -33,6 +35,7 @@ object CoreApiBridge {
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             synchronized(lock) {
+                observationPublication.invalidate()
                 bound = service?.let { IMeshCoreApi.Stub.asInterface(it) }
                 client = null
                 hostClient = null
@@ -42,6 +45,7 @@ object CoreApiBridge {
 
         override fun onServiceDisconnected(name: ComponentName?) {
             synchronized(lock) {
+                observationPublication.invalidate()
                 bound = null
                 client = null
                 hostClient = null
@@ -51,6 +55,7 @@ object CoreApiBridge {
 
         override fun onBindingDied(name: ComponentName?) {
             val context = synchronized(lock) {
+                observationPublication.invalidate()
                 bound = null
                 client = null
                 hostClient = null
@@ -64,6 +69,7 @@ object CoreApiBridge {
 
         override fun onNullBinding(name: ComponentName?) {
             val context = synchronized(lock) {
+                observationPublication.invalidate()
                 bindingRequested = false
                 latch.countDown()
                 applicationContext
@@ -81,6 +87,7 @@ object CoreApiBridge {
             val appContext = checkNotNull(applicationContext)
             if (!appContext.bindService(Intent(appContext, MeshCoreApiService::class.java),
                     connection, Context.BIND_AUTO_CREATE)) {
+                observationPublication.invalidate()
                 bindingRequested = false
                 latch.countDown()
             }
@@ -88,30 +95,41 @@ object CoreApiBridge {
     }
 
     /** No legacy command fallback after a typed Core operation is submitted. */
-    fun typedCommand(context: Context, raw: String): String = synchronized(exchangeLock) {
-        try {
+    fun typedCommand(context: Context, raw: String): String {
+        var failed: CoreFailureCorrelation? = null
+        val original = synchronized(exchangeLock) { try {
             bind(context)
             latch.await(3, TimeUnit.SECONDS)
             val current = synchronized(lock) {
                 val api = bound ?: throw CoreHostFailure("unavailable")
-                hostClient ?: CoreHostClient { frame -> api.exchange(frame) }.also { hostClient = it }
+                val currentClient = hostClient ?: CoreHostClient { frame -> api.exchange(frame) }.also { hostClient = it }
+                Triple(api, currentClient, observationPublication.token())
             }
+            if (CoreObservationContext.present()) try {
+                CoreObservationContext.bind(observationPublication, current.third, current.second, current.first.asBinder(),
+                    current.first.asBinder().queryLocalInterface("com.meshchat.runtime.IMeshCoreApi") === current.first)
+            } catch (_: Exception) { CoreObservationContext.closeCurrent() }
             val request = JSONObject(raw)
-            val result = CoreHostCommands(current).execute(request.getString("action"),
+            val result = CoreHostCommands(current.second).execute(request.getString("action"),
                 request.getJSONObject("payload"))
             JSONObject().put("ok", true).put("result", result).toString()
         } catch (error: CoreHostFailure) {
-            JSONObject().put("ok", false).put("error", error.error).toString()
+            val encoded = JSONObject().put("ok", false).put("error", error.error).toString()
+            failed = error.correlation
+            encoded
         } catch (_: org.json.JSONException) {
             failure("invalid_request")
         } catch (_: InterruptedException) {
             Thread.currentThread().interrupt()
             failure("unavailable")
         } catch (_: android.os.RemoteException) {
-            synchronized(lock) { hostClient = null; client = null }
+            synchronized(lock) { observationPublication.invalidate(); hostClient = null; client = null }
             // The mutation outcome may be unknown. Rebinding never replays it.
             failure("unavailable")
-        }
+        } }
+        // Primary serialization is complete. Selection sees immutable correlation only, outside bridge locks.
+        try { CoreObservationContext.failed(failed) } catch (_: Exception) { }
+        return original
     }
 
     private fun failure(code: String) = JSONObject().put("ok", false)

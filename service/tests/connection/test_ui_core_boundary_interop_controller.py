@@ -2267,7 +2267,7 @@ INITIALIZE_SITES = dict(zip(INITIALIZE_CALLS, ["initialize_peer_start", "initial
 
 
 def run_initialize_report(tmp_path, monkeypatch, capsys, *, role="android", point=None, kind="peer", guard=None,
-                          foreign=False, later_error=False, cleanup_error=False):
+                          foreign=False, later_error=False, cleanup_error=False, core_observation=None):
     """Actual initialize/run/main and failure scope; external hosts/setup and later workload are inert."""
     import connection_ci
     state = SimpleNamespace(events=[], point=point, guard=guard, errors=[], now=100.0,
@@ -2281,6 +2281,8 @@ def run_initialize_report(tmp_path, monkeypatch, capsys, *, role="android", poin
     class Peer:
         process = SimpleNamespace(pid=17)
         processes_started, forced_exits, clean_exits = 0, 0, 0
+        def core_failure_observation(self, error):
+            return core_observation if error is state.error else None
         def start(self):
             step("peer.start")
             self.processes_started += 1
@@ -2482,6 +2484,39 @@ def test_initialize_failure_site_catalog_extends_existing_fixed_labels_only():
     assert controller.FAILURE_SITES == frozenset(INITIALIZE_SITES.values()) | {
         "negotiate_settings_update", "pairing_offer_begin", "pairing_answer_begin", "pairing_status",
         "rendezvous_receive", "rendezvous_publish", "negotiate_inventory", "negotiate_native_stats"}
+
+
+CORE_FAILURE_OBSERVATION = {"v": 1, "operation": "ice_servers", "stage": "tls_context",
+    "category": "unexpected", "cause": "file_not_found"}
+
+
+@pytest.mark.parametrize("role,point,kind,foreign,expected", [
+    ("android", "call.ice_servers", "peer", False, True),
+    ("android", "runtime.capabilities", "peer", False, True),
+    ("windows", "call.ice_servers", "peer", False, False),
+    ("android", "call.ice_servers", "value", False, False),
+    ("android", "call.ice_servers", "peer", True, False),
+])
+def test_actual_controller_failure_report_uses_only_same_android_core_error(
+        tmp_path, monkeypatch, capsys, role, point, kind, foreign, expected):
+    run = run_initialize_report(tmp_path, monkeypatch, capsys, role=role, point=point, kind=kind,
+        foreign=foreign, core_observation=CORE_FAILURE_OBSERVATION)
+    assert run.code == 1
+    assert run.record.get("core_failure_observation") == (CORE_FAILURE_OBSERVATION if expected else None)
+    assert "PRIVATE" not in run.output
+
+
+@pytest.mark.parametrize("observation", [
+    {**CORE_FAILURE_OBSERVATION, "secret": "PRIVATE_CREDENTIAL"},
+    {**CORE_FAILURE_OBSERVATION, "stage": "broker_json", "category": "response_encoding"},
+    {**CORE_FAILURE_OBSERVATION, "operation": "runtime_capabilities", "stage": "tls_context"},
+    {**CORE_FAILURE_OBSERVATION, "cause": "PRIVATE_CREDENTIAL"},
+])
+def test_actual_controller_rejects_invalid_core_observation(tmp_path, monkeypatch, capsys, observation):
+    run = run_initialize_report(tmp_path, monkeypatch, capsys, point="call.ice_servers",
+        core_observation=observation)
+    assert run.code == 1 and "core_failure_observation" not in run.record
+    assert "PRIVATE" not in run.output
 
 
 FAILURE_REPORT_CASES = [

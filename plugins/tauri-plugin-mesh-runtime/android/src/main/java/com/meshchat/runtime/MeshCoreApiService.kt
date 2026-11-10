@@ -39,7 +39,9 @@ class MeshCoreApiService : Service() {
             return errorFrame("forbidden")
         }
         val name = callingPackage(uid, hostUid) ?: return errorFrame("forbidden")
-        return dispatcher.exchange(CoreCaller.fromUid(uid, hostUid, name), frame)
+        val caller = CoreCaller.fromUid(uid, hostUid, name)
+        val observation = CoreObservationContext.capture(api.asBinder(), uid == hostUid, caller.scope == "owner")
+        return dispatcher.exchange(caller, frame, observation)
     }
 
     private fun callingPackage(uid: Int, hostUid: Int): String? {
@@ -53,10 +55,13 @@ class MeshCoreApiService : Service() {
     companion object {
         // The app process owns admission. Unbinding/recreating this Android
         // service must not replace a worker whose native invocation is wedged.
-        private val dispatcher = CoreDispatch({ caller, frame ->
+        private val dispatcher = CoreDispatch({ caller, frame, observation ->
             val module = Python.getInstance().getModule("mesh_chat.mobile_bridge")
             val encoded = Base64.encodeToString(frame, Base64.NO_WRAP)
-            val reply = module.callAttr("core_exchange", caller.name, encoded, caller.scope).toString()
+            val reply = if (observation == null) module.callAttr("core_exchange", caller.name, encoded, caller.scope).toString()
+                else Python.getInstance().getModule("mesh_chat.core_api.qualification_host")
+                    .callAttr("android_observed_core_exchange", caller.name, encoded, caller.scope,
+                        observation.qualificationBinding, observation.sink).toString()
             Base64.decode(reply, Base64.NO_WRAP)
         })
         const val PERMISSION = "com.meshchat.runtime.permission.CORE_API"

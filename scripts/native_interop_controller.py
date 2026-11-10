@@ -19,6 +19,7 @@ from native_interop_evidence import SCENARIOS, SAMPLE_REJECTION_REASONS, Samples
 from native_interop_diagnostics import (NegativeControlDiagnostics, PreflightDiagnostics, negative_control_error,
     negative_control_observation, negative_control_stage, rendezvous_observation, reset_negative_control)
 from native_interop_peers import AndroidEmulator, AndroidPeer, PeerFailure, WindowsPeer
+from native_interop_core_observation import core_failure_observation
 from native_interop_preflight import android_environment, outbound_services
 from native_interop_rendezvous import Rendezvous, checked_payload
 from native_interop_workload import workload as required_workload
@@ -194,6 +195,15 @@ class Controller:
     def failure_site(self, error):
         observed = self._operation_failure
         return observed[1] if observed is not None and observed[0] is error and observed[1] in FAILURE_SITES else None
+
+    def failure_core(self, error):
+        try:
+            if self.role != "android" or type(error) is not PeerFailure or error.code != "internal": return {}
+            provider = getattr(self.peer, "core_failure_observation", None)
+            selected = core_failure_observation(provider(error)) if callable(provider) else None
+            return {"core_failure_observation": selected} if selected is not None else {}
+        except Exception:
+            return {}
 
     def failure_retirement(self, error):
         try:
@@ -755,6 +765,8 @@ def main():
             result.update(controller.failure_rendezvous(error))
             result.update(controller.failure_retirement(error))
             result.update(controller.failure_negative_control(error))
+            try: result.update(controller.failure_core(error))
+            except Exception: pass  # Optional private diagnostics cannot replace the primary report.
     finally:
         if peer is not None and peer.process is not None:
             try: peer.stop(crash=True)
