@@ -621,6 +621,22 @@ def test_lifetime_cleanup_uses_actual_remaining_budget_and_still_requests_all_ow
                for item in events if item["event"] == "request")
 
 
+def test_conflicting_replay_cannot_insert_changed_text_before_expected_error(tmp_path):
+    completed, observed, events = lifetime_fixture(tmp_path, "changed_payload_insert_then_conflict")
+    assert [item for item in events if item["event"] == "conflict_insert"] == [
+        {"event": "conflict_insert", "outbound_records": 3, "matching_changed": 1, "error_code": "idempotency_conflict"}]
+    pending = [item for item in events if item["event"] == "enqueue" and item["pending"]]
+    assert len(pending) == 4 and pending[-1]["changed"] is True
+    assert len({item["key"] for item in pending}) == 1
+    assert completed.returncode == 1
+    details = pairing.failure_details(observed)
+    assert details["application_phase"] == "shared_host_lifetime"
+    assert details["diagnostics"]["subphase"] == "original_key_replay"
+    assert observed["passed"] is False and "checks" not in observed
+    assert [(item["role"], item["incarnation"]) for item in events if item["event"] == "exited"] == [
+        ("contender", 1), ("answerer", 1), ("offerer", 1), ("offerer", 2)]
+
+
 LIFETIME_CHECKS = {key: value for key, value in pairing.CHECKS.items() if key in {
     "clean_host_exits", "concurrent_owner_refusals", "rejected_owner_exits", "pending_message_before_owner_stop",
     "reopened_original_message_and_key", "reopened_same_public_identity", "runtime_lock_reacquired",
