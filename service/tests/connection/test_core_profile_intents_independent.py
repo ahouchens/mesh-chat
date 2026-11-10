@@ -14,7 +14,10 @@ from mesh_chat.core_api.profile_intents import NativeOrigin
 from mesh_chat.core_api.runtime_host import CoreRuntimeHost
 from mesh_chat.core_api.wire_codec import decode_frame, encode_frame
 from mesh_chat.errors import NativeUnavailable, StorageUnavailable
+from mesh_chat.vault import VaultStore
 from test_core_runtime_host import runtime
+from test_mobile_profile_host import platform_host
+from test_pairing_runtime import native_pairing
 
 
 class NativeBoundary:
@@ -346,3 +349,102 @@ def test_exact_revoked_expired_attachment_cleanup_does_not_revoke_current_creden
     assert len(p.base["loads"]) == before
     assert p.resume(ticket, attachment=current, token=fresh)["historical_outcome"] == "applied"
     assert len(p.base["loads"]) == before + 1
+
+
+def ordinary_request_with_lost_result(r, monkeypatch, loss):
+    caps = r.request("runtime.capabilities")
+    assert caps["ok"]
+    profile = caps["result"]["profiles"][0]
+    original = lose_catalog_return(r, monkeypatch, "intent" if loss == "admission" else "complete",
+        committed=loss == "admission")
+    result = r.request("profile.lock", {"profile": profile}, "independent-native-reopen-original")
+    assert not result["ok"] and result["error"]["code"] == "unavailable"
+    monkeypatch.setattr(r.meta, "conditional_put_and_delete", original)
+    history = r.meta.list("host_profile_operation")
+    assert len(history) == 1 and history[0]["state"] == "intent"
+    assert r.active._store_closed is (loss == "completion")
+    return profile, history
+
+
+def native_credential(r, host, profile):
+    challenge = host.begin_authentication(profile)["challenge"]
+    r.proof.add(challenge)  # Explicit OS-authorizer boundary double, not platform proof.
+    return host.complete_authentication(challenge)["credential_handle"]
+
+
+@pytest.mark.parametrize("loss", ["admission", "completion"])
+@pytest.mark.parametrize("action", ["lock", "select", "unlock"])
+def test_acknowledged_native_owner_close_allows_fresh_actions_without_rewriting_unknown_history(platform_host, monkeypatch, loss, action):
+    r = platform_host
+    assert r.host.core.profile_intents.origin is None and r.host.core.profile_intents.binding is None
+    profile, history = ordinary_request_with_lost_result(r, monkeypatch, loss)
+    previous = r.host.context()["host_generation"], r.host.core.lifecycle.query()["host_incarnation"]
+    r.host.close()  # Real production close: drain lifecycle, deny old admission, close catalog.
+    assert r.host._closed and r.active._store_closed and r.meta._key is None
+    assert not r.request("runtime.capabilities")["ok"]
+    catalog = VaultStore(r.meta_root, r.meta_key, allow_unprotected_for_tests=True)
+    reopened = None
+    try:
+        assert catalog.list("host_profile_operation") == history
+        reopened = r.build(None, catalog)
+        assert reopened.core.profile_intents.origin is None and reopened.core.profile_intents.binding is None
+        assert reopened.context()["host_generation"] != previous[0]
+        assert reopened.core.lifecycle.query()["host_incarnation"] != previous[1]
+        assert reopened.context()["state"] == "locked" and not r.loads
+        caps = r.request("runtime.capabilities", target=reopened)
+        assert caps["ok"] and caps["result"]["profiles"][0] == profile
+        old = r.request("profile.lock", {"profile": profile}, "independent-native-reopen-original", target=reopened)
+        assert not old["ok"] and old["error"]["code"] == "resync_required"
+        params = {"profile": profile}
+        if action == "unlock": params["credential_handle"] = native_credential(r, reopened, profile)
+        fresh = r.request("profile." + action, params, "independent-native-reopen-fresh", target=reopened)
+        assert all(item in catalog.list("host_profile_operation") for item in history)
+        assert fresh["ok"], fresh  # Old custody ended; historical uncertainty has not.
+    finally:
+        if reopened is not None: reopened.close()
+        else: catalog.close()
+
+
+@pytest.mark.parametrize("loss", ["admission", "completion"])
+def test_same_live_configured_owner_retains_uncertain_ordinary_custody(protected, monkeypatch, loss):
+    p = protected
+    original = lose_catalog_return(p, monkeypatch, "intent" if loss == "admission" else "complete",
+        committed=loss == "admission")
+    result = p.request("profile.lock", {"profile": p.handles["alpha"]}, "independent-live-owner-original")
+    assert not result["ok"] and result["error"]["code"] == "unavailable"
+    monkeypatch.setattr(p.meta, "conditional_put_and_delete", original)
+    history = p.meta.list("host_profile_operation")
+    slot = p.meta.get("host_profile_dispatch", "current")
+    assert len(history) == 1 and history[0]["state"] == "intent" and slot is not None
+    assert p.host.profile_intents.origin is p.native
+    blocked_alternatives(p)
+    assert p.meta.list("host_profile_operation") == history
+    assert p.meta.get("host_profile_dispatch", "current") == slot
+
+
+@pytest.mark.parametrize("loss", ["admission", "completion"])
+def test_new_core_uuid_and_missing_private_ports_cannot_drop_existing_private_custody(protected, monkeypatch, loss):
+    p = protected
+    ticket = p.prepare()
+    original = lose_catalog_return(p, monkeypatch, "intent" if loss == "admission" else "complete",
+        committed=loss == "admission")
+    with pytest.raises(StorageUnavailable): p.resume(ticket)
+    monkeypatch.setattr(p.meta, "conditional_put_and_delete", original)
+    history, slot = row(p, ticket), p.meta.get("host_profile_dispatch", "current")
+    # Deliberately no old-owner close/ack. A new UUID and dropping injected ports
+    # cannot turn this still-owned protected reservation into ordinary admission.
+    replacement = CoreRuntimeHost(p.meta, tuple(p.host.profiles.values()), selected="alpha",
+        publish=p.base["published"].append, credential_authorizer=lambda *_: True)
+    assert replacement.lifecycle.query()["host_incarnation"] != p.host.lifecycle.query()["host_incarnation"]
+    stream = replacement.bind(lambda: p.authority[0])
+    try:
+        def call(operation, params, key=None):
+            value = {"api_version": 1, "request_id": "independent:replacement", "operation": operation, "params": params}
+            if key is not None: value["idempotency_key"] = key
+            return decode_frame(stream.exchange(encode_frame(value)))
+        assert call("runtime.capabilities", {})["ok"]
+        result = call("profile.lock", {"profile": p.handles["alpha"]}, "independent-unproved-replacement")
+        assert not result["ok"] and result["error"]["code"] == "unavailable"
+        assert row(p, ticket) == history and p.meta.get("host_profile_dispatch", "current") == slot
+    finally:
+        stream.close()

@@ -17,6 +17,7 @@ from test_core_sdk_distribution import run_consumer, installed_consumer
 from test_core_sdk_upgrade import pinned_install, old_consumer
 
 from pathlib import Path
+from types import SimpleNamespace
 ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -46,9 +47,9 @@ def runtime(tmp_path, monkeypatch):
     meta = VaultStore(tmp_path / "host-catalog", meta_key, allow_unprotected_for_tests=True)
     profiles = tuple(RegisteredProfile(name, name, handles[name], lambda name=name: opener(name)) for name in keys)
     published, clock, credential_authority = [], [100.0], [True]
-    def build(active, selected="alpha", catalog=None, registered=None):
+    def build(active, selected="alpha", catalog=None, registered=None, **intent_ports):
         return CoreRuntimeHost(catalog or meta, registered or profiles, selected=selected, publish=published.append,
-            credential_authorizer=lambda *_: credential_authority[0], active=active, clock=lambda: clock[0])
+            credential_authorizer=lambda *_: credential_authority[0], active=active, clock=lambda: clock[0], **intent_ports)
     host = build(first)
     grants = [Grant("application-owner", frozenset({"observe", "read", "send", "profile_owner"}), ("alpha", "beta"))]
     stream = host.bind(lambda: grants[0])
@@ -69,6 +70,25 @@ def runtime(tmp_path, monkeypatch):
     for service in opened:
         service.close()
     meta.close()
+
+
+@pytest.fixture
+def protected_runtime(runtime):
+    from mesh_chat.core_api.profile_intents import NativeOrigin
+    r = runtime
+    origin = SimpleNamespace(capture=lambda *_a, **_k: None, validate=lambda *_a, **_k: None,
+                             claim_dispatch=lambda *_a, **_k: object())
+    host = r["build"](r["first"], intent_origin=origin,
+        intent_auth=SimpleNamespace(consume_authorization=lambda *_a, **_k: True),
+        intent_binding=NativeOrigin("test-provider", "test-catalog", "test-native"))
+    stream = host.bind(lambda: r["grants"][0])
+    def invoke(operation, params=None, key=None):
+        return r["invoke"](operation, params, key, endpoint=stream)
+    assert invoke("runtime.capabilities")["ok"]
+    try:
+        yield {**r, "host": host, "stream": stream, "invoke": invoke}
+    finally:
+        stream.close()
 
 
 def test_runtime_preserves_existing_handles_and_only_actual_host_advertises_lifecycle(runtime):
@@ -231,8 +251,8 @@ def test_unlock_completion_failure_reuses_consumed_credential_without_second_ope
     assert len(r["loads"]) == before
 
 
-def test_generic_completion_uncertainty_fences_new_lifecycle_identity(runtime, monkeypatch):
-    r = runtime
+def test_generic_completion_uncertainty_fences_new_lifecycle_identity(protected_runtime, monkeypatch):
+    r = protected_runtime
     original = r["meta"].conditional_put_and_delete
     def fail_completion(expected, records, *args, **kwargs):
         records = list(records)
@@ -290,8 +310,8 @@ def test_new_post_admission_grant_denial_records_no_effect_and_releases_slot(run
     assert r["invoke"]("profile.lock", params, "different-valid-effect-key")["ok"]
 
 
-def test_later_pre_effect_denial_does_not_release_earlier_generic_uncertainty(runtime, monkeypatch):
-    r = runtime
+def test_later_pre_effect_denial_does_not_release_earlier_generic_uncertainty(protected_runtime, monkeypatch):
+    r = protected_runtime
     original = r["meta"].conditional_put_and_delete
     original_grant = r["grants"][0]
     attempts = []

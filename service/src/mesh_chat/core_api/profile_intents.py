@@ -13,6 +13,8 @@ from .requests import IDEMPOTENCY_KEY
 OPERATIONS = "host_profile_operation"
 ALIASES = "host_profile_alias"
 DISPATCH = "host_profile_dispatch"
+POLICY = "host_profile_admission_policy"
+PROTECTED = {"version": 1, "mode": "protected"}
 TERMINAL = frozenset({"complete", "withdrawn", "rejected_no_effect"})
 
 
@@ -47,6 +49,13 @@ class AuthPort(Protocol):
                               attachment, core_host_incarnation, expected_revision) -> bool: ...
 
 
+@dataclass(frozen=True)
+class IntentConfiguration:
+    origin: OriginPort
+    auth: AuthPort
+    binding: NativeOrigin
+
+
 class OperationLedger:
     def __init__(self, host, limits):
         self.host, self.store, self.limits = host, host.store, limits
@@ -60,7 +69,52 @@ class OperationLedger:
     def slot(self):
         return self.store.get(DISPATCH, "current")
 
+    @staticmethod
+    def private_evidence(snapshots):
+        return bool(snapshots[ALIASES]) or any(row.get("version") == 2 for row in snapshots[OPERATIONS].values())
+
+    def initialize_policy(self, configured, expected, records):
+        snapshots = self.snapshots()
+        marker, slot = self.store.get(POLICY, "current"), self.slot()
+        if marker is not None and marker != PROTECTED:
+            raise ApiFailure("unavailable")
+        protected = configured or marker is not None or slot is not None or self.private_evidence(snapshots)
+        expected.update({(POLICY, "current"): marker, (DISPATCH, "current"): slot})
+        if protected and marker is None:
+            records.append((POLICY, "current", dict(PROTECTED)))
+        return not protected, snapshots
+
+    def policy_read_set(self, snapshots):
+        marker, slot = self.store.get(POLICY, "current"), self.slot()
+        if self.host._ordinary_catalog:
+            if marker is not None or slot is not None or self.private_evidence(snapshots):
+                raise ApiFailure("unavailable")
+        elif marker != PROTECTED:
+            raise ApiFailure("unavailable")
+        if not self.host._ordinary_catalog:
+            self.validate_aliases(snapshots)
+        return {(POLICY, "current"): marker, (DISPATCH, "current"): slot}, slot
+
+    def validate_aliases(self, snapshots):
+        for alias_id, alias in snapshots[ALIASES].items():
+            row = snapshots[OPERATIONS].get(alias.get("identity"))
+            if (row is None or row.get("version") != 2 or row.get("caller") != alias.get("caller")
+                    or alias_id != self.alias_id(row["caller"], row.get("original_key", ""))):
+                raise ApiFailure("unavailable")
+        for identity, row in snapshots[OPERATIONS].items():
+            if row.get("version") == 2:
+                alias = snapshots[ALIASES].get(self.alias_id(row["caller"], row.get("original_key", "")))
+                if alias != {"identity": identity, "caller": row["caller"]}:
+                    raise ApiFailure("unavailable")
+
+    def guard_ordinary(self):
+        if self.host._ordinary_catalog:
+            self.policy_read_set(self.snapshots())
+
     def check_slot(self, identity):
+        if self.host._ordinary_catalog:
+            self.guard_ordinary()
+            return
         slot = self.slot()
         if slot is not None and slot["identity"] != identity:
             raise ApiFailure("unavailable")
@@ -83,6 +137,7 @@ class OperationLedger:
 
     def reserve(self, identity, row, alias_id):
         snapshots = self.snapshots()
+        policy, _ = self.policy_read_set(snapshots)
         if any(self.store.opaque_id("host-profile-operation", row["caller"], profile_id, row["original_key"])
                in snapshots[OPERATIONS] for profile_id in self.host.profiles):
             raise ApiFailure("idempotency_conflict")
@@ -94,18 +149,18 @@ class OperationLedger:
         if selection != {"selected": row["selected_profile"]}:
             raise ApiFailure("resync_required")
         self.store.conditional_put_and_delete(
-            {(OPERATIONS, identity): None, (ALIASES, alias_id): None,
+            {**policy, (OPERATIONS, identity): None, (ALIASES, alias_id): None,
              ("host_profile_catalog", "selection"): selection},
             [(OPERATIONS, identity, row), (ALIASES, alias_id, {"identity": identity, "caller": row["caller"]})],
             expected_collections=snapshots)
 
     def admit(self, identity, previous, row, *, key):
         self.check_slot(identity)
-        slot = self.slot()
         snapshots = self.snapshots()
+        policy, slot = self.policy_read_set(snapshots)
         # Validate the *same* read set that the transaction will compare. A
         # second host can change admission after the optimistic initial check.
-        if ((slot is not None and slot["identity"] != identity) or any(
+        if not self.host._ordinary_catalog and ((slot is not None and slot["identity"] != identity) or any(
                 candidate != identity and value.get("state") == "intent"
                 for candidate, value in snapshots[OPERATIONS].items())):
             raise ApiFailure("unavailable")
@@ -115,18 +170,20 @@ class OperationLedger:
         if previous is None:
             self.check_capacity(snapshots, row["caller"], row["profile"])
         self.store.conditional_put_and_delete(
-            {(OPERATIONS, identity): previous, (DISPATCH, "current"): slot},
-            [(OPERATIONS, identity, row), (DISPATCH, "current", {"identity": identity})],
+            {**policy, (OPERATIONS, identity): previous},
+            [(OPERATIONS, identity, row)] + ([] if self.host._ordinary_catalog else
+                [(DISPATCH, "current", {"identity": identity})]),
             expected_collections=snapshots)
 
     def finish(self, identity, previous, row):
-        slot = self.slot()
+        snapshots = self.snapshots()
+        policy, slot = self.policy_read_set(snapshots)
         if slot is not None and slot["identity"] != identity:
             raise ApiFailure("unavailable")
         self.store.conditional_put_and_delete(
-            {(OPERATIONS, identity): previous, (DISPATCH, "current"): slot},
+            {**policy, (OPERATIONS, identity): previous},
             [(OPERATIONS, identity, row)],
-            [(DISPATCH, "current")] if slot is not None else ())
+            [(DISPATCH, "current")] if slot is not None else (), expected_collections=snapshots)
 
 
 class ProfileIntents:
@@ -134,8 +191,26 @@ class ProfileIntents:
     available = False
 
     def __init__(self, host, *, origin=None, auth=None, binding=None, limits):
-        self.host, self.origin, self.auth, self.binding = host, origin, auth, binding
+        supplied = (origin is not None, auth is not None, binding is not None)
+        if any(supplied) and (not all(supplied) or not isinstance(binding, NativeOrigin)
+                or not all(callable(getattr(origin, name, None)) for name in ("capture", "validate", "claim_dispatch"))
+                or not callable(getattr(auth, "consume_authorization", None))):
+            raise ValueError("Private intent configuration must be complete")
+        self.host = host
+        self._configuration = IntentConfiguration(origin, auth, binding) if all(supplied) else None
         self.ledger = OperationLedger(host, limits)
+
+    @property
+    def origin(self):
+        return self._configuration.origin if self._configuration is not None else None
+
+    @property
+    def auth(self):
+        return self._configuration.auth if self._configuration is not None else None
+
+    @property
+    def binding(self):
+        return self._configuration.binding if self._configuration is not None else None
 
     def _ports(self):
         if (not isinstance(self.binding, NativeOrigin) or self.origin is None
@@ -281,7 +356,10 @@ class ProfileIntents:
             if row["state"] not in TERMINAL:
                 raise ApiFailure("conflict")
             updated = {**row, "acknowledged": True}
-            self.host.store.conditional_put_and_delete({(OPERATIONS, intent_ref): row}, [(OPERATIONS, intent_ref, updated)])
+            snapshots = self.ledger.snapshots()
+            policy, _ = self.ledger.policy_read_set(snapshots)
+            self.host.store.conditional_put_and_delete({**policy, (OPERATIONS, intent_ref): row},
+                [(OPERATIONS, intent_ref, updated)], expected_collections=snapshots)
             return self._view(intent_ref, updated)
 
     def resume(self, authorize, *, intent_ref, attachment, credential_handle=None):
