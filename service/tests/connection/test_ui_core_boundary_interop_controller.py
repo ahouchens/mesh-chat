@@ -215,7 +215,7 @@ def test_workload_cannot_be_relabelled_or_substituted_for_the_other_matrix(mode)
         evidence.verify_pair(*reports, "a" * 40, "b" * 40, workload=other)
 
 
-@pytest.mark.parametrize("role,fault,site,error_type", [
+FAILURE_REPORT_CASES = [
     ("android", "negotiate_settings_update", "negotiate_settings_update", "PeerFailure"),
     ("windows", "pairing_offer_begin", "pairing_offer_begin", "PeerFailure"),
     ("android", "pairing_answer_begin", "pairing_answer_begin", "PeerFailure"),
@@ -235,8 +235,10 @@ def test_workload_cannot_be_relabelled_or_substituted_for_the_other_matrix(mode)
     ("windows", "after_success", None, "ValueError"),
     ("android", "after_success", None, "ValueError"),
     ("windows", "caught_then_unrelated", None, "ValueError"),
-])
-def test_actual_failure_report_selects_only_active_literal_call_site(tmp_path, monkeypatch, capsys, role, fault, site, error_type):
+]
+
+
+def run_negotiate_report(tmp_path, monkeypatch, capsys, role, fault, *, status_reply=None):
     # Actual main/negotiate/wait/report flow, synthetic peer/artifact boundaries.
     # No native process, network, service allocation or successful evidence claim.
     import connection_ci
@@ -268,6 +270,7 @@ def test_actual_failure_report_selects_only_active_literal_call_site(tmp_path, m
         def pairing_status(self, operation):
             events.append("status")
             fail("pairing_status")
+            if status_reply is not None: return status_reply(operation)
             return {"operation_id": operation, "state": "retired" if fault == "status_retired" else "offer_ready",
                     "pairing_code": "PRIVATE_SIGNED_CODE"}
         def inventory(self):
@@ -299,10 +302,12 @@ def test_actual_failure_report_selects_only_active_literal_call_site(tmp_path, m
         instance.profile = "PRIVATE_PROFILE"
         instance.default_call_settings = {}
         instance.broker_ice = {"iceServers": [] if fault == "before_any_call" else [{"urls": ["stun:PRIVATE_URL"]}]}
-        if fault == "caught_then_unrelated":
+        if fault in {"caught_then_unrelated", "caught_status_then_unrelated", "caught_status_then_success", "caught_status_then_foreign"}:
             with pytest.raises(controller.PeerFailure): instance.negotiate("direct", "windows")
+            if fault in {"caught_status_then_success", "caught_status_then_foreign"}: instance.pairing_status()
         else:
             instance.negotiate("direct", "windows")
+        if fault == "success": return {}
         error = ValueError("PRIVATE_LATER_EXCEPTION/SDP/KEY")
         error.failure_site = "PRIVATE_CALLER_SUPPLIED_SITE"
         raise error
@@ -323,8 +328,18 @@ def test_actual_failure_report_selects_only_active_literal_call_site(tmp_path, m
     output = tmp_path / "failure.json"
     monkeypatch.setattr(sys, "argv", ["native_interop_controller", "--role", role, "--expected-source", "a" * 40,
                                       "--workload", "full", "--output", str(output)])
-    assert controller.main() == 1
+    exit_code = controller.main()
     record = json.loads(output.read_text())
+    captured = capsys.readouterr()
+    return SimpleNamespace(record=record, events=events, exit_code=exit_code,
+        output=output.read_text() + captured.out + captured.err)
+
+
+@pytest.mark.parametrize("role,fault,site,error_type", FAILURE_REPORT_CASES)
+def test_actual_failure_report_selects_only_active_literal_call_site(tmp_path, monkeypatch, capsys, role, fault, site, error_type):
+    run = run_negotiate_report(tmp_path, monkeypatch, capsys, role, fault)
+    record, events = run.record, run.events
+    assert run.exit_code == 1
     assert record["passed"] is False and record["phase"] == "direct_supervisor_owned_pairing_windows"
     assert record["workload"] == "full" and record["failure_type"] == error_type
     if site is None: assert "failure_site" not in record
@@ -336,10 +351,104 @@ def test_actual_failure_report_selects_only_active_literal_call_site(tmp_path, m
                          else "supervisor_pairing_retired" if fault == "status_retired" else "invalid_request")
         assert record["error_code"] == expected_code
     if site is not None: fields.add("failure_site")
+    if fault == "status_retired":
+        fields.add("pairing_state")
+        assert record["pairing_state"] == "retired" and "pairing_retirement" not in record
     assert set(record) == fields
     success_path = (["settings", "begin_offer", "status", "publish", "status", "inventory", "stats"] if role == "windows"
                     else ["settings", "receive", "begin_answer", "status", "inventory", "stats"])
     assert events == success_path[:len(events)]  # No added/reordered/repeated requests.
     if fault == "after_success": assert events == success_path
-    captured = capsys.readouterr()
-    assert "PRIVATE_" not in output.read_text() + captured.out + captured.err
+    assert "PRIVATE_" not in run.output
+
+
+def retirement_example():
+    # Agreed first-causal-transition DTO, checked against C's shared sanitizer.
+    value = {"phase": "gather_answer", "event": "failed", "reason": "invalid_document"}
+    assert controller.validated_pairing_retirement(value) == value
+    return value
+
+
+RETIREMENT_CASES = ("valid", "absent", "null", "empty", "missing_phase", "missing_event", "missing_reason",
+    "extra_private", "phase_private", "event_private", "reason_private", "foreign_identity", "stale_time",
+    "phase_number", "event_array", "reason_object", "scalar", "array")
+
+
+@pytest.mark.parametrize("state", ["retiring", "retired"])
+@pytest.mark.parametrize("case", RETIREMENT_CASES)
+def test_retirement_failure_retains_actual_state_and_only_shared_sanitized_cause(tmp_path, monkeypatch, capsys, state, case):
+    valid = retirement_example()
+    value = dict(valid)
+    if case.startswith("missing_"): value.pop(case.removeprefix("missing_"))
+    elif case == "extra_private": value["sdp"] = "PRIVATE_SDP"
+    elif case.endswith("_private"): value[case.removesuffix("_private")] = "PRIVATE_ENUM"
+    elif case == "foreign_identity": value["operation_id"] = "PRIVATE_FOREIGN_ID"
+    elif case == "stale_time": value["sampled_at_ms"] = 123
+    elif case == "phase_number": value["phase"] = 1
+    elif case == "event_array": value["event"] = ["PRIVATE_EVENT"]
+    elif case == "reason_object": value["reason"] = {"raw": "PRIVATE_REASON"}
+    elif case == "null": value = None
+    elif case == "empty": value = {}
+    elif case == "scalar": value = "PRIVATE_RAW_ERROR"
+    elif case == "array": value = [valid]
+    def reply(operation):
+        result = {"operation_id": operation, "state": state, "pairing_code": "PRIVATE_PAIRING_CODE",
+                  "resource": "PRIVATE_RESOURCE", "url": "https://PRIVATE_URL", "raw_error": "PRIVATE_ERROR"}
+        if case != "absent": result["retirement"] = value
+        return result
+    run = run_negotiate_report(tmp_path, monkeypatch, capsys, "windows", "retirement", status_reply=reply)
+    record = run.record
+    assert run.exit_code == 1 and record["passed"] is False
+    assert record["error_code"] == "supervisor_pairing_retired" and record["failure_site"] == "pairing_status"
+    assert record["phase"] == "direct_supervisor_owned_pairing_windows" and record["workload"] == "full"
+    assert record["pairing_state"] == state
+    if case == "valid": assert record["pairing_retirement"] == valid
+    else: assert "pairing_retirement" not in record
+    assert set(record) == {"v", "passed", "evidence_level", "role", "scope", "workload", "phase", "failure_type",
+                           "error_code", "failure_site", "pairing_state"} | ({"pairing_retirement"} if case == "valid" else set())
+    assert run.events == ["settings", "begin_offer", "status"]
+    assert "PRIVATE_" not in run.output
+
+
+@pytest.mark.parametrize("state", ["retiring", "retired"])
+def test_foreign_status_identity_cannot_attach_state_or_retirement(tmp_path, monkeypatch, capsys, state):
+    value = retirement_example()
+    def forbidden_sanitize(_): pytest.fail("Foreign status detail was inspected")
+    monkeypatch.setattr(controller, "validated_pairing_retirement", forbidden_sanitize)
+    run = run_negotiate_report(tmp_path, monkeypatch, capsys, "windows", "foreign_status",
+        status_reply=lambda _: {"operation_id": "PRIVATE_FOREIGN_ID", "state": state, "retirement": value})
+    assert run.record["error_code"] == "invalid_pairing_identity" and run.record["failure_site"] == "pairing_status"
+    assert "pairing_state" not in run.record and "pairing_retirement" not in run.record
+    assert "PRIVATE_" not in run.output
+
+
+@pytest.mark.parametrize("fault", ["caught_status_then_unrelated", "caught_status_then_success", "caught_status_then_foreign"])
+def test_retirement_detail_belongs_only_to_same_active_status_exception(tmp_path, monkeypatch, capsys, fault):
+    value = retirement_example()
+    calls = []
+    def reply(operation):
+        calls.append(operation)
+        if len(calls) == 1: return {"operation_id": operation, "state": "retired", "retirement": value}
+        return {"operation_id": "PRIVATE_OTHER_ID" if fault.endswith("foreign") else operation,
+                "state": "retired" if fault.endswith("foreign") else "offer_ready", "retirement": value}
+    run = run_negotiate_report(tmp_path, monkeypatch, capsys, "windows", fault, status_reply=reply)
+    assert run.exit_code == 1 and run.record["passed"] is False
+    assert "pairing_state" not in run.record and "pairing_retirement" not in run.record
+    if fault.endswith("foreign"):
+        assert run.record["failure_site"] == "pairing_status" and run.record["error_code"] == "invalid_pairing_identity"
+    else:
+        assert "failure_site" not in run.record and run.record["failure_type"] == "ValueError"
+    assert "PRIVATE_" not in run.output
+
+
+@pytest.mark.parametrize("role", ["windows", "android"])
+def test_successful_negotiate_report_never_gains_retirement_failure_fields(tmp_path, monkeypatch, capsys, role):
+    value = retirement_example()
+    run = run_negotiate_report(tmp_path, monkeypatch, capsys, role, "success",
+        status_reply=lambda operation: {"operation_id": operation, "state": "offer_ready",
+            "pairing_code": "PRIVATE_SIGNED_CODE", "retirement": value})
+    assert run.exit_code == 0 and run.record["passed"] is True
+    assert not {"failure_site", "pairing_state", "pairing_retirement"} & set(run.record)
+    assert "PRIVATE_" not in run.output
+    # This intentionally incomplete component fixture cannot qualify native CI.
+    with pytest.raises(ValueError): evidence.verify_report(run.record, "a" * 40, "b" * 40, role)
