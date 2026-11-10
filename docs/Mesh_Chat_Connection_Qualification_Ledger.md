@@ -65,15 +65,54 @@ kernel faults, transport, retirement effects and acknowledgments are scripted.
 The lead verified all 14 source/evidence artifacts. This establishes ordering
 vulnerability under those boundaries, not native proof or the CI failure cause.
 
-Failure-only, fixed-enum diagnostics are being implemented without changing
-exceptions, deadlines, queries or acceptance. A separate exact-owner preparation,
-peer completion exchange and retirement commit contract is under review; it is
-not frozen or implemented. Preparation must preserve real cleanup receipts if
-remote closure retires an owner before its local commit, deny replacement, and
-honor every permanent fence. Measurement synchronization alone is insufficient.
-Preserve actual kernel drops, receipt rejection while blocked, exact owner
-acknowledgment and global zero accounting. Bootstrap retirement remains deferred;
-no timeout, retry-budget, authority or acceptance relaxation is assigned.
+Failure-only diagnostics `b7f323e4cd3874ca685e038472c2f652b280842b`
+(tree `5789a83cfbdca3df3c503d710d3ca302b12a1180`) are integrated at `508198f`
+after lead evidence verification and an independent review with no new findings.
+All **739 focused cases pass with zero skips**: 667 prior cases remain and 72 are
+added. Three original-source semantic failures demonstrate missing classified
+evidence while preserving the original exception and phase. The separate
+16-failure launcher attempt omitted the pinned Node runtime; its evidence is
+retained, and the same source passes with the correct runtime. All literal
+exception-message multisets are unchanged. The optional failure field contains
+only a scenario, one of 23 fixed stages and an optional actual-branch reason.
+Unknown causes stay unclassified; cleanup replacement uses its own exception.
+This is component evidence, not native qualification or a fix for the race.
+
+The independently reviewed private v2 preparation/completion/commit contract is
+now frozen for implementation. After successful measurements and fault cleanup,
+each role prepares its exact fresh transferred owner without disposal, publishes
+then receives one sealed `case_complete_<scenario>_<initiator>` marker with exact
+`{completed:true}`, commits the same request, and requires real exact owner/native
+cleanup proof plus fresh clearance and independent global zero. Preparation
+retains cleanup receipts across remote closure before local commit and denies
+replacement while preserving current packets, inspection and genuine cleanup.
+Only the witnessed manual-carrier True-to-False authority-signature successor is
+allowed; all other active-ticket fences remain sticky. Existing owned-host
+failure teardown supplies abandonment, never positive acknowledgment. Completed
+historical receipts cannot admit or retire a later generation or satisfy its nonce.
+
+The new marker budget is 17 Windows/15 Android uploads including reports for the
+full workload and eight per role for quick; the run inventory cap remains 100.
+The producer and consumer implementations and independent composition proof are
+pending. No public SDK/grant, JNI/host protocol, timeout, retry-budget, kernel-drop,
+receipt or global-zero relaxation is assigned. Bootstrap retirement remains
+deferred until full native qualification.
+
+Retained diagnostic XML SHA-256 is
+`263f4ab12da8f6bb31226ed5fccb2390dcd3902f8ac64b8ebea77fec32f9341d`;
+the complete 739-case inventory is
+`49ac55727b6df90b7d0ab93493c8aa66121722ef9942fd87de99bc43c3603991`.
+Three-failure semantic RED XML is
+`35f837c93f397be8b4a1b1568b550ab22157a81ae0e3513e5b5001a0c6c097b8`;
+the separate launcher-failure XML is
+`5ea50fd3741121083fe1e11d32cb97c1bd8b74c158fabe9bcdaf2b582e2b518b`.
+The frozen preparation contract is SHA-256
+`6ca4ca2ccd4807d66e38396258f0361f8721ac0cec255ed8a73b7516dbbd3fed`.
+Its accepted provenance is the trusted in-process native closed callback plus
+captured host/service and nonreused fresh physical identity; current callbacks do
+not carry an independent host/adapter tag. Restored resources are excluded.
+Android failure teardown remains bounded shutdown attempts and service detachment,
+not unconditional JVM exit. Those limitations are not upgraded by this design.
 
 Retained `ccd3b51` full-run archive SHA-256 values:
 
