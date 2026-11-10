@@ -246,6 +246,10 @@ class Controller:
     def observe(self, logical=None, *, ready=True, scenario=None):
         inventory = self.peer.inventory()
         resources = [item for item in inventory["resources"] if logical is None or item["logical_session"] == logical]
+        if ready and len(resources) == 1:
+            owner_state = resources[0].get("owner_state")
+            if type(owner_state) is str and owner_state == "pending_adoption":
+                return None
         for resource in resources:
             requested = time.monotonic()
             value = self.peer.path(resource["logical_session"], resource["physical_resource"])
