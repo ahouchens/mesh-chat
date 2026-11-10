@@ -60,7 +60,7 @@ def _classify_cause(error):
                 return known
         following = _cause(error)
         if following is None:
-            return "none" if depth == 0 else "other"
+            return "none" if depth == 0 and not reason_used else "other"
         if depth == 2:
             return "unknown"
         error = following

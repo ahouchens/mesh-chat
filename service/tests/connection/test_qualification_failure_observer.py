@@ -350,6 +350,34 @@ def test_actual_ice_view_rejection_has_source_witnessed_invalid_observation(publ
     assert (selected["stage"], selected["category"]) == ("ice_view", "invalid_observation")
 
 
+@pytest.mark.parametrize("observed", [False, True])
+def test_ice_view_secondary_observation_fault_preserves_original_error(published, monkeypatch, observed):
+    _, binding = published
+    handle = profile()
+    from mesh_chat.core_api.service_calls import ServiceCallSettings
+    monkeypatch.setattr(ServiceCallSettings, "ice", lambda self, profile: CallIceObservation("PRIVATE"))
+    reads = []
+
+    def hostile_ice(self, name):
+        if name == "ice":
+            reads.append(1)
+            if len(reads) == 1:
+                raise ValueError("PRIVATE original view failure")
+            raise ApiFailure("forbidden")
+        return object.__getattribute__(self, name)
+
+    monkeypatch.setattr(CallIceObservation, "__getattribute__", hostile_ice)
+    sink = Sink()
+    value = request("call.ice_servers", profile=handle)
+    result = exchange(value, binding, sink) if observed else exchange(value)
+    assert reply(result)["error"]["code"] == "internal"
+    if observed:
+        selected = json.loads(sink.value)
+        assert (selected["stage"], selected["category"]) == ("ice_view", "unexpected")
+    else:
+        assert sink.value is None
+
+
 @pytest.mark.parametrize("scope, caller", [("consumer", "qualification"), ("owner", "")])
 def test_foreign_scope_or_invalid_host_caller_never_exports(published, monkeypatch, scope, caller):
     service, binding = published
@@ -540,6 +568,10 @@ def test_cause_classifier_never_reads_messages_context_or_arbitrary_reason():
     class UnknownTimeout(TimeoutError):
         pass
     assert observer._classify_cause(UnknownTimeout("PRIVATE")) == "none"
+
+
+def test_unrecognized_exact_urlerror_reason_is_other():
+    assert observer._classify_cause(URLError("PRIVATE unknown reason")) == "other"
 
 
 class BrokerResponse:

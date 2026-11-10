@@ -774,8 +774,14 @@ class CoreSession:
                 try:
                     return call_ice_view(params["profile"], observation)
                 except Exception as error:
-                    invalid_observation = (type(observation) is CallIceObservation
-                                           and not isinstance(observation.ice, dict))
+                    invalid_observation = False
+                    try:
+                        invalid_observation = (type(observation) is CallIceObservation
+                                               and not isinstance(observation.ice, dict))
+                    except Exception:
+                        # A secondary diagnostic read must not replace the
+                        # original view error or its existing Core mapping.
+                        pass
                     note("caught", error, "ice_view", "invalid_observation" if invalid_observation else None)
                     raise
             elif operation == "call.control":
