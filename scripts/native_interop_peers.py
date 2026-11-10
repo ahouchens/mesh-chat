@@ -18,7 +18,7 @@ import subprocess
 import sys
 import threading
 import time
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from native_interop_diagnostics import PreflightDiagnostics
 
@@ -47,6 +47,29 @@ def checked_sample_request(value):
     if type(value) is not str or re.fullmatch(r"[a-f0-9]{32}", value) is None:
         raise PeerFailure("invalid_sample_request")
     return value
+
+
+def retirement_correlation(operation_id, request_id):
+    if operation_id is None and request_id is None: return {}
+    if (type(operation_id) is not str or len(operation_id) != 36
+            or type(request_id) is not str or re.fullmatch(r"[a-f0-9]{32}", request_id) is None):
+        raise PeerFailure("invalid_carrier_retirement_request")
+    try: canonical = str(UUID(operation_id)) == operation_id
+    except ValueError: canonical = False
+    if not canonical: raise PeerFailure("invalid_carrier_retirement_request")
+    return {"operation_id": operation_id, "request_id": request_id}
+
+
+def retirement_payload(operation_id, request_id, logical_session, expected_physical,
+                       expected_service_incarnation, expected_adapter_epoch):
+    payload = retirement_correlation(operation_id, request_id)
+    if (not payload or any(type(value) is not str or not 1 <= len(value) <= 128
+                          or any(ord(char) < 0x20 for char in value) for value in (logical_session, expected_physical))
+            or any(type(value) is not str or re.fullmatch(r"[a-f0-9]{32}", value) is None
+                   for value in (expected_service_incarnation, expected_adapter_epoch))):
+        raise PeerFailure("invalid_carrier_retirement_request")
+    return {**payload, "logical_session": logical_session, "expected_physical": expected_physical,
+            "expected_service_incarnation": expected_service_incarnation, "expected_adapter_epoch": expected_adapter_epoch}
 
 
 def encode(value):
@@ -203,8 +226,14 @@ class WindowsPeer:
         client = self.client
         return self._bounded(lambda: client.request(operation, params or {}, idempotency_key=key))
 
-    def inventory(self):
-        return self.private("qualification.inventory")
+    def inventory(self, *, operation_id=None, request_id=None):
+        payload = retirement_correlation(operation_id, request_id)
+        return self.private("qualification.inventory", payload) if payload else self.private("qualification.inventory")
+
+    def retire_carrier(self, operation_id, request_id, logical_session, expected_physical,
+                       expected_service_incarnation, expected_adapter_epoch):
+        return self.private("qualification.retire_carrier", retirement_payload(operation_id, request_id,
+            logical_session, expected_physical, expected_service_incarnation, expected_adapter_epoch))
 
     def path(self, logical, physical, sample_request):
         return self.private("qualification.path_evidence", {"logical_session": logical, "expected_physical": physical,
@@ -365,8 +394,14 @@ class AndroidPeer:
     def core(self, operation, params=None, key=None):
         return self._request("core", {"operation": operation, "params": params or {}, "idempotency_key": key})
 
-    def inventory(self):
-        return self._request("inspect", {"command": "qualification.inventory", "payload": {}})
+    def inventory(self, *, operation_id=None, request_id=None):
+        return self._request("inspect", {"command": "qualification.inventory",
+            "payload": retirement_correlation(operation_id, request_id)})
+
+    def retire_carrier(self, operation_id, request_id, logical_session, expected_physical,
+                       expected_service_incarnation, expected_adapter_epoch):
+        return self._request("inspect", {"command": "qualification.retire_carrier", "payload": retirement_payload(
+            operation_id, request_id, logical_session, expected_physical, expected_service_incarnation, expected_adapter_epoch)})
 
     def path(self, logical, physical, sample_request):
         return self._request("inspect", {"command": "qualification.path_evidence", "payload": {
