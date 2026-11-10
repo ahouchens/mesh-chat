@@ -10,6 +10,23 @@ composer state, independent SDK distributions and upgrades, supervisor-owned
 native lifecycle/pairing, and the remaining packaged transport/fault matrix.
 The ledger records exact scope; this is not full M2–M5 completion.
 
+The preflight diagnostic follow-up integrates `2fef6f3` at `88ea975`.
+It preserves the single checked `adb root` invocation, fatal outcome, UID
+requirement, command order, deadlines and cleanup. Only that root invocation
+captures stderr in memory. Failure reports may include a strict bounded nonzero
+exit status and a fixed diagnostic-family label, selected only for the same
+escaping checked exception and validated preflight site. Raw command/output,
+private suffixes and environment values are not exported. Unknown, conflicting
+or overlong diagnostic text remains unclassified. The 4096-byte bound applies
+to classification, not total subprocess stderr capture.
+
+The worker's complete focused controller/peer/preflight suite passed **484
+cases**, zero failures/skips; the lead independently verified XML and inventory
+hashes. Immutable source review found no actionable issues. This is a reporting
+change with scripted-boundary regression evidence, not a fix for the unknown
+`902b12d` root-command cause. Exact-source full local and CI qualification remain
+required. No retry, root bypass or native acceptance is added.
+
 The latest completed qualification checkpoint is `902b12d1470177fe4207e027bf3d44fbe839cc91`
 (tree `ad829c7716cb2b4c15620a9d69504c6ce114922e`), full run
 [42796005344](https://github.com/ahouchens/mesh-chat/actions/runs/42796005344).
