@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import json
+import subprocess
 import sys
 from types import SimpleNamespace
 
@@ -12,6 +13,114 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 import native_interop_controller as controller
 import native_interop_evidence as evidence
 from native_interop_rendezvous import APPROVAL_PHASES, OFFER_PHASES, checked_payload
+from test_ui_core_boundary_interop_peers import (
+    ANDROID_ENVIRONMENT_SITES, ANDROID_START_SITES, assert_android_cleaned, scripted_android,
+)
+
+
+def run_android_preflight_report(tmp_path, monkeypatch, capsys, *, site=None, fault=None):
+    """Actual main/start/environment; all subprocess and external services scripted."""
+    import android_qualification
+    import connection_ci
+    script = scripted_android(monkeypatch, tmp_path, fault=site)
+    context = {"source_commit": "a" * 40}
+    events = []
+    foreign = controller.PeerFailure("invalid_request")
+    foreign.preflight_failure_site = "android_root"
+    monkeypatch.setattr(controller, "source_identity", lambda _: ("a" * 40, "b" * 40))
+    monkeypatch.setattr(connection_ci, "current_plan", lambda: {"native_workload": "full"})
+    monkeypatch.setattr(controller, "context_from_environment", lambda: context)
+    monkeypatch.setattr(controller, "binding", lambda *_: (None, {}))
+    monkeypatch.setattr(android_qualification, "APKS", script.apks)
+    monkeypatch.setattr(controller, "AndroidEmulator", lambda: script.emulator)
+    def services():
+        events.append("services")
+        if fault == "after_success": raise foreign
+        return {}
+    monkeypatch.setattr(controller, "outbound_services", services)
+    monkeypatch.setattr(controller, "AndroidPeer", lambda *_: SimpleNamespace(process=None))
+    monkeypatch.setattr(controller, "GithubArtifacts", lambda *_: SimpleNamespace(close=lambda: events.append("transport_closed")))
+    monkeypatch.setattr(controller, "Rendezvous", lambda *_: SimpleNamespace(close=lambda: events.append("rendezvous_closed")))
+    def execute(instance):
+        events.append("controller")
+        return {}  # Incomplete synthetic execution, never qualified native evidence.
+    monkeypatch.setattr(controller.Controller, "run", execute)
+    if fault in {"foreign", "caught_then_success", "caught_then_same", "unscoped_same"}:
+        start = script.emulator.start
+        def intercepted_start(apks, *, diagnostics):
+            with pytest.raises(subprocess.CalledProcessError):
+                start(apks, diagnostics=diagnostics)
+            if fault == "foreign": raise foreign
+            if fault == "unscoped_same":
+                with diagnostics.scope(None): pass
+                raise script.failure
+            script.fault = None
+            start(apks, diagnostics=diagnostics)
+            if fault == "caught_then_same": raise script.failure
+        monkeypatch.setattr(script.emulator, "start", intercepted_start)
+    if fault == "cleanup_substitution":
+        close = script.emulator.close
+        def substituting_close():
+            close()
+            if not events:
+                events.append("cleanup_substitution")
+                raise foreign
+        monkeypatch.setattr(script.emulator, "close", substituting_close)
+    output = tmp_path / "preflight-report.json"
+    output.write_text(json.dumps({"passed": True, "preflight_failure_site": "PRIVATE_STALE_SITE", "pairing_state": "retired"}))
+    monkeypatch.setattr(sys, "argv", ["native_interop_controller", "--role", "android", "--expected-source", "a" * 40,
+        "--workload", "full", "--output", str(output)])
+    exit_code = controller.main()
+    record = json.loads(output.read_text())
+    captured = capsys.readouterr()
+    return SimpleNamespace(record=record, exit_code=exit_code, script=script, events=events,
+        output=output.read_text() + captured.out + captured.err)
+
+
+@pytest.mark.parametrize("site", (*ANDROID_START_SITES, *ANDROID_ENVIRONMENT_SITES))
+def test_actual_precontroller_report_identifies_each_checked_command_only(tmp_path, monkeypatch, capsys, site):
+    run = run_android_preflight_report(tmp_path, monkeypatch, capsys, site=site)
+    assert run.exit_code == 1
+    record = run.record
+    assert record["passed"] is False and record["phase"] == "platform_outbound_preflight"
+    assert record["failure_type"] == "CalledProcessError" and record["preflight_failure_site"] == site
+    assert set(record) == {"v", "passed", "evidence_level", "role", "scope", "workload", "phase", "failure_type", "preflight_failure_site"}
+    sites = (*ANDROID_START_SITES, *ANDROID_ENVIRONMENT_SITES)
+    expected = list(sites[:sites.index(site) + 1])
+    if run.script.starts: expected.insert(2, "boot")
+    if run.script.starts: expected.append("kill")
+    assert run.script.calls == expected and run.events == []
+    assert "PRIVATE_" not in run.output
+    assert_android_cleaned(run.script)
+
+
+@pytest.mark.parametrize("fault", ["foreign", "caught_then_same", "unscoped_same", "cleanup_substitution", "after_success"])
+def test_precontroller_report_omits_foreign_or_cleared_command_attribution(tmp_path, monkeypatch, capsys, fault):
+    run = run_android_preflight_report(tmp_path, monkeypatch, capsys,
+        site=None if fault == "after_success" else "android_root_identity", fault=fault)
+    assert run.exit_code == 1 and run.record["phase"] == "platform_outbound_preflight"
+    expected_type = "CalledProcessError" if fault in {"caught_then_same", "unscoped_same"} else "PeerFailure"
+    assert run.record["failure_type"] == expected_type
+    fields = {"v", "passed", "evidence_level", "role", "scope", "workload", "phase", "failure_type"}
+    if expected_type == "PeerFailure":
+        fields.add("error_code")
+        assert run.record["error_code"] == "invalid_request"
+    assert set(run.record) == fields
+    assert "controller" not in run.events and "PRIVATE_" not in run.output
+    assert not run.script.emulator.root.exists() and run.script.emulator.process is None
+
+
+@pytest.mark.parametrize("caught", [False, True])
+def test_success_report_omits_all_preflight_failure_metadata(tmp_path, monkeypatch, capsys, caught):
+    run = run_android_preflight_report(tmp_path, monkeypatch, capsys,
+        site="android_root_identity" if caught else None, fault="caught_then_success" if caught else None)
+    assert run.exit_code == 0 and run.record["passed"] is True
+    assert set(run.record) == {"v", "passed", "evidence_level", "role", "scope", "workload", "context",
+        "source_commit", "source_tree", "platform", "preflight", "artifacts", "execution"}
+    assert run.events == ["services", "controller", "rendezvous_closed", "transport_closed"]
+    assert "PRIVATE_" not in run.output and not run.script.emulator.root.exists()
+    with pytest.raises(ValueError):
+        evidence.verify_pair(interop_reports()[0], run.record, "a" * 40, "b" * 40)
 
 
 def interop_reports(source="a" * 40, tree="b" * 40, android_artifacts=None, *, workload="full"):
@@ -318,8 +427,8 @@ def run_negotiate_report(tmp_path, monkeypatch, capsys, role, fault, *, status_r
     monkeypatch.setattr(controller, "context_from_environment", lambda: context)
     monkeypatch.setattr(controller, "binding", lambda *_: (Path("unused.exe"), {}))
     monkeypatch.setattr(controller, "outbound_services", lambda: {})
-    monkeypatch.setattr(controller, "android_environment", lambda: {})
-    monkeypatch.setattr(controller, "AndroidEmulator", lambda: SimpleNamespace(start=lambda *_: None, close=lambda: None))
+    monkeypatch.setattr(controller, "android_environment", lambda **_: {})
+    monkeypatch.setattr(controller, "AndroidEmulator", lambda: SimpleNamespace(start=lambda *_, **__: None, close=lambda: None))
     monkeypatch.setattr(controller, "WindowsPeer", lambda *_: Peer())
     monkeypatch.setattr(controller, "AndroidPeer", lambda *_: Peer())
     monkeypatch.setattr(controller, "GithubArtifacts", lambda *_: Transport())
