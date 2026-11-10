@@ -9,6 +9,7 @@ import sys
 import tempfile
 import subprocess
 import tarfile
+import xml.etree.ElementTree as ET
 import zipfile
 from threading import Event, RLock
 from types import SimpleNamespace
@@ -550,6 +551,78 @@ def test_android_distribution_requires_both_publications_apks_and_exact_scope(fa
 def test_android_staging_cannot_resolve_producer_checkout_as_application():
     with pytest.raises(ValueError, match="outside checkout"):
         android_staging.stage(staging.ROOT)
+
+
+def android_installed_manifest():
+    # Exact SDK-decoded consumer manifest from d0babe9 / CI42723779984,
+    # artifact13723116006. Raw binary manifest SHA256:
+    # 26f95238c753ad13c543b6c570e4397a3975983c35f9aeca4f0fafb1f7e131ce.
+    # Source archive SHA256 (validated by lead before extraction):
+    # d9ab9c343e5f4cdad9958247a0140525802571547b443b5b9022c94305d685c9.
+    # Manifest admission evidence only; neither independent device case ran.
+    return ET.parse(staging.ROOT / "tests/core-ui-boundary/android_consumer_manifest.xml").getroot()
+
+
+@pytest.mark.parametrize("protection", ["0x2", "signature", "2", "0x00000002", "0X00000002"])
+def test_actual_compiled_consumer_manifest_requires_exact_signature_authority(protection):
+    manifest = android_installed_manifest()
+    android_distribution.verify_manifest(manifest)
+    ns = "{http://schemas.android.com/apk/res/android}"
+    permission = next(node for node in manifest.findall("permission")
+        if node.get(ns + "name") == android_distribution.APP_ID + ".permission.MESH_CORE_API")
+    assert permission.get(ns + "protectionLevel") == "0x2"  # apkanalyzer's actual rendering.
+    permission.set(ns + "protectionLevel", protection)
+    android_distribution.verify_manifest(manifest)
+
+
+@pytest.mark.parametrize("fault", ["package", "application_name", "backup", "application_process",
+    "missing_application", "duplicate_application", "missing_core", "duplicate_core", "core_permission",
+    "missing_core_permission", "core_exported", "missing_core_exported", "core_process", "core_isolated",
+    "missing_bootstrap", "duplicate_bootstrap", "bootstrap_exported", "missing_bootstrap_exported",
+    "bootstrap_process", "missing_bootstrap_process", "bootstrap_isolated", "missing_declaration",
+    "duplicate_declaration", "missing_protection", "normal", "dangerous", "signature_or_system",
+    "privileged_flags", "other_flags", "text_flags", "malformed_protection", "reference_protection",
+    "missing_uses_permission"])
+def test_installed_consumer_manifest_rejects_authority_and_process_substitutions(fault):
+    manifest = android_installed_manifest()
+    android_distribution.verify_manifest(manifest)
+    ns = "{http://schemas.android.com/apk/res/android}"
+    application = manifest.find("application")
+    core, bootstrap_service = application.findall("service")
+    permission_name = android_distribution.APP_ID + ".permission.MESH_CORE_API"
+    permission = next(node for node in manifest.findall("permission") if node.get(ns + "name") == permission_name)
+    if fault == "package": manifest.set("package", "com.other.application")
+    elif fault == "application_name": application.set(ns + "name", "com.other.Application")
+    elif fault == "backup": application.set(ns + "allowBackup", "true")
+    elif fault == "application_process": application.set(ns + "process", ":other")
+    elif fault == "missing_application": manifest.remove(application)
+    elif fault == "duplicate_application": manifest.append(copy.deepcopy(application))
+    elif fault == "missing_core": application.remove(core)
+    elif fault == "duplicate_core": application.append(copy.deepcopy(core))
+    elif fault == "core_permission": core.set(ns + "permission", "com.other.PERMISSION")
+    elif fault == "missing_core_permission": core.attrib.pop(ns + "permission")
+    elif fault == "core_exported": core.set(ns + "exported", "false")
+    elif fault == "missing_core_exported": core.attrib.pop(ns + "exported")
+    elif fault == "core_process": core.set(ns + "process", ":mesh_bootstrap")
+    elif fault == "core_isolated": core.set(ns + "isolatedProcess", "true")
+    elif fault == "missing_bootstrap": application.remove(bootstrap_service)
+    elif fault == "duplicate_bootstrap": application.append(copy.deepcopy(bootstrap_service))
+    elif fault == "bootstrap_exported": bootstrap_service.set(ns + "exported", "true")
+    elif fault == "missing_bootstrap_exported": bootstrap_service.attrib.pop(ns + "exported")
+    elif fault == "bootstrap_process": bootstrap_service.set(ns + "process", ":other")
+    elif fault == "missing_bootstrap_process": bootstrap_service.attrib.pop(ns + "process")
+    elif fault == "bootstrap_isolated": bootstrap_service.set(ns + "isolatedProcess", "true")
+    elif fault == "missing_declaration": manifest.remove(permission)
+    elif fault == "duplicate_declaration": manifest.append(copy.deepcopy(permission))
+    elif fault == "missing_protection": permission.attrib.pop(ns + "protectionLevel")
+    elif fault == "missing_uses_permission":
+        manifest.remove(next(node for node in manifest.findall("uses-permission") if node.get(ns + "name") == permission_name))
+    else:
+        permission.set(ns + "protectionLevel", {"normal": "0x0", "dangerous": "1", "signature_or_system": "0x3",
+            "privileged_flags": "0x12", "other_flags": "0x80000002", "text_flags": "signature|privileged",
+            "malformed_protection": "signature PRIVATE_ERROR", "reference_protection": "@integer/signature"}[fault])
+    with pytest.raises(ValueError, match="ordinary app-owned service authority"):
+        android_distribution.verify_manifest(manifest)
 
 
 def android_publication_fixture(directory):

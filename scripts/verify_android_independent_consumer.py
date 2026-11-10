@@ -137,6 +137,40 @@ def verify_source_inputs(record):
             raise ValueError("Independent Android source inputs changed after staging")
 
 
+def signature_only(value):
+    # apkanalyzer prints compiled protection flags numerically (signature = 2).
+    # Compare the complete value: masking base bits could admit extra flags.
+    if value == "signature":
+        return True
+    if not isinstance(value, str) or re.fullmatch(r"(?:0[xX][0-9a-fA-F]{1,8}|[0-9]{1,10})", value) is None:
+        return False
+    return int(value, 16 if value.lower().startswith("0x") else 10) == 2
+
+
+def verify_manifest(manifest):
+    ns = "{http://schemas.android.com/apk/res/android}"
+    applications = manifest.findall("application")
+    if manifest.tag != "manifest" or manifest.get("package") != APP_ID or len(applications) != 1:
+        raise ValueError("Installed manifest lacks the ordinary app-owned service authority")
+    application = applications[0]
+    services = application.findall("service")
+    core = [node for node in services if node.get(ns + "name") == "com.meshchat.runtime.MeshCoreApiService"]
+    bootstrap = [node for node in services if node.get(ns + "name") == "com.meshchat.runtime.BootstrapService"]
+    permission = APP_ID + ".permission.MESH_CORE_API"
+    declarations = [node for node in manifest.findall("permission") if node.get(ns + "name") == permission]
+    if (application.get(ns + "name") != APP_ID + ".ConsumerApplication"
+            or application.get(ns + "allowBackup") != "false" or application.get(ns + "process") is not None
+            or len(core) != 1 or len(bootstrap) != 1 or len(declarations) != 1
+            or not signature_only(declarations[0].get(ns + "protectionLevel"))
+            or not any(node.get(ns + "name") == permission for node in manifest.findall("uses-permission"))):
+        raise ValueError("Installed manifest lacks the ordinary app-owned service authority")
+    if (core[0].get(ns + "permission") != permission or core[0].get(ns + "exported") != "true"
+            or core[0].get(ns + "process") is not None or core[0].get(ns + "isolatedProcess") not in {None, "false"}
+            or bootstrap[0].get(ns + "exported") != "false" or bootstrap[0].get(ns + "process") != ":mesh_bootstrap"
+            or bootstrap[0].get(ns + "isolatedProcess") not in {None, "false"}):
+        raise ValueError("Installed manifest lacks the ordinary app-owned service authority")
+
+
 def verify_stage(directory):
     from android_qualification import source
     identity = source()
@@ -163,20 +197,7 @@ def verify_stage(directory):
             raise ValueError("Installed dependency graph omits Python or native WebRTC")
     from verify_android_webrtc import verify_android_webrtc
     verify_android_webrtc(apk)
-    manifest = ET.fromstring(subprocess.check_output(["apkanalyzer", "manifest", "print", str(apk)], timeout=60))
-    ns = "{http://schemas.android.com/apk/res/android}"
-    application = manifest.find("application")
-    services = {node.get(ns + "name"): node for node in application.findall("service")}
-    core = services.get("com.meshchat.runtime.MeshCoreApiService")
-    bootstrap = services.get("com.meshchat.runtime.BootstrapService")
-    permission = APP_ID + ".permission.MESH_CORE_API"
-    if (manifest.get("package") != APP_ID or application.get(ns + "name") != APP_ID + ".ConsumerApplication"
-            or application.get(ns + "allowBackup") != "false" or core is None or bootstrap is None
-            or core.get(ns + "permission") != permission or core.get(ns + "exported") != "true"
-            or bootstrap.get(ns + "exported") != "false" or bootstrap.get(ns + "process") != ":mesh_bootstrap"
-            or not any(node.get(ns + "name") == permission and node.get(ns + "protectionLevel") == "signature"
-                       for node in manifest.findall("permission"))):
-        raise ValueError("Installed manifest lacks the ordinary app-owned service authority")
+    verify_manifest(ET.fromstring(subprocess.check_output(["apkanalyzer", "manifest", "print", str(apk)], timeout=60)))
     result = {"v": 1, "passed": True, **identity, "scope": SCOPE, "checks": dict(CHECKS),
               "application_files": staged["application_files"],
               "artifacts": {str(path.relative_to(ROOT)).replace("\\", "/"): digest(path) for path in ARTIFACTS}}
