@@ -42,6 +42,7 @@ plugins/*/android/.tauri/
 plugins/*/android/build/
 plugins/*/android/webrtc-smoke/build/
 plugins/*/android/core-api-host/build/
+plugins/*/android/runtime-host/build/
 sdk/kotlin/build/
 plugins/*/android/local.properties
 plugins/*/android/*.iml
