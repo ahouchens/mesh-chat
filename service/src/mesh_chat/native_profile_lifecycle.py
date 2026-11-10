@@ -6,7 +6,7 @@ never accepts a filesystem path, key, profile factory or private event from JSON
 """
 from dataclasses import dataclass
 from threading import Lock, RLock
-from typing import Callable, Any
+from typing import Callable, Any, Literal
 from uuid import UUID, uuid4
 
 from .errors import NativeUnavailable, ValidationError
@@ -14,6 +14,54 @@ from .errors import NativeUnavailable, ValidationError
 
 class ProfileLifecycleResync(ValidationError):
     code = "resync_required"
+
+
+class ProfileLifecycleIdentityConflict(ValidationError):
+    """A retained canonical operation was queried with another identity."""
+
+
+@dataclass(frozen=True)
+class LifecycleRequest:
+    operation_id: str
+    action: Literal["lock", "select", "unlock"]
+    profile_id: str
+    core_host_incarnation: str
+    expected_revision: int
+
+    def __post_init__(self):
+        try:
+            valid_id = isinstance(self.operation_id, str) and str(UUID(self.operation_id)) == self.operation_id
+        except (ValueError, TypeError, AttributeError):
+            valid_id = False
+        if (not valid_id or not isinstance(self.action, str) or self.action not in {"lock", "select", "unlock"}
+                or not isinstance(self.profile_id, str) or not 1 <= len(self.profile_id) <= 80
+                or not isinstance(self.core_host_incarnation, str) or not self.core_host_incarnation
+                or type(self.expected_revision) is not int or self.expected_revision < 0):
+            raise ValidationError("Profile lifecycle request identity is invalid")
+
+
+@dataclass(frozen=True)
+class CompletionFact:
+    """Retained historical evidence, independent of current replay eligibility."""
+    status: Literal["unknown", "pending", "applied"]
+    request: LifecycleRequest | None = None
+    result_revision: int | None = None
+    result_service_incarnation: str | None = None
+
+    def __post_init__(self):
+        if self.status == "unknown":
+            valid = self.request is None and self.result_revision is None and self.result_service_incarnation is None
+        elif self.status == "pending":
+            valid = (isinstance(self.request, LifecycleRequest) and self.result_revision is None
+                     and self.result_service_incarnation is None)
+        elif self.status == "applied":
+            valid = (isinstance(self.request, LifecycleRequest) and type(self.result_revision) is int
+                     and self.result_revision > self.request.expected_revision
+                     and (self.result_service_incarnation is None or isinstance(self.result_service_incarnation, str)))
+        else:
+            valid = False
+        if not valid:
+            raise ValidationError("Profile lifecycle completion fact is invalid")
 
 
 @dataclass(frozen=True)
@@ -40,7 +88,7 @@ class ProfileRuntimeLifecycle:
         self._read_selection = read_selection
         self._active, self._retiring = active, None
         self._pending = None
-        self._last = None
+        self._last: CompletionFact | None = None
         self._revision = 0
         self._provider_fault = False
         self._incarnation = uuid4().hex
@@ -77,6 +125,29 @@ class ProfileRuntimeLifecycle:
         finally:
             self._transition_lock.release()
 
+    def _request_identity(self, request) -> LifecycleRequest:
+        operation_id, action, profile_id, revision = request
+        return LifecycleRequest(operation_id, action, profile_id, self._incarnation, revision)
+
+    def lookup_exact_completion(self, request: LifecycleRequest) -> CompletionFact:
+        """Read exact retained evidence; never advance or repair a transition."""
+        if not isinstance(request, LifecycleRequest):
+            raise ValidationError("Profile lifecycle request identity is invalid")
+        with self._lock:
+            pending = self._request_identity(self._pending) if self._pending is not None else None
+            if pending is not None and pending.operation_id == request.operation_id:
+                if pending != request:
+                    raise ProfileLifecycleIdentityConflict("Operation ID was already used with different input")
+                return CompletionFact("pending", pending)
+            last = self._last
+            if last is not None and last.request is not None and last.request.operation_id == request.operation_id:
+                if last.request != request:
+                    raise ProfileLifecycleIdentityConflict("Operation ID was already used with different input")
+                return last
+            if request.profile_id not in self._slots:
+                raise ValidationError("Profile is not registered")
+            return CompletionFact("unknown")
+
     def _mutate(self, action, profile_id, operation_id, host_incarnation, expected_revision):
         with self._lock:
             if (not isinstance(action, str) or not isinstance(profile_id, str)
@@ -90,12 +161,13 @@ class ProfileRuntimeLifecycle:
             if host_incarnation != self._incarnation or type(expected_revision) is not int:
                 raise ProfileLifecycleResync("Profile host incarnation changed")
             request = operation_id, action, profile_id, expected_revision
-            if self._last is not None and self._last[0][0] == operation_id:
-                previous, revision, service = self._last
-                if previous != request:
+            last = self._last
+            previous = last.request if last is not None else None
+            if last is not None and previous is not None and previous.operation_id == operation_id:
+                if (previous.operation_id, previous.action, previous.profile_id, previous.expected_revision) != request:
                     raise ValidationError("Operation ID was already used with different input")
                 current = self.query()
-                if revision != self._revision or service != current["service_incarnation"]:
+                if last.result_revision != self._revision or last.result_service_incarnation != current["service_incarnation"]:
                     raise ProfileLifecycleResync("Profile lifecycle result is no longer current")
                 return current
             if self._pending is not None:
@@ -226,5 +298,6 @@ class ProfileRuntimeLifecycle:
             self._revision += 1
             self._pending = None
             result = self.query()
-            self._last = request, self._revision, result["service_incarnation"]
+            self._last = CompletionFact("applied", self._request_identity(request), self._revision,
+                                        result["service_incarnation"])
             return result
