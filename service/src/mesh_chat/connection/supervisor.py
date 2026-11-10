@@ -7,7 +7,7 @@ from threading import RLock
 from .diagnostics import Diagnostics, validated_pairing_retirement
 from .model import (
     Adopted, Cancel, ConnectionKey, ConnectionState, ContextChanged, Desired, Event,
-    Failed, Failure, HandoffLease, Operation, Phase, Policy, Resource, Result, Retire, Tick, Work,
+    Execution, Failed, Failure, HandoffLease, Operation, Phase, Policy, Resource, Result, Retire, Tick, Work,
 )
 from .reducer import transition
 
@@ -218,6 +218,43 @@ class ConnectionSupervisor:
     def handoff_committed(self, operation: Operation):
         with self._lock:
             return operation in self._handoff_committed
+
+    def pending_handoff_adoption(self, key: ConnectionKey, resource: Resource, now: float) -> bool:
+        """Observe existing pending custody; never advance or grant a lease."""
+        with self._lock:
+            state = self._states.get(key)
+            if (state is None or state.key != key or key.scope == "pairing" or key in self._retired
+                    or state.runtime_epoch != self.runtime_epoch or state.carrier is not None
+                    or not state.authority.authorized or state.desired is not Desired.ENABLED
+                    or state.execution is not Execution.AVAILABLE or state.blocked):
+                return False
+            step = state.negotiation
+            if (step is None or step.phase is not Phase.DISCOVER or step.operation is None
+                    or not now < step.deadline):
+                return False
+            operation = step.operation
+            work = self._running.get(operation)
+            if (operation.key != key or operation.runtime_epoch != self.runtime_epoch
+                    or operation.generation != state.generation
+                    or operation.policy_revision != state.authority.revision
+                    or work is None or work.operation != operation
+                    or work.phase is not Phase.DISCOVER or work.resource != step.resource
+                    or work.deadline != step.deadline or not now < work.deadline
+                    or resource in self._surrendered.get(key, ())
+                    or self._owned_elsewhere(key, resource)):
+                return False
+            leases = [(operation, lease) for operation, lease in self._handoffs.items()
+                      if lease.resource == resource]
+            if len(leases) != 1:
+                return False
+            source_operation, lease = leases[0]
+            return bool(source_operation == lease.operation and lease.target == key
+                        and lease.operation in self._handoff_committed
+                        and lease.operation.key.scope == "pairing"
+                        and lease.operation.runtime_epoch == self.runtime_epoch
+                        and resource.adapter_epoch == lease.source.adapter_epoch
+                        and now < lease.deadline
+                        and resource not in self._retiring and lease.source not in self._retiring)
 
     def reject_handoff(self, operation: Operation):
         with self._lock:

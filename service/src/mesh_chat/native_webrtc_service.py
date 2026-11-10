@@ -748,9 +748,27 @@ class NativeWebRTCServiceMixin(NativePairingServiceMixin, NativeWebRTCControlMix
                     "profile_incarnation": sha256((incarnation + self._identity.hash.hex()).encode("ascii")).hexdigest()[:32],
                     "resources": [{"logical_session": session,
                                    "physical_resource": self._native_resources.require(session),
-                                   "adopted": self._shared_native_session(session)}
+                                   "adopted": self._shared_native_session(session),
+                                   "owner_state": self._native_inspection_owner_state(session)}
                                   for session in sorted(self._native_webrtc_live)
                                   if self._native_resources.physical(session) is not None]}
+
+    def _native_inspection_owner_state(self, session_id):
+        """Private inventory metadata; path inspection still checks authority."""
+        if not self._shared_native_session(session_id):
+            return "unadopted"
+        profiles = [profile for profile, session in self._native_webrtc_profile_sessions.items()
+                    if session == session_id]
+        runtime = getattr(self, "_connection_runtime", None)
+        if (len(profiles) != 1
+                or getattr(getattr(runtime, "owner", None), "runtime_epoch", None) != self._runtime_incarnation):
+            return "unavailable"
+        if self._native_carrier_authorized(session_id):
+            return "authorized"
+        from .connection.model import Resource
+        physical = self._native_resources.require(session_id)
+        return ("pending_adoption" if runtime.pending_handoff_adoption(profiles[0], Resource("native", physical))
+                else "unavailable")
 
     def _native_host_accounting(self):
         """Private bounded counts, including explicit unsupported observations."""
