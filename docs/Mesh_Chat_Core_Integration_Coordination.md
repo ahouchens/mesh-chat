@@ -14,7 +14,7 @@ worker follow-ups without another permission request.
 The current shared checkpoint is `733c38b0d084435557ae1d40e640038c8f3e1aa2`
 (tree `c6f51445f0049b42b95138c2c168ee5394475c22`). Full manual qualification
 [42728488792](https://github.com/ahouchens/mesh-chat/actions/runs/42728488792)
-is running. Retained selection confirms all six families and native workload
+completed failed at 01:04:44 UTC on November 10. Retained selection confirms all six families and native workload
 `full`; duplicate PR run `42728497275` was canceled. The lead independently
 passes all 225 consumer regressions, then exact SDK staging, strict policy types,
 **3,650 required policy cases**, **670 Python plus 12 rendered UI cases**, and
@@ -41,10 +41,19 @@ failure; production manifests and runtime behavior are unchanged. Android now
 independently passes **52 exact installed-device cases**, **62 JVM cases** with
 zero skips, and **17 distribution/binary hash bindings**. This includes both
 ordinary app-owned independent-consumer cases, Maven publication, application
-lifecycle and cold-process restart. Native Windows–Android interoperability is
-now running; it is a separate gate. Successful OS credential UI, cross-platform
-message receipts, media and physical execution are not established by these
-Android component results.
+lifecycle and cold-process restart. Both direct platforms independently pass
+25/10/12 transport/recovery/setup cases. The separate native interoperability
+gate failed before Android preflight: source/artifact admission reports
+`RuntimeError`. Exactly 25 downloaded runtime-host publication files were outside
+the generated-output ignore rules; D reproduces the clean-source rejection in
+an isolated Git checkout. The Windows partner later reports
+`RendezvousUnavailable` in initialization. No cross-platform receipt result is
+claimed. Successful OS credential UI, media and physical execution remain open.
+
+D's narrow `.gitignore` repair `975a034` is integrated and independently passes
+all 50 native-evidence checks, including rejection of tracked source changes,
+unrelated untracked files, adjacent host source and wrong revisions. Source and
+artifact validators are unchanged. A new exact-source CI run is still required.
 
 Previous full combined qualification
 [42723779984](https://github.com/ahouchens/mesh-chat/actions/runs/42723779984)

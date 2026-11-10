@@ -23,7 +23,7 @@ qualification.
 The current shared checkpoint is `733c38b0d084435557ae1d40e640038c8f3e1aa2`
 (tree `c6f51445f0049b42b95138c2c168ee5394475c22`). Full manual qualification
 [42728488792](https://github.com/ahouchens/mesh-chat/actions/runs/42728488792)
-is running. Retained selection confirms all six families and native workload
+completed failed at 01:04:44 UTC on November 10. Retained selection confirms all six families and native workload
 `full`; duplicate PR run `42728497275` was canceled. The lead independently
 passes all 225 consumer regressions, then exact SDK staging, strict policy types,
 **3,650 required policy cases**, **670 Python plus 12 rendered UI cases**, and
@@ -50,10 +50,19 @@ failure; production manifests and runtime behavior are unchanged. Android now
 independently passes **52 exact installed-device cases**, **62 JVM cases** with
 zero skips, and **17 distribution/binary hash bindings**. This includes both
 ordinary app-owned independent-consumer cases, Maven publication, application
-lifecycle and cold-process restart. Native Windows–Android interoperability is
-now running; it is a separate gate. Successful OS credential UI, cross-platform
-message receipts, media and physical execution are not established by these
-Android component results.
+lifecycle and cold-process restart. Both direct platforms independently pass
+25/10/12 transport/recovery/setup cases. The separate native interoperability
+gate failed before Android preflight: source/artifact admission reports
+`RuntimeError`. Exactly 25 downloaded runtime-host publication files were outside
+the generated-output ignore rules; D reproduces the clean-source rejection in
+an isolated Git checkout. The Windows partner later reports
+`RendezvousUnavailable` in initialization. No cross-platform receipt result is
+claimed. Successful OS credential UI, media and physical execution remain open.
+
+D's narrow `.gitignore` repair `975a034` is integrated and independently passes
+all 50 native-evidence checks, including rejection of tracked source changes,
+unrelated untracked files, adjacent host source and wrong revisions. Source and
+artifact validators are unchanged. A new exact-source CI run is still required.
 
 Previous full combined qualification
 [42723779984](https://github.com/ahouchens/mesh-chat/actions/runs/42723779984)
@@ -377,12 +386,12 @@ never described as physical-device qualification.
 | INV18 | `local` | Deterministic traces, replay and the seeded simulator corpus. |
 | INV19 | `local` | Failed persistence keeps the in-memory denial and never reports durable success; intent-batch and authority-write regressions. |
 | INV20 | `partial` | The gate rejects failed, canceled, skipped or missing required evidence; publication re-hashes staged assets against that manifest. A branch-build release qualification executed and passed on setup/MSI/APK artifacts; no tag has exercised publication. |
-| INV21 | `partial` | The facade enforces caller, profile, permission and private-event boundaries in tests. The Windows named-pipe endpoint adds OS access control, executable allowlisting and an installed-wheel consumer in consumer/owner scopes; the Android Binder endpoint carries a signature permission, caller-derived grant and required gate suites, and its standalone APK now enqueues and reads a message against a host-owned approved contact, queries it after a host-process restart, rejects a changed payload for the repeated key with no duplicate, and the installed-wheel Windows consumer performs the same enqueue/query round trip plus repeated-key handle reuse, changed-payload conflict and unknown-peer rejection over the named pipe, and queries the saved handle after a host restart on the same vault. Full transport delivery, receipt, pairing and partition qualification of the independent messaging consumer remains open. |
+| INV21 | `partial` | The facade enforces caller, profile, permission and private-event boundaries. Named-pipe consumers add OS access control and executable allowlisting; Binder consumers use signature permission and caller-derived grants. At `733c38b`, the public SDK through normal frozen Windows hosts qualifies fresh profile creation, pairing and two authenticated receipts with key replay and single message records. Android separately qualifies six Binder-consumer cases and two app-owned distribution-only lifecycle/cold-process cases. Cross-platform independent delivery, partitions and successful native credential UI remain open. |
 | INV22 | `partial` | Clients carry no peer policy. Named-pipe and Binder host components exist; exclusive vault ownership is enforced by the runtime. Full packaged multi-client attachment, owner stop and lifecycle qualification remain open. |
 | INV23 | `local` | Durable enqueue receipts, conflicting payload rejection and stable logical IDs across restart; acknowledgments never change peer delivery state. |
 | INV24 | `local` | Explicit `resync_required` for gaps, expiry and authority change; the client consumer clears its position and resnapshots. Long-term retention is not promised. |
-| INV25 | `partial` | A declared compatibility file fixes the public API, IPC, peer-wire and client namespaces, and the Python, TypeScript and Kotlin component versions are bound to it by test. Every client refuses an unsupported major before side effects, and the aggregator checks the contract. The TypeScript package shape is pinned to the declaration and ships only dist, but no published package matrix or upgrade fixtures exist. |
-| INV26 | `partial` | Installed-wheel and TypeScript tarball component smokes exist. Independent Android AAR/APK Binder qualification passed four cases at `461c2e9`; full distribution-only Windows and Android messaging consumers, upgrade fixtures and support promises remain open. |
+| INV25 | `partial` | The compatibility declaration separates public API 1.1, IPC 1 and unchanged peer wire 1; client versions and unsupported-major rejection are tested. Experimental standalone Python/TypeScript artifacts and Kotlin Maven publications are staged. Source-pinned upgrade fixtures rebuild the actual baseline service-carried Python client and TypeScript 0.2 package; they do not invent an earlier standalone Python release. A published support matrix and upgrade window remain undeclared. |
+| INV26 | `partial` | Distribution-only Windows public SDK bootstrap/pairing/receipt checks pass at `733c38b`. Android independently builds from the client/runtime-host Maven publication outside the producer checkout and passes fresh lifecycle plus cold locked-process restart, with 17 distribution/binary hashes bound to the complete Android report. Experimental upgrade/component checks exist. Android peer delivery, successful native credential UI, the complete cross-platform scenario and release support promises remain open. |
 
 ## Required scenarios
 
@@ -412,7 +421,7 @@ never described as physical-device qualification.
 | SC22 | `component` | Wrong caller, profile/scope and private-control attempts are rejected before effects in facade tests. |
 | SC23 | `local` | Lost reply, timeout and duplicate request after restart resolve by idempotency key; conflicting payloads fail. |
 | SC24 | `local` | Bounded replay, explicit gaps, cursor expiry and consumer deduplication are covered by facade and client tests. |
-| SC25 | `open` | Component clients declare versions that are checked against the compatibility declaration, but no supported SDK/API/package version pairs are published to validate or reject. |
+| SC25 | `partial` | Declared experimental client versions, incompatible-major rejection and source-pinned baseline upgrade fixtures execute in the required component suite. No supported release SDK/API/package matrix or upgrade window is published; component staging is not a support commitment. |
 | SC26 | `partial` | Detach does not stop the runtime; the owner can now request a stop that sets the shutdown event and closes the host stream after the reply, but process exit and packaged multi-client evidence remain unqualified. The Windows endpoint serves a bounded number of concurrent local clients. |
 
 ## Completion boundaries

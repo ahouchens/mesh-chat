@@ -7,7 +7,7 @@
 The current shared checkpoint is `733c38b0d084435557ae1d40e640038c8f3e1aa2`
 (tree `c6f51445f0049b42b95138c2c168ee5394475c22`). Full manual qualification
 [42728488792](https://github.com/ahouchens/mesh-chat/actions/runs/42728488792)
-is running. Retained selection confirms all six families and native workload
+completed failed at 01:04:44 UTC on November 10. Retained selection confirms all six families and native workload
 `full`; duplicate PR run `42728497275` was canceled. The lead independently
 passes all 225 consumer regressions, then exact SDK staging, strict policy types,
 **3,650 required policy cases**, **670 Python plus 12 rendered UI cases**, and
@@ -34,10 +34,19 @@ failure; production manifests and runtime behavior are unchanged. Android now
 independently passes **52 exact installed-device cases**, **62 JVM cases** with
 zero skips, and **17 distribution/binary hash bindings**. This includes both
 ordinary app-owned independent-consumer cases, Maven publication, application
-lifecycle and cold-process restart. Native Windows–Android interoperability is
-now running; it is a separate gate. Successful OS credential UI, cross-platform
-message receipts, media and physical execution are not established by these
-Android component results.
+lifecycle and cold-process restart. Both direct platforms independently pass
+25/10/12 transport/recovery/setup cases. The separate native interoperability
+gate failed before Android preflight: source/artifact admission reports
+`RuntimeError`. Exactly 25 downloaded runtime-host publication files were outside
+the generated-output ignore rules; D reproduces the clean-source rejection in
+an isolated Git checkout. The Windows partner later reports
+`RendezvousUnavailable` in initialization. No cross-platform receipt result is
+claimed. Successful OS credential UI, media and physical execution remain open.
+
+D's narrow `.gitignore` repair `975a034` is integrated and independently passes
+all 50 native-evidence checks, including rejection of tracked source changes,
+unrelated untracked files, adjacent host source and wrong revisions. Source and
+artifact validators are unchanged. A new exact-source CI run is still required.
 
 At `733c38b`, Android qualification archive `13725011496` has SHA-256
 `b2d6986d76a80af40311cef5c2713249c8f9bb9d4cd679544f4d3df1032bbf44`;
@@ -52,6 +61,19 @@ exact Git source and archive entries. Broad verification archive `13722974519`
 has SHA-256 `fcf37cd3cd4388b5645d2d1768e9f1c0b4795454f672070dce35272f57d0e2bf`;
 its 670 Python and 12 rendered cases independently pass. Broader automated
 completion remains a runner summary because full-suite XML is not retained.
+
+For `733c38b`, Linux direct archive `13724986632` has SHA-256
+`0666d1ca890d3fd3dc3391b444b80c6329d7905e371b0a376426f27bda88d9cf`;
+Windows direct archive `13723939962` has
+`ed158b0f846b5d869d7847c09c99ba22c0fb2e71aadf709184ddd3f21b21e8b2`.
+Both independently reconstruct 25/10/12 required cases without skips; native
+binary digests in these report archives remain runner claims.
+Failed native Android archive `13725042152` has SHA-256
+`7a97177b8beb5d1b4bc4fff48229ab393a1ad54222cfd7aff1632caf8c5be586`;
+failed native Windows archive `13724858507` has
+`327055445002760baf86cfa33288f991e20cb7dfc85679a2af64371a1630b5c2`.
+The archive metadata binds these failure reports to this run/source. Their
+phase/type reports establish no paired scenario execution or aggregate pass.
 
 Previous full combined qualification
 [42723779984](https://github.com/ahouchens/mesh-chat/actions/runs/42723779984)
