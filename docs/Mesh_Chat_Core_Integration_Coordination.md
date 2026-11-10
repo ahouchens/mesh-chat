@@ -72,8 +72,14 @@ own first crash. Manual consent, workload, receipts and deadlines are unchanged.
 Root verified 737 controller cases, 343 contact-fence follow-up cases and 691
 cold-setup cases, including their failing pre-change regressions. These overlapping
 component suites are not an aggregate qualification count. Independent sequential
-composition and combined exact-source local/full native qualification are still
-pending. SC26 remains partial; isolated-helper retirement remains deferred.
+composition (`ba3a7eb`) passes all 16 controls: real Windows loopback native hosts,
+actual private request/owner acknowledgment and correlated controller zero checks,
+opposite initiators, stale requests, delayed disposal, sealed-journal failure and
+Stop/quarantine preservation. Contact approval rows, mailbox and Reticulum
+readiness remain modeled; both role labels use Windows hosts. This does not prove
+Android execution, full path-case receipts or cold-process behavior. Combined
+exact-source local/full native qualification is still pending. SC26 remains
+partial; isolated-helper retirement remains deferred.
 
 The rendezvous diagnostic follow-up integrates `bdd2ff6` and `b0888ec` at
 `b8d77e6`. It records fixed stage/reason labels at known transport origins,
