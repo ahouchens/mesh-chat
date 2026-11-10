@@ -1,9 +1,12 @@
 """Offline allocation observations, not Android/JVM or native transport proof."""
 import json
+from pathlib import Path
 import socket
 from threading import Event
+from time import monotonic
+from types import SimpleNamespace
 import urllib.request
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -106,7 +109,8 @@ def test_native_stats_never_borrows_private_capability_or_permission(profile_run
     assert not calls
 
 
-def test_reserved_inventory_precedes_native_publication_without_pairing_retirement(native_pairing, monkeypatch):
+@pytest.mark.parametrize("controller_wait", [False, True])
+def test_reserved_inventory_precedes_native_publication_without_pairing_retirement(native_pairing, monkeypatch, controller_wait):
     """Real vault/signatures/runtime/Core; mailbox/native allocation are doubles."""
     create, _ = native_pairing
     first, *_ = create()
@@ -155,6 +159,56 @@ def test_reserved_inventory_precedes_native_publication_without_pairing_retireme
         assert reply["ok"] is False and reply["error"]["code"] == "invalid_request"
         assert second._native_resources.current(logical, physical)
         assert context["state"] not in {"retired", "retiring"}
+        if controller_wait:
+            monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[3] / "scripts"))
+            import native_interop_controller as controller
+            statuses, inventories, stats_calls = [], [], []
+            class Peer:
+                def core(self, operation, params, key=None):
+                    # Settings/rendezvous are unrelated modeled boundaries;
+                    # stats still traverses the actual Core parser/adapter.
+                    if operation == "call.settings_update":
+                        return {}
+                    stats_calls.append(operation)
+                    result = session.request(frame(operation, **params))
+                    if not result["ok"]:
+                        raise controller.PeerFailure(result["error"]["code"])
+                    return result["result"]
+
+                def pairing_begin(self, operation, role, *, pairing_code, direct):
+                    result = second.native_pairing_begin(operation, role=role, pairing_code=pairing_code,
+                        authorized=lambda: True, allow_direct_ip_disclosure=direct)
+                    return {"operation_id": operation, **result}
+
+                def pairing_status(self, operation):
+                    if statuses == ["reserved"]:
+                        # The previous real Controller.wait iteration must
+                        # have deferred before inventory AND native stats.
+                        assert not inventories and not stats_calls
+                        release.set()
+                    second._connection_runtime.step()
+                    result = second.native_pairing_status(operation)
+                    statuses.append(result["state"])
+                    return {"operation_id": operation, **result}
+
+                def inventory(self):
+                    assert statuses[-1] != "reserved"
+                    inventories.append(True)
+                    return inspector.dispatch("qualification.inventory", {})
+
+            transport = SimpleNamespace(wait=lambda *args, **kwargs: {"shareable": code})
+            rendezvous = SimpleNamespace(open=lambda phase, value: value)
+            instance = controller.Controller("android", Peer(), transport, rendezvous, {})
+            instance.deadline = monotonic() + 3
+            instance.default_call_settings = {}
+            instance.broker_ice = {"iceServers": [{"urls": ["stun:fixture.invalid"]}]}
+            # Replay this already admitted exact intent, using its real
+            # domain input checks rather than allocating a second carrier.
+            monkeypatch.setattr(controller, "uuid4", lambda: UUID(answer_id))
+            observed, turn_url = instance.negotiate("direct", "windows")
+            assert observed == logical and turn_url is None
+            assert statuses[0] == "reserved" and statuses[-1] == "awaiting_approval"
+            assert inventories == [True] and stats_calls == ["native.command"]
     finally:
         release.set()
     run_until(second, lambda: second.native_pairing_status(answer_id)["state"] == "awaiting_approval")
