@@ -11,7 +11,68 @@ reports. Exact evidence and limits are in the ledger. Wave 2 is activated below.
 Existing human authorization covers continued implementation, integration and
 worker follow-ups without another permission request.
 
-The current shared checkpoint is `55e6b1924a31b978403555aa6be83487ce86553d`
+The current shared checkpoint is `994e4b488ba88935569970ac0adfb15c237f621d`
+(tree `70c7ce3b052b0338737010bab628fb6b0b153e94`). Full manual qualification
+[42763177698](https://github.com/ahouchens/mesh-chat/actions/runs/42763177698)
+selects all six families and native `full`; duplicate PR run `42763183634` was
+confirmed canceled. The workflow completed **failed**: both native jobs failed,
+and Linux direct was canceled at its 40-minute job limit during `apt-get update`
+in the syscall-observer installation step. The retained log shows Ubuntu mirror
+index fetching followed by cancellation; the underlying mirror/network cause is
+unproven. Required Linux NAT, fabric, recovery and setup steps were skipped and
+no direct execution reports were produced. This is not a Linux transport pass.
+No aggregate pass or release/default promotion is claimed.
+
+The corrected candidate passes every exact-source local gate: SDK staging,
+strict model/reducer types, **3,931 policy cases**, **776 Python plus 12 rendered
+UI cases**, and **nine Windows boundary cases**, with zero skips. Local policy
+takes 417.68 seconds. Independent inventory comparison finds exactly the three
+new bootstrap startup regressions and no removed cases. The same three cases
+are present in CI's independently reconstructed **3,931-pass** policy inventory.
+The retained CI UI evidence also confirms **776 plus 12 passes**, with no skips.
+
+Windows packaged reports and the sidecar binding pass independent validation,
+including actual DPAPI/EFS independent-consumer bootstrap and Windows pairing
+receipts. The sidecar is 54,596,632 bytes, SHA-256
+`dc4373f98ac9b8c2e634af655f4bde630340b7b7fc147e95d8a49875dd2aa265`.
+Android's **52 emulator and 62 JVM cases** pass with **17 artifact bindings**,
+including the corrected instrumentation APK. Windows direct's **25 fabric,
+10 recovery and 12 setup cases** pass with zero skips. Layout reports 72 cases
+without overflow and every archive entry was hashed; PNGs were not retained or
+visually reviewed locally. WebView2 probe and direct binary hashes remain runner
+claims. These component/platform results do not establish cross-platform receipts,
+selected relay paths, OS authentication, media coexistence or physical acceptance.
+
+The startup repair advances both actual native peers through `negotiate()` to
+`explicit_contact_approval`: the previous `gather_answer/failed/transient`
+retirement does not recur. Both reports now contain `PeerFailure` with
+`error_code: contact_not_approved`, without a retirement DTO or substage. This
+phase includes explicit decisions, approval polling, a reconnect-consent update,
+and private path-readiness inspection. Its label alone does not prove the decision
+RPC failed. Ordinary Core/domain error mapping differs from the private path
+route, narrowing source review toward native carrier authority during inspection.
+C is assigned a guarded offline review of the actual fresh-profile consent,
+handoff and adoption sequence. No consent, authority or deadline relaxation is
+authorized by this failure; a concrete repair requires a reproduced path.
+
+The next bounded repair adds private inventory `owner_state` metadata while
+preserving the existing mapping-based `adopted` flag and every resource row.
+`pending_adoption` must be proven from an existing committed pairing handoff
+lease and the exact current, authorized, unfenced target DISCOVER operation,
+with matching resource/runtime/generation/revision and unexpired deadlines.
+The query has no effects or new custody registry. Readiness polling will defer
+only a strict positive pending result for one uniquely matching resource;
+other, missing, malformed or ambiguous states and `ready=False` retain protected
+path sampling and its errors. Current path authority checks remain intact.
+An offline gated claim reproduces the gap between publishing the service mapping
+and applying the worker's Adopted completion. Releasing that gate authorizes the
+same physical resource. Consent-retirement controls establish valid denial but
+do not explain the initial-direct sequence. The actual CI substage is not retained.
+No-handoff manual/recovered/automatic pending windows lack this exact proof and
+remain unavailable under this narrow repair. C owns the read-only producer and
+D the consumer; implementation and integrated qualification remain pending.
+
+The previous shared checkpoint is `55e6b1924a31b978403555aa6be83487ce86553d`
 (tree `81d4ab8f07cc488d3cab09037226e9a7e6eab5ae`). Full manual qualification
 [42758745281](https://github.com/ahouchens/mesh-chat/actions/runs/42758745281)
 completed **failed** on 2026-11-10. Selection confirms all six families and the
