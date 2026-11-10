@@ -4,9 +4,38 @@
 
 ### AGP repair and timing diagnostics: full CI dispatched
 
-Full combined qualification
+The current shared checkpoint is `733c38b0d084435557ae1d40e640038c8f3e1aa2`
+(tree `c6f51445f0049b42b95138c2c168ee5394475c22`). Full manual qualification
+[42728488792](https://github.com/ahouchens/mesh-chat/actions/runs/42728488792)
+is running. Retained selection confirms all six families and native workload
+`full`; duplicate PR run `42728497275` was canceled. The lead independently
+passes all 225 consumer regressions, then exact SDK staging, strict policy types,
+**3,650 required policy cases**, **670 Python plus 12 rendered UI cases**, and
+**nine Windows components**, with zero failures/skips.
+
+CI policy independently reconstructs all 3,650 required cases with zero skips.
+Windows also independently passes strengthened normal bootstrap, public SDK
+pairing and two authenticated receipts, packaged WebView2 pairing/transport and
+service recovery, native control/lifecycle and nine boundary components. Desktop
+archive `13724620154` has SHA-256
+`c19f1ff5d70b109e48a8a6a6f5c5818083c8bedba85305427645906f0f57d32f`;
+native archive `13722764946` has
+`182dcd4752844ac050d6d0afbf0a97eb1d25c08674f1efa52d35618d6d74a88f`.
+The exact frozen executable is unchanged from `d0babe9`, independently hashed as
+`3a4c634df666abe2d8db33838fc74b39858089fe08502e185ac225718f179d10`.
+The source-bound report set is a new run; no older report is relabeled. The
+WebView2 probe digest remains a runner claim, and neither Windows result proves
+selected paths, Android receipts or physical execution.
+
+D's repair accepts the exact signature protection value, whether rendered
+symbolically as `signature` or numerically as `0x2`. It does not mask extra flags.
+The actual decoded APK manifest and negative authority/process cases cover the
+failure; production manifests and runtime behavior are unchanged. Full installed
+Android and cross-platform qualification remain pending for this source.
+
+Previous full combined qualification
 [42723779984](https://github.com/ahouchens/mesh-chat/actions/runs/42723779984)
-is running at shared checkpoint `d0babe9a137bd49c79eb0bbbe8849b942b3632f7`
+completed failed at checkpoint `d0babe9a137bd49c79eb0bbbe8849b942b3632f7`
 (tree `66fe66421328f2c75e21b0729f9ab9878a5ae8ab`). Retained selection independently
 confirms all six families and native workload `full`; duplicate PR run
 `42723762938` was canceled. Exact SDK staging, strict policy types, **3,612
@@ -25,8 +54,14 @@ to the exact 54,572,232-byte frozen executable independently hashed in its archi
 Native lifecycle includes 100 channel pairs/controls and three cold starts;
 these remain control/resource evidence, separate from public message receipts.
 The WebView2 probe executable is not retained, so its digest remains a runner
-claim. Android is executing its device suites; actual independent publication
-and its two new cases remain pending. No full combined platform acceptance.
+claim. The run completed with Android failure: the verifier incorrectly required
+the literal `signature`, while the actual compiled permission was `0x2`. The
+runtime-host Maven publication and both independent APK builds succeeded, but
+the two new installed cases did not execute. All 50 existing device cases, 62
+JVM cases and seven existing APK/AAR hashes independently pass. Linux and Windows
+direct transport/recovery/setup each independently pass 25/10/12 cases. Native
+interoperability was skipped after the Android failure; no full combined platform
+acceptance is claimed.
 
 At `d0babe9`, desktop artifact `13721134266` has archive SHA-256
 `cc202238f51514d94ccb7a12f233d4231edb7363c3b3e4cb58cb3340a82ad33a`;
@@ -42,6 +77,23 @@ The exact source, installed SDK archive and nine consumer source files bind to
 the bootstrap and same executable. This is not selected-path, Android, impairment,
 media, physical or SC21 qualification.
 
+At `d0babe9`, Android debug artifact `13723116006` has archive SHA-256
+`d9ab9c343e5f4cdad9958247a0140525802571547b443b5b9022c94305d685c9`.
+The complete 174-entry archive index independently hashes the original consumer
+APK as `1fa7be1327a6538286c800b55f6c573c16541e97f0446578105e8150f17a55a1`
+and its raw manifest as
+`26f95238c753ad13c543b6c570e4397a3975983c35f9aeca4f0fafb1f7e131ce`.
+The tiny locally derived manifest-only ZIP is not an installable APK. Disk
+recovery removed only extracted auxiliary logcat/obfuscation-map copies after
+recording their hashes; original CI archives, required reports and inventories
+remain available. This preserves report admission evidence, not unexecuted tests.
+Direct Linux archive `13722158093` has SHA-256
+`6d001b2390559b2116c126be95b9f7117d75790dac8dd4916942065bb3ba4a53`;
+Windows `13723257746` has
+`a6ee2dcb37183792f394d5eb024d0dd4b21566c7792d64874beb17b79f407eef`.
+Their binary digests remain runner claims because these report archives do not
+retain the native binaries.
+
 The lead has integrated C's startup repair `a62ad39` and Android generated-source
 repair `44e74a3`, plus D's bootstrap regression gate `62ceee0`. C and A independently
 reproduce the real source failure: fresh public profile creation runs on a worker
@@ -50,7 +102,7 @@ The repair scopes adapters to those two upstream modules, preserves Python's
 global signal API and main-thread behavior, and does not swallow other startup
 exceptions. The lead passes **65 focused startup/network/bootstrap/config cases**
 with zero skips in 13.54s; A's six fenced offline controls independently confirm
-the failure and repair. Repaired frozen execution remains unqualified.
+the failure and repair. The repaired frozen Windows execution is independently qualified above.
 
 Android now registers a tracked generated-directory property through the Variant
 API. Actual cached AGP/Gradle checks cover debug/release registration, producer
@@ -85,8 +137,7 @@ completed offerer snapshot reads before failure at 240,071 ms. The missing
 network causes contact bootstrap to skip initialization. Its caught exception
 is still under investigation; this evidence does not yet establish the precise
 startup defect by itself. The source-level signal-registration cause and repair
-are now independently established above; exact repaired frozen execution remains
-the next platform gate.
+are now independently established above; the repaired frozen Windows execution now passes the platform gates recorded above.
 
 The preceding full-qualification checkpoint is `677b6bf9e9ea0f50d4465e04cca9f79038632187`
 (tree `0e2516336d33d0febd5b152a25ab9b6972f7212b`). Full manual qualification
