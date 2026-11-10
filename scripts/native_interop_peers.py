@@ -43,6 +43,12 @@ def checked_reply(value, identifier):
     return value.get("result")
 
 
+def checked_sample_request(value):
+    if type(value) is not str or re.fullmatch(r"[a-f0-9]{32}", value) is None:
+        raise PeerFailure("invalid_sample_request")
+    return value
+
+
 def encode(value):
     raw = json.dumps(value, separators=(",", ":")).encode()
     if not 1 < len(raw) <= MAX_FRAME:
@@ -200,8 +206,9 @@ class WindowsPeer:
     def inventory(self):
         return self.private("qualification.inventory")
 
-    def path(self, logical, physical):
-        return self.private("qualification.path_evidence", {"logical_session": logical, "expected_physical": physical})
+    def path(self, logical, physical, sample_request):
+        return self.private("qualification.path_evidence", {"logical_session": logical, "expected_physical": physical,
+            "sample_request": checked_sample_request(sample_request)})
 
     def pairing_begin(self, operation_id, role, *, pairing_code=None, direct=False):
         payload = {"operation_id": operation_id, "role": role, "allow_direct_ip_disclosure": direct}
@@ -361,9 +368,9 @@ class AndroidPeer:
     def inventory(self):
         return self._request("inspect", {"command": "qualification.inventory", "payload": {}})
 
-    def path(self, logical, physical):
+    def path(self, logical, physical, sample_request):
         return self._request("inspect", {"command": "qualification.path_evidence", "payload": {
-            "logical_session": logical, "expected_physical": physical}})
+            "logical_session": logical, "expected_physical": physical, "sample_request": checked_sample_request(sample_request)}})
 
     def pairing_begin(self, operation_id, role, *, pairing_code=None, direct=False):
         payload = {"operation_id": operation_id, "role": role, "allow_direct_ip_disclosure": direct}

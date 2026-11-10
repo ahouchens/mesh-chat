@@ -10,6 +10,12 @@ from native_interop_workload import LEVEL, PATH_CASES, SCOPE, workload as requir
 SCENARIOS = ("direct", "turn_udp", "turn_tcp", "turn_tls", "impaired", "cold_start_receipts")
 APPLICATION = ("enqueued_packets", "enqueued_controls", "enqueued_bytes", "received_packets", "received_controls", "received_bytes")
 ACCOUNTING = ("capacity", "reserved_count", "creating_count", "allocated_count", "active_count", "retiring_count")
+SAMPLE_REJECTION_REASONS = frozenset({
+    "sample_object", "qualification_scope", "sample_version", "service_incarnation", "profile_incarnation",
+    "adapter_epoch", "sample_request", "sample_sequence", "sample_ttl", "sample_timestamp",
+    "request_elapsed", "service_elapsed", "sample_resource", "sample_replay", "sample_readiness",
+    "selected_transport", "direct_selected_type", "relay_selected_protocol", "application_counters", "selected_pair_identity",
+})
 
 
 class AccountingUnavailable(ValueError):
@@ -22,6 +28,12 @@ def digest(value):
 
 def token(value, length):
     return isinstance(value, str) and re.fullmatch(r"[a-f0-9]{" + str(length) + "}", value) is not None
+
+
+def finite_clock(value):
+    if type(value) not in {int, float}: return False
+    try: return math.isfinite(value)
+    except OverflowError: return False
 
 
 def accounting(value, *, empty=False):
@@ -41,52 +53,84 @@ def accounting(value, *, empty=False):
 
 
 class Samples:
-    def __init__(self, *, clock=time.time, monotonic=time.monotonic):
-        self.clock, self.monotonic = clock, monotonic
+    def __init__(self, *, monotonic=time.monotonic):
+        self.monotonic = monotonic
         self.previous = {}
+        self._rejection = None
 
-    def consume(self, value, inventory, requested_at, *, ready=False, scenario=None):
-        if (not isinstance(value, dict) or value.get("qualification_only") is not True
-                or value.get("v") != 1 or value.get("service_incarnation") != inventory.get("service_incarnation")
-                or value.get("profile_incarnation") != inventory.get("profile_incarnation")
-                or not token(value.get("adapter_epoch"), 32)
-                or type(value.get("sample_sequence")) is not int or value["sample_sequence"] <= 0
-                or value.get("valid_for_ms") != 2000
-                or type(value.get("sampled_at_ms")) is not int
-                or not 0 <= self.clock() * 1000 - value["sampled_at_ms"] <= 2000
-                or not 0 <= self.monotonic() - requested_at <= 2
-                or type(value.get("sample_elapsed_ms")) is not int or not 0 <= value["sample_elapsed_ms"] <= 2000):
-            raise ValueError("Private native observation is stale or belongs to another runtime")
+    def _reject(self, reason, message):
+        error = ValueError(message)
+        self._rejection = error, reason
+        raise error
+
+    def failure_reason(self, error):
+        observed = self._rejection
+        return (observed[1] if observed is not None and observed[0] is error
+                and type(observed[1]) is str and observed[1] in SAMPLE_REJECTION_REASONS else None)
+
+    def check_request(self, value, sample_request):
+        self._rejection = None
+        invalid = "Private native observation is stale or belongs to another runtime"
+        if not isinstance(value, dict): self._reject("sample_object", invalid)
+        if (type(sample_request) is not str or not token(sample_request, 32)
+                or type(value.get("sample_request")) is not str or value["sample_request"] != sample_request):
+            self._reject("sample_request", invalid)
+
+    def consume(self, value, inventory, requested_at, *, sample_request, ready=False, scenario=None):
+        self.check_request(value, sample_request)
+        invalid = "Private native observation is stale or belongs to another runtime"
+        if value.get("qualification_only") is not True: self._reject("qualification_scope", invalid)
+        if type(value.get("v")) is not int or value["v"] != 1: self._reject("sample_version", invalid)
+        if value.get("service_incarnation") != inventory.get("service_incarnation"):
+            self._reject("service_incarnation", invalid)
+        if value.get("profile_incarnation") != inventory.get("profile_incarnation"):
+            self._reject("profile_incarnation", invalid)
+        if not token(value.get("adapter_epoch"), 32): self._reject("adapter_epoch", invalid)
+        if type(value.get("sample_sequence")) is not int or value["sample_sequence"] <= 0:
+            self._reject("sample_sequence", invalid)
+        if type(value.get("valid_for_ms")) is not int or value["valid_for_ms"] != 2000:
+            self._reject("sample_ttl", invalid)
+        # Native time is opaque here. Freshness is invocation-bound plus local elapsed time;
+        # the producer validates the original timestamp in its own clock domain.
+        if type(value.get("sampled_at_ms")) is not int or not 0 <= value["sampled_at_ms"] <= 2**53 - 1:
+            self._reject("sample_timestamp", invalid)
+        returned_at = self.monotonic()
+        if (not finite_clock(requested_at) or not finite_clock(returned_at)
+                or not 0 <= returned_at - requested_at <= 2):
+            self._reject("request_elapsed", invalid)
+        if type(value.get("sample_elapsed_ms")) is not int or not 0 <= value["sample_elapsed_ms"] <= 2000:
+            self._reject("service_elapsed", invalid)
         resource = next((item for item in inventory.get("resources", [])
                          if item.get("logical_session") == value.get("logical_session")
                          and item.get("physical_resource") == value.get("resource")), None)
         if resource is None:
-            raise ValueError("Native observation does not identify a current exact resource")
+            self._reject("sample_resource", "Native observation does not identify a current exact resource")
         identity = (value["service_incarnation"], value["resource"], value["adapter_epoch"])
         previous = self.previous.get(identity, 0)
         if value["sample_sequence"] <= previous:
-            raise ValueError("Native observation sequence did not advance")
+            self._reject("sample_replay", "Native observation sequence did not advance")
         self.previous[identity] = value["sample_sequence"]
         if ready and any(value.get(field) is not True for field in ("adopted", "attached", "messaging_ready")):
-            raise ValueError("Selected ICE does not establish supervisor messaging readiness")
+            self._reject("sample_readiness", "Selected ICE does not establish supervisor messaging readiness")
         pair = value.get("pair")
         if (value.get("status") != "selected" or not isinstance(pair, dict)
                 or value.get("ice_state") not in {"connected", "completed"}
                 or value.get("dtls_state") != "connected" or value.get("channel_state") != "open"):
-            raise ValueError("Required selected native path is unavailable")
+            self._reject("selected_transport", "Required selected native path is unavailable")
         if scenario == "direct":
             if any(pair.get(field, {}).get("type") not in {"host", "srflx", "prflx"} for field in ("local", "remote")):
-                raise ValueError("Required direct path selected a relay")
+                self._reject("direct_selected_type", "Required direct path selected a relay")
         elif scenario in {"turn_udp", "turn_tcp", "turn_tls", "impaired"}:
             protocol = "udp" if scenario == "impaired" else scenario.removeprefix("turn_")
             if pair.get("local", {}).get("type") != "relay" or pair.get("relay_protocol") != protocol:
-                raise ValueError("TURN advertisement/configuration does not prove selected client protocol")
+                self._reject("relay_selected_protocol", "TURN advertisement/configuration does not prove selected client protocol")
         counters = value.get("application")
         if (not isinstance(counters, dict) or set(counters) != set(APPLICATION)
                 or any(type(count) is not int or count < 0 for count in counters.values())):
-            raise ValueError("Native packet counters are unavailable")
+            self._reject("application_counters", "Native packet counters are unavailable")
         if not token(pair.get("token"), 32):
-            raise ValueError("Selected pair identity is unavailable")
+            self._reject("selected_pair_identity", "Selected pair identity is unavailable")
+        self._rejection = None
         return value
 
 

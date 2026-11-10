@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT / "service/src"))
 
 from mesh_chat.connection.diagnostics import validated_pairing_retirement
 from native_interop_artifacts import GithubArtifacts, context_from_environment
-from native_interop_evidence import SCENARIOS, Samples, accounting, digest, selection, traffic
+from native_interop_evidence import SCENARIOS, SAMPLE_REJECTION_REASONS, Samples, accounting, digest, selection, traffic
 from native_interop_diagnostics import PreflightDiagnostics
 from native_interop_peers import AndroidEmulator, AndroidPeer, PeerFailure, WindowsPeer
 from native_interop_preflight import android_environment, outbound_services
@@ -26,6 +26,12 @@ from test_packaged_lifecycle import source_identity
 OFFERS = {"direct": "offer", **{name: "offer_" + name for name in SCENARIOS[1:5]}}
 FAILURE_SITES = frozenset({"negotiate_settings_update", "pairing_offer_begin", "pairing_answer_begin",
     "pairing_status", "rendezvous_receive", "rendezvous_publish", "negotiate_inventory", "negotiate_native_stats"})
+FAILURE_SUBSTAGES = frozenset({
+    "pending_contact_wait", "implicit_contact_guard", "contact_decision", "approved_contact_wait",
+    "reconnect_consent", "approval_ready_observation", "approval_acknowledgment", "transferred_status_wait",
+    "adopted_observation", "transferred_cancel", "transferred_cancel_check", "post_cancel_observation",
+    "carrier_identity_check", "path_inventory", "path_read", "path_validation",
+})
 
 
 def selected_ice(value, scenario):
@@ -83,6 +89,7 @@ class Controller:
         self.pairing = None
         self._operation_failure: tuple[Exception, str] | None = None
         self._pairing_failure: tuple[Exception, str, dict[str, str] | None] | None = None
+        self._substage_failure: tuple[Exception, str] | None = None
         self.workload = required_workload(workload)
 
     @contextmanager
@@ -91,6 +98,7 @@ class Controller:
             raise ValueError("Unknown native diagnostic site")
         self._operation_failure = None
         self._pairing_failure = None
+        self._substage_failure = None
         try:
             yield
         except Exception as error:
@@ -101,6 +109,34 @@ class Controller:
         else:
             self._operation_failure = None
             self._pairing_failure = None
+            self._substage_failure = None
+
+    @contextmanager
+    def _substage(self, stage):
+        self._substage_failure = None
+        if type(stage) is not str or stage not in FAILURE_SUBSTAGES:
+            raise ValueError("Unknown native diagnostic substage")
+        try:
+            yield
+        except Exception as error:
+            observed = self._substage_failure
+            if observed is None or observed[0] is not error:
+                self._substage_failure = error, stage
+            raise
+        else:
+            self._substage_failure = None
+
+    def failure_observation(self, error):
+        observed = self._substage_failure
+        if (observed is None or observed[0] is not error or type(observed[1]) is not str
+                or observed[1] not in FAILURE_SUBSTAGES):
+            return {}
+        selected = {"failure_substage": observed[1]}
+        if observed[1] == "path_validation":
+            reason = self.samples.failure_reason(error)
+            if type(reason) is str and reason in SAMPLE_REJECTION_REASONS:
+                selected["sample_rejection_reason"] = reason
+        return selected
 
     def failure_site(self, error):
         observed = self._operation_failure
@@ -231,35 +267,49 @@ class Controller:
         if self.role == initiator:
             # The production supervisor sends the signed contact invitation;
             # the controller supplies only each person's explicit decision.
-            pending = self.wait(lambda: next((item for item in self.snapshot().get("contacts", []) if item.get("trust") == "pending_request"), None))
-            self.core("peer.approve", {"profile": self.profile, "peer": pending["core_handle"]})
+            with self._substage("pending_contact_wait"):
+                pending = self.wait(lambda: next((item for item in self.snapshot().get("contacts", []) if item.get("trust") == "pending_request"), None))
+            with self._substage("contact_decision"):
+                self.core("peer.approve", {"profile": self.profile, "peer": pending["core_handle"]})
         else:
-            pending = self.wait(lambda: next((item for item in self.snapshot().get("contact_invitations", []) if item.get("state") == "pending"), None))
-            if self.snapshot().get("contacts"):
-                raise ValueError("Receiving the signed invitation silently created contact approval")
-            self.core("contact.invitation", {"profile": self.profile, "action": "decide", "invitation": pending["id"], "accept": True})
-        self.contact = self.wait(self.approved_contact)
-        self.native("reconnect_consent_set", contact_id=self.contact["id"], auto_reconnect=False,
-                    allow_direct_ip_disclosure=True)
-        self.wait(lambda: self.observe(session, ready=True), timeout=120)
-        if self.role == "android": self.publish("approved", {"approved": True})
-        elif self.receive("approved") != {"approved": True}: raise ValueError("Peer approval was not explicit")
+            with self._substage("pending_contact_wait"):
+                pending = self.wait(lambda: next((item for item in self.snapshot().get("contact_invitations", []) if item.get("state") == "pending"), None))
+            with self._substage("implicit_contact_guard"):
+                if self.snapshot().get("contacts"):
+                    raise ValueError("Receiving the signed invitation silently created contact approval")
+            with self._substage("contact_decision"):
+                self.core("contact.invitation", {"profile": self.profile, "action": "decide", "invitation": pending["id"], "accept": True})
+        with self._substage("approved_contact_wait"):
+            self.contact = self.wait(self.approved_contact)
+        with self._substage("reconnect_consent"):
+            self.native("reconnect_consent_set", contact_id=self.contact["id"], auto_reconnect=False,
+                        allow_direct_ip_disclosure=True)
+        with self._substage("approval_ready_observation"):
+            self.wait(lambda: self.observe(session, ready=True), timeout=120)
+        with self._substage("approval_acknowledgment"):
+            if self.role == "android": self.publish("approved", {"approved": True})
+            elif self.receive("approved") != {"approved": True}: raise ValueError("Peer approval was not explicit")
 
     def observe(self, logical=None, *, ready=True, scenario=None):
-        inventory = self.peer.inventory()
-        resources = [item for item in inventory["resources"] if logical is None or item["logical_session"] == logical]
-        if ready and len(resources) == 1:
-            owner_state = resources[0].get("owner_state")
-            if type(owner_state) is str and owner_state == "pending_adoption":
-                return None
+        with self._substage("path_inventory"):
+            inventory = self.peer.inventory()
+            resources = [item for item in inventory["resources"] if logical is None or item["logical_session"] == logical]
+            if ready and len(resources) == 1:
+                owner_state = resources[0].get("owner_state")
+                if type(owner_state) is str and owner_state == "pending_adoption":
+                    return None
         for resource in resources:
-            requested = time.monotonic()
-            value = self.peer.path(resource["logical_session"], resource["physical_resource"])
-            if ready and any(value.get(field) is not True for field in ("adopted", "attached", "messaging_ready")):
-                continue
-            if value.get("status") != "selected":
-                continue
-            return self.samples.consume(value, inventory, requested, ready=ready, scenario=scenario)
+            with self._substage("path_read"):
+                sample_request = os.urandom(16).hex()
+                requested = time.monotonic()
+                value = self.peer.path(resource["logical_session"], resource["physical_resource"], sample_request)
+            with self._substage("path_validation"):
+                self.samples.check_request(value, sample_request)
+                if ready and any(value.get(field) is not True for field in ("adopted", "attached", "messaging_ready")):
+                    continue
+                if value.get("status") != "selected":
+                    continue
+                return self.samples.consume(value, inventory, requested, sample_request=sample_request, ready=ready, scenario=scenario)
         return None
 
     def text(self, scenario, index=0, *, sender=None, padded=False):
@@ -330,15 +380,21 @@ class Controller:
     def path_case(self, scenario, initiator):
         session, url = self.negotiate(scenario, initiator)
         if self.contact is None: self.pair(session, initiator)
-        self.wait(lambda: self.pairing_status().get("state") == "transferred", timeout=120)
-        adopted = self.wait(lambda: self.observe(session, ready=True, scenario=scenario), timeout=120)
-        cancelled = self.peer.pairing_cancel(self.pairing)
-        if cancelled.get("operation_id") != self.pairing or cancelled.get("state") != "transferred":
-            raise ValueError("Retired pairing intent tried to reclaim its transferred carrier")
-        before = self.wait(lambda: self.observe(session, ready=True, scenario=scenario), timeout=120)
-        if any(adopted[name] != before[name] for name in
-               ("resource", "logical_session", "adapter_epoch", "service_incarnation")):
-            raise ValueError("Transferred pairing cancellation replaced its adopted carrier")
+        with self._substage("transferred_status_wait"):
+            self.wait(lambda: self.pairing_status().get("state") == "transferred", timeout=120)
+        with self._substage("adopted_observation"):
+            adopted = self.wait(lambda: self.observe(session, ready=True, scenario=scenario), timeout=120)
+        with self._substage("transferred_cancel"):
+            cancelled = self.peer.pairing_cancel(self.pairing)
+        with self._substage("transferred_cancel_check"):
+            if cancelled.get("operation_id") != self.pairing or cancelled.get("state") != "transferred":
+                raise ValueError("Retired pairing intent tried to reclaim its transferred carrier")
+        with self._substage("post_cancel_observation"):
+            before = self.wait(lambda: self.observe(session, ready=True, scenario=scenario), timeout=120)
+        with self._substage("carrier_identity_check"):
+            if any(adopted[name] != before[name] for name in
+                   ("resource", "logical_session", "adapter_epoch", "service_incarnation")):
+                raise ValueError("Transferred pairing cancellation replaced its adopted carrier")
         self.phase = scenario + "_authenticated_receipts"
         fault, impairment = None, None
         try:
@@ -495,6 +551,7 @@ def main():
             site = controller.failure_site(error)
             if site is not None: result["failure_site"] = site
             result.update(controller.failure_pairing(error))
+            result.update(controller.failure_observation(error))
     finally:
         if peer is not None and peer.process is not None:
             try: peer.stop(crash=True)
