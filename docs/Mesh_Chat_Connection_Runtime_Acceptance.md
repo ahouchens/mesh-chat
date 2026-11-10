@@ -64,6 +64,17 @@ No policy/deadline relaxation or additional live probe is assigned. Native
 pending-action recovery, document-bound authority, positive resource-owner
 retirement, cross-platform receipts and full acceptance remain open.
 
+The narrow follow-up `6b81322` is integrated as `db10298`: the Android
+interop controller now calls `BootstrapClient.configure(context)` before
+WebRTC attachment and Python initialization. The only other changed file adds
+three offline regressions: startup composition and configured/unconfigured
+factory controls through the real gather/sign/bind path. The source guard fails
+on the previous harness. C reports 101 focused passes; the lead reviewed the
+complete two-file diff and independently reran 73 pairing/runtime/diagnostic
+cases with zero failures or skips. The Java client and native/mailbox boundaries
+are doubles; this is not device evidence. Full exact-source local and CI
+qualification of the corrected candidate is next.
+
 The previous shared checkpoint is `e7630c8b6ed1feda6b3ef049336be309179b6075`
 (tree `07beb0ed2d1859b66fe14b19f6ee7fbb4ec2663b`). Full manual qualification
 [42752889278](https://github.com/ahouchens/mesh-chat/actions/runs/42752889278)
