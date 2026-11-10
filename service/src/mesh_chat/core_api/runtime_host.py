@@ -63,6 +63,8 @@ class CoreRuntimeHost:
         self._clock, self._lock, self._credentials = clock, threading.RLock(), {}
         self._sessions, self._published, self._invocation = WeakSet(), active, None
         self._credential_bindings, self._intent_invocation = {}, None
+        self._profile_intents = ProfileIntents(self, origin=intent_origin, auth=intent_auth, binding=intent_binding,
+                                              limits=lambda: (MAX_HOST_OPERATIONS, MAX_CALLER_OPERATIONS))
         with self._lock:
             expected, records = {}, []
             for profile in profiles:
@@ -86,18 +88,23 @@ class CoreRuntimeHost:
                     raise ValueError("Persisted selection requires a registered host slot")
             if active is not None and bytes.fromhex(active.store.opaque_id("core-api-handle-key", "v1")) != self.profiles[selected].handle_key:
                 raise ValueError("Active profile does not match persisted handle authority")
-            self.store.conditional_put_and_delete(expected, records)
+            self._ordinary_catalog, policy_collections = self.profile_intents.ledger.initialize_policy(
+                intent_origin is not None, expected, records)
+            self.store.conditional_put_and_delete(expected, records, expected_collections=policy_collections)
         self.lifecycle = ProfileRuntimeLifecycle(tuple(ProfileSlot(p.profile_id,
             lambda profile=p: self._open(profile)) for p in profiles), selected,
             publish=self._publish, remember_selection=self._remember_selection,
             read_selection=lambda: self.store.get("host_profile_catalog", "selection")["selected"], active=active)
-        self.profile_intents = ProfileIntents(self, origin=intent_origin, auth=intent_auth, binding=intent_binding,
-                                            limits=lambda: (MAX_HOST_OPERATIONS, MAX_CALLER_OPERATIONS))
+
+    @property
+    def profile_intents(self):
+        return self._profile_intents
 
     def _remember_selection(self, profile_id):
         self.store.put("host_profile_catalog", "selection", {"selected": profile_id})
 
     def _recheck_invocation(self):
+        self.profile_intents.ledger.guard_ordinary()
         if self._invocation is None:
             raise ApiFailure("forbidden")
         authorize, caller, profile_id = self._invocation
@@ -145,6 +152,7 @@ class CoreRuntimeHost:
     def issue_unlock_credential(self, caller, profile_id, *, lifetime_seconds=60):
         """Trusted host-authentication hook, never a public request operation."""
         with self._lock:
+            self.profile_intents.ledger.guard_ordinary()
             if (not isinstance(caller, str) or not 1 <= len(caller) <= 200 or profile_id not in self.profiles
                     or type(lifetime_seconds) is not int or not 1 <= lifetime_seconds <= 300
                     or self._credential_authorizer(caller, profile_id) is not True):

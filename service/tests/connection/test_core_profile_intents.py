@@ -5,7 +5,7 @@ import pytest
 
 from mesh_chat.core_api import runtime_host
 from mesh_chat.core_api.errors import ApiFailure
-from mesh_chat.core_api.profile_intents import ProfileIntents, NativeOrigin, OPERATIONS, ALIASES, DISPATCH
+from mesh_chat.core_api.profile_intents import NativeOrigin, OPERATIONS, ALIASES, DISPATCH, POLICY, PROTECTED
 from mesh_chat.errors import NativeUnavailable
 from mesh_chat.vault import RecordConflict
 from test_core_runtime_host import runtime
@@ -41,13 +41,16 @@ class AuthDouble:
 
 @pytest.fixture
 def producer(runtime):
-    r = runtime
-    host = r["host"]
+    base = runtime
     binding = NativeOrigin("provider-install", "sealed-catalog", "native-generation")
     origin, auth, attachment = OriginDouble(binding), AuthDouble(), object()
     origin.ready.add(attachment)
-    host.profile_intents = ProfileIntents(host, origin=origin, auth=auth, binding=binding,
-        limits=lambda: (runtime_host.MAX_HOST_OPERATIONS, runtime_host.MAX_CALLER_OPERATIONS))
+    host = base["build"](base["first"], intent_origin=origin, intent_auth=auth, intent_binding=binding)
+    stream = host.bind(lambda: base["grants"][0])
+    def invoke(operation, params=None, key=None):
+        return base["invoke"](operation, params, key, endpoint=stream)
+    assert invoke("runtime.capabilities")["ok"]
+    r = {**base, "host": host, "stream": stream, "invoke": invoke}
     intents = host.profile_intents
     authorize = lambda: r["grants"][0]
 
@@ -64,8 +67,11 @@ def producer(runtime):
             "expected_revision": row["expected_revision"]}
         return host.issue_bound_unlock_credential(authorize, intent_ref=ref, attachment=document, proof=proof)
 
-    return {**r, "intents": intents, "origin": origin, "auth": auth, "attachment": attachment,
-            "binding": binding, "authorize": authorize, "prepare": prepare, "issue": issue}
+    try:
+        yield {**r, "intents": intents, "origin": origin, "auth": auth, "attachment": attachment,
+               "binding": binding, "authorize": authorize, "prepare": prepare, "issue": issue}
+    finally:
+        stream.close()
 
 
 def resume(r, ticket, **kwargs):
@@ -433,9 +439,7 @@ def test_observe_scope_and_historical_host_replacement_never_rebase(producer):
     with pytest.raises(ApiFailure, match="not_found"):
         r["intents"].observe(r["authorize"], intent_ref=ticket["intent_ref"], attachment=r["attachment"])
     r["grants"][0] = replace(r["grants"][0], caller="application-owner")
-    replacement = r["build"](r["first"])
-    replacement.profile_intents = ProfileIntents(replacement, origin=r["origin"], auth=r["auth"], binding=r["binding"],
-        limits=lambda: (4096, 256))
+    replacement = r["build"](r["first"], intent_origin=r["origin"], intent_auth=r["auth"], intent_binding=r["binding"])
     observed = replacement.profile_intents.observe(r["authorize"], intent_ref=ticket["intent_ref"], attachment=r["attachment"])
     assert observed["historical_outcome"] == "unknown" and not observed["replay_eligible"]
     with pytest.raises(ApiFailure, match="resync_required"):
@@ -485,9 +489,7 @@ def test_list_is_bounded_and_terminal_tombstones_survive_catalog_reopen(producer
     r["meta"].close()
     from mesh_chat.vault import VaultStore
     reopened = VaultStore(r["meta_root"], r["meta_key"], allow_unprotected_for_tests=True)
-    replacement = r["build"](r["first"], catalog=reopened)
-    replacement.profile_intents = ProfileIntents(replacement, origin=r["origin"], auth=r["auth"], binding=r["binding"],
-                                                limits=lambda: (4096, 256))
+    replacement = r["build"](r["first"], catalog=reopened, intent_origin=r["origin"], intent_auth=r["auth"], intent_binding=r["binding"])
     try:
         rows = replacement.profile_intents.list(r["authorize"], attachment=r["attachment"])["intents"]
         assert len(rows) == 3 and all(item["historical_outcome"] == "rejected_no_effect" for item in rows)
@@ -503,10 +505,131 @@ def test_native_origin_replacement_can_observe_but_never_admit_old_key(producer)
     previous = r["meta"].get(OPERATIONS, ticket["intent_ref"])
     changed = NativeOrigin("provider-install", "sealed-catalog", "replacement-generation")
     r["origin"].binding = changed
-    r["intents"].binding = changed
-    observed = r["intents"].observe(r["authorize"], intent_ref=ticket["intent_ref"], attachment=r["attachment"])
+    replacement = r["build"](r["first"], intent_origin=r["origin"], intent_auth=r["auth"], intent_binding=changed)
+    observed = replacement.profile_intents.observe(r["authorize"], intent_ref=ticket["intent_ref"], attachment=r["attachment"])
     assert not observed["replay_eligible"] and observed["reason"] == "resync_required"
     with pytest.raises(ApiFailure, match="resync_required"):
-        resume(r, ticket)
+        replacement.profile_intents.resume(r["authorize"], intent_ref=ticket["intent_ref"], attachment=r["attachment"])
     assert r["meta"].get(OPERATIONS, ticket["intent_ref"]) == previous
     assert r["intents"].ledger.slot() is None
+
+
+def test_configuration_is_constructor_bound_and_marker_precedes_generic_work(producer):
+    r = producer
+    assert r["meta"].get(POLICY, "current") == PROTECTED
+    assert not r["meta"].list(OPERATIONS) and not r["meta"].list(ALIASES)
+    with pytest.raises(AttributeError):
+        r["host"].profile_intents = None
+    with pytest.raises(AttributeError):
+        r["intents"].binding = None
+    assert not r["intents"].available
+
+
+def test_partial_configuration_cannot_fall_back_to_ordinary(runtime):
+    with pytest.raises(ValueError, match="complete"):
+        runtime["build"](runtime["first"], intent_binding=NativeOrigin("p", "c", "n"))
+    assert runtime["meta"].get(POLICY, "current") is None
+
+
+@pytest.mark.parametrize("loss", ["admission", "completion"])
+def test_configured_generic_first_custody_survives_missing_ports(producer, monkeypatch, loss):
+    r = producer
+    original = fail_write(r, monkeypatch, "intent" if loss == "admission" else "complete", after=loss == "admission")
+    assert r["invoke"]("profile.lock", {"profile": r["profiles"]["alpha"]}, "generic-before-private-key")["error"]["code"] == "unavailable"
+    monkeypatch.setattr(r["meta"], "conditional_put_and_delete", original)
+    assert not r["meta"].list(ALIASES)
+    before = r["meta"].list(OPERATIONS)
+    assert all(row.get("version") != 2 for row in before)
+    replacement = r["build"](None)
+    with pytest.raises(ApiFailure, match="unavailable"):
+        replacement.mutate(r["authorize"], r["authorize"](), "profile.lock", {"profile": r["profiles"]["alpha"]}, "new-uuid-no-ports-key")
+    assert r["meta"].get(POLICY, "current") == PROTECTED
+    assert r["meta"].list(OPERATIONS) == before
+
+
+def test_completed_generic_history_keeps_successor_protected(producer, monkeypatch):
+    r = producer
+    assert r["invoke"]("profile.lock", {"profile": r["profiles"]["alpha"]}, "protected-complete-first-key")["ok"]
+    assert r["intents"].ledger.slot() is None and not r["meta"].list(ALIASES)
+    replacement = r["build"](None)
+    assert not replacement._ordinary_catalog
+    original = fail_write(r, monkeypatch, "complete")
+    with pytest.raises(OSError):
+        replacement.mutate(r["authorize"], r["authorize"](), "profile.lock", {"profile": r["profiles"]["alpha"]}, "successor-unknown-action")
+    monkeypatch.setattr(r["meta"], "conditional_put_and_delete", original)
+    successor = r["build"](None)
+    with pytest.raises(ApiFailure, match="unavailable"):
+        successor.mutate(r["authorize"], r["authorize"](), "profile.lock", {"profile": r["profiles"]["alpha"]}, "next-successor-action-key")
+
+
+def test_ambiguous_pre_marker_slot_is_not_reinterpreted_or_deleted(runtime):
+    r = runtime
+    identity, row = r["host"]._operation_record(r["grants"][0].caller, r["host"].profiles["alpha"],
+                                               "profile.lock", "old-experimental-slot-key")
+    r["meta"].put_many([(OPERATIONS, identity, row), (DISPATCH, "current", {"identity": identity})])
+    assert r["meta"].get(POLICY, "current") is None
+    replacement = r["build"](None)
+    with pytest.raises(ApiFailure, match="unavailable"):
+        replacement.mutate(lambda: r["grants"][0], r["grants"][0], "profile.lock", {"profile": r["profiles"]["alpha"]}, "not-a-migration-waiver-key")
+    assert r["meta"].get(OPERATIONS, identity) == row
+    assert r["meta"].get(DISPATCH, "current") == {"identity": identity}
+    assert r["meta"].get(POLICY, "current") == PROTECTED
+
+
+@pytest.mark.parametrize("after", [False, True])
+def test_lost_marker_commit_never_exposes_configured_host_or_resets_policy(runtime, monkeypatch, after):
+    r = runtime
+    original = r["meta"].conditional_put_and_delete
+    def failure(expected, records, *args, **kwargs):
+        records = list(records)
+        if any(kind == POLICY for kind, _, _ in records):
+            if after:
+                original(expected, records, *args, **kwargs)
+            raise OSError("marker write return unavailable")
+        return original(expected, records, *args, **kwargs)
+    monkeypatch.setattr(r["meta"], "conditional_put_and_delete", failure)
+    native = OriginDouble(NativeOrigin("p", "c", "n"))
+    with pytest.raises(OSError):
+        r["build"](r["first"], intent_origin=native, intent_auth=AuthDouble(), intent_binding=native.binding)
+    monkeypatch.setattr(r["meta"], "conditional_put_and_delete", original)
+    assert r["meta"].get(POLICY, "current") == (PROTECTED if after else None)
+    response = r["invoke"]("profile.lock", {"profile": r["profiles"]["alpha"]}, "ordinary-after-marker-loss")
+    if after:
+        assert response.get("error", {}).get("code") == "unavailable"
+    else:
+        assert response["ok"]
+
+
+@pytest.mark.parametrize("after", [False, True])
+def test_ordinary_admission_racing_first_marker_cannot_open_or_downgrade(runtime, monkeypatch, after):
+    r = runtime
+    original = r["meta"].conditional_put_and_delete
+    injected = []
+    def race(expected, records, *args, **kwargs):
+        records = list(records)
+        if not injected and records and records[0][2].get("state") == "intent":
+            injected.append(True)
+            if after:
+                original(expected, records, *args, **kwargs)
+            r["meta"].put(POLICY, "current", dict(PROTECTED))
+            if after:
+                return
+        return original(expected, records, *args, **kwargs)
+    monkeypatch.setattr(r["meta"], "conditional_put_and_delete", race)
+    response = r["invoke"]("profile.lock", {"profile": r["profiles"]["alpha"]}, "ordinary-race-arming-key")
+    assert not response["ok"] and not r["first"]._store_closed
+    assert r["meta"].get(POLICY, "current") == PROTECTED
+    assert len(r["meta"].list(OPERATIONS)) == int(after)
+
+
+@pytest.mark.parametrize("private_shape", ["alias", "row"])
+def test_orphan_private_evidence_without_marker_cannot_downgrade(runtime, private_shape):
+    r = runtime
+    if private_shape == "alias":
+        r["meta"].put(ALIASES, "orphan-private-index", {"identity": "missing", "caller": "application-owner"})
+    else:
+        r["meta"].put(OPERATIONS, "orphan-private-row", {"version": 2, "caller": "application-owner", "original_key": "orphan-private-key-0001", "state": "prepared"})
+    replacement = r["build"](None)
+    with pytest.raises(ApiFailure, match="unavailable"):
+        replacement.mutate(lambda: r["grants"][0], r["grants"][0], "profile.lock", {"profile": r["profiles"]["alpha"]}, "cannot-ignore-private-evidence")
+    assert r["meta"].get(POLICY, "current") == PROTECTED
