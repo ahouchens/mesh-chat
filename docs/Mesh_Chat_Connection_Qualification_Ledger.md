@@ -102,10 +102,37 @@ adding 103. Its two actual controllers independently gate the slow final sample
 or fault cleanup; native, kernel, receipt and cleanup boundaries remain scripted.
 The producer exercises actual service/owner/private-dispatch paths with modeled
 native callbacks. Neither focused suite establishes real native completion.
-Independent real composition on the common implementation and fresh full
-qualification remain pending. No public SDK/grant, JNI/host protocol, timeout,
+Independent composition `ce4b9c4` is now reviewed and integrated, with all
+**28 cases passing without skips**: the original 18 controls remain and ten are
+added. Both role labels use actual Windows native hosts on localhost. The tests
+retain and forward the host's actual closed callback after mapping removal,
+commit the slow original owner after normal remote-loss cleanup, and require
+matching native/owner/cleanup proof plus real global zero. They also cover
+close-start projection before native cleanup, sticky Stop invalidation with
+normal disposal, and historical receipts across an actual later generation.
+Dropping the real closed notification produces the intended semantic failure
+despite successful cleanup and zero host counts. Review corrected one stale-target
+negative to exercise initial preparation; both variants and the complete suite
+pass on the corrected commit. No native receipt, owner generation, acknowledgment
+or zero count is synthesized. Approval/Reticulum boundaries remain modeled and
+runtime steps are driven synchronously; this is not Android/JNI, authenticated
+message receipt, full controller/path-case or packaged qualification. Fresh
+combined local and full native qualification remain pending. No public SDK/grant, JNI/host protocol, timeout,
 retry-budget, kernel-drop, receipt or global-zero relaxation is assigned. Bootstrap retirement remains
 deferred until full native qualification.
+
+Retained corrected composition XML SHA-256 is
+`e8fbc6bffe76a04ce925d48b6e61d5fdc5bbbb41fea3626a872fa6bce4f869df`;
+its complete collected/executed inventory is
+`726223b5a5ec7972687fce948b6198a5ed786f6712adeece2df5bc0b2071fee2`.
+The lost-notification semantic RED XML is
+`6d5cc843d2e20d47221d96af5af1b8f1bca10faea1d371b8d0c26da25fda19f9`.
+Root rehashed 19 source inputs and 27 retained artifacts, checked all 18 prior
+case names, and verified that the serialized fixture functions are unchanged.
+The earlier 28-case pass, four incorrect test-expectation failures and launcher
+path/import failures remain separately retained. Final evidence is bound to
+`ce4b9c468596916b549cad579e13c2b55e7cb9e7`, tree
+`973d96e3df636ac9ec97b5e56b5ee0f0f786ffa1`.
 
 Retained producer XML SHA-256 is
 `c87c35c3656a693b9bd4911699d9f5db25ec98ef5b9f6cca760eec911532da47`;

@@ -55,8 +55,12 @@ hashes and truthful counters. Never export SDP, credentials, bearer documents,
 vault keys or raw addresses. Unit admission tests are not packaged OS evidence.
 
 The private v2 owner-retirement producer `3172d02` and controller `b3751ae`
-are implemented and source-reviewed together at `6459710`. Independent real
-composition and full native qualification remain pending. The
+are implemented and source-reviewed together at `6459710`. Reviewed composition
+`ce4b9c4` passes 28 controls with actual Windows localhost native hosts for both
+role labels, including late commit and raw closed delivery after mapping release.
+Approval/Reticulum boundaries remain modeled. This is not Android/JNI, full
+controller/path-case or packaged acceptance; full native qualification remains
+pending. The
 `qualification.retire_carrier` request has exactly `action`, `operation_id`,
 `request_id`, `logical_session`, `expected_physical`,
 `expected_service_incarnation` and `expected_adapter_epoch`. Action is exactly

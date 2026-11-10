@@ -55,7 +55,11 @@ overtaking under scripted native boundaries; it does not identify the CI cause.
 The private prepare/completion/commit producer `3172d02` and consumer `b3751ae`
 are reviewed and integrated at `6459710`, with 445 producer component cases and
 998 consumer cases passing. Native callbacks and controller/native boundaries
-are modeled in those focused suites. Independent real composition and fresh
+are modeled in those focused suites. Reviewed composition `ce4b9c4` additionally
+passes 28 actual Windows localhost host controls for both role labels, preserving
+all 18 prior cases. It covers retained native cleanup proof across late commit;
+approval/Reticulum remain modeled. It does not establish Android/JNI, full
+controller/path-case or authenticated message receipts. Fresh combined local and
 full qualification remain pending.
 No public API/grant, timeout, authority or negative-control relaxation is assigned.
 

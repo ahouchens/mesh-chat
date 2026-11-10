@@ -108,8 +108,22 @@ adding 103. Its two actual controllers independently gate the slow final sample
 or fault cleanup; native, kernel, receipt and cleanup boundaries remain scripted.
 The producer exercises actual service/owner/private-dispatch paths with modeled
 native callbacks. Neither focused suite establishes real native completion.
-Independent real composition on the common implementation and fresh full
-qualification remain pending. No public SDK/grant, JNI/host protocol, timeout,
+Independent composition `ce4b9c4` is now reviewed and integrated, with all
+**28 cases passing without skips**: the original 18 controls remain and ten are
+added. Both role labels use actual Windows native hosts on localhost. The tests
+retain and forward the host's actual closed callback after mapping removal,
+commit the slow original owner after normal remote-loss cleanup, and require
+matching native/owner/cleanup proof plus real global zero. They also cover
+close-start projection before native cleanup, sticky Stop invalidation with
+normal disposal, and historical receipts across an actual later generation.
+Dropping the real closed notification produces the intended semantic failure
+despite successful cleanup and zero host counts. Review corrected one stale-target
+negative to exercise initial preparation; both variants and the complete suite
+pass on the corrected commit. No native receipt, owner generation, acknowledgment
+or zero count is synthesized. Approval/Reticulum boundaries remain modeled and
+runtime steps are driven synchronously; this is not Android/JNI, authenticated
+message receipt, full controller/path-case or packaged qualification. Fresh
+combined local and full native qualification remain pending. No public SDK/grant, JNI/host protocol, timeout,
 retry-budget, kernel-drop, receipt or global-zero relaxation is assigned. Bootstrap retirement remains
 deferred until full native qualification.
 
