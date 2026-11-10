@@ -4,6 +4,70 @@
 
 ### Cold-restart containment: full CI completed; native pairing remains unqualified
 
+The latest completed checkpoint is `5e6d0dac9f9cbee8ebdd986d85a4394dbf7b45c0`
+(tree `eac21be7c638e72e2eb6f65a92adef5821b61f96`). Its first full run
+[42819716492](https://github.com/ahouchens/mesh-chat/actions/runs/42819716492)
+failed installing the Android 35 system image: the SDK installer reported an
+unknown ZIP archive before emulator tests. No Android qualification report was
+produced, and native interoperability was skipped. Every other available suite
+passed and was independently validated. The archive/download cause is unknown;
+no product change or acceptance relaxation was made for that failure.
+
+The separate unchanged-source full run
+[42824231976](https://github.com/ahouchens/mesh-chat/actions/runs/42824231976)
+passes **4,760 policy cases**, **1,239 Python UI + 12 rendered cases**, **nine
+Windows boundary cases**, **52 Android emulator cases**, **71 JVM cases**, and
+Linux/Windows **25 transport + 10 recovery + 12 setup cases** each, all with zero
+skips. All 17 Android binary/distribution hashes validate. The 72 layout cases
+report no overflow; screenshots were not visually reviewed. Exact-source local
+SDK staging, strict types and full policy/UI/Windows gates pass. The 109 added
+policy/UI cases remove no prior inventory entries. Installed Windows bootstrap,
+public pairing, two receipts and the same-application/caller lifetime slice pass;
+the previously recorded isolation, helper-retirement and media limits remain.
+
+The full required gate nevertheless **fails native interoperability**. Both actual
+peers report `PeerFailure` / `scenario_deadline` at
+`direct_native_lease_retirement`. Source reachability implies a direct case had
+completed its transferred/adopted cancellation checks, authenticated exchange and
+post-receipt selected-path/counter validation before entering retirement. Failed
+reports do not retain those case samples, the direct initiator/index, close reply
+or last inventory/counters. This progress is not independently replayable scenario
+acceptance, both-direct-initiator coverage, the full relay/fault matrix, 100 receipt
+iterations, cold starts or final accounting. No new rendezvous failure is reported;
+the historical `c0b3cf7` acknowledgment cause remains unknown.
+
+Read-only source audit establishes a controller/dispatch contract mismatch:
+`native.command` / `native_webrtc_close` returns `state:managed` for an adopted
+shared-native carrier and does not call the protected physical close method.
+The controller ignores that reply and then waits for globally empty inventory
+and zero native leases. Disabled automatic reconnect does not revoke an existing
+verified manual carrier. The guard is intentional and must remain. The reports
+do not retain the actual close result, so no exclusive runtime cause, disposal
+leak or replacement allocation is asserted. Existing owner Stop can retire the
+carrier but also persists a stopped profile/contact fence; restarting a later
+manual case therefore needs a coherent, reviewed admission contract. A simple
+command substitution or raw-close bypass is insufficient.
+
+Product/controller audits and independent composition/contract review are active.
+No native disposal fix, consent change, timeout increase or acceptance weakening
+is assigned. SC26 remains partial. The separately accepted isolated-helper
+retirement design remains production-unassigned pending full native qualification.
+
+Retained `5e6d0da` / repeat run `42824231976` archive SHA-256 values:
+
+- `selection`: `14d04a033bb7d833c939acfb76e069ffbccc7aea5a645a9bb60f1b0de26aedd1`
+- `layout`: `62bebd9fdaebc195323f01a14040a8188533a25afe9d055f0ec0974721663876`
+- `policy`: `90e184504247301b76ce3d42d33fefbc0d2521f8b1b4bdc3f380b62e0d6336ad`
+- `verification`: `048fe049166b5f6b16183bb2b694dac68895df45c2c4e6b47d6d113b42770321`
+- `desktop`: `7bd6b67751cd5ae1d61bcf885f6330c85902ac3a9108c10dec72ee2586447337`
+- `native-windows`: `109959089cb79208cd12c538854815ce996577c0f0c554644bfd0269d5d06dfe`
+- `android`: `993ba94657e54d075f071a9189610319a65eb98fa9681f2843827e84562ae5d1`
+- `android-debug`: `bf181253b8618c656ef13ef9d2066b41bed4424804da0205524d8254fae31071`
+- `direct-linux`: `e537bc82187aa1f27f22368c41e7af178bf04412c6aded967cebec16ed36c6e1`
+- `direct-windows`: `66a921f7948d74f23659fdc0e9a77e20b4ee75e0a1f88e30cc2c2a3467ec6e06`
+- `native-interop-windows`: `54dbe5047862298eb720f356125ebc8fc01f2307e74ecf266ea7748de9b917d2`
+- `native-interop-android`: `8b3425c8983876da946157cf57da14529c62940301b40450975bdb61fa518c40`
+
 The rendezvous diagnostic follow-up integrates `bdd2ff6` and `b0888ec` at
 `b8d77e6`. It records fixed stage/reason labels at known transport origins,
 bound in memory to the exact escaping receive error. An HTTP status is optional
@@ -28,12 +92,13 @@ controller report paths with scripted transport faults, negative identity and
 redaction controls, and pre-change regressions for the missing fields and parser
 mislabeling. Root independently verified XML/inventory/hashes; final immutable
 review found no remaining actionable issues. These are offline controls, not a
-repair for the unobserved `c0b3cf7` cause. Exact-source local and full CI gates
-remain required. The revised helper-retirement interface has A/B design acceptance
+repair for the unobserved `c0b3cf7` cause. Exact-source local and non-native CI
+gates pass at `5e6d0da`; full CI fails native lease retirement as recorded above.
+The revised helper-retirement interface has A/B design acceptance
 after C's post-fence retirement-only registration correction; production remains
 unassigned pending full native qualification.
 
-The latest completed checkpoint is `c0b3cf7558972b8560bac52e5154674d25603c86`
+The earlier completed checkpoint is `c0b3cf7558972b8560bac52e5154674d25603c86`
 (tree `4304e0adbee1da7e694fc58b90bf05e933fce518`), full run
 [42810308484](https://github.com/ahouchens/mesh-chat/actions/runs/42810308484).
 The required gate **failed native Windows–Android interoperability**. Windows

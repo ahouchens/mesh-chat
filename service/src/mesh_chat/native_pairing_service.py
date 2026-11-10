@@ -5,6 +5,7 @@ that capability, physical leases, documents, or reducer events through this port
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from hashlib import sha256
 import json
 import math
@@ -24,8 +25,124 @@ CHANNELS = [
 ]
 
 
+@dataclass(frozen=True)
+class _CarrierRetirement:
+    request: tuple
+    ticket: object
+    runtime: object
+    host: object
+    identity: object
+
+
 class NativePairingServiceMixin:
     native_pairing_public_intents = True
+
+    def _native_retirement_context(self, operation_id):
+        context = getattr(self, "_native_pairing_contexts", {}).get(operation_id)
+        if (context is None or context["state"] != "transferred" or not context["admitted"]
+                or context["runtime_epoch"] != self._runtime_incarnation
+                or context["identity"]() is not self._identity
+                or context["host"] is not self._native_webrtc_host()
+                or context["authorized"]() is not True):
+            raise ContactNotApproved("Carrier retirement context is unavailable")
+        return context
+
+    def native_pairing_retire_carrier(self, operation_id, *, request_id, logical_session,
+                                     expected_physical, expected_service_incarnation,
+                                     expected_adapter_epoch):
+        with self._dispatch_lock, self._native_webrtc_lock:
+            self._require_native_work()
+            context = self._native_retirement_context(operation_id)
+            request = (request_id, logical_session, expected_physical,
+                       expected_service_incarnation, expected_adapter_epoch)
+            previous = context.get("carrier_retirement")
+            if previous is not None:
+                if previous.request != request:
+                    raise ValidationError("Carrier retirement request changed")
+                return self.native_pairing_retirement_observation(operation_id, request_id)
+            if (expected_service_incarnation != self._runtime_incarnation
+                    or context["session"] != logical_session or context["physical"] != expected_physical
+                    or logical_session not in self._native_webrtc_live
+                    or logical_session in self._native_webrtc_creating
+                    or not self._native_resources.current(logical_session, expected_physical)
+                    or getattr(self, "_native_path_sequences", {}).get(expected_physical, (None,))[0]
+                       != expected_adapter_epoch):
+                raise NativeUnavailable("Carrier retirement resource changed")
+            profiles = [profile for profile, session in self._native_webrtc_profile_sessions.items()
+                        if session == logical_session]
+            if len(profiles) != 1:
+                raise NativeUnavailable("Carrier retirement owner is ambiguous")
+            profile = self._reconnect_profile(profiles[0])
+            control = self._native_webrtc_controls.get(logical_session, {})
+            from .native_webrtc_control import profile_binding
+            if (profile.get("scope_kind", "contact") != "contact"
+                    or profile.get("auto_reconnect") is not False
+                    or control.get("profile_id") != profile["id"]
+                    or control.get("profile_binding") != profile_binding(profile)
+                    or not self._native_carrier_authorized(logical_session)
+                    or self._authorized_manual_native_carrier(profile) != logical_session):
+                raise ContactNotApproved("Carrier retirement owner is unavailable")
+            runtime = self._connection_runtime
+            key = connection_key(profile)
+            state = runtime.owner.snapshot(key)
+            try:
+                ticket = runtime.begin_carrier_retirement(
+                    key, Resource("native", expected_physical), state.generation, state.authority.revision)
+            except ValueError as error:
+                raise NativeUnavailable("Carrier retirement owner changed") from error
+            context["carrier_retirement"] = _CarrierRetirement(
+                request, ticket, runtime, context["host"], self._identity)
+            return {"request_id": request_id, "state": "pending"}
+
+    def native_pairing_retirement_observation(self, operation_id, request_id):
+        with self._dispatch_lock:
+            context = self._native_retirement_context(operation_id)
+            record = context.get("carrier_retirement")
+            if (record is None or record.request[0] != request_id
+                    or record.runtime is not self._connection_runtime
+                    or record.host is not self._native_webrtc_host()
+                    or record.identity is not self._identity):
+                raise NativeUnavailable("Carrier retirement request is unavailable")
+            return {"request_id": request_id,
+                    "state": record.runtime.carrier_retirement_status(record.ticket)}
+
+    def native_pairing_retirement_pending(self):
+        with self._dispatch_lock:
+            return any(record is not None and record.runtime.carrier_retirement_status(record.ticket) != "acknowledged"
+                       for context in getattr(self, "_native_pairing_contexts", {}).values()
+                       for record in (context.get("carrier_retirement"),))
+
+    def _native_pairing_retirement_clearances(self):
+        """Fresh local absence facts; only runtime cleanup results acknowledge disposal."""
+        runtime = self._connection_runtime
+        acknowledged = runtime.cleanup_acknowledged_retirements()
+        clearances = []
+        for context in getattr(self, "_native_pairing_contexts", {}).values():
+            record = context.get("carrier_retirement")
+            if (record is None or record.ticket not in acknowledged or record.runtime is not runtime
+                    or record.host is not self._native_webrtc_host() or record.identity is not self._identity
+                    or context["runtime_epoch"] != self._runtime_incarnation):
+                continue
+            try:
+                if self._native_retirement_cleared(record):
+                    clearances.append(record.ticket)
+            except Exception:
+                pass  # An unknown local projection cannot acknowledge retirement.
+        return tuple(clearances)
+
+    def _native_retirement_cleared(self, record):
+        _, logical, physical, _, _ = record.request
+        with self._native_webrtc_lock:
+            if (self._native_resources.physical(logical) is not None
+                    or self._native_resources.resolve(physical) is not None
+                    or logical in self._native_webrtc_live or logical in self._native_webrtc_creating
+                    or logical in self._native_webrtc_descriptions
+                    or record.ticket.key.profile_id in self._native_webrtc_profile_sessions):
+                return False
+        journal = getattr(self, "_carrier_journal", None)
+        if journal is not None and any(binding.resource == physical for binding in journal.bindings()):
+            return False
+        return not self.native_manual_carrier_authorized(record.ticket.key.profile_id)
 
     def native_pairing_begin(self, operation_id, *, role, authorized,
                              pairing_code=None, allow_direct_ip_disclosure=False,

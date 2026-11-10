@@ -27,6 +27,14 @@ acceptance remains unfulfilled; these separate failures do not identify a common
 cause or explain the earlier installed invitation failure. The next diagnostic
 change preserves transport failure while selecting only safe origin metadata.
 
+Checkpoint `5e6d0da` full repeat `42824231976` passes the same installed Windows
+public pairing/receipt/lifetime slice plus the Android and other component suites.
+Both actual native peers fail later at a direct-case native lease-retirement
+deadline. The controller requests a compatibility close which deliberately returns
+managed for an adopted supervisor-owned carrier. Owner-correct retirement and
+later-case admission require review; the guard and strict zero-lease acceptance
+remain unchanged. No full cross-platform or isolated-helper acceptance follows.
+
 ## Gaps observed when this proposal was written
 
 The following observations motivated the implementation; they are historical,

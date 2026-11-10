@@ -80,3 +80,13 @@ validation, but that is not retained scenario-specific sample/receipt acceptance
 The exact transport branch is unrecorded. Full native qualification and isolated
 helper retirement remain unfulfilled; no timeout/retry/authority relaxation is
 authorized by these passing component/platform checks.
+
+Checkpoint `5e6d0da` full repeat `42824231976` passes all non-native suites,
+including 4,760 policy, 1,239 Python UI plus 12 rendered cases, installed Windows
+pairing/lifetime, 52 Android emulator and 71 JVM cases. Both actual native roles
+fail at `direct_native_lease_retirement` with a scenario deadline. The compatibility
+native close is deliberately non-authoritative for adopted supervisor-owned
+carriers (`state:managed`); the controller ignores that reply before waiting for
+zero leases. Existing protected owner Stop has durable later-admission consequences.
+The guard, exact-resource custody and strict empty accounting must remain intact;
+no full native or isolated-helper qualification is established by this checkpoint.

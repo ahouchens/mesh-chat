@@ -23,7 +23,9 @@ def native_runtime(service):
             return {**payload, "profiles": [
                 projected(profile)
                 for profile in payload["profiles"]
-            ] + service._native_pairing_profiles()}
+            ] + service._native_pairing_profiles(),
+                    "retirement_clearances": (service._native_pairing_retirement_clearances()
+                                              if runtime.cleanup_acknowledged_retirements() else ())}
 
     def execution():
         if service._shutdown.is_set():

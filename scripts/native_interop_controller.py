@@ -489,8 +489,7 @@ class Controller:
         self.phase = "clean_host_retirement"
         self.native("reconnect_consent_set", contact_id=self.contact["id"], auto_reconnect=False,
                     allow_direct_ip_disclosure=True)
-        for resource in self.peer.inventory()["resources"]:
-            self.native("native_webrtc_close", session_id=resource["logical_session"])
+        self.core("connection.stop", {"profile": self.profile, "peer": self.contact["core_handle"]})
         final_accounting = self.wait(self.retired, timeout=30)
         webviews = 0
         if self.role == "windows":
