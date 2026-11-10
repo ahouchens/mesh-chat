@@ -2,7 +2,7 @@
 
 Status: the original proposal below is partly implemented. Public pairing
 intents, normal app-owned hosts and independent distribution inputs exist.
-Checkpoint `65b0872` independently verifies installed Windows bootstrap, public
+Checkpoint `902b12d` independently verifies installed Windows bootstrap, public
 pairing and two authenticated receipts. Full run `42784376932` failed native
 interoperability at explicit contact approval, so it is not aggregate or
 Windows–Android qualification. The private topology controller remains a

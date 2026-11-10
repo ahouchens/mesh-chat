@@ -53,3 +53,10 @@ does not prove readiness or delivery. Restrict raw endpoint tuples to transient
 controller memory/fault correlation; export only categories, availability,
 hashes and truthful counters. Never export SDP, credentials, bearer documents,
 vault keys or raw addresses. Unit admission tests are not packaged OS evidence.
+
+The `902b12d` full qualification run `42796005344` executed all 18 native-path
+JVM controls (71 JVM cases overall), all 52 required Android emulator cases and
+the installed Windows platform suites successfully. Its cross-platform native
+Android role failed earlier at checked `adb root` preflight; the original cause
+is unknown because command output was not retained. These passing component/
+platform results do not qualify the full Windows–Android sample/receipt matrix.

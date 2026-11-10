@@ -20,6 +20,41 @@ and scenario rows below to complete; their named remaining obligations still
 apply, including packaged cross-platform transport and unavailable physical
 qualification.
 
+The latest completed qualification checkpoint is `902b12d1470177fe4207e027bf3d44fbe839cc91`
+(tree `ad829c7716cb2b4c15620a9d69504c6ce114922e`), full run
+[42796005344](https://github.com/ahouchens/mesh-chat/actions/runs/42796005344).
+The required gate **failed native interoperability**. Android failed during
+`platform_outbound_preflight`, at the checked `android_root` command, with
+`CalledProcessError`. Its subsequent root-identity, pairing and native sample
+checks were not reached. Windows reported `RendezvousUnavailable` at
+`initialize`. The retained Android output does not contain the exit
+status or cause: stderr was discarded and captured stdout was not serialized.
+No transience, root-privilege rejection or successful cross-platform freshness
+validation is inferred. The failed attempt remains recorded.
+
+All other families independently verified **PASS** on that exact source:
+**4,482 policy cases**, **1,049 Python UI + 12 rendered cases**, **nine Windows
+boundary cases**, **52 required Android emulator cases**, and **71 JVM cases**,
+with zero skips. The JVM inventory retains all 62 prior cases and executes all
+nine new sampling controls, including the actual invocation helper. All 17
+Android binary/distribution hashes validate. Linux and Windows each pass the
+25 transport, 10 recovery and 12 setup cases; 72 layout cases have no overflow
+(runner reports checked; screenshots not visually reviewed). Local SDK staging,
+strict types and all full local gates also passed.
+
+Installed Windows public-SDK lifetime acceptance is reconfirmed on `902b12d`:
+two same-application/same-caller SDK sessions, detach/reattach, refusal of a
+competing owner, pending-message/key preservation across trusted owner restart,
+positive host exits and native-host shutdown acknowledgement. This does not
+prove separate consumer-process isolation or isolated-helper completion.
+The separate helper-retirement draft has independent architecture review but
+remains unimplemented. Its exact-completion proposal covers helper child/I/O,
+pipes, protected temporary directory, executor and registered local carrier/
+handoff work; native preparation and router-mapping cleanup retain their current
+best-effort scope. SC26 remains partial. A narrow preflight diagnostic follow-up
+preserves the checked failure, one root invocation, UID guard and all deadlines;
+no rerun or diagnostic label retroactively assigns the failed attempt's cause.
+
 The native sample freshness follow-up combines producer `14e10f4`, consumer
 `a542589` and independent composition regression `ae585ec` at `377ab38`.
 Source inspection proves the former controller compared native monotonic ticks
@@ -49,11 +84,11 @@ The lead ran **706 combined focused cases**, all passing with zero skips in
 9.96 seconds, including **19 real Python producer/service/controller composition
 cases with modeled native effects** and all 45 Windows host conformance cases.
 The old clock comparison fails the retained behavioral regression. Nine new
-Android JVM vectors invoke the production callback helper but remain unexecuted
-locally. Exact-source SDK/types/policy/UI/Windows gates and actual full CI are
-still required. No native platform, receipt matrix or helper-retirement
-acceptance is promoted; the separate bootstrap-retirement implementation stays
-deferred while this qualification repair is verified.
+Android JVM vectors invoke the production callback helper and subsequently
+passed in the exact-source CI run recorded above. All local gates and platform
+suites passed; packaged cross-platform acceptance remains blocked by native
+Android preflight. No receipt-matrix or helper-retirement acceptance is promoted;
+the separate bootstrap-retirement implementation stays deferred.
 
 The preceding qualification checkpoint is `65b08727264f463f7337b9be06e36799f5a3a364`
 (tree `77cedce295df08a7be13cec774bea289ac302ee5`). Full manual run
@@ -1017,7 +1052,7 @@ never described as physical-device qualification.
 | SC23 | `local` | Lost reply, timeout and duplicate request after restart resolve by idempotency key; conflicting payloads fail. |
 | SC24 | `local` | Bounded replay, explicit gaps, cursor expiry and consumer deduplication are covered by facade and client tests. |
 | SC25 | `partial` | Declared experimental clients, incompatible-major refusal and actual source-pinned baseline upgrade fixtures execute. Supported runtime/SDK/package pairs, exclusions and a bounded upgrade/data window remain undeclared; those exact pairs require installed qualification. A release tag does not provide missing automated pair coverage. |
-| SC26 | `partial` | Exact `65b0872` installed Windows evidence verifies two same-application SDK sessions, detach/reattach, refused competing ownership, pending-message/key preservation across owner restart, three clean host exits and one rejected-owner exit. Android verifies SDK detach/rebind, runtime shutdown/restart and cold locked-process lifecycle. Separate consumer-process/caller isolation and exact isolated-helper/resource retirement remain open. Trusted owner shutdown authority is unchanged. |
+| SC26 | `partial` | Exact `902b12d` installed Windows evidence verifies two same-application SDK sessions, detach/reattach, refused competing ownership, pending-message/key preservation across owner restart, three clean host exits and one rejected-owner exit. Android verifies SDK detach/rebind, runtime shutdown/restart and cold locked-process lifecycle. Separate consumer-process/caller isolation and exact isolated-helper/resource retirement remain open. Trusted owner shutdown authority is unchanged. |
 
 ## Completion boundaries
 
