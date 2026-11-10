@@ -150,6 +150,18 @@ class NativePairingServiceMixin:
             self._native_pairing_notify_terminal(context)
             return self._native_pairing_projection(context)
 
+    def native_pairing_qualification_status(self, operation_id):
+        """Private fresh-profile qualification only; ordinary status is unchanged."""
+        with self._dispatch_lock:
+            result = self.native_pairing_status(operation_id)
+            if result["state"] in {"retiring", "retired"}:
+                context = self._native_pairing_contexts[operation_id]
+                key = connection_key({"id": context["id"], "scope_kind": "pairing",
+                                      "local_device_id": context["identity_hash"]})
+                result["retirement"] = self._connection_runtime.owner.pairing_retirement_diagnostic(
+                    key=key, runtime_epoch=context["runtime_epoch"], source=context["source"])
+            return result
+
     @staticmethod
     def _native_pairing_projection(context):
         # The pairing code is returned only by this authorized private port.
