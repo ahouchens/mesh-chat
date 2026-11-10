@@ -10,6 +10,8 @@ import socket
 from urllib.parse import urlsplit
 from uuid import uuid4
 
+from native_interop_diagnostics import negative_control_error, negative_control_stage
+
 
 def ipv4_proc(value):
     address, port = value.split(":")
@@ -56,8 +58,9 @@ def netem_counter(text, handle):
 
 class AndroidKernelPath:
     """Only the explicitly booted rootable CI emulator may execute these rules."""
-    def __init__(self, peer, observation, turn_url, *, resolver=socket.getaddrinfo):
+    def __init__(self, peer, observation, turn_url, *, resolver=socket.getaddrinfo, diagnostics=None):
         self.peer, self._blocked = peer, False
+        self._negative_diagnostics = diagnostics
         self._installed = []
         self.rule = "mesh-ci-" + uuid4().hex[:12]
         self.ifb = "mci" + uuid4().hex[:8]
@@ -143,37 +146,49 @@ class AndroidKernelPath:
         self.drop_args = ["-p", self.protocol, "-s", value["local"], "--sport", str(value["local_port"]),
             "-d", value["remote"], "--dport", str(value["remote_port"]), "-m", "owner", "--uid-owner", self.uid,
             "-m", "comment", "--comment", self.rule, "-j", "DROP"]
-        self.command("iptables", "-I", "OUTPUT", "1", *self.drop_args)
+        with negative_control_stage(getattr(self, "_negative_diagnostics", None), "kernel_block_install"):
+            self.command("iptables", "-I", "OUTPUT", "1", *self.drop_args)
         self._blocked = True
 
     def unblock(self):
         if not self._blocked:
             return 0
-        text = self.command("iptables", "-nvx", "-L", "OUTPUT", "--line-numbers")
-        lines = [line.split() for line in text.splitlines() if self.rule in line]
-        if len(lines) != 1 or len(lines[0]) < 4 or lines[0][3] != "DROP":
-            raise ValueError("Exact kernel block rule counter is unavailable")
-        packets = int(lines[0][1])
+        observer = getattr(self, "_negative_diagnostics", None)
+        with negative_control_stage(observer, "kernel_counter_read"):
+            text = self.command("iptables", "-nvx", "-L", "OUTPUT", "--line-numbers")
+        with negative_control_stage(observer, "kernel_counter_parse"):
+            lines = [line.split() for line in text.splitlines() if self.rule in line]
+            if len(lines) != 1 or len(lines[0]) < 4 or lines[0][3] != "DROP":
+                raise negative_control_error(observer, "kernel_counter_parse",
+                    ValueError("Exact kernel block rule counter is unavailable"), "counter_unavailable")
+            packets = int(lines[0][1])
         current = True
         try: self.require_current()
         except Exception: current = False
-        self.command("iptables", "-D", "OUTPUT", *self.drop_args)
+        with negative_control_stage(observer, "kernel_restore_delete"):
+            self.command("iptables", "-D", "OUTPUT", *self.drop_args)
         self._blocked = False
         if not current:
-            raise ValueError("The blocked native kernel socket changed before restoration")
+            raise negative_control_error(observer, "kernel_restore_current",
+                ValueError("The blocked native kernel socket changed before restoration"), "current_check_failed")
         return packets
 
     def require_current(self):
-        if self.peer._adb("shell", "pidof", self.peer.APP) != self.pid:
-            raise ValueError("The native process changed during kernel fault correlation")
-        links = self.command("sh", "-c", f"'for f in /proc/{self.pid}/fd/*; do readlink \"$f\" 2>/dev/null || true; done'")
-        inodes = set(re.findall(r"socket:\[([0-9]+)\]", links))
-        tables = [self.command("cat", f"/proc/{self.pid}/net/{self.protocol}"),
-                  self.command("cat", f"/proc/{self.pid}/net/{self.protocol}6")]
-        try: conntrack = self.command("cat", "/proc/net/nf_conntrack") if self.protocol == "udp" else ""
-        except Exception: conntrack = ""
-        if owned_socket("\n".join(tables), inodes, self.addresses, self.port, conntrack) != self.socket:
-            raise ValueError("The native kernel socket changed during its selected-path test")
+        observer = getattr(self, "_negative_diagnostics", None)
+        with negative_control_stage(observer, "kernel_current_process"):
+            if self.peer._adb("shell", "pidof", self.peer.APP) != self.pid:
+                raise negative_control_error(observer, "kernel_current_process",
+                    ValueError("The native process changed during kernel fault correlation"), "process_changed")
+        with negative_control_stage(observer, "kernel_current_socket"):
+            links = self.command("sh", "-c", f"'for f in /proc/{self.pid}/fd/*; do readlink \"$f\" 2>/dev/null || true; done'")
+            inodes = set(re.findall(r"socket:\[([0-9]+)\]", links))
+            tables = [self.command("cat", f"/proc/{self.pid}/net/{self.protocol}"),
+                      self.command("cat", f"/proc/{self.pid}/net/{self.protocol}6")]
+            try: conntrack = self.command("cat", "/proc/net/nf_conntrack") if self.protocol == "udp" else ""
+            except Exception: conntrack = ""
+            if owned_socket("\n".join(tables), inodes, self.addresses, self.port, conntrack) != self.socket:
+                raise negative_control_error(observer, "kernel_current_socket",
+                    ValueError("The native kernel socket changed during its selected-path test"), "socket_changed")
 
     def report(self):
         after = self.counters()
@@ -200,4 +215,5 @@ class AndroidKernelPath:
             except Exception: failures.append(item)
         self._installed = [item for item in self._installed if item in failures]
         if failures:
-            raise RuntimeError("Exact kernel fault cleanup is incomplete")
+            raise negative_control_error(getattr(self, "_negative_diagnostics", None), "fault_cleanup",
+                RuntimeError("Exact kernel fault cleanup is incomplete"), "cleanup_incomplete")

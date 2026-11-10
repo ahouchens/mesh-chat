@@ -16,7 +16,8 @@ sys.path.insert(0, str(ROOT / "service/src"))
 from mesh_chat.connection.diagnostics import validated_pairing_retirement
 from native_interop_artifacts import GithubArtifacts, RendezvousUnavailable, context_from_environment
 from native_interop_evidence import SCENARIOS, SAMPLE_REJECTION_REASONS, Samples, accounting, digest, selection, traffic
-from native_interop_diagnostics import PreflightDiagnostics, rendezvous_observation
+from native_interop_diagnostics import (NegativeControlDiagnostics, PreflightDiagnostics, negative_control_error,
+    negative_control_observation, negative_control_stage, rendezvous_observation, reset_negative_control)
 from native_interop_peers import AndroidEmulator, AndroidPeer, PeerFailure, WindowsPeer
 from native_interop_preflight import android_environment, outbound_services
 from native_interop_rendezvous import Rendezvous, checked_payload
@@ -135,6 +136,8 @@ class Controller:
         self._pairing_failure: tuple[Exception, str, dict[str, str] | None] | None = None
         self._substage_failure: tuple[Exception, str] | None = None
         self._retirement_context = self._retirement_failure = None
+        try: self._negative_diagnostics = NegativeControlDiagnostics()
+        except Exception: self._negative_diagnostics = None
         self.workload = required_workload(workload)
 
     @contextmanager
@@ -196,6 +199,24 @@ class Controller:
             return {"carrier_retirement_failure": selected} if selected is not None else {}
         except Exception:
             return {}
+
+    def failure_negative_control(self, error):
+        try:
+            observer = self._negative_diagnostics
+            if type(observer) is not NegativeControlDiagnostics or observer._disabled is not False:
+                return {}
+            record = observer._failure
+            if type(record) is not tuple or len(record) != 2 or record[0] is not error:
+                return {}
+            selected = negative_control_observation(observer.failure_observation(error))
+            if selected != negative_control_observation(record[1]): return {}
+            return {"negative_control": selected} if selected else {}
+        except Exception:
+            return {}
+
+    def negative_traffic(self, before, after):
+        with negative_control_stage(self._negative_diagnostics, "final_traffic"):
+            return traffic(before, after)
 
     def _retirement_poll_observation(self, state=None, resources=None, counts=None):
         context = self._retirement_context
@@ -409,11 +430,14 @@ class Controller:
         # production Core frame budget; impairment acts on real kernel packets.
         return value + (":" + "x" * 1024 if padded else "")
 
-    def enqueue(self, text):
+    def enqueue(self, text, *, negative_control=False):
         result = self.core("message.enqueue", {"profile": self.profile, "recipient": self.contact["core_handle"],
             "kind": "text", "text": text}, uuid4().hex)
         if result.get("accepted") is not True:
-            raise ValueError("Core did not durably accept the message")
+            error = ValueError("Core did not durably accept the message")
+            if negative_control:
+                negative_control_error(self._negative_diagnostics, "blocked_enqueue", error, "not_accepted")
+            raise error
         return result["message"]
 
     def delivered(self, handle):
@@ -438,31 +462,49 @@ class Controller:
 
     def negative(self, fault, scenario):
         self.phase = scenario + "_kernel_block_negative_control"
+        self._negative_diagnostics = reset_negative_control(self._negative_diagnostics, scenario)
+        observer = self._negative_diagnostics
         if fault is not None:
-            fault.block()
-            self.publish("negative_ready_" + scenario, {"approved": True})
-        elif self.receive("negative_ready_" + scenario) != {"approved": True}:
-            raise ValueError("Kernel block admission was not acknowledged")
-        handle = self.enqueue(self.text("blocked_path_" + scenario))
+            with negative_control_stage(observer, "kernel_block"): fault.block()
+            with negative_control_stage(observer, "ready_publish"):
+                self.publish("negative_ready_" + scenario, {"approved": True})
+        else:
+            with negative_control_stage(observer, "ready_receive"):
+                if self.receive("negative_ready_" + scenario) != {"approved": True}:
+                    raise negative_control_error(observer, "ready_receive",
+                        ValueError("Kernel block admission was not acknowledged"), "not_acknowledged")
+        with negative_control_stage(observer, "blocked_enqueue"):
+            handle = self.enqueue(self.text("blocked_path_" + scenario), negative_control=True)
         until = time.monotonic() + 2
         while time.monotonic() < until:
-            if self.delivered(handle):
-                raise ValueError("Authenticated receipt arrived while the selected kernel path was blocked")
+            with negative_control_stage(observer, "blocked_receipt"):
+                if self.delivered(handle):
+                    raise negative_control_error(observer, "blocked_receipt",
+                        ValueError("Authenticated receipt arrived while the selected kernel path was blocked"), "receipt_while_blocked")
             time.sleep(0.1)
         packets = None
         if fault is not None:
-            if self.receive("negative_checked_" + scenario) != {"approved": True}:
-                raise ValueError("Remote blocked-path observation is missing")
-            packets = fault.unblock()
-            if packets <= 0:
-                raise ValueError("Negative control has no actual dropped packets")
+            with negative_control_stage(observer, "checked_receive"):
+                if self.receive("negative_checked_" + scenario) != {"approved": True}:
+                    raise negative_control_error(observer, "checked_receive",
+                        ValueError("Remote blocked-path observation is missing"), "not_acknowledged")
+            with negative_control_stage(observer, "kernel_unblock"): packets = fault.unblock()
+            with negative_control_stage(observer, "dropped_count"):
+                if packets <= 0:
+                    raise negative_control_error(observer, "dropped_count",
+                        ValueError("Negative control has no actual dropped packets"), "no_dropped_packets")
         else:
-            self.publish("negative_checked_" + scenario, {"approved": True})
-        self.wait(lambda: self.delivered(handle), timeout=90)
-        inbound = self.wait(lambda: self.records(self.text("blocked_path_" + scenario, sender=self.partner), "inbound"), timeout=90)
-        outbound = self.records(self.text("blocked_path_" + scenario), "outbound")
-        if len(inbound) != 1 or len(outbound) != 1:
-            raise ValueError("Blocked-path recovery duplicated the queued durable message")
+            with negative_control_stage(observer, "checked_publish"):
+                self.publish("negative_checked_" + scenario, {"approved": True})
+        with negative_control_stage(observer, "restored_delivery"):
+            self.wait(lambda: self.delivered(handle), timeout=90)
+        with negative_control_stage(observer, "recovered_inbound"):
+            inbound = self.wait(lambda: self.records(self.text("blocked_path_" + scenario, sender=self.partner), "inbound"), timeout=90)
+        with negative_control_stage(observer, "recovered_records"):
+            outbound = self.records(self.text("blocked_path_" + scenario), "outbound")
+            if len(inbound) != 1 or len(outbound) != 1:
+                raise negative_control_error(observer, "recovered_records",
+                    ValueError("Blocked-path recovery duplicated the queued durable message"), "record_count")
         return {"blocked_packets": packets, "delivered_while_blocked": False, "delivered_after_restore": True,
                 "kernel_protocol": fault.protocol if fault is not None else None,
                 "kernel_socket": digest(fault.socket) if fault is not None else None,
@@ -470,6 +512,7 @@ class Controller:
 
     def path_case(self, scenario, initiator):
         self._retirement_context = self._retirement_failure = None
+        self._negative_diagnostics = reset_negative_control(self._negative_diagnostics, scenario)
         session, url = self.negotiate(scenario, initiator)
         if self.contact is None: self.pair(session, initiator)
         with self._substage("transferred_status_wait"):
@@ -492,7 +535,7 @@ class Controller:
         try:
             if scenario in {"turn_tcp", "turn_tls", "impaired"} and self.role == "android":
                 from native_interop_faults import AndroidKernelPath
-                fault = AndroidKernelPath(self.peer, before, url)
+                fault = AndroidKernelPath(self.peer, before, url, diagnostics=self._negative_diagnostics)
             if scenario == "impaired":
                 if self.role == "android":
                     fault.install()
@@ -502,19 +545,26 @@ class Controller:
             messages = [self.exchange(scenario + ":" + initiator, index, padded=scenario == "impaired")[0]
                         for index in range(20 if scenario == "impaired" else 1)]
             negative = self.negative(fault, scenario) if scenario in {"turn_tcp", "turn_tls", "impaired"} else None
-            after = self.observe(session, ready=True, scenario=scenario)
-            if after is None: raise ValueError("Native selected path disappeared after receipt delivery")
-            if fault is not None and scenario == "impaired": impairment = fault.report()
-            if scenario == "impaired" and self.role == "android" and (
-                    before["pair"]["rtt_ms"] is None or after["pair"]["rtt_ms"] is None):
-                raise ValueError("Actual selected-pair baseline/impaired RTT is unavailable")
-            self.cases.append({"scenario": scenario, "initiator": initiator, "supervisor_pairing": {
-                "operation": digest(self.pairing), "role": "offer" if self.role == initiator else "answer", "state": "transferred",
-                "transferred_cancel_preserves_carrier": True},
-                "before": selection(before), "after": selection(after),
-                "native_delta": traffic(before, after), "messages": messages, "impairment": impairment, "negative": negative})
+            with negative_control_stage(self._negative_diagnostics, "final_observation"):
+                after = self.observe(session, ready=True, scenario=scenario)
+                if after is None:
+                    raise negative_control_error(self._negative_diagnostics, "final_observation",
+                        ValueError("Native selected path disappeared after receipt delivery"), "path_missing")
+            with negative_control_stage(self._negative_diagnostics, "final_evidence"):
+                if fault is not None and scenario == "impaired": impairment = fault.report()
+                if scenario == "impaired" and self.role == "android" and (
+                        before["pair"]["rtt_ms"] is None or after["pair"]["rtt_ms"] is None):
+                    raise negative_control_error(self._negative_diagnostics, "final_evidence",
+                        ValueError("Actual selected-pair baseline/impaired RTT is unavailable"), "rtt_unavailable")
+                self.cases.append({"scenario": scenario, "initiator": initiator, "supervisor_pairing": {
+                    "operation": digest(self.pairing), "role": "offer" if self.role == initiator else "answer", "state": "transferred",
+                    "transferred_cancel_preserves_carrier": True},
+                    "before": selection(before), "after": selection(after),
+                    "native_delta": self.negative_traffic(before, after), "messages": messages, "impairment": impairment, "negative": negative})
         finally:
-            if fault is not None: fault.close()
+            if fault is not None:
+                with negative_control_stage(self._negative_diagnostics, "fault_cleanup"): fault.close()
+        self._negative_diagnostics = reset_negative_control(self._negative_diagnostics)
         self.phase = scenario + "_native_lease_retirement"
         self._retirement_context = {"scenario": scenario, "initiator": initiator, "stage": "request",
             "polls": 0, "polls_capped": False, "last_observation": None}
@@ -678,6 +728,7 @@ def main():
             result.update(controller.failure_observation(error))
             result.update(controller.failure_rendezvous(error))
             result.update(controller.failure_retirement(error))
+            result.update(controller.failure_negative_control(error))
     finally:
         if peer is not None and peer.process is not None:
             try: peer.stop(crash=True)

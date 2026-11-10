@@ -8,6 +8,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 import native_interop_faults as faults
+from native_interop_diagnostics import (NEGATIVE_CONTROL_REASONS, NegativeControlDiagnostics,
+    negative_control_error, negative_control_observation, negative_control_stage)
 
 
 def row(local="0F02000A:C350", remote="026433C6:0D96", inode="1234"):
@@ -112,3 +114,171 @@ def test_kernel_fault_cleanup_retains_failed_exact_rule_for_later_retry(monkeypa
     monkeypatch.setattr(value, "command", lambda *args: None)
     value.close()
     assert value._installed == []
+
+
+def diagnostic_kernel(monkeypatch):
+    from subprocess import CalledProcessError
+    value = kernel_fixture("tcp")
+    observer = value._negative_diagnostics = NegativeControlDiagnostics()
+    observer.reset("turn_tcp")
+    state = SimpleNamespace(value=value, observer=observer, commands=[], fault=None,
+        error=CalledProcessError(17, ["PRIVATE_COMMAND"], output="PRIVATE_OUTPUT", stderr="PRIVATE_STDERR"))
+    value.pid, value.addresses, value.port = "123", {"198.51.100.2"}, 3478
+    def adb(*args):
+        state.commands.append(("adb", *args))
+        if state.fault == "process_error": raise state.error
+        return "456" if state.fault == "process_changed" else "123"
+    value.peer = SimpleNamespace(APP="PRIVATE_APP", _adb=adb)
+    def command(*args):
+        state.commands.append(args)
+        if args[:2] == ("iptables", "-I"):
+            if state.fault == "install_error": raise state.error
+            return ""
+        if args[:2] == ("iptables", "-nvx"):
+            if state.fault == "counter_read_error": raise state.error
+            if state.fault == "counter_missing": return "PRIVATE_NOT_A_COUNTER"
+            text = "1 3 100 DROP tcp -- * * PRIVATE_ENDPOINT PRIVATE_ENDPOINT /* " + value.rule + " */"
+            if state.fault == "counter_duplicate": text += "\n" + text
+            elif state.fault == "counter_target": text = text.replace("DROP", "ACCEPT")
+            elif state.fault == "counter_number": text = text.replace("1 3 100", "1 PRIVATE_NUMBER 100")
+            return text
+        if args[:2] == ("iptables", "-D"):
+            if state.fault == "delete_error": raise state.error
+            return ""
+        if args[:2] == ("sh", "-c"):
+            if state.fault == "socket_read_error": raise state.error
+            return "socket:[1234]"
+        assert args[0] == "cat"
+        if args[1].endswith("tcp6"): return "header\n"
+        if state.fault == "socket_missing": return "header\n"
+        return "header\n" + row(local="0F02000A:C351" if state.fault == "socket_changed" else "0F02000A:C350")
+    monkeypatch.setattr(value, "command", command)
+    return state
+
+
+@pytest.mark.parametrize("point,stage,reason", [
+    ("process_error", "kernel_current_process", None),
+    ("process_changed", "kernel_current_process", "process_changed"),
+    ("socket_read_error", "kernel_current_socket", None),
+    ("socket_missing", "kernel_current_socket", None),
+    ("socket_changed", "kernel_current_socket", "socket_changed"),
+    ("install_error", "kernel_block_install", None),
+])
+def test_actual_kernel_block_keeps_deepest_stage_and_only_observed_branch_reason(monkeypatch, point, stage, reason):
+    state = diagnostic_kernel(monkeypatch)
+    state.fault = point
+    with pytest.raises(Exception) as failure:
+        with negative_control_stage(state.observer, "kernel_block"): state.value.block()
+    expected = {"scenario": "turn_tcp", "stage": stage}
+    if reason is not None: expected["reason"] = reason
+    assert state.observer.failure_observation(failure.value) == expected
+    if point.endswith("error"): assert failure.value is state.error
+    assert state.value._blocked is False
+    assert "PRIVATE" not in repr(expected)
+
+
+@pytest.mark.parametrize("point,stage,reason", [
+    ("counter_read_error", "kernel_counter_read", None),
+    ("counter_missing", "kernel_counter_parse", "counter_unavailable"),
+    ("counter_duplicate", "kernel_counter_parse", "counter_unavailable"),
+    ("counter_target", "kernel_counter_parse", "counter_unavailable"),
+    ("counter_number", "kernel_counter_parse", None),
+    ("delete_error", "kernel_restore_delete", None),
+    ("process_changed", "kernel_restore_current", "current_check_failed"),
+    ("socket_changed", "kernel_restore_current", "current_check_failed"),
+])
+def test_actual_kernel_unblock_preserves_current_check_delete_order_and_new_error_custody(monkeypatch, point, stage, reason):
+    state = diagnostic_kernel(monkeypatch)
+    state.value.block()
+    state.commands.clear()
+    state.fault = point
+    with pytest.raises(Exception) as failure:
+        with negative_control_stage(state.observer, "kernel_unblock"): state.value.unblock()
+    expected = {"scenario": "turn_tcp", "stage": stage}
+    if reason is not None: expected["reason"] = reason
+    assert state.observer.failure_observation(failure.value) == expected
+    if point.endswith("error"): assert failure.value is state.error
+    if stage == "kernel_restore_current":
+        assert state.value._blocked is False and state.commands[-1][:2] == ("iptables", "-D")
+        assert str(failure.value) == "The blocked native kernel socket changed before restoration"
+    else: assert state.value._blocked is True
+    assert state.commands[0] == ("iptables", "-nvx", "-L", "OUTPUT", "--line-numbers")
+    assert "PRIVATE" not in repr(expected)
+
+
+def test_actual_kernel_cleanup_replacement_has_own_literal_reason_and_no_primary_attribution(monkeypatch):
+    state = diagnostic_kernel(monkeypatch)
+    state.value.block()
+    state.fault = "delete_error"
+    with pytest.raises(Exception) as primary: state.value.unblock()
+    assert primary.value is state.error
+    with pytest.raises(RuntimeError) as escaped:
+        with negative_control_stage(state.observer, "fault_cleanup"): state.value.close()
+    assert escaped.value is not primary.value
+    assert str(escaped.value) == "Exact kernel fault cleanup is incomplete"
+    assert state.observer.failure_observation(escaped.value) == {
+        "scenario": "turn_tcp", "stage": "fault_cleanup", "reason": "cleanup_incomplete"}
+    assert state.observer.failure_observation(primary.value) == {}
+    assert state.value._blocked is True
+
+
+def test_actual_kernel_success_retains_same_commands_and_no_failure_evidence(monkeypatch):
+    state = diagnostic_kernel(monkeypatch)
+    state.value.block()
+    assert state.value.unblock() == 3
+    state.value.close()
+    assert state.value._blocked is False and state.observer._failure is None
+    assert len(state.commands) == 11
+    assert [args[:2] for args in state.commands if args[0] == "iptables"] == [
+        ("iptables", "-I"), ("iptables", "-nvx"), ("iptables", "-D")]
+
+
+@pytest.mark.parametrize("after", [False, True])
+def test_throwing_kernel_observer_cannot_replace_error_or_leak_partial_observation(monkeypatch, after):
+    state = diagnostic_kernel(monkeypatch)
+    state.fault = "process_changed"
+    observe = state.observer.observe
+    def broken(*args):
+        if after: observe(*args)
+        raise ValueError("PRIVATE_OBSERVER")
+    monkeypatch.setattr(state.observer, "observe", broken)
+    with pytest.raises(ValueError, match="native process changed") as failure: state.value.block()
+    assert state.observer.failure_observation(failure.value) == {}
+    assert state.value._blocked is False
+
+
+@pytest.mark.parametrize("value", [None, [], {}, {"scenario": "direct", "stage": "kernel_block"},
+    {"scenario": "turn_tcp", "stage": "PRIVATE_UNKNOWN"}, {"scenario": "turn_tcp", "stage": True},
+    {"scenario": "turn_tcp", "stage": "kernel_block", "reason": "process_changed"},
+    {"scenario": "turn_tcp", "stage": "blocked_receipt", "reason": "PRIVATE_UNKNOWN"},
+    {"scenario": "turn_tcp", "stage": "blocked_receipt", "reason": None},
+    {"scenario": "turn_tcp", "stage": "blocked_receipt", "reason": 1},
+    {"scenario": "turn_tcp", "stage": "kernel_block", "socket": "PRIVATE_SOCKET"}])
+def test_negative_projection_rejects_unknown_extra_wrong_type_and_mismatched_reason(value):
+    assert negative_control_observation(value) == {}
+
+
+def test_negative_projection_has_exact_safe_catalog_and_never_parses_exception_text():
+    assert set(NEGATIVE_CONTROL_REASONS) == {"kernel_block", "kernel_current_process", "kernel_current_socket",
+        "kernel_block_install", "ready_publish", "ready_receive", "blocked_enqueue", "blocked_receipt",
+        "checked_receive", "checked_publish", "kernel_unblock", "kernel_counter_read", "kernel_counter_parse",
+        "kernel_restore_current", "kernel_restore_delete", "dropped_count", "restored_delivery",
+        "recovered_inbound", "recovered_records", "final_observation", "final_evidence", "final_traffic", "fault_cleanup"}
+    observer = NegativeControlDiagnostics()
+    for scenario in ("turn_tcp", "turn_tls", "impaired"):
+        for stage, reasons in NEGATIVE_CONTROL_REASONS.items():
+            for reason in (None, *reasons):
+                observer.reset(scenario)
+                error = ValueError("Authenticated receipt arrived while the selected kernel path was blocked")
+                error.reason, error.stage = "PRIVATE_REASON", "PRIVATE_STAGE"
+                assert negative_control_error(observer, stage, error, reason) is error
+                value = {"scenario": scenario, "stage": stage}
+                if reason is not None: value["reason"] = reason
+                assert observer.failure_observation(error) == value
+                assert observer.failure_observation(ValueError(str(error))) == {}
+                selected = negative_control_observation(value)
+                assert selected == value and selected is not value
+    observer.reset("direct")
+    with pytest.raises(ValueError) as failure:
+        with negative_control_stage(observer, "final_traffic"): raise ValueError("PRIVATE_TEXT")
+    assert observer.failure_observation(failure.value) == {}

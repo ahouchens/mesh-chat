@@ -1,7 +1,95 @@
-"""Failure-only, per-run attribution for checked Android preflight commands."""
+"""Failure-only, bounded attribution for controller and Android boundaries."""
 
 from contextlib import contextmanager
 from subprocess import CalledProcessError
+
+
+NEGATIVE_CONTROL_REASONS = {
+    "kernel_block": frozenset(),
+    "kernel_current_process": frozenset({"process_changed"}),
+    "kernel_current_socket": frozenset({"socket_changed"}),
+    "kernel_block_install": frozenset(),
+    "ready_publish": frozenset(),
+    "ready_receive": frozenset({"not_acknowledged"}),
+    "blocked_enqueue": frozenset({"not_accepted"}),
+    "blocked_receipt": frozenset({"receipt_while_blocked"}),
+    "checked_receive": frozenset({"not_acknowledged"}),
+    "checked_publish": frozenset(),
+    "kernel_unblock": frozenset(),
+    "kernel_counter_read": frozenset(),
+    "kernel_counter_parse": frozenset({"counter_unavailable"}),
+    "kernel_restore_current": frozenset({"current_check_failed"}),
+    "kernel_restore_delete": frozenset(),
+    "dropped_count": frozenset({"no_dropped_packets"}),
+    "restored_delivery": frozenset(),
+    "recovered_inbound": frozenset(),
+    "recovered_records": frozenset({"record_count"}),
+    "final_observation": frozenset({"path_missing"}),
+    "final_evidence": frozenset({"rtt_unavailable"}),
+    "final_traffic": frozenset(),
+    "fault_cleanup": frozenset({"cleanup_incomplete"}),
+}
+
+
+def negative_control_observation(value):
+    if (type(value) is not dict or not {"scenario", "stage"} <= set(value)
+            or set(value) - {"scenario", "stage", "reason"}
+            or type(value["scenario"]) is not str or value["scenario"] not in {"turn_tcp", "turn_tls", "impaired"}
+            or type(value["stage"]) is not str or value["stage"] not in NEGATIVE_CONTROL_REASONS):
+        return {}
+    if "reason" in value and (type(value["reason"]) is not str
+            or value["reason"] not in NEGATIVE_CONTROL_REASONS[value["stage"]]):
+        return {}
+    return dict(value)
+
+
+class NegativeControlDiagnostics:
+    def __init__(self):
+        self.reset()
+
+    def reset(self, scenario=None):
+        self._scenario, self._failure, self._disabled = scenario, None, False
+
+    def observe(self, error, stage, reason=None):
+        if self._disabled or (self._failure is not None and self._failure[0] is error):
+            return
+        value = {"scenario": self._scenario, "stage": stage}
+        if reason is not None: value["reason"] = reason
+        selected = negative_control_observation(value)
+        self._failure = (error, selected) if selected else None
+
+    def failure_observation(self, error):
+        if self._disabled or self._failure is None or self._failure[0] is not error:
+            return {}
+        return negative_control_observation(self._failure[1])
+
+
+def reset_negative_control(observer, scenario=None):
+    try:
+        observer.reset(scenario)
+        return observer
+    except Exception:
+        return None
+
+
+def negative_control_error(observer, stage, error, reason=None):
+    try:
+        observer.observe(error, stage, reason)
+    except Exception:
+        try:
+            observer._failure, observer._disabled = None, True
+        except Exception:
+            pass
+    return error
+
+
+@contextmanager
+def negative_control_stage(observer, stage):
+    try:
+        yield
+    except Exception as error:
+        negative_control_error(observer, stage, error)
+        raise
 
 
 RENDEZVOUS_REASONS = {
