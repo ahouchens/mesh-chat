@@ -724,6 +724,276 @@ def test_previous_case_acknowledgment_cannot_satisfy_new_case(monkeypatch, sampl
     assert "owner_retirement_acknowledged" not in state.controller.cases[1]
 
 
+def negative_control_case(monkeypatch, sample, *, role="android", point="receipt", cleanup_error=False,
+                          scenario="turn_tcp", observer_mode=None):
+    """Actual path_case/negative/receipt predicates; host/kernel DTO boundaries only."""
+    import native_interop_faults
+    state = retirement_case(monkeypatch, sample, role=role)
+    instance, peer = state.controller, state.controller.peer
+    def sleep(seconds):
+        assert seconds in (0.1, 0.25)
+        state.events.append(("sleep", seconds))
+        state.now += seconds
+    monkeypatch.setattr(controller, "time", SimpleNamespace(monotonic=lambda: state.now, sleep=sleep))
+    instance.context = {"run_id": 123, "run_attempt": 1}
+    state.blocked, state.restored, state.block_reads = False, False, 0
+    state.point, state.cleanup_error = point, cleanup_error
+    state.scenario = scenario
+    state.observer_mode = observer_mode
+    state.boundary_error = ValueError("PRIVATE_BOUNDARY_PAYLOAD")
+    state.cleanup_exception = RuntimeError("PRIVATE_CLEANUP_PAYLOAD")
+    def command(operation, params, key=None):
+        state.events.append(operation)
+        if operation == "message.enqueue":
+            if state.point == "enqueue_error": raise state.boundary_error
+            return {"accepted": state.point != "enqueue", "message": "PRIVATE_MESSAGE"}
+        if operation == "message.query":
+            if state.blocked:
+                state.block_reads += 1
+                if state.point == "receipt_error": raise state.boundary_error
+                return {"state": "delivered" if state.point == "receipt" else "sending"}
+            if state.point == "restored_error": raise state.boundary_error
+            return {"state": "delivered"}
+        assert operation == "application.snapshot"
+        if state.point == "records_error": raise state.boundary_error
+        values = [{"kind": "chat", "text": instance.text("blocked_path_" + state.scenario, sender=sender),
+                   "direction": direction, "id": "PRIVATE_" + direction}
+                  for sender, direction in ((instance.role, "outbound"), (instance.partner, "inbound"))]
+        if state.point == "duplicate": values.append(dict(values[0]))
+        return {"messages": values}
+    peer.core = command
+    class Fault:
+        protocol, socket = "tcp", {"PRIVATE_SOCKET": "PRIVATE_ADDRESS"}
+        def block(self):
+            state.events.append("block")
+            if state.point == "block_error": raise state.boundary_error
+            state.blocked = True
+        def unblock(self):
+            state.events.append("unblock")
+            state.blocked, state.restored = False, True
+            if state.point == "unblock_error": raise state.boundary_error
+            return 0 if state.point == "zero_drop" else 2
+        def close(self):
+            state.events.append("fault_cleanup")
+            if state.cleanup_error: raise state.cleanup_exception
+            state.blocked = False
+        def install(self): pass
+        def report(self):
+            if state.point == "impairment_error": raise state.boundary_error
+            return {}
+    state.kernel = Fault()
+    if observer_mode in {"actual_kernel_install", "actual_kernel_delete"}:
+        from test_ui_core_boundary_interop_faults import diagnostic_kernel
+        kernel = diagnostic_kernel(monkeypatch)
+        kernel.value._negative_diagnostics = instance._negative_diagnostics
+        kernel.fault = "install_error" if observer_mode == "actual_kernel_install" else "delete_error"
+        state.boundary_error = kernel.error
+        def block():
+            kernel.value.block()
+            state.blocked = True
+        def unblock():
+            packets = kernel.value.unblock()
+            state.blocked, state.restored = False, True
+            return packets
+        state.kernel.block, state.kernel.unblock, state.kernel.close = block, unblock, kernel.value.close
+    monkeypatch.setattr(native_interop_faults, "AndroidKernelPath", lambda *args, **kwargs: state.kernel)
+    def publish(phase, value):
+        state.events.append(("publish", phase))
+        if state.point == "publish_error": raise state.boundary_error
+        if phase.startswith("negative_checked"): state.blocked, state.restored = False, True
+    def receive(partner, phase, *, timeout):
+        state.events.append(("receive", phase, timeout))
+        if state.point == "receive_error": raise state.boundary_error
+        if phase.startswith("negative_ready"): state.blocked = True
+        return {"approved": state.point != "ack"}
+    instance.transport = SimpleNamespace(publish=publish, wait=receive)
+    instance.rendezvous = SimpleNamespace(seal=lambda phase, value: value, open=lambda phase, value: value)
+    original = instance.observe
+    def observe(*args, **kwargs):
+        value = original(*args, **kwargs)
+        if state.observation == 3:
+            if state.point == "final_observation_error": raise state.boundary_error
+            if state.point == "path_missing": return None
+            if state.point == "traffic": value["application"] = dict.fromkeys(evidence.APPLICATION, 0)
+            if state.point == "selection": value["pair"] = None
+        return value
+    instance.observe = observe
+    observer = instance._negative_diagnostics
+    if observer_mode in {"observe", "observe_after", "reset", "projection"}:
+        name = {"observe": "observe", "observe_after": "observe", "reset": "reset", "projection": "failure_observation"}[observer_mode]
+        original_method = getattr(observer, name)
+        def broken(*args, **kwargs):
+            if observer_mode == "observe_after": original_method(*args, **kwargs)
+            raise ValueError("PRIVATE_OBSERVER_PAYLOAD")
+        monkeypatch.setattr(observer, name, broken)
+    elif observer_mode == "malformed":
+        original_method = observer.failure_observation
+        monkeypatch.setattr(observer, "failure_observation", lambda error: {**original_method(error), "socket": "PRIVATE_SOCKET"})
+    elif observer_mode == "forged_projection":
+        monkeypatch.setattr(observer, "failure_observation", lambda error: {"scenario": scenario, "stage": "blocked_receipt", "reason": "receipt_while_blocked"})
+    return state
+
+
+def run_negative_control_report(tmp_path, monkeypatch, capsys, sample, **options):
+    import connection_ci
+    state = negative_control_case(monkeypatch, sample, **options)
+    peer = state.controller.peer
+    peer.process = SimpleNamespace(pid=17)
+    def stop(**kwargs): peer.process = None
+    peer.stop = stop
+    def execute():
+        try: state.controller.path_case(state.scenario, "windows")
+        except Exception as error:
+            state.primary_error = error
+            if state.observer_mode == "foreign_escape": error = ValueError("PRIVATE_FOREIGN_EXCEPTION")
+            state.escaping_error = error
+            if error is not state.primary_error: raise error
+            raise
+    state.controller.run = execute
+    monkeypatch.setattr(controller, "Controller", lambda *_args, **_kwargs: state.controller)
+    monkeypatch.setattr(controller, "source_identity", lambda _: ("a" * 40, "b" * 40))
+    monkeypatch.setattr(connection_ci, "current_plan", lambda: {"native_workload": "full"})
+    monkeypatch.setattr(controller, "context_from_environment", lambda: {"source_commit": "a" * 40})
+    monkeypatch.setattr(controller, "binding", lambda *_: (None, {}))
+    monkeypatch.setattr(controller, "outbound_services", lambda: {})
+    monkeypatch.setattr(controller, "android_environment", lambda **_: {})
+    monkeypatch.setattr(controller, "AndroidEmulator", lambda: SimpleNamespace(start=lambda *args, **kwargs: None, close=lambda: None))
+    monkeypatch.setattr(controller, "WindowsPeer", lambda *_: peer)
+    monkeypatch.setattr(controller, "AndroidPeer", lambda *_: peer)
+    monkeypatch.setattr(controller, "GithubArtifacts", lambda *_: SimpleNamespace(close=lambda: None))
+    monkeypatch.setattr(controller, "Rendezvous", lambda *_: SimpleNamespace(close=lambda: None))
+    output = tmp_path / "negative.json"
+    monkeypatch.setattr(sys, "argv", ["controller", "--role", state.controller.role, "--workload", "full", "--expected-source", "a" * 40, "--output", str(output)])
+    code = controller.main()
+    captured = capsys.readouterr()
+    return SimpleNamespace(record=json.loads(output.read_text()), code=code, state=state,
+                           output=output.read_text() + captured.out + captured.err)
+
+
+@pytest.mark.parametrize("point,stage,reason", [("receipt", "blocked_receipt", "receipt_while_blocked"),
+    ("zero_drop", "dropped_count", "no_dropped_packets"), ("path_missing", "final_observation", "path_missing")])
+def test_negative_report_classifies_actual_assertion_without_losing_original_failure(tmp_path, monkeypatch, capsys, sample, point, stage, reason):
+    run = run_negative_control_report(tmp_path, monkeypatch, capsys, sample, point=point)
+    assert run.code == 1 and run.record["failure_type"] == "ValueError"
+    assert run.record["phase"] == "turn_tcp_kernel_block_negative_control"
+    assert run.record.get("negative_control") == {"scenario": "turn_tcp", "stage": stage, "reason": reason}
+    assert "PRIVATE" not in run.output and not run.state.requests
+
+
+@pytest.mark.parametrize("point,stage,reason", [
+    ("enqueue", "blocked_enqueue", "not_accepted"), ("enqueue_error", "blocked_enqueue", None),
+    ("block_error", "kernel_block", None), ("publish_error", "ready_publish", None),
+    ("receive_error", "checked_receive", None), ("ack", "checked_receive", "not_acknowledged"),
+    ("receipt_error", "blocked_receipt", None), ("unblock_error", "kernel_unblock", None),
+    ("restored_error", "restored_delivery", None), ("records_error", "recovered_inbound", None),
+    ("duplicate", "recovered_records", "record_count"),
+    ("final_observation_error", "final_observation", None), ("traffic", "final_traffic", None),
+    ("selection", "final_evidence", None),
+])
+def test_negative_report_identifies_actual_stage_without_inventing_reason(tmp_path, monkeypatch, capsys, sample, point, stage, reason):
+    run = run_negative_control_report(tmp_path, monkeypatch, capsys, sample, point=point)
+    expected = {"scenario": "turn_tcp", "stage": stage}
+    if reason is not None: expected["reason"] = reason
+    assert run.code == 1 and run.record["negative_control"] == expected
+    assert run.state.controller.failure_negative_control(run.state.escaping_error) == {"negative_control": expected}
+    if point.endswith("error"): assert run.state.escaping_error is run.state.boundary_error
+    assert "PRIVATE" not in run.output and not run.state.requests
+
+
+@pytest.mark.parametrize("point,stage,reason", [("receive_error", "ready_receive", None),
+    ("ack", "ready_receive", "not_acknowledged"), ("publish_error", "checked_publish", None)])
+def test_negative_windows_source_branches_use_same_safe_schema(tmp_path, monkeypatch, capsys, sample, point, stage, reason):
+    run = run_negative_control_report(tmp_path, monkeypatch, capsys, sample, role="windows", point=point)
+    expected = {"scenario": "turn_tcp", "stage": stage}
+    if reason is not None: expected["reason"] = reason
+    assert run.code == 1 and run.record["negative_control"] == expected
+    assert "PRIVATE" not in run.output
+
+
+@pytest.mark.parametrize("point", ["receipt", "path_missing", "traffic"])
+def test_fault_cleanup_replacement_is_the_exact_reported_error_not_primary(tmp_path, monkeypatch, capsys, sample, point):
+    run = run_negative_control_report(tmp_path, monkeypatch, capsys, sample, point=point, cleanup_error=True)
+    assert run.state.escaping_error is run.state.cleanup_exception
+    assert run.record["failure_type"] == "RuntimeError"
+    assert run.record["negative_control"] == {"scenario": "turn_tcp", "stage": "fault_cleanup"}
+    assert run.state.controller.failure_negative_control(run.state.boundary_error) == {}
+    assert "PRIVATE" not in run.output
+
+
+@pytest.mark.parametrize("mode", ["observe", "observe_after", "reset", "projection", "malformed", "forged_projection"])
+def test_negative_observer_failure_or_forgery_omits_metadata_without_outcome_change(tmp_path, monkeypatch, capsys, sample, mode):
+    run = run_negative_control_report(tmp_path, monkeypatch, capsys, sample, point="zero_drop", observer_mode=mode)
+    assert run.code == 1 and run.record["failure_type"] == "ValueError"
+    assert run.record["phase"] == "turn_tcp_kernel_block_negative_control"
+    assert str(run.state.escaping_error) == "Negative control has no actual dropped packets"
+    assert "negative_control" not in run.record and "PRIVATE" not in run.output
+    assert run.state.block_reads == 20 and not run.state.requests
+
+
+def test_negative_foreign_escaping_error_cannot_inherit_primary_stage(tmp_path, monkeypatch, capsys, sample):
+    run = run_negative_control_report(tmp_path, monkeypatch, capsys, sample, observer_mode="foreign_escape")
+    assert run.state.primary_error is not run.state.escaping_error
+    assert run.code == 1 and run.record["failure_type"] == "ValueError" and "negative_control" not in run.record
+    assert run.state.controller.failure_negative_control(run.state.escaping_error) == {}
+    assert "PRIVATE" not in run.output
+
+
+@pytest.mark.parametrize("mode,stage,reason,kind", [
+    ("actual_kernel_install", "kernel_block_install", None, "CalledProcessError"),
+    ("actual_kernel_delete", "fault_cleanup", "cleanup_incomplete", "RuntimeError"),
+])
+def test_actual_kernel_error_reaches_main_with_exact_escaping_identity_and_safe_branch(tmp_path, monkeypatch, capsys, sample, mode, stage, reason, kind):
+    run = run_negative_control_report(tmp_path, monkeypatch, capsys, sample, point="success", observer_mode=mode)
+    expected = {"scenario": "turn_tcp", "stage": stage}
+    if reason is not None: expected["reason"] = reason
+    assert run.code == 1 and run.record["failure_type"] == kind and run.record["negative_control"] == expected
+    if mode == "actual_kernel_install": assert run.state.escaping_error is run.state.boundary_error
+    else: assert run.state.controller.failure_negative_control(run.state.boundary_error) == {}
+    assert "PRIVATE" not in run.output
+
+
+@pytest.mark.parametrize("poison", [None, [], (), (ValueError("PRIVATE_FOREIGN"), {}),
+    {"scenario": "turn_tcp", "stage": "blocked_receipt"}])
+def test_negative_malformed_or_foreign_identity_record_fails_closed(monkeypatch, sample, poison):
+    state = negative_control_case(monkeypatch, sample)
+    with pytest.raises(ValueError) as failure: state.controller.path_case("turn_tcp", "windows")
+    state.controller._negative_diagnostics._failure = poison
+    assert state.controller.failure_negative_control(failure.value) == {}
+
+
+@pytest.mark.parametrize("scenario", ["turn_tcp", "turn_tls", "impaired"])
+def test_negative_diagnostics_preserve_actual_window_waits_calls_and_success_clear(monkeypatch, sample, scenario):
+    state = negative_control_case(monkeypatch, sample, scenario=scenario, point="block_error")
+    with pytest.raises(ValueError) as failure: state.controller.path_case(scenario, "windows")
+    assert failure.value is state.boundary_error
+    state.point = "success"
+    # The impaired RTT requirement is an existing positive gate, not a diagnostic substitute.
+    if scenario == "impaired": sample[0]["pair"]["rtt_ms"] = 10
+    waits = []
+    original_wait = state.controller.wait
+    def wait(action, **kwargs):
+        waits.append(kwargs)
+        return original_wait(action, **kwargs)
+    monkeypatch.setattr(state.controller, "wait", wait)
+    state.controller.path_case(scenario, "windows")
+    assert state.controller.failure_negative_control(failure.value) == {}
+    assert state.controller.failure_negative_control(ValueError("PRIVATE_FOREIGN")) == {}
+    assert state.block_reads == 20 and state.now >= 2
+    assert [event for event in state.events if isinstance(event, tuple) and event == ("sleep", 0.1)] == [("sleep", 0.1)] * 20
+    assert sum(item.get("timeout") == 90 for item in waits) == 2
+    assert state.controller.deadline == 3000 and state.controller.cases[-1]["owner_retirement_acknowledged"] is True
+    assert "negative_control" not in state.controller.cases[-1]
+
+
+@pytest.mark.parametrize("point,reason", [("impairment_error", None), ("success", "rtt_unavailable")])
+def test_impaired_final_evidence_branch_remains_distinct_from_kernel_negative(tmp_path, monkeypatch, capsys, sample, point, reason):
+    run = run_negative_control_report(tmp_path, monkeypatch, capsys, sample, point=point, scenario="impaired")
+    expected = {"scenario": "impaired", "stage": "final_evidence"}
+    if reason is not None: expected["reason"] = reason
+    assert run.code == 1 and run.record["negative_control"] == expected
+    assert "PRIVATE" not in run.output
+
+
 def run_carrier_failure_report(tmp_path, monkeypatch, capsys, sample, *, remaining=0.5, fault="", polls=None):
     """Actual main plus case retirement, inert binding and earlier path/receipt effects."""
     import connection_ci
