@@ -400,6 +400,32 @@ credential facade. These are authorized implementation handoffs.
 
 ## Active Wave 2 handoff
 
+The next local integration is `29d8159`, after the shared `733c38b` qualification
+source. B removed only three unused internal renderer wrappers and their obsolete
+mocks; active native/SDK/older-host compatibility is preserved. B passes 135
+focused cases plus TypeScript; the lead independently passes 45 API/composer
+cases. These results are separate from the platform run pinned to `733c38b`.
+
+Plan 92 activates a hidden pending-profile recovery foundation. A owns
+`core_api/runtime_host.py`, new private `core_api/profile_intents.py`, and their
+producer tests: one sealed reservation/receipt authority, a caller/key alias in
+the same transaction and existing quotas, common dispatch fencing, pure safe
+observations, explicit original-intent retry and injected credential/origin
+ports. C owns `native_profile_lifecycle.py` and its lifecycle tests, including
+immutable exact request/completion types and pure `lookup_exact_completion`.
+Completion lookup never advances effects, repairs the journal or infers success
+from current catalog state. Unknown work cannot be overtaken or withdrawn.
+
+The private capability stays unavailable without the complete trusted native
+binding. Actual Rust/Kotlin/mobile attachment wiring is a later assignment:
+dispatch must share the same atomic authority revoked by native page-load
+Started; an asynchronously updated Python mirror is insufficient. Denial-only
+credential cleanup accepts an already-revoked exact attachment. Only the newest
+native cleanup and Core revocation acknowledgements can make a replacement
+attachment ready. No public SDK expansion, automatic replay, host rebasing or
+renderer-process-crash support is implied. B holds UI recovery changes; D reviews
+the contract independently before its later platform qualification.
+
 All workers merge the current lead branch before edits. Source `174728e` is the
 qualified baseline; subsequent lead-only documentation commits record that
 evidence without being relabeled as separately tested source.
