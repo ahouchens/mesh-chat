@@ -14,7 +14,8 @@ worker follow-ups without another permission request.
 The next implementation checkpoint combines Android fixture repair `adc6f41`
 and Windows consumer lifetime slice `911ed8c` at `2d99222`. The lead reviewed
 the immutable changes; worker focused reports pass **99 Android retirement and
-related component cases** and **491 Windows consumer/evidence cases**, with zero
+related component cases** and **492 Windows consumer/evidence cases after review
+correction**, with zero
 skips. The latter include 26 actual subprocess protocol controls. These results
 precede the combined exact-source gates and do not qualify native execution.
 
@@ -41,7 +42,11 @@ This is a same-application, two-session scenario. Independent consumer-process
 exit, caller/cross-user/multi-application isolation, isolated-bootstrap-helper
 retirement and subsequent delivery of the preserved pending message remain
 outside its scope. Strict report predicates reject the prior two-exit report and
-unexecuted claims. A independently reviews the immutable lifetime slice; combined
+unexecuted claims. Independent review found that a conflicting replay could add
+an extra message while still returning the expected error. Follow-up `846da34`
+compares copied outbound message-ID sets before and after replay; a new fault
+inserts that extra record and then throws the expected conflict. The old producer
+fails this control, and the corrected 492-case focused suite passes. Combined
 SDK/types/policy/UI/Windows gates and actual full CI remain required before
 accepting this checkpoint. No acceptance row or experimental selector is promoted.
 

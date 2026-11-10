@@ -56,7 +56,8 @@ owner launch against the same data must report refusal and positively exit while
 the original host stays usable. The receiver then exits before new work is
 enqueued. The sender must preserve that pending message, its opaque handle and
 original caller key across a trusted owner stop and reopen, without another
-profile creation or pairing. Changed payload with the original key must conflict.
+profile creation or pairing. Changed payload with the original key must conflict
+without adding any outbound message record to the authorized conversation.
 
 Three normal host incarnations must acknowledge shutdown and positively exit;
 the refused owner's exit is counted separately. The producer checks actual EFS
