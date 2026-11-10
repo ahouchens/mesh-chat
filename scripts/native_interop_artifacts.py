@@ -125,6 +125,9 @@ class GithubArtifacts:
                 raise self._unavailable(stage, "response_empty" if not data else "response_oversized",
                                         "GitHub response exceeds its qualification budget")
             if binary: return data
+            # The response context/read has completed; other decoder failures
+            # retain the existing generic wrapper rather than a read label.
+            reason = "transport_failed"
             try:
                 return json.loads(data)
             except (json.JSONDecodeError, UnicodeDecodeError):

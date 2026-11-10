@@ -233,6 +233,9 @@ def scripted_receive(tmp_path, monkeypatch, fault="inventory_http", *, status=40
                 if state.fault == "oversized": data = b"X" * (backend.MAX_API_RESPONSE + 1)
                 if state.fault == "json_invalid": data = b"PRIVATE_NOT_JSON"
                 if state.fault == "json_encoding": data = b"\xff"
+                if state.fault == "json_recursion":
+                    depth = max(10000, sys.getrecursionlimit() + 100)
+                    data = b"[" * depth + b"0" + b"]" * depth
                 return Response(data)
             if stage == "archive_request" and state.fault in {"blob_http", "blob_timeout", "blob_empty", "blob_oversized", "redirect_invalid", "redirect_parse"}:
                 location = ("http://synthetic.invalid/PRIVATE_SIGNED" if state.fault == "redirect_invalid" else
@@ -268,6 +271,7 @@ RECEIVE_ORIGINS = [
     ("blob_oversized", "blob_request", "response_oversized", 3),
     ("json_invalid", "inventory_request", "json_invalid", 1),
     ("json_encoding", "inventory_request", "json_invalid", 1),
+    ("json_recursion", "inventory_request", "transport_failed", 1),
     ("inventory_shape", "inventory_check", "inventory_invalid", 1),
     ("inventory_count", "inventory_check", "inventory_invalid", 1),
     ("inventory_bound", "inventory_check", "inventory_invalid", 1),
@@ -449,3 +453,18 @@ def test_fixed_receive_projection_has_only_literal_stages_and_reasons():
             value = {"rendezvous_stage": stage, "rendezvous_reason": reason}
             selected = rendezvous_observation(value)
             assert selected == value and selected is not value
+
+
+def test_decoder_value_error_cannot_inherit_completed_response_read_origin(tmp_path, monkeypatch):
+    state = scripted_receive(tmp_path, monkeypatch, "json_invalid")
+    decode = backend.json.loads
+    def limited_decoder(data, *args, **kwargs):
+        if data == b"PRIVATE_NOT_JSON": raise ValueError("PRIVATE_DECODER_LIMIT")
+        return decode(data, *args, **kwargs)
+    monkeypatch.setattr(backend.json, "loads", limited_decoder)
+    with pytest.raises(backend.RendezvousUnavailable) as caught:
+        state.transport.wait(state.role, state.phase)
+    assert str(caught.value) == "GitHub artifact transport is unavailable"
+    assert state.transport.failure_observation(caught.value) == {
+        "rendezvous_stage": "inventory_request", "rendezvous_reason": "transport_failed"}
+    assert len(state.calls) == 1
