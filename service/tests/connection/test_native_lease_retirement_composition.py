@@ -113,10 +113,10 @@ class ServicePeer:
         return self.port.dispatch("qualification.inventory", retirement_correlation(operation_id, request_id))
 
     def retire_carrier(self, operation_id, request_id, logical_session, expected_physical,
-                       expected_service_incarnation, expected_adapter_epoch):
+                       expected_service_incarnation, expected_adapter_epoch, *, action):
         return self.port.dispatch("qualification.retire_carrier", retirement_payload(
             operation_id, request_id, logical_session, expected_physical,
-            expected_service_incarnation, expected_adapter_epoch))
+            expected_service_incarnation, expected_adapter_epoch, action=action))
 
     def path(self, logical, physical, sample_request):
         return self.port.dispatch("qualification.path_evidence", {
@@ -237,9 +237,17 @@ def retirement_requests(state):
     return requests
 
 
-def request_retirement(state, requests):
+def prepare_retirement(state, requests):
+    # Both real owners must retain proof custody before either peer can close.
     for role, payload in requests.items():
-        assert state.peers[role].retire_carrier(**payload) == {
+        assert state.peers[role].retire_carrier(**payload, action="prepare") == {
+            "request_id": payload["request_id"], "state": "prepared"}
+
+
+def request_retirement(state, requests):
+    prepare_retirement(state, requests)
+    for role, payload in requests.items():
+        assert state.peers[role].retire_carrier(**payload, action="commit") == {
             "request_id": payload["request_id"], "state": "pending"}
 
 
@@ -524,6 +532,8 @@ def test_two_manual_cases_reverse_initiator_and_old_request_cannot_retire_replac
     identity = manual_identity(state)
     request_retirement(state, first)
     await_retirement(state, first)
+    receipts = {role: peer.contexts[first[role]["operation_id"]]["carrier_retirement"].ticket
+                for role, peer in state.peers.items()}
     assert manual_identity(state) == identity
 
     other = "android" if initiator == "windows" else "windows"
@@ -534,16 +544,25 @@ def test_two_manual_cases_reverse_initiator_and_old_request_cannot_retire_replac
         assert state.physical[role] != first[role]["expected_physical"]
         before = peer.inventory()["host_accounting"]
         assert before["active_count"] == 1
-        assert peer.retire_carrier(**first[role]) == {
-            "request_id": first[role]["request_id"], "state": "acknowledged"}
+        runtime = state.services[role]._connection_runtime
+        live = runtime.owner.snapshot(receipts[role].key)
+        assert live.generation > receipts[role].generation
+        assert live.carrier.resource.resource_id == state.physical[role]
+        for action in ("prepare", "commit"):
+            assert peer.retire_carrier(**first[role], action=action) == {
+                "request_id": first[role]["request_id"], "state": "acknowledged"}
+        assert runtime.owner.snapshot(receipts[role].key) == live
+        with pytest.raises(ValidationError):
+            peer.retire_carrier(**{**first[role], "request_id": uuid4().hex}, action="prepare")
         assert correlated_retired(state, role, first[role]) is None
         with pytest.raises(ValidationError):
-            peer.retire_carrier(**{**first[role], "expected_physical": state.physical[role]})
+            peer.retire_carrier(**{**first[role], "expected_physical": state.physical[role]}, action="commit")
         with pytest.raises(NativeUnavailable):
-            peer.retire_carrier(**{**first[role], "operation_id": state.intents[role], "request_id": uuid4().hex})
+            peer.retire_carrier(**{**first[role], "operation_id": state.intents[role], "request_id": uuid4().hex}, action="prepare")
         assert peer.pairing_cancel(state.intents[role])["state"] == "transferred"
         assert state.controllers[role].native("native_webrtc_close", session_id=state.sessions[role]) == {"state": "managed"}
         assert state.services[role]._native_carrier_authorized(state.sessions[role])
+        assert runtime.owner.snapshot(receipts[role].key) == live
         assert peer.inventory()["host_accounting"] == before
     final = retirement_requests(state)
     request_retirement(state, final)
@@ -607,16 +626,25 @@ def test_real_vault_journal_failure_cannot_be_acknowledged_by_native_zero(manual
 
 @pytest.mark.parametrize("initiator", ["windows", "android"])
 @pytest.mark.parametrize("denial", ["stop", "quarantine"])
-def test_transient_retirement_never_clears_real_owner_denial(manual_carriers, initiator, denial):
+def test_transient_retirement_never_clears_real_owner_denial(manual_carriers, monkeypatch, initiator, denial):
     state = manual_carriers
     requests = retirement_requests(state)
     service = state.services[initiator]
-    request_retirement(state, requests)
     if denial == "stop":
-        state.controllers[initiator].native("reconnect_stop", contact_id=state.contacts[initiator])
-        await_retirement(state, requests)
+        # Keep the committed ticket active: Stop must invalidate it, rather
+        # than racing an already completed historical receipt.
+        with delayed_native_close(state, initiator, monkeypatch) as entered:
+            request_retirement(state, requests)
+            state.drive(entered.is_set)
+            state.controllers[initiator].native("reconnect_stop", contact_id=state.contacts[initiator])
+            with pytest.raises((ContactNotApproved, NativeUnavailable)):
+                correlated_retired(state, initiator, requests[initiator])
+        state.drive(lambda: all(observer.retired() is not None for observer in state.controllers.values()))
         state.controllers[initiator].native("reconnect_start", contact_id=state.contacts[initiator])
+        with pytest.raises((ContactNotApproved, NativeUnavailable)):
+            state.peers[initiator].retire_carrier(**requests[initiator], action="commit")
     else:
+        request_retirement(state, requests)
         service._connection_runtime.quarantine()
         # Quarantine denies private inventory itself: inspect actual host leases
         # for cleanup only, without manufacturing an authorized controller ack.
