@@ -20,6 +20,40 @@ and scenario rows below to complete; their named remaining obligations still
 apply, including packaged cross-platform transport and unavailable physical
 qualification.
 
+The next implementation checkpoint combines Android fixture repair `adc6f41`
+and Windows consumer lifetime slice `911ed8c` at `2d99222`. The lead reviewed
+the immutable changes; worker focused reports pass **99 Android retirement and
+related component cases** and **491 Windows consumer/evidence cases**, with zero
+skips. The latter include 26 actual subprocess protocol controls. These results
+precede the combined exact-source gates and do not qualify native execution.
+
+The Android fixture retains the original ten-second wait but now checks routing,
+creation and both exact registry bindings under the existing dispatch/native
+locks. The actual post-Stop callback is exercised against a gated production
+close adapter and real registry. The old callback admits premature reuse; the
+new one stays false until confirmed release. The same logical ID then receives a
+new physical identity, and a stale old callback cannot retire that replacement.
+Production resource limits, admission, disposal and authority remain unchanged.
+
+The Windows application preserves public pairing and two authenticated receipts,
+then checks two SDK sessions sharing one host, session-close independence,
+reattachment, refused concurrent-owner positive exit and original pending-message
+identity/key preservation across trusted owner stop/reopen. Three normal host
+exits and one refused-owner exit are required. Work is enqueued only after the
+receiver positively exits. All shutdown requests use trusted inherited EOF; no
+SDK runtime-stop grant is added. Advertised operations describe bound ports,
+not permission-filtered grants, so advertised `runtime.stop` alone is not owner
+authority. Operation inventories remain stable and private `native.command`
+remains absent. The original 240-second main budget is preserved.
+
+This is a same-application, two-session scenario. Independent consumer-process
+exit, caller/cross-user/multi-application isolation, isolated-bootstrap-helper
+retirement and subsequent delivery of the preserved pending message remain
+outside its scope. Strict report predicates reject the prior two-exit report and
+unexecuted claims. A independently reviews the immutable lifetime slice; combined
+SDK/types/policy/UI/Windows gates and actual full CI remain required before
+accepting this checkpoint. No acceptance row or experimental selector is promoted.
+
 The latest qualification checkpoint is
 `606f68df05cd0538dbff0b76e6c6745eeda4c24b` (tree
 `7c3cdde2a07108df9c9f8ec58852b98f286bc10c`). Full manual qualification

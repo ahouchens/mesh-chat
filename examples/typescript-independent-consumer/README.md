@@ -26,8 +26,9 @@ No private command is sent to the host's lifetime stream.
 The host must be a separately installed normal app-owned runtime. The pipe is
 explicitly supplied by that application's trusted bootstrap, which authenticates
 the executable image. The SDK does not open a vault or retrieve a vault key.
-The production host route and public pairing are being integrated. This source
-and its protocol checks do not establish packaged host or SC21 qualification.
+The production host route and public pairing are implemented. Installed-host
+qualification requires exact-source retained reports; source and protocol checks
+alone do not establish packaged host or SC21 qualification.
 
 `bootstrap-check.mjs` is a separate installed application check. It uses only
 this normal launch route and the installed public SDK to verify a fresh empty
@@ -46,8 +47,25 @@ a public pairing code, accepts the signed invitation and approves the pending
 contact. Both intents must transfer. Cancelling those transferred intents must
 preserve public messaging readiness and delivery. One message in each direction
 must reach authenticated `delivered` state, retain the same message on original
-key replay and produce exactly one outbound/inbound public record. Both hosts
-must acknowledge clean shutdown, and the producer checks EFS on both vaults.
+key replay and produce exactly one outbound/inbound public record.
+
+The lifetime sequence attaches two SDK sessions from this same Node application
+to one host. Closing one session must leave the other usable, and a replacement
+session must observe the same authorized profile, contact and messages. A second
+owner launch against the same data must report refusal and positively exit while
+the original host stays usable. The receiver then exits before new work is
+enqueued. The sender must preserve that pending message, its opaque handle and
+original caller key across a trusted owner stop and reopen, without another
+profile creation or pairing. Changed payload with the original key must conflict.
+
+Three normal host incarnations must acknowledge shutdown and positively exit;
+the refused owner's exit is counted separately. The producer checks actual EFS
+on the two distinct profile directories and vaults. A passing report qualifies
+SDK session-close independence within one application, not exit of a separate
+consumer process or caller/cross-user/multi-application isolation. Host shutdown
+acknowledges the in-process native host, but does not certify exit of every
+isolated bootstrap helper. Pending-message preservation does not prove its
+subsequent delivery after restart. The original 240-second main deadline remains.
 The report is Windows-only. Android, selected ICE paths and SC21 remain separate.
 The public pairing disclosure option governs gathering; it does not grant
 persistent per-contact direct-IP messaging consent. This check uses the supported

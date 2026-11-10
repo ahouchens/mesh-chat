@@ -49,9 +49,9 @@ Windows host artifact. It rechecks the boundary reports against the required
 source commit/tree, retained JUnit and collection digests, run identities and
 zero-failure/zero-skip execution. The uniform manifest includes separate
 `core_ui_boundary_python`, `core_ui_boundary_rendered` and
-`core_windows_boundary` records. Rendered execution must contain all ten named
+`core_windows_boundary` records. Rendered execution must contain all twelve named
 cases, including composer remount and keyed group create/send reply-loss controls; Windows must contain
-all three named cases. Python counts come from the
+all nine required cases. Python counts come from the
 complete collection of the required boundary files, rather than a historical
 case count. The final gate requires only the standard library.
 
@@ -187,7 +187,8 @@ Three additional `NativeProfileResultRegistrationTest` cases require actual
 AndroidX result-registry routing for unrelated results, cancelled registrations,
 replacement challenges and cancelled credential UI. Their explicit component
 scope does not qualify successful OS credential confirmation. The required Core
-API inventory has 13 cases; all four Android suites together require 50 cases.
+API inventory has 13 cases; all five Android suites together require 52 cases,
+including the two independent-host lifecycle cases.
 The separate required Windows gate now collects nine cases: the original three
 app-pipe cases and six normal app-owned host checks. The latter execute actual
 DPAPI and image-authenticated pipes with explicitly unprotected test Vault
@@ -208,8 +209,21 @@ invitation/contact decisions, transferred-intent cancellation and
 bidirectional messages. Public connection observations must stay ready; actual
 Core `delivered` queries and exactly one inbound/outbound public record per
 message establish the receipt checks. This report binds its bootstrap report,
-SDK/runtime/application hashes and distinct run, requires actual EFS and two
-acknowledged host exits, and cannot satisfy Windows-Android/SC21 evidence.
+SDK/runtime/application hashes and distinct run, and requires actual EFS.
+The shared-host lifetime sequence uses two SDK sessions in one Node application:
+one session closes, the survivor remains usable, and a replacement sees the same
+authorized state. A concurrent owner against the same data must refuse startup
+and positively exit. After the receiver positively exits, the sender enqueues
+unique pending work, stops and reopens under its trusted owner, and must preserve
+the original message, caller key, contact and public identity. It requires three
+acknowledged normal host exits plus one rejected-owner exit. No SDK runtime-stop
+authority is granted. Exact report predicates reject old two-exit reports.
+
+This sequence does not establish separate consumer-process exit, caller or
+cross-user/multi-application isolation, isolated-bootstrap-helper retirement,
+post-restart pending-message delivery, or Windows-Android/SC21 acceptance.
+Synthetic subprocess and producer fixtures validate the harness only; the
+expanded installed scenario requires its own passing source-bound CI report.
 The three public pairing vectors use an advertised production Core actor with
 real framing, vault records and signatures. The fixture admits one offer to
 `offer_ready`, then revokes the caller's grants. Begin/query/cancel must return
