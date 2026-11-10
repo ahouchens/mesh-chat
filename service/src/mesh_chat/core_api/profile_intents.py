@@ -224,6 +224,7 @@ class ProfileIntents:
                 eligible = status["revision"] == row["expected_revision"]
         if row["state"] == "prepared":
             eligible = eligible and (row["expected_revision"], row["selected_profile"]) == (status["revision"], status["selected_profile"])
+            eligible = eligible and (row["action"] == "select" or row["profile"] == status["selected_profile"])
         if row["state"] == "complete":
             eligible = eligible and (row["revision"], row["service_incarnation"]) == (status["revision"], status["service_incarnation"])
         return {"intent_ref": identity, "action": row["action"],

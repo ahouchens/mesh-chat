@@ -295,6 +295,20 @@ class CoreRuntimeHost:
         self.profile_intents.ledger.finish(identity, receipt, completed)
         return completed
 
+    def _validate_new_transition(self, operation, profile_id, status):
+        """Positive checks before a never-invoked request acquires custody."""
+        if status["pending_action"] is not None:
+            raise ApiFailure("unavailable")
+        if operation != "profile.select" and profile_id != status["selected_profile"]:
+            raise ApiFailure("invalid_request")
+
+    def _reject_before_first_effect(self, identity, receipt, error):
+        rejected = {**receipt, "state": "rejected_no_effect",
+                    "rejection_code": error.code if isinstance(error, ApiFailure) else "unavailable"}
+        if receipt.get("version") == 2:
+            rejected["ever_dispatched"] = False
+        self.profile_intents.ledger.finish(identity, receipt, rejected)
+
     def _dispatch_reserved(self, grant, identity, row, attachment, credential):
         intents, ledger = self.profile_intents, self.profile_intents.ledger
         intents._validate(grant, row, attachment, "observe")
@@ -319,6 +333,8 @@ class CoreRuntimeHost:
             raise ApiFailure("resync_required")
         if row["state"] == "prepared" and (row["expected_revision"], row["selected_profile"]) != (status["revision"], status["selected_profile"]):
             raise ApiFailure("resync_required")
+        if not row["ever_dispatched"]:
+            self._validate_new_transition("profile." + row["action"], row["profile"], status)
         if row["action"] == "unlock":
             self._bound_credential(credential, identity, row, attachment)
         previously_dispatched = row["ever_dispatched"]
@@ -329,14 +345,14 @@ class CoreRuntimeHost:
                                                       expected=intents._origin(row), request=request)
             if admission is None or admission is False:
                 raise ApiFailure("forbidden")
-        except (ApiFailure, NativeUnavailable):
+            if row["action"] == "unlock":
+                self._bound_credential(credential, identity, admitted, attachment, consume=True)
+            self._intent_invocation = admitted, attachment
+            self._recheck_invocation()
+        except (ApiFailure, NativeUnavailable) as error:
             if not previously_dispatched:
-                ledger.finish(identity, admitted, {**admitted, "state": "rejected_no_effect", "ever_dispatched": False})
+                self._reject_before_first_effect(identity, admitted, error)
             raise
-        if row["action"] == "unlock":
-            self._bound_credential(credential, identity, admitted, attachment, consume=True)
-        self._intent_invocation = admitted, attachment
-        self._recheck_invocation()
         result = self.lifecycle.mutate(row["action"], row["profile"], row["operation_id"],
                                        host_incarnation=row["host_incarnation"], expected_revision=row["expected_revision"])
         if result["pending_action"] is None:
@@ -368,23 +384,35 @@ class CoreRuntimeHost:
                     self._dispatch_reserved(grant, identity, receipt, attachment, params.get("credential_handle"))
                     return self.catalog(grant)
                 if receipt is None:
+                    self._validate_new_transition(operation, profile_id, status)
                     if operation == "profile.unlock":
                         self._credential(params["credential_handle"], grant.caller, profile_id)
                     self.profile_intents.ledger.admit(identity, None, proposed, key=key)
                     receipt = proposed
                 if receipt["host_incarnation"] != status["host_incarnation"]:
                     raise ApiFailure("resync_required")
+                if receipt["state"] == "rejected_no_effect":
+                    raise ApiFailure(receipt["rejection_code"])
                 if receipt["state"] == "complete":
                     if (receipt["revision"], receipt["service_incarnation"]) != (status["revision"], status["service_incarnation"]):
                         raise ApiFailure("resync_required")
                     return self.catalog(grant)
-                self.profile_intents.ledger.admit(identity, receipt, receipt, key=key)
-                if operation == "profile.unlock":
-                    completed_open = (existing and status["state"] == "unlocked" and status["selected_profile"] == profile_id
-                                      and status["revision"] == receipt["expected_revision"] + 1)
-                    if not completed_open:
-                        self._credential(params["credential_handle"], grant.caller, profile_id, consume=True)
-                self._recheck_invocation()
+                if existing:
+                    self.profile_intents.ledger.admit(identity, receipt, receipt, key=key)
+                try:
+                    if operation == "profile.unlock":
+                        completed_open = (existing and status["state"] == "unlocked" and status["selected_profile"] == profile_id
+                                          and status["revision"] == receipt["expected_revision"] + 1)
+                        if not completed_open:
+                            self._credential(params["credential_handle"], grant.caller, profile_id, consume=True)
+                    self._recheck_invocation()
+                except ApiFailure as error:
+                    # Only this fresh, successfully returned admission proves
+                    # there was no earlier invocation. Existing/ambiguous rows
+                    # retain custody even when the current attempt is denied.
+                    if not existing:
+                        self._reject_before_first_effect(identity, receipt, error)
+                    raise
                 result = self.lifecycle.mutate(operation.split(".")[1], profile_id, receipt["operation_id"],
                     host_incarnation=receipt["host_incarnation"], expected_revision=receipt["expected_revision"])
                 if result["pending_action"] is None:
