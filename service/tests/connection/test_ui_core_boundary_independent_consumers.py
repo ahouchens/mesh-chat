@@ -162,7 +162,8 @@ def test_actual_node_snapshot_selects_network_presence_without_extra_requests(tm
                              ("offerer", "offerer", "answerer", "answerer", "answerer", "answerer", "offerer")]
         assert details["diagnostics"]["post_accept_reads"] == {"attempts": 1, "completed": 1,
             "clipped": False, "deadline_exhausted_at_entry": False}
-        assert [event["operation"] for event in events if event["event"] == "request"][-2:] == ["peer.pairing_query", "peer.pairing_query"]
+        assert [event["operation"] for event in events if event["event"] == "request"][-4:] == [
+            "peer.pairing_query", "peer.pairing_query", "diagnostics.query", "diagnostics.query"]
     assert [event["role"] for event in events if event["event"] == "stop"] == (["offerer"] if pre_profile else ["offerer", "answerer"])
 
 
@@ -194,7 +195,7 @@ def test_strict_failure_parser_rejects_unselected_network_or_error_values(fault)
     snapshot = {**{key: 0 for key in pairing.SNAPSHOT_COUNTS}, **{key: False for key in pairing.SNAPSHOT_FLAGS},
         "observed_subphase": "offerer_create", "service_error": None}
     observed = {"passed": False, "phase": "fresh_profiles", "error_code": "unavailable", "diagnostics": {
-        "subphase": "offerer_create", "deadline_exhausted": False,
+        "subphase": "offerer_create", "deadline_exhausted": False, "failure_origin": "unknown", "cleanup": [],
         "stage_timing": {"offsets_ms": {"failure_observed": 0}, "clipped": False},
         "peers": {"offerer": {"last_snapshot": snapshot}}}}
     pairing.failure_details(copy.deepcopy(observed))
@@ -244,7 +245,8 @@ def test_actual_producer_distinguishes_late_acceptance_and_post_accept_reads(tmp
     assert [item["role"] for item in events if item["event"] == "stop"] == ["offerer", "answerer"]
     accepted = next(index for index, item in enumerate(events) if item["event"] == "accept_returned")
     following = [item["operation"] for item in events[accepted + 1:] if item["event"] == "request"]
-    assert following == ([] if entry_expired else ["application.snapshot"]) + ["peer.pairing_query", "peer.pairing_query"]
+    assert following == ([] if entry_expired else ["application.snapshot"]) + [
+        "peer.pairing_query", "peer.pairing_query", "diagnostics.query", "diagnostics.query"]
 
 
 @pytest.mark.parametrize("mode", ["reject", "invalid", "advance_clock", "retirement_failure", "uninitialized"])
@@ -276,15 +278,12 @@ def test_failure_probe_preserves_original_failure_and_retirement_with_bounded_re
         assert stops == [{"event": "stop", "role": role, "incarnation": 1,
                           "remaining": 0 if mode == "advance_clock" else 30000} for role in ("offerer", "answerer")]
         assert events.index(stops[0]) > events.index(probes[1])
-        if mode == "retirement_failure":
-            assert details["application_phase"] == "retirement" and details["error_code"] == "unavailable"
-            assert details["diagnostics"]["subphase"] == "retirement"
-        else:
-            assert details["application_phase"] == "explicit_approval" and details["error_code"] == "forbidden"
-            assert details["diagnostics"]["subphase"] == "invitation_accept"
-            expected = ({"query_outcome": "ok", "state": "transferred", "expired": True} if mode == "advance_clock"
-                        else {"query_outcome": "failed" if mode == "reject" else "invalid_result"})
-            assert details["diagnostics"]["failure_probe"] == {role: expected for role in ("offerer", "answerer")}
+        assert details["application_phase"] == "explicit_approval" and details["error_code"] == "forbidden"
+        assert details["diagnostics"]["subphase"] == "invitation_accept"
+        expected = ({"query_outcome": "ok", "state": "transferred", "expired": True}
+                    if mode in {"advance_clock", "retirement_failure"}
+                    else {"query_outcome": "failed" if mode == "reject" else "invalid_result"})
+        assert details["diagnostics"]["failure_probe"] == {role: expected for role in ("offerer", "answerer")}
 
 
 def test_failure_probe_queries_two_distinct_initialized_peers_concurrently_once():
@@ -303,15 +302,249 @@ function peer(role) { return {role,profile:'PRIVATE_PROFILE',pairing:'PRIVATE_PA
     return {state:'awaiting_approval',expires_at:Date.now()/1000+30,token:'PRIVATE_TOKEN'};
   }
 }}; }
-await probePairingFailure([{role:'offerer'},peer('offerer'),peer('offerer'),peer('answerer'),peer('answerer')],diagnostics);
+await probePairingFailure([{role:'offerer'},peer('offerer'),peer('offerer'),peer('answerer'),peer('answerer')],diagnostics,()=>0);
 console.log(JSON.stringify({calls,probe:diagnostics.failure().failure_probe}));
 """
     completed = subprocess.run([node, "--input-type=module", "-e", script], cwd=staging.ROOT,
         capture_output=True, text=True, check=True, timeout=5)
     assert "PRIVATE" not in completed.stdout
     value = json.loads(completed.stdout)
-    assert value["calls"] == [{"role": role, "operation": "peer.pairing_query", "timeout": 2000} for role in ("offerer", "answerer")]
+    assert value["calls"][:2] == [{"role": role, "operation": "peer.pairing_query", "timeout": 2000}
+        for role in ("offerer", "answerer")]
+    assert sorted(value["calls"][2:], key=lambda row: row["role"]) == [
+        {"role": role, "operation": "diagnostics.query", "timeout": 2000} for role in ("answerer", "offerer")]
     assert value["probe"] == {role: {"query_outcome": "ok", "state": "awaiting_approval", "expired": False} for role in ("offerer", "answerer")}
+
+
+@pytest.mark.parametrize("elapsed,reject,stall", [
+    (0, False, False), (0, True, False), (1250, False, False), (1250, False, True),
+    (1999.4, False, False), (2000, False, False), (2500, True, False)])
+def test_serialized_clients_share_one_failure_probe_deadline(elapsed, reject, stall):
+    node, _ = staging.tools()
+    script = """
+import {pairingDiagnostics,probePairingFailure} from './examples/typescript-independent-consumer/pairing-diagnostics.mjs';
+const config = CONFIG;
+let now=0, release, diagnosticTimeout;
+const gate=new Promise(resolve=>{release=resolve;});
+const stalled=new Promise(resolve=>{diagnosticTimeout=resolve;});
+const calls=[];
+function peer(role){
+  let tail=Promise.resolve();
+  return {role,profile:'PRIVATE_PROFILE',pairing:'PRIVATE_PAIRING',client:{request(operation,params,options){
+    const run=async()=>{
+      calls.push({role,operation,timeout:options.timeoutMs,limit:params.limit??null,at:now});
+      if(operation==='peer.pairing_query'){
+        await gate;
+        if(config.reject)throw new Error('PRIVATE_PAIRING_ERROR');
+        return {state:'retired',expires_at:Date.now()/1000+30};
+      }
+      if(config.stall){await stalled;throw new Error('PRIVATE_TIMEOUT');}
+      return {available:false,runtime_failure:null,total_connections:0,truncated:false,connections:[]};
+    };
+    const result=tail.then(run,run); tail=result.then(()=>undefined,()=>undefined);return result;
+  }}};
+}
+const diagnostics=pairingDiagnostics();
+const work=probePairingFailure([peer('offerer'),peer('offerer'),peer('answerer'),peer('answerer')],diagnostics,()=>now);
+await new Promise(resolve=>setImmediate(resolve));
+const before=structuredClone(calls);
+now=config.elapsed;release();
+if(config.stall){await new Promise(resolve=>setImmediate(resolve));now=2000;diagnosticTimeout();}
+await work;
+console.log(JSON.stringify({before,calls,finished:now,diagnostics:diagnostics.failure()}));
+""".replace("CONFIG", json.dumps({"elapsed": elapsed, "reject": reject, "stall": stall}))
+    completed = subprocess.run([node, "--input-type=module", "-e", script], cwd=staging.ROOT,
+        capture_output=True, text=True, check=True, timeout=5)
+    assert "PRIVATE" not in completed.stdout + completed.stderr
+    value = json.loads(completed.stdout)
+    assert value["before"] == [{"role": role, "operation": "peer.pairing_query", "timeout": 2000, "limit": None, "at": 0}
+                               for role in ("offerer", "answerer")]
+    diagnostics = value["diagnostics"]["public_diagnostics"]
+    remaining = int(2000 - elapsed)
+    if remaining > 0:
+        assert value["calls"][2:] == [{"role": role, "operation": "diagnostics.query", "timeout": remaining, "limit": 4, "at": elapsed}
+                                       for role in ("offerer", "answerer")]
+        assert all(row["query_outcome"] == ("failed" if stall else "ok") for row in diagnostics.values())
+        assert value["finished"] == (2000 if stall else elapsed)
+    else:
+        assert len(value["calls"]) == 2
+        assert diagnostics == {role: {"query_outcome": "not_attempted", "reason": "deadline_exhausted"}
+                               for role in ("offerer", "answerer")}
+    assert value["diagnostics"]["failure_probe"] == {role: ({"query_outcome": "failed"} if reject else
+        {"query_outcome": "ok", "state": "retired", "expired": False}) for role in ("offerer", "answerer")}
+
+
+def test_public_actor_projection_uses_only_existing_view_enums_and_selected_fields():
+    from mesh_chat.core_api.views import ENUMS, REASONS
+    node, _ = staging.tools()
+    script = """
+import {publicDiagnosticObservation,ACTOR_ENUMS,FAILURE_ORIGINS} from './examples/typescript-independent-consumer/pairing-diagnostics.mjs';
+const row={desired:'enabled',execution:'available',negotiation:'checking',reason:'phase_timeout',
+  runtime_epoch:'PRIVATE_EPOCH',sequence:12,captured_at:123};
+const value={profile:'PRIVATE_PROFILE',available:true,runtime_failure:null,total_connections:1,truncated:false,
+  connections:[{connection:'PRIVATE_CONNECTION',observation:row}]};
+Object.defineProperty(value,'captured_at',{get(){throw new Error('PRIVATE_UNSELECTED_READ');}});
+const good=publicDiagnosticObservation(value);
+const unknown=publicDiagnosticObservation({...value,runtime_failure:'PRIVATE_FAILURE',connections:[{observation:{
+  desired:'PRIVATE_DESIRED',execution:'PRIVATE_EXECUTION',negotiation:'PRIVATE_NEGOTIATION',reason:'PRIVATE_REASON'}}]});
+const enums=Object.fromEntries(Object.entries(ACTOR_ENUMS).map(([key,values])=>[key,[...values]]));
+console.log(JSON.stringify({good,unknown,enums,origins:[...FAILURE_ORIGINS]}));
+"""
+    completed = subprocess.run([node, "--input-type=module", "-e", script], cwd=staging.ROOT,
+        capture_output=True, text=True, check=True, timeout=5)
+    assert "PRIVATE" not in completed.stdout + completed.stderr
+    value = json.loads(completed.stdout)
+    assert {key: set(values) for key, values in value["enums"].items()} == {
+        **{key: ENUMS[key] for key in ("desired", "execution", "negotiation")}, "reason": REASONS} == pairing.ACTOR_ENUMS
+    assert set(value["origins"]) == pairing.FAILURE_ORIGINS
+    assert value["good"] == {"query_outcome": "ok", "available": True, "runtime_failure": None,
+        "total_connections": 1, "truncated": False, "connections": [
+            {"desired": "enabled", "execution": "available", "negotiation": "checking", "reason": "phase_timeout"}]}
+    assert value["unknown"]["runtime_failure"] == "unknown"
+    assert value["unknown"]["connections"] == [{key: "unknown" for key in pairing.ACTOR_ENUMS}]
+    pairing.public_diagnostic_details({"offerer": value["good"], "answerer": value["unknown"]})
+
+
+@pytest.mark.parametrize("fault", ["available", "runtime_failure", "total_bool", "total_fraction", "total_negative",
+    "total_nan", "truncated", "rows", "too_many", "row", "observation", "enum_type", "unavailable_rows"])
+def test_public_actor_producer_fails_closed_on_malformed_selected_fields(fault):
+    node, _ = staging.tools()
+    script = """
+import {publicDiagnosticObservation} from './examples/typescript-independent-consumer/pairing-diagnostics.mjs';
+const value={available:true,runtime_failure:null,total_connections:1,truncated:false,connections:[{observation:{
+  desired:'enabled',execution:'available',negotiation:'checking',reason:'phase_timeout'}}]};
+const fault=FAULT;
+if(fault==='available')value.available=1;
+if(fault==='runtime_failure')value.runtime_failure={path:'PRIVATE_PATH'};
+if(fault==='total_bool')value.total_connections=true;
+if(fault==='total_fraction')value.total_connections=1.5;
+if(fault==='total_negative')value.total_connections=-1;
+if(fault==='total_nan')value.total_connections=NaN;
+if(fault==='truncated')value.truncated=1;
+if(fault==='rows')value.connections='PRIVATE_ROWS';
+if(fault==='too_many'){value.connections=Array(5).fill(value.connections[0]);value.total_connections=5;}
+if(fault==='row')value.connections[0]=null;
+if(fault==='observation')value.connections[0].observation=[];
+if(fault==='enum_type')value.connections[0].observation.reason={path:'PRIVATE_PATH'};
+if(fault==='unavailable_rows')value.available=false;
+console.log(JSON.stringify(publicDiagnosticObservation(value)));
+""".replace("FAULT", json.dumps(fault))
+    completed = subprocess.run([node, "--input-type=module", "-e", script], cwd=staging.ROOT,
+        capture_output=True, text=True, check=True, timeout=5)
+    assert json.loads(completed.stdout) == {"query_outcome": "invalid_result"}
+    assert "PRIVATE" not in completed.stdout + completed.stderr
+
+
+def custody_report():
+    return {"passed": False, "phase": "explicit_approval", "error_code": "forbidden", "diagnostics": {
+        "subphase": "invitation_accept", "deadline_exhausted": False, "failure_origin": "core_error", "peers": {},
+        "stage_timing": {"offsets_ms": {"failure_observed": 0}, "clipped": False},
+        "cleanup": [{"role": "offerer", "incarnation": 1, "attempts": 1, "detach": "ok", "stop": "completed",
+                     "retired": True, "budget_ms": 30000}],
+        "public_diagnostics": {"offerer": {"query_outcome": "ok", "available": True, "runtime_failure": None,
+            "total_connections": 1, "truncated": False, "connections": [
+                {"desired": "enabled", "execution": "available", "negotiation": "checking", "reason": "phase_timeout"}]}}}}
+
+
+@pytest.mark.parametrize("path,value", [
+    pytest.param(path, value, id=label) for label, path, value in (
+        ("origin", ("failure_origin",), "PRIVATE_ORIGIN"),
+        ("origin-type", ("failure_origin",), []),
+        ("cleanup-only-phase", ("failure_origin",), "cleanup_failure"),
+        ("cleanup-type", ("cleanup",), {}),
+        ("role", ("cleanup", 0, "role"), "PRIVATE_ROLE"),
+        ("incarnation-bool", ("cleanup", 0, "incarnation"), True),
+        ("incarnation-limit", ("cleanup", 0, "incarnation"), 3),
+        ("attempts-bool", ("cleanup", 0, "attempts"), True),
+        ("attempts-limit", ("cleanup", 0, "attempts"), 3),
+        ("detach", ("cleanup", 0, "detach"), "PRIVATE_DETACH"),
+        ("stop-type", ("cleanup", 0, "stop"), []),
+        ("retired-type", ("cleanup", 0, "retired"), 1),
+        ("detach-is-not-exit", ("cleanup", 0, "detach"), "failed"),
+        ("budget-bool", ("cleanup", 0, "budget_ms"), True),
+        ("budget-float", ("cleanup", 0, "budget_ms"), 30.5),
+        ("budget-negative", ("cleanup", 0, "budget_ms"), -1),
+        ("budget-limit", ("cleanup", 0, "budget_ms"), 30001),
+        ("budget-provenance", ("cleanup", 0, "attempts"), 0),
+        ("detach-provenance", ("cleanup", 0, "detach"), "not_attempted"),
+        ("actor-roles", ("public_diagnostics",), {"PRIVATE_ROLE": {"query_outcome": "failed"}}),
+        ("actor-outcome", ("public_diagnostics", "offerer", "query_outcome"), "PRIVATE_OUTCOME"),
+        ("actor-available", ("public_diagnostics", "offerer", "available"), 1),
+        ("actor-failure", ("public_diagnostics", "offerer", "runtime_failure"), "PRIVATE_FAILURE"),
+        ("actor-failure-type", ("public_diagnostics", "offerer", "runtime_failure"), []),
+        ("actor-total-bool", ("public_diagnostics", "offerer", "total_connections"), True),
+        ("actor-total-float", ("public_diagnostics", "offerer", "total_connections"), 1.5),
+        ("actor-total-negative", ("public_diagnostics", "offerer", "total_connections"), -1),
+        ("actor-total-limit", ("public_diagnostics", "offerer", "total_connections"), 257),
+        ("actor-truncated", ("public_diagnostics", "offerer", "truncated"), 0),
+        ("actor-truncated-provenance", ("public_diagnostics", "offerer", "truncated"), True),
+        ("actor-rows", ("public_diagnostics", "offerer", "connections"), {}),
+        ("actor-row-count", ("public_diagnostics", "offerer", "connections"), []),
+        ("actor-row-type", ("public_diagnostics", "offerer", "connections", 0), []),
+        ("actor-enum", ("public_diagnostics", "offerer", "connections", 0, "desired"), "PRIVATE_DESIRED"),
+        ("actor-enum-type", ("public_diagnostics", "offerer", "connections", 0, "reason"), []),
+        ("actor-unavailable", ("public_diagnostics", "offerer", "available"), False),
+    )
+])
+def test_failure_custody_consumer_rejects_malformed_types_ranges_enums_and_provenance(path, value):
+    observed = custody_report()
+    pairing.failure_details(copy.deepcopy(observed))
+    target = observed["diagnostics"]
+    for part in path[:-1]: target = target[part]
+    target[path[-1]] = value
+    with pytest.raises(ValueError): pairing.failure_details(observed)
+
+
+@pytest.mark.parametrize("fault", ["origin_missing", "cleanup_missing", "slot_duplicate", "slots_limit", "budget_missing",
+    "raw_owner", "raw_actor", "raw_diagnostic", "failed_payload", "deadline_payload", "row_limit"])
+def test_failure_custody_consumer_rejects_missing_custody_and_private_extra_fields(fault):
+    observed = custody_report()
+    diagnostics = observed["diagnostics"]
+    if fault == "origin_missing": diagnostics.pop("failure_origin")
+    elif fault == "cleanup_missing": diagnostics.pop("cleanup")
+    elif fault == "slot_duplicate": diagnostics["cleanup"] *= 2
+    elif fault == "slots_limit": diagnostics["cleanup"] *= 5
+    elif fault == "budget_missing": diagnostics["cleanup"][0].pop("budget_ms")
+    elif fault == "raw_owner": diagnostics["cleanup"][0]["runtime_id"] = "PRIVATE_RUNTIME"
+    elif fault == "raw_actor": diagnostics["public_diagnostics"]["offerer"]["connections"][0]["connection"] = "PRIVATE_HANDLE"
+    elif fault == "raw_diagnostic": diagnostics["public_diagnostics"]["offerer"]["runtime_epoch"] = "PRIVATE_EPOCH"
+    elif fault == "failed_payload": diagnostics["public_diagnostics"]["offerer"] = {"query_outcome": "failed", "error": "PRIVATE_ERROR"}
+    elif fault == "deadline_payload": diagnostics["public_diagnostics"]["offerer"] = {"query_outcome": "not_attempted", "reason": "PRIVATE_REASON"}
+    else: diagnostics["public_diagnostics"]["offerer"]["connections"] *= 5
+    with pytest.raises(ValueError): pairing.failure_details(observed)
+
+
+def test_maximum_selected_failure_report_fits_existing_byte_bound():
+    node, _ = staging.tools()
+    script = """
+import {pairingDiagnostics,publicDiagnosticObservation,ACTOR_ENUMS} from './examples/typescript-independent-consumer/pairing-diagnostics.mjs';
+let now=0;
+const d=pairingDiagnostics(()=>now);d.start();now=600000;
+d.enter('invitation_accept');d.acceptanceReturned();d.enter('pending_request_wait');d.pendingWait(true);
+for(let i=0;i<4096;i++){d.pendingAttempt();d.pendingComplete();}
+d.enter('offerer_relationship_wait');
+for(const role of ['offerer','answerer']){
+  d.snapshot(role,{network:{},service_error:'network_interface_unavailable',contacts:Array(256).fill({trust:'pending_request'}),
+    contact_invitations:Array(256).fill({state:'pending'})});
+  d.pairing(role,{state:'awaiting_approval'});d.connections(role,256,256,256);
+}
+for(const [role,incarnation] of [['offerer',1],['answerer',1],['contender',1],['offerer',2]]){
+  Object.assign(d.owned(role,incarnation),{attempts:2,detach:'failed',stop:'completed',retired:false,budget_ms:30000});
+}
+d.freezeFailure('core_error');
+const observation=Object.fromEntries(Object.entries(ACTOR_ENUMS).map(([key,values])=>[key,[...values].sort((a,b)=>b.length-a.length)[0]]));
+const actors=publicDiagnosticObservation({available:true,runtime_failure:'adapter_quarantined',total_connections:Number.MAX_SAFE_INTEGER,
+  truncated:true,connections:Array(4).fill({connection:'PRIVATE_HANDLE',observation})});
+d.publicProbe({offerer:actors,answerer:actors});d.probe(Object.fromEntries(['offerer','answerer'].map(role=>
+  [role,{query_outcome:'ok',state:'awaiting_approval',expired:false}])));
+console.log(JSON.stringify({passed:false,phase:'explicit_approval',error_code:'resource_exhausted',diagnostics:d.failure(true)}));
+"""
+    completed = subprocess.run([node, "--input-type=module", "-e", script], cwd=staging.ROOT,
+        capture_output=True, text=True, check=True, timeout=5)
+    assert len(completed.stdout.encode()) <= 4096
+    assert "PRIVATE" not in completed.stdout + completed.stderr
+    details = pairing.failure_details(json.loads(completed.stdout))
+    assert details["diagnostics"]["public_diagnostics"]["offerer"]["total_connections"] == 256
 
 
 def test_node_diagnostic_projection_caps_counts_and_selects_no_private_payloads():
@@ -365,6 +598,9 @@ now = 2000000;
 diagnostics.acceptanceReturned();
 diagnostics.pendingWait(true);
 diagnostics.pendingAttempt(); diagnostics.pendingComplete();
+diagnostics.enter('retirement');diagnostics.freezeFailure('cleanup_failure');
+diagnostics.snapshot('offerer',{contacts:[],contact_invitations:[]});
+diagnostics.pairing('offerer',{state:'retired'});diagnostics.connections('offerer',0,0,0);
 console.log(JSON.stringify({before,after:diagnostics.failure()}));
 """
     completed = subprocess.run([node, "--input-type=module", "-e", script], cwd=staging.ROOT,
@@ -387,7 +623,7 @@ console.log(JSON.stringify({before,after:diagnostics.failure()}));
     "missing_entry", "missing_counts", "provenance", "provenance_missing"])
 def test_timing_read_count_and_snapshot_provenance_contract_rejects_unsafe_fields(fault):
     observed = {"passed": False, "phase": "explicit_approval", "error_code": "unavailable", "diagnostics": {
-        "subphase": "pending_request_wait", "deadline_exhausted": True,
+        "subphase": "pending_request_wait", "deadline_exhausted": True, "failure_origin": "unknown", "cleanup": [],
         "stage_timing": {"offsets_ms": {"invitation_accept_started": 1, "invitation_accept_returned": 2,
             "pending_request_wait_entered": 2, "failure_observed": 3}, "clipped": False},
         "post_accept_reads": {"attempts": 1, "completed": 1, "clipped": False, "deadline_exhausted_at_entry": False},
@@ -426,7 +662,7 @@ def test_timing_read_count_and_snapshot_provenance_contract_rejects_unsafe_field
     "envelope_field", "error_code", "negative", "oversized", "boolean_count", "string_flag", "inconsistent"])
 def test_pairing_failure_report_rejects_unselected_private_or_unbounded_fields(fault):
     observed = {"passed": False, "phase": "explicit_approval", "error_code": "unavailable",
-        "diagnostics": {"subphase": "offerer_ready_wait", "deadline_exhausted": True,
+        "diagnostics": {"subphase": "offerer_ready_wait", "deadline_exhausted": True, "failure_origin": "unknown", "cleanup": [],
             "stage_timing": {"offsets_ms": {"failure_observed": 1}, "clipped": False}, "peers": {"offerer": {
             "last_pairing": {"state": "awaiting_approval", "code_present": False},
             "last_connections": {"total": 1, "checked": 1, "ready": 0, "counts_capped": False}}}}}
@@ -452,7 +688,7 @@ def test_pairing_failure_report_rejects_unselected_private_or_unbounded_fields(f
 @pytest.mark.parametrize("fault", ["role", "state", "code", "timestamp", "error", "expired_type", "unknown_outcome"])
 def test_failure_probe_report_cannot_retain_private_or_unselected_result_fields(fault):
     observed = {"passed": False, "phase": "explicit_approval", "error_code": "forbidden",
-        "diagnostics": {"subphase": "invitation_accept", "deadline_exhausted": False,
+        "diagnostics": {"subphase": "invitation_accept", "deadline_exhausted": False, "failure_origin": "unknown", "cleanup": [],
             "stage_timing": {"offsets_ms": {"failure_observed": 1}, "clipped": False}, "peers": {},
             "failure_probe": {"offerer": {"query_outcome": "ok", "state": "transferred", "expired": False}}}}
     pairing.failure_details(copy.deepcopy(observed))
@@ -521,18 +757,114 @@ def test_application_owned_runtime_framing_and_retirement_use_real_subprocesses(
     assert "# pass 26" in result.stdout and "# fail 0" in result.stdout and "# skipped 0" in result.stdout
 
 
-def lifetime_fixture(tmp_path, fault=""):
+def lifetime_fixture(tmp_path, fault="", *, probe=""):
     """Actual installed-app JS control flow; inert SDK/runtime only, not native proof."""
     node, _ = staging.tools()
     log = tmp_path / "lifetime.jsonl"
     completed = subprocess.run([node, "--import", (staging.ROOT /
         "tests/core-ui-boundary/pairing_diagnostic_fixture.mjs").as_uri(),
         str(staging.APPLICATION / "pairing-check.mjs"), "--runtime", "unused", "--data-directory", "unused"],
-        cwd=staging.ROOT, env={**os.environ, "PAIRING_DIAGNOSTIC_FAULT": fault, "PAIRING_DIAGNOSTIC_LOG": str(log)},
+        cwd=staging.ROOT, env={**os.environ, "PAIRING_DIAGNOSTIC_FAULT": fault,
+            "PAIRING_DIAGNOSTIC_PROBE": probe, "PAIRING_DIAGNOSTIC_LOG": str(log)},
         capture_output=True, text=True, timeout=15)
     assert "private" not in (completed.stdout + completed.stderr).lower()
     assert len(completed.stdout.encode()) <= 4096
     return completed, json.loads(completed.stdout), [json.loads(line) for line in log.read_text().splitlines()]
+
+
+def test_primary_core_failure_survives_secondary_cleanup_rejection(tmp_path):
+    completed, observed, events = lifetime_fixture(tmp_path, "invitation_accept", probe="retirement_failure")
+    assert completed.returncode == 1
+    assert observed["phase"] == "explicit_approval"
+    assert observed["error_code"] == "forbidden"
+    assert observed["diagnostics"]["subphase"] == "invitation_accept"
+    assert observed["diagnostics"]["failure_origin"] == "core_error"
+    assert observed["diagnostics"]["cleanup"] == [
+        {"role": role, "incarnation": 1, "attempts": 1, "detach": "ok", "stop": "failed", "retired": False,
+         "budget_ms": 30000} for role in ("offerer", "answerer")]
+    assert [item["original"] for item in events if item["event"] == "error_identity"] == [True, True]
+    pairing.failure_details(observed)
+    assert [item["role"] for item in events if item["event"] == "stop"] == ["offerer", "answerer"]
+
+
+@pytest.mark.parametrize("fault", ["throw_undefined", "throw_null", "throw_number", "throw_string", "throw_false"])
+def test_unknown_primitive_throw_retains_identity_and_stage_despite_cleanup_failure(tmp_path, fault):
+    completed, observed, events = lifetime_fixture(tmp_path, fault, probe="retirement_failure")
+    assert completed.returncode == 1 and observed["phase"] == "explicit_approval"
+    assert observed["error_code"] == "unavailable"
+    diagnostics = pairing.failure_details(observed)["diagnostics"]
+    assert diagnostics["subphase"] == "invitation_accept" and diagnostics["failure_origin"] == "unknown"
+    assert diagnostics["deadline_exhausted"] is False
+    assert diagnostics["stage_timing"]["offsets_ms"] == {"invitation_accept_started": 0, "failure_observed": 0}
+    assert all(row["stop"] == "failed" and row["retired"] is False for row in diagnostics["cleanup"])
+    assert [row["original"] for row in events if row["event"] == "error_identity"] == [True, True]
+
+
+@pytest.mark.parametrize("fault,subphase,origin,elapsed", [
+    ("invitation_wait", "invitation_wait", "wait_deadline", 300000),
+    ("invitation_budget", "invitation_guard", "budget_deadline", 240001),
+])
+def test_owned_deadline_identity_survives_zero_budget_cleanup(tmp_path, fault, subphase, origin, elapsed):
+    completed, observed, events = lifetime_fixture(tmp_path, fault, probe="zero_budget_failure")
+    assert completed.returncode == 1 and observed["phase"] == "explicit_approval"
+    diagnostics = pairing.failure_details(observed)["diagnostics"]
+    assert diagnostics["subphase"] == subphase and diagnostics["failure_origin"] == origin
+    assert diagnostics["deadline_exhausted"] is True
+    assert diagnostics["stage_timing"]["offsets_ms"] == {"failure_observed": elapsed}
+    assert all(row["budget_ms"] == 0 and row["stop"] == "failed" and row["retired"] is False
+               for row in diagnostics["cleanup"])
+    assert [row["role"] for row in events if row["event"] == "stop"] == ["offerer", "answerer"]
+    assert max(i for i, row in enumerate(events) if row["event"] in {"probe", "public_probe"}) < next(
+        i for i, row in enumerate(events) if row["event"] == "stop")
+
+
+@pytest.mark.parametrize("mode", ["reject", "invalid", "advance_clock", "diagnostic_throw", "projection_throw", "observer_throw", "mutate_error"])
+def test_probe_failure_or_clock_advance_never_substitutes_primary_error(tmp_path, mode):
+    completed, observed, events = lifetime_fixture(tmp_path, "invitation_accept", probe=mode)
+    assert completed.returncode == 1 and observed["phase"] == "explicit_approval" and observed["error_code"] == "forbidden"
+    diagnostics = pairing.failure_details(observed)["diagnostics"]
+    assert diagnostics["subphase"] == "invitation_accept" and diagnostics["failure_origin"] == "core_error"
+    assert diagnostics["deadline_exhausted"] is False
+    assert diagnostics["stage_timing"]["offsets_ms"] == {"invitation_accept_started": 0, "failure_observed": 0}
+    assert [row["original"] for row in events if row["event"] == "error_identity"] == [True, True]
+    assert len([row for row in events if row["event"] == "probe"]) == 2
+    public = diagnostics["public_diagnostics"]
+    expected = ({"query_outcome": "not_attempted", "reason": "deadline_exhausted"} if mode == "advance_clock"
+                else {"query_outcome": "invalid_result"} if mode == "invalid"
+                else {"query_outcome": "failed"})
+    if mode not in {"observer_throw", "mutate_error"}:
+        assert public == {role: expected for role in ("offerer", "answerer")}
+    assert [row["role"] for row in events if row["event"] == "stop"] == ["offerer", "answerer"]
+
+
+def test_arbitrary_deadline_message_cannot_supply_owned_failure_origin(tmp_path):
+    _, observed, _ = lifetime_fixture(tmp_path, "forged_deadline_message", probe="retirement_failure")
+    assert observed["phase"] == "explicit_approval" and observed["diagnostics"]["failure_origin"] == "unknown"
+
+
+@pytest.mark.parametrize("fault,detach,stop", [
+    ("final_exit_missing", "ok", "failed"), ("final_detach_failure", "failed", "completed")])
+def test_cleanup_only_failure_keeps_distinct_incarnations_and_detach_facts(tmp_path, fault, detach, stop):
+    completed, observed, events = lifetime_fixture(tmp_path, fault)
+    assert completed.returncode == 1 and observed["phase"] == "retirement"
+    diagnostics = pairing.failure_details(observed)["diagnostics"]
+    assert diagnostics["failure_origin"] == "cleanup_failure" and diagnostics["subphase"] == "retirement"
+    facts = diagnostics["cleanup"]
+    assert [(row["role"], row["incarnation"]) for row in facts] == [
+        ("offerer", 1), ("answerer", 1), ("contender", 1), ("offerer", 2)]
+    assert all(row["retired"] is True for row in facts[:3])
+    assert facts[-1] == {"role": "offerer", "incarnation": 2, "attempts": 1, "detach": detach, "stop": stop,
+                         "retired": False, "budget_ms": 30000}
+    assert not any(row["event"] in {"probe", "public_probe"} for row in events)
+    assert "public_diagnostics" not in diagnostics and "failure_probe" not in diagnostics
+
+
+def test_detach_failure_cannot_be_counted_as_retired_despite_positive_stop(tmp_path):
+    _, observed, _ = lifetime_fixture(tmp_path, "invitation_accept", probe="detach_failure")
+    diagnostics = pairing.failure_details(observed)["diagnostics"]
+    assert observed["phase"] == "explicit_approval" and observed["error_code"] == "forbidden"
+    assert all(row["detach"] == "failed" and row["stop"] == "completed" and row["retired"] is False
+               for row in diagnostics["cleanup"])
 
 
 def test_actual_js_shared_session_lifetime_preserves_order_and_original_pending_key(tmp_path):
@@ -565,7 +897,7 @@ def test_actual_js_shared_session_lifetime_preserves_order_and_original_pending_
     ("survivor_message", "second_client_attach"), ("extra_authority", "second_client_attach"),
     ("changed_operations", "second_client_attach"), ("reattach_wrong_owner", "client_reattach"),
     ("slot_never_releases", "client_reattach"),
-    ("second_client_failure", "second_client_attach"), ("refused_alive", "retirement"),
+    ("second_client_failure", "second_client_attach"), ("refused_alive", "competing_owner_refusal"),
     ("receiver_not_exited", "pending_enqueue"), ("pending_terminal", "pending_enqueue"),
     ("pending_absent", "pending_enqueue"), ("replay_duplicate", "pending_enqueue"),
     ("replay_new_handle", "pending_enqueue"), ("reopened_identity", "pending_owner_reopen"),
@@ -593,7 +925,7 @@ def test_actual_js_lifetime_faults_cannot_manufacture_qualification(tmp_path, fa
         if item["event"] == "probe": assert item["role"] not in exited_roles
 
 
-@pytest.mark.parametrize("fault,phase", [("startup_observation_failure", "retirement"),
+@pytest.mark.parametrize("fault,phase", [("startup_observation_failure", "fresh_profiles"),
     ("initial_negotiation_failure", "fresh_profiles")])
 def test_owner_custody_precedes_startup_observation_and_sdk_negotiation(tmp_path, fault, phase):
     completed, observed, events = lifetime_fixture(tmp_path, fault)
@@ -1045,7 +1377,8 @@ def test_actual_independent_app_installs_from_sdk_archive_outside_checkout(recor
                                   capture_output=True, text=True, timeout=15)
         assert rejected.returncode == 1
         assert json.loads(rejected.stdout) == {"passed": False, "phase": "arguments", "error_code": "unavailable",
-            "diagnostics": {"subphase": "arguments", "deadline_exhausted": False, "peers": {}}}
+            "diagnostics": {"subphase": "arguments", "deadline_exhausted": False,
+                "failure_origin": "unknown", "cleanup": [], "peers": {}}}
         assert pairing.failure_details(json.loads(rejected.stdout))["application_phase"] == "arguments"
     finally:
         staging.cleanup(directory, parent)
