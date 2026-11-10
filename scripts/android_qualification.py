@@ -28,6 +28,16 @@ APP_ID = "com.meshchat.runtime.smoke"
 # Requires authenticated concurrent controller admission, never ordinary suite
 # discovery. It is invoked explicitly by native_interop_peers.AndroidPeer.
 CONTROLLER_ONLY_CLASSES = frozenset({"PackagedNativeInteropBoundaryTest"})
+CORE_FAILURE_OBSERVATION = (
+    "implicitCapabilitiesFailureUsesOneExistingExchange",
+    "iceFailureUsesTwoExistingExchangesAndPrivateObservation",
+    "wrongBindingAndPublicEntryOmitObservation",
+    "successfulEntryOmitsObservation",
+)
+CORE_FAILURE_OBSERVATION_SCOPE = (
+    "Actual optimized Android local Binder and Chaquopy diagnostic boundary with controlled producer failures; "
+    "no broker connectivity or native peer receipt qualification"
+)
 WEBRTC = {
     "NativeCallbackQueueTest": ("saturatedMetadataQueueStillAdmitsExactDisposal",),
     "NativeSessionReservationsTest": (
@@ -52,6 +62,7 @@ WEBRTC = {
         "queuedAvailabilityStartHonorsStopWithoutCrashingOrOpeningTheRuntime",
         "optedInServiceRestoresAndKeepsNativeTrafficWhileActivityIsStopped",
         "productionDesktopTransportOffersToNative", "productionDesktopTransportAnswersNative"),
+    "CoreFailureObservationBoundaryTest": CORE_FAILURE_OBSERVATION,
 }
 CORE_API = ("serviceIsExportedBehindTheSignaturePermission",
             "emptyFrameIsRejectedBeforeDispatch",
@@ -111,6 +122,8 @@ def cases(suite):
     if any(item["class"] in CONTROLLER_ONLY_CLASSES for item in result):
         raise ValueError("Controller-only instrumentation cannot enter ordinary qualification")
     for item in result:
+        if item["class"] == "CoreFailureObservationBoundaryTest":
+            item["scope"] = CORE_FAILURE_OBSERVATION_SCOPE
         if item["class"] == "NativeProfileResultRegistrationTest":
             item["scope"] = PROFILE_RESULT_SCOPE
         if item["class"] == "IndependentConsumerTest":

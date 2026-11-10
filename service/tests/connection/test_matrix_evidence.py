@@ -168,7 +168,7 @@ def test_gate_revalidates_policy_inventory_and_both_platform_component_reports(t
     source, tree, _ = fixture(tmp_path)
     result = matrix.collect(tmp_path, source, tree, ["policy", "verification", "android"])
     assert result["policy_tests_executed"] == 1
-    assert result["android_tests_executed"] == 52
+    assert result["android_tests_executed"] == 56
     assert set(result["windows_transport_checks"]) == CHECKS
     assert set(result["report_sha256"]) == {"policy", "windows_transport", "windows_packaged_lifecycle",
                                           "windows_packaged_transport", "windows_packaged_pairing", "android",
@@ -362,6 +362,27 @@ def test_android_result_registry_execution_and_component_scope_are_required(tmp_
         case.pop("scope")
     else:
         case["scope"] = "Successful OS credential confirmation"
+    (tmp_path / "android/android-qualification.json").write_text(json.dumps(android))
+    with pytest.raises(ValueError, match="scenario"):
+        matrix.collect(tmp_path, source, tree, ["policy", "verification", "android"])
+
+
+@pytest.mark.parametrize("fault", ["missing", "not_passed", "scope_missing", "scope_overstated"])
+def test_android_private_failure_observation_cannot_be_omitted_or_overclaimed(tmp_path, fault):
+    source, tree, android = fixture(tmp_path)
+    suite = next(item for item in android["suites"] if item["suite"] == "webrtc")
+    case = next(item for item in suite["scenarios"]
+                if "CoreFailureObservationBoundaryTest" in item["scenario_id"])
+    if fault == "missing":
+        suite["scenarios"].remove(case)
+        for key in ("tests_collected", "tests_executed", "tests_passed"):
+            suite[key] = len(suite["scenarios"])
+    elif fault == "not_passed":
+        case["passed"] = False
+    elif fault == "scope_missing":
+        case.pop("scope")
+    else:
+        case["scope"] = "Successful broker connection and authenticated native peer receipts"
     (tmp_path / "android/android-qualification.json").write_text(json.dumps(android))
     with pytest.raises(ValueError, match="scenario"):
         matrix.collect(tmp_path, source, tree, ["policy", "verification", "android"])

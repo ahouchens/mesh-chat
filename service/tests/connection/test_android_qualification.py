@@ -52,7 +52,7 @@ def test_stale_wrong_skipped_crashed_or_duplicate_instrumentation_is_rejected(ou
 
 def test_scenario_inventory_names_are_unique_and_both_offer_roles_are_mandatory():
     cases = list(gate.cases("webrtc")) + list(gate.cases("signaling"))
-    assert len(cases) == len({case["id"] for case in cases}) == 31
+    assert len(cases) == len({case["id"] for case in cases}) == 35
     assert {case["method"] for case in cases} >= {
         "productionDesktopTransportOffersToNative", "productionDesktopTransportAnswersNative",
         "sharedRuntimeOwnsNativeRecoveryAcrossLifecycle",
@@ -75,9 +75,40 @@ def inventory_fixture(directory, suite="webrtc"):
 def test_evidence_counts_actual_execution_and_hashes_each_report(tmp_path):
     identity, artifacts, _ = inventory_fixture(tmp_path)
     result = gate.verify_suite(tmp_path, "webrtc", identity, artifacts)
-    assert result["tests_collected"] == result["tests_executed"] == result["tests_passed"] == 21
+    assert result["tests_collected"] == result["tests_executed"] == result["tests_passed"] == 25
     assert result["tests_skipped"] == result["tests_failed"] == 0
     assert all(len(case["report_sha256"]) == 64 for case in result["scenarios"])
+
+
+@pytest.mark.parametrize("method", (
+    "implicitCapabilitiesFailureUsesOneExistingExchange",
+    "iceFailureUsesTwoExistingExchangesAndPrivateObservation",
+    "wrongBindingAndPublicEntryOmitObservation",
+    "successfulEntryOmitsObservation",
+))
+@pytest.mark.parametrize("fault", ["missing", "not_run", "skipped", "scope"])
+def test_each_optimized_failure_observation_control_is_required(tmp_path, method, fault):
+    identity, artifacts, inventory = inventory_fixture(tmp_path)
+    result = gate.verify_suite(tmp_path, "webrtc", identity, artifacts)
+    observer_cases = [case for case in gate.cases("webrtc")
+                      if case["class"] == "CoreFailureObservationBoundaryTest"]
+    assert len(observer_cases) == 4
+    assert all(case["scope"] == gate.CORE_FAILURE_OBSERVATION_SCOPE for case in observer_cases)
+    assert result["tests_executed"] == 25
+    case = next(case for case in observer_cases if case["method"] == method)
+    report = tmp_path / case["report"]
+    if fault == "missing":
+        report.unlink()
+    elif fault == "not_run":
+        report.write_text("OK (0 tests)\nINSTRUMENTATION_CODE: -1\n")
+    elif fault == "skipped":
+        report.write_text(report.read_text().replace("STATUS_CODE: 0", "STATUS_CODE: -3"))
+    else:
+        selected = next(item for item in inventory["scenarios"] if item["id"] == case["id"])
+        selected["scope"] = "Successful broker connection and authenticated peer receipts"
+        (tmp_path / "inventory.json").write_text(json.dumps(inventory))
+    with pytest.raises((ValueError, FileNotFoundError)):
+        gate.verify_suite(tmp_path, "webrtc", identity, artifacts)
 
 
 @pytest.mark.parametrize("fault", ["missing", "skipped", "wrong_process_case", "scope"])
@@ -179,7 +210,7 @@ def test_failed_runner_preserves_all_case_failures_and_later_missing_suites(tmp_
     result = json.loads((tmp_path / "android-qualification.json").read_text())
     assert result["passed"] is False and "RAW" not in json.dumps(result)
     webrtc, *later = result["failed_run_reports"]["suites"]
-    assert webrtc["inventory"] == "valid" and webrtc["passed_case_reports"] == 19
+    assert webrtc["inventory"] == "valid" and webrtc["passed_case_reports"] == 23
     assert webrtc["failed_case_reports"] == webrtc["missing_case_reports"] == 1
     assert {issue["scenario_id"] for issue in webrtc["issues"]} == {first["id"], second["id"]}
     assert all(item["inventory"] == "missing" and item["unvalidated_case_reports"] == item["required_case_reports"] for item in later)
@@ -247,7 +278,7 @@ bash scripts/test_android_webrtc.sh'''
     inventory = json.loads((reports / "inventory.json").read_text())
     evidence = gate.verify_suite(reports, "webrtc", {key: inventory[key] for key in ("source_commit", "source_tree")},
                                  inventory["artifacts"])
-    assert evidence["tests_executed"] == 21
+    assert evidence["tests_executed"] == 25
 
 
 def test_independent_runner_launches_both_cases_when_every_adb_call_consumes_stdin(tmp_path):
