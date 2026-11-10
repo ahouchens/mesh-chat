@@ -10,7 +10,51 @@ composer state, independent SDK distributions and upgrades, supervisor-owned
 native lifecycle/pairing, and the remaining packaged transport/fault matrix.
 The ledger records exact scope; this is not full M2–M5 completion.
 
-The current shared checkpoint is `e7630c8b6ed1feda6b3ef049336be309179b6075`
+The current shared checkpoint is `55e6b1924a31b978403555aa6be83487ce86553d`
+(tree `81d4ab8f07cc488d3cab09037226e9a7e6eab5ae`). Full manual qualification
+[42758745281](https://github.com/ahouchens/mesh-chat/actions/runs/42758745281)
+completed **failed** on 2026-11-10. Selection confirms all six families and the
+native `full` workload; duplicate PR run `42758746355` was canceled. The final
+gate fails because native Windows–Android pairing remains unqualified.
+
+All exact-source local gates pass: SDK staging, strict model/reducer types,
+**3,928 policy cases**, **776 Python plus 12 rendered UI cases**, and **nine
+Windows boundary cases**, with zero skips. Local policy takes 396.66 seconds.
+The lead independently reconstructs the corresponding CI policy/UI inventories,
+the complete Windows packaged report set, Android's **52 emulator and 62 JVM
+cases** with **17 artifact bindings**, and **25 fabric, 10 recovery and 12 setup
+cases on each of Linux and Windows**. These pass. The previous Windows setup
+channel-discovery failure does not recur; this does not establish its cause.
+The Windows sidecar remains 54,596,632 bytes with SHA-256
+`dc4373f98ac9b8c2e634af655f4bde630340b7b7fc147e95d8a49875dd2aa265`.
+WebView2 probe and direct binary hashes remain runner claims. Layout reports
+72 no-overflow cases; all archive entries were hashed, but PNGs were not retained
+or visually reviewed locally. Native control cycles are not durable-message
+receipts, and requested relay policy does not establish the selected ICE path.
+
+Both native failure reports now contain exact-actor retirement metadata.
+Android reports `{phase:gather_answer,event:failed,reason:transient}`; Windows
+reports `{phase:wait_answer,event:tick,reason:phase_timeout}`. Both retain
+`failure_site: pairing_status`, `pairing_state: retired` and
+`error_code: supervisor_pairing_retired`. Android startup and bootstrap-key
+exchange completed; the previous pre-controller startup failure did not recur.
+The Android exception itself was not retained, so the transient reason alone
+does not identify its source or prove a native transport timeout.
+
+C's source audit finds a concrete instrumentation prerequisite omission:
+`PackagedNativeInteropBoundaryTest` attaches WebRTC without configuring
+`BootstrapClient`, although ordinary Android startup configures both. Answer
+gathering binds signed onboarding and constructs `AndroidBootstrapProcess`,
+whose client requires that context. A guarded offline control reproduces the
+exact retirement signature without configuration and reaches `awaiting_approval`
+with `initialize_contact` after configuration, with zero external I/O. This is
+a harness defect consistent with the CI evidence, not proof of its sole cause.
+C is assigned the missing initialization call and narrow regression coverage.
+No policy/deadline relaxation or additional live probe is assigned. Native
+pending-action recovery, document-bound authority, positive resource-owner
+retirement, cross-platform receipts and full acceptance remain open.
+
+The previous shared checkpoint is `e7630c8b6ed1feda6b3ef049336be309179b6075`
 (tree `07beb0ed2d1859b66fe14b19f6ee7fbb4ec2663b`). Full manual qualification
 [42752889278](https://github.com/ahouchens/mesh-chat/actions/runs/42752889278)
 completed **failed**. Selection independently confirms all six families and the

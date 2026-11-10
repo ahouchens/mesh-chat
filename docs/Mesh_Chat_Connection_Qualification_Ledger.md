@@ -4,7 +4,66 @@
 
 ### Cold-restart containment: full CI completed; native pairing remains unqualified
 
-The current shared checkpoint is `e7630c8b6ed1feda6b3ef049336be309179b6075`
+The current shared checkpoint is `55e6b1924a31b978403555aa6be83487ce86553d`
+(tree `81d4ab8f07cc488d3cab09037226e9a7e6eab5ae`). Full manual qualification
+[42758745281](https://github.com/ahouchens/mesh-chat/actions/runs/42758745281)
+completed **failed** on 2026-11-10. Selection confirms all six families and the
+native `full` workload; duplicate PR run `42758746355` was canceled. The final
+gate fails because native Windows–Android pairing remains unqualified.
+
+All exact-source local gates pass: SDK staging, strict model/reducer types,
+**3,928 policy cases**, **776 Python plus 12 rendered UI cases**, and **nine
+Windows boundary cases**, with zero skips. Local policy takes 396.66 seconds.
+The lead independently reconstructs the corresponding CI policy/UI inventories,
+the complete Windows packaged report set, Android's **52 emulator and 62 JVM
+cases** with **17 artifact bindings**, and **25 fabric, 10 recovery and 12 setup
+cases on each of Linux and Windows**. These pass. The previous Windows setup
+channel-discovery failure does not recur; this does not establish its cause.
+The Windows sidecar remains 54,596,632 bytes with SHA-256
+`dc4373f98ac9b8c2e634af655f4bde630340b7b7fc147e95d8a49875dd2aa265`.
+WebView2 probe and direct binary hashes remain runner claims. Layout reports
+72 no-overflow cases; all archive entries were hashed, but PNGs were not retained
+or visually reviewed locally. Native control cycles are not durable-message
+receipts, and requested relay policy does not establish the selected ICE path.
+
+Both native failure reports now contain exact-actor retirement metadata.
+Android reports `{phase:gather_answer,event:failed,reason:transient}`; Windows
+reports `{phase:wait_answer,event:tick,reason:phase_timeout}`. Both retain
+`failure_site: pairing_status`, `pairing_state: retired` and
+`error_code: supervisor_pairing_retired`. Android startup and bootstrap-key
+exchange completed; the previous pre-controller startup failure did not recur.
+The Android exception itself was not retained, so the transient reason alone
+does not identify its source or prove a native transport timeout.
+
+C's source audit finds a concrete instrumentation prerequisite omission:
+`PackagedNativeInteropBoundaryTest` attaches WebRTC without configuring
+`BootstrapClient`, although ordinary Android startup configures both. Answer
+gathering binds signed onboarding and constructs `AndroidBootstrapProcess`,
+whose client requires that context. A guarded offline control reproduces the
+exact retirement signature without configuration and reaches `awaiting_approval`
+with `initialize_contact` after configuration, with zero external I/O. This is
+a harness defect consistent with the CI evidence, not proof of its sole cause.
+C is assigned the missing initialization call and narrow regression coverage.
+No policy/deadline relaxation or additional live probe is assigned. Native
+pending-action recovery, document-bound authority, positive resource-owner
+retirement, cross-platform receipts and full acceptance remain open.
+
+Retained archives for `55e6b19` / run `42758745281` (SHA-256):
+
+- selection: artifact `13735764912`, `96c2e9da2e4b2ae9c86b8ad779fd461812507170a4cc16360f673d8768afa0bd`.
+- policy: artifact `13736966320`, `a573f0ca0a710fec57a67ed0c75fac3f0fea999dd2ce57a1d0e846af61658b5d`.
+- verification: artifact `13737077521`, `8ce72874b33d69c6cb94905c7a6744517168fb2f302d849a20053b7db89ac247`.
+- desktop: artifact `13736559056`, `bfdda1260d10e78e1a416bb87bd0435ab49b83575f3e627ba0b54a017d18b97f`.
+- native-windows: artifact `13736623990`, `a6d73c0f399bd48e4002f1b098081f01ceee7172a6cbad57c1e7f392ccbeaeaf`.
+- android: artifact `13737148800`, `55919f3e30951bcb5ddd109d90a8141db02450d9f081d9530526e2a41c715cb7`.
+- android-debug: artifact `13736834675`, `2f7821f3cddec870d56a605771a7b36dd993f5f79967e13c2c1c04eb2955e98e`.
+- direct-linux: artifact `13737872442`, `afd1c6e767ae22fc740bd7d5788197f6bb35cff86042fe94853e5c87d0fa35c1`.
+- direct-windows: artifact `13737293553`, `9e42995229a2a686b28836fb209c63941dcd5d15d4dd352d773fb7a841a03137`.
+- layout: artifact `13737121127`, `2f4f5fcaeee8711dcf1b424edc5fd00be938e019d26b27fafff21357b9713144`.
+- native-interop-android: artifact `13737278035`, `5da76749155accd38f9ef61d8ed1e4e7cd08422bc3bc1174195a78d471702e51`.
+- native-interop-windows: artifact `13738210690`, `47370dd328b1e3f74488f465ad74633feb16700482319b8546bea3ad822624d0`.
+
+The previous shared checkpoint is `e7630c8b6ed1feda6b3ef049336be309179b6075`
 (tree `07beb0ed2d1859b66fe14b19f6ee7fbb4ec2663b`). Full manual qualification
 [42752889278](https://github.com/ahouchens/mesh-chat/actions/runs/42752889278)
 completed **failed**. Selection independently confirms all six families and the
