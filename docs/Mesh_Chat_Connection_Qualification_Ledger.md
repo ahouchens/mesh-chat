@@ -48,8 +48,11 @@ Native interoperability now passes source/artifact admission and reaches
 `supervisor_pairing_retired`. The phase spans multiple calls and does not identify
 the root cause. Offline payload-path controls pass with explicit native/mailbox
 doubles; no extra live probe or cross-platform receipt success is claimed.
-D is adding fixed-enum failure-site diagnostics without changing requests,
-checks, deadlines or workload and without recording sensitive payloads.
+D's fixed-enum failure-site diagnostics `539d5b2` are integrated at `918131a`.
+Eight literal sites bind to the exact active exception; successful calls clear
+the tag. Requests, checks, deadlines and workload are unchanged, and reports
+include no sensitive payloads. All 90 controller cases pass in the attempted
+local qualification described below; the native CI cause remains unproved.
 
 A/D independently reproduced an ordinary-host cold-restart regression introduced
 by the protected dispatch fence. Containment `4018fca`, integrated at `197392d`,
@@ -63,6 +66,36 @@ with six installed-SDK cases omitted from that focused run. New exact-source
 staging and full gates are still required. This containment is not a native
 owner-retirement protocol, migration of old ambiguous protected catalogs, or an
 older-binary rollback guarantee.
+
+Candidate `918131add72471b99631b76a04a150f8fb89b873` passes exact SDK staging
+and strict policy types, but its first complete local policy attempt is **not
+qualified**: 3,777 pass, six fail, one setup error, zero skips, in 430.98s. Five
+SDK-upgrade failures report disk-full or unavailable database files; npm's setup
+exit maps to `ENOSPC`. All six installed runtime-SDK lifecycle cases, all 33
+independent admission cases and all 90 controller cases pass within that failed
+run. Original log, XML and source-bound collection inventory are retained as
+`containment-policy-attempt1` artifacts.
+
+The separate eight-person workspace case reaches an assertion with seven sends
+instead of one after 5.810s. Its recording network leaves sends unacknowledged;
+the scheduler retries all due deliveries after five seconds, and the observed
+extra payload includes an older manifest. No workspace-specific disk exception
+is present. A controlled module-local clock run passes the entire scenario with
+one decline decision. Advancing that clock past outstanding due times instead
+produces one new decision and 15 old manifest deliveries with original logical
+IDs and exactly incremented attempt counts. The relevant service and test sources
+are identical between `a3b6ebc` and `918131a`; the containment did not introduce
+this behavior. The bounded test correction pins only this scenario's workspace
+clock, keeping production retry behavior unchanged. Correction `938d7ed` passes
+four focused cases, including existing retry and due-batch controls; a separate
+5.1-second real delay also preserves exactly one decline decision.
+
+Explicit user-authorized cleanup removes rebuildable Gradle/pip caches and the
+stopped Mesh test emulator's old Quick Boot snapshot. Current emulator data disks,
+configuration, source and qualification evidence are retained; free space reaches
+1,899,499,520 bytes immediately afterward. Full exact-source policy, UI and
+Windows qualification remains required before the next shared push/full CI.
+
 
 Verified archive provenance for `a3b6ebc` / run `42736168066`:
 
