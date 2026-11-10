@@ -143,6 +143,18 @@ zero leases. Existing protected owner Stop has durable later-admission consequen
 The guard, exact-resource custody and strict empty accounting must remain intact;
 no full native or isolated-helper qualification is established by this checkpoint.
 
+Checkpoint `ccd3b51` has passing exact-source local SDK/types, 5,068 required
+policy cases, 1,482 Python UI + 12 rendered cases, nine Windows boundary cases,
+and broader local service execution (6,298 pass/49 optional-platform skips).
+First full run `42857623266` fails Windows public-SDK invitation waiting and skips
+native interoperability; its first cause remains unresolved. The unchanged full
+retry `42862760087` passes Windows public pairing/lifetime and all non-native
+gates but fails native Android under TURN TCP negative-control phase with an
+unclassified `ValueError`; Windows later reports TURN TLS wait-answer timeout.
+No full native acceptance, isolated-helper completion, separate-caller/process,
+physical or media qualification is inferred. Coordination/diagnostic follow-up
+is under review; no timeout, authority or negative-control relaxation is assigned.
+
 Checkpoint `36466e0` full run `42843336931` verifies 5,066 policy cases,
 1,482 Python UI plus 12 rendered cases and the Windows/Android platform suites.
 General verification fails two composition fixture setups before their test

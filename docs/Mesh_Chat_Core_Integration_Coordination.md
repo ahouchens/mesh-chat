@@ -11,7 +11,67 @@ reports. Exact evidence and limits are in the ledger. Wave 2 is activated below.
 Existing human authorization covers continued implementation, integration and
 worker follow-ups without another permission request.
 
-The latest completed checkpoint is `36466e0245ec9c35d0e7b1bdaf2c544b40c050e0`
+The latest completed checkpoint is `ccd3b5164181aae6de47e1a939f52a2a05464378`
+(tree `39fd544a48f0461a4828f3f6339d274902f9e7b1`). Reviewed fixture
+serialization `c4e6036` is integrated. Fresh SDK staging and strict policy types
+pass; **5,068 required policy cases**, **1,482 Python UI + 12 rendered cases**
+and **nine Windows boundary cases** pass with zero skips. The complete local
+service inventory executes 6,347 cases: **6,298 pass, 49 optional/platform skips,
+zero failures or errors**, including all 18 retirement composition controls.
+The two new policy cases remove no prior inventory entries. Two failed local
+launcher attempts (missing tooling import path, then missing Windows spawn
+guard) are retained separately; neither is passing qualification evidence.
+
+First full run
+[42857623266](https://github.com/ahouchens/mesh-chat/actions/runs/42857623266)
+fails installed Windows public-SDK pairing at `explicit_approval` /
+`invitation_wait`, with a preserved local `wait_deadline` at 240,008 ms.
+Both pairing probes find acknowledged retirement before caller cleanup, with
+`expired:false`; current stopped/idle/ineligible actors do not identify the
+first retirement cause. The zero remaining cleanup budget does not establish
+positive host shutdown or a separate permanent shutdown defect. Nine Windows
+boundary cases and installed DPAPI/EFS bootstrap pass; later Windows packaged
+gates do not run. Native interoperability is **skipped**. Other required suites
+pass and are independently verified. Frozen service, SDK archive and consumer
+application hashes exactly match the prior passing Windows run at `36466e0`;
+three source audits find no new concrete caller/producer/harness defect. The
+invitation cause remains unresolved, including after the following retry.
+
+One unchanged-source full retry,
+[42862760087](https://github.com/ahouchens/mesh-chat/actions/runs/42862760087),
+passes installed Windows public-SDK pairing, receipts and the recorded
+same-application/caller lifetime slice, plus later packaged Windows gates.
+All required non-native evidence independently validates: the exact 5,068-case
+policy inventory, UI/Windows boundaries, **52 Android emulator cases**, **71 JVM
+cases**, all **17 Android distribution hashes**, and Linux/Windows each
+**25 transport + 10 recovery + 12 setup cases** with zero skips. The 72 layout
+report cases show no overflow; screenshots were not visually reviewed. Existing
+separate-caller/process, isolated-helper, physical and media limits remain.
+
+The retry nevertheless **fails native interoperability**. Android reports an
+unclassified `ValueError` while its phase is
+`turn_tcp_kernel_block_negative_control`. That phase also remains selected
+during post-negative observation, traffic validation and kernel-fault cleanup;
+the failing assertion/producer boundary is not identified. Windows subsequently
+reports `turn_tls_supervisor_owned_pairing_windows` with
+`supervisor_pairing_retired`; its exact first-retirement diagnostic is
+`wait_answer` / `tick` / `phase_timeout`. This is consistent with a partner
+stopping in the previous scenario, not proof of the Android cause. The bounded
+Android job-log inspection exposes no fixed exception message or script frame.
+Failed reports retain no successful case rows for independent receipt/path
+replay, 100 iterations, cold restarts or final zero accounting. No full native
+acceptance or aggregate pass follows from source-reachable progress.
+
+There is no third unchanged retry. A source-level coordination concern is under
+independent review: one controller can request owner retirement while its peer
+still performs final selected-path/counter/cleanup observations. A deterministic
+original-controller reproducer and minimal synchronization/escaping-error
+diagnostic design are in progress; no source correction or causal claim is yet
+accepted. Preserve actual kernel drops, receipt rejection while blocked, exact
+owner acknowledgment and global zero accounting. Bootstrap retirement remains
+deferred; no timeout, retry-budget, authority or acceptance relaxation is assigned.
+
+The preceding completed checkpoint is `36466e0245ec9c35d0e7b1bdaf2c544b40c050e0`
 (tree `404089a57be9a1feb8cf1ec830331dc8c3123720`), full run
 [42843336931](https://github.com/ahouchens/mesh-chat/actions/runs/42843336931).
 Fresh local SDK staging, strict policy types, **5,066 required policy/adapter

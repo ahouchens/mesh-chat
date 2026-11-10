@@ -4,7 +4,94 @@
 
 ### Cold-restart containment: full CI completed; native pairing remains unqualified
 
-The latest completed checkpoint is `36466e0245ec9c35d0e7b1bdaf2c544b40c050e0`
+The latest completed checkpoint is `ccd3b5164181aae6de47e1a939f52a2a05464378`
+(tree `39fd544a48f0461a4828f3f6339d274902f9e7b1`). Reviewed fixture
+serialization `c4e6036` is integrated. Fresh SDK staging and strict policy types
+pass; **5,068 required policy cases**, **1,482 Python UI + 12 rendered cases**
+and **nine Windows boundary cases** pass with zero skips. The complete local
+service inventory executes 6,347 cases: **6,298 pass, 49 optional/platform skips,
+zero failures or errors**, including all 18 retirement composition controls.
+The two new policy cases remove no prior inventory entries. Two failed local
+launcher attempts (missing tooling import path, then missing Windows spawn
+guard) are retained separately; neither is passing qualification evidence.
+
+First full run
+[42857623266](https://github.com/ahouchens/mesh-chat/actions/runs/42857623266)
+fails installed Windows public-SDK pairing at `explicit_approval` /
+`invitation_wait`, with a preserved local `wait_deadline` at 240,008 ms.
+Both pairing probes find acknowledged retirement before caller cleanup, with
+`expired:false`; current stopped/idle/ineligible actors do not identify the
+first retirement cause. The zero remaining cleanup budget does not establish
+positive host shutdown or a separate permanent shutdown defect. Nine Windows
+boundary cases and installed DPAPI/EFS bootstrap pass; later Windows packaged
+gates do not run. Native interoperability is **skipped**. Other required suites
+pass and are independently verified. Frozen service, SDK archive and consumer
+application hashes exactly match the prior passing Windows run at `36466e0`;
+three source audits find no new concrete caller/producer/harness defect. The
+invitation cause remains unresolved, including after the following retry.
+
+One unchanged-source full retry,
+[42862760087](https://github.com/ahouchens/mesh-chat/actions/runs/42862760087),
+passes installed Windows public-SDK pairing, receipts and the recorded
+same-application/caller lifetime slice, plus later packaged Windows gates.
+All required non-native evidence independently validates: the exact 5,068-case
+policy inventory, UI/Windows boundaries, **52 Android emulator cases**, **71 JVM
+cases**, all **17 Android distribution hashes**, and Linux/Windows each
+**25 transport + 10 recovery + 12 setup cases** with zero skips. The 72 layout
+report cases show no overflow; screenshots were not visually reviewed. Existing
+separate-caller/process, isolated-helper, physical and media limits remain.
+
+The retry nevertheless **fails native interoperability**. Android reports an
+unclassified `ValueError` while its phase is
+`turn_tcp_kernel_block_negative_control`. That phase also remains selected
+during post-negative observation, traffic validation and kernel-fault cleanup;
+the failing assertion/producer boundary is not identified. Windows subsequently
+reports `turn_tls_supervisor_owned_pairing_windows` with
+`supervisor_pairing_retired`; its exact first-retirement diagnostic is
+`wait_answer` / `tick` / `phase_timeout`. This is consistent with a partner
+stopping in the previous scenario, not proof of the Android cause. The bounded
+Android job-log inspection exposes no fixed exception message or script frame.
+Failed reports retain no successful case rows for independent receipt/path
+replay, 100 iterations, cold restarts or final zero accounting. No full native
+acceptance or aggregate pass follows from source-reachable progress.
+
+There is no third unchanged retry. A source-level coordination concern is under
+independent review: one controller can request owner retirement while its peer
+still performs final selected-path/counter/cleanup observations. A deterministic
+original-controller reproducer and minimal synchronization/escaping-error
+diagnostic design are in progress; no source correction or causal claim is yet
+accepted. Preserve actual kernel drops, receipt rejection while blocked, exact
+owner acknowledgment and global zero accounting. Bootstrap retirement remains
+deferred; no timeout, retry-budget, authority or acceptance relaxation is assigned.
+
+Retained `ccd3b51` full-run archive SHA-256 values:
+
+| Run | Evidence | SHA-256 |
+| --- | --- | --- |
+| 42857623266 | selection | `13d48d59835e5668b19ffc984e494fa9229b03a969b02a7e9e1207e6eb768059` |
+| 42857623266 | policy | `483c7567c5a4822708c9b8ca607466382f1d805e59395f4a63f7074444fc2fd8` |
+| 42857623266 | verification | `ecdc6fa20fc43b304fd0f8a8b02f92345c5e390941f408269deca86ccf47f68c` |
+| 42857623266 | native-windows | `e93035988a145a80838052ebec17dc4a9e59e0dad51166ad8ce7fe341603a123` |
+| 42857623266 | desktop | `37a0cda14165e7e3a2782cef38c811ff8b57f7f04a0a603c2692ee650341a958` |
+| 42857623266 | android | `62f16a286fe7e5d66fb398efefe74f411c36055682f2f8be907574f737796e1a` |
+| 42857623266 | android-debug | `cfffb946906ee57334b512c1ac7c0bb1cfa2da0dafd0b95ba276d7803ba543bf` |
+| 42857623266 | direct-linux | `f573231a093baf807f671b168f68db854e5e8d198af68bb3b6f20e3d738294a3` |
+| 42857623266 | direct-windows | `77b751a6c24fc7f1252d737ea89ea79335bde81835f7cb74c91dfd3e91cc0030` |
+| 42857623266 | layout | `c4f1c507132dcb2d9c5406530b4a413a56df060d3244fa6db889ab36de4f8909` |
+| 42862760087 | selection | `da2d6e20fb9dcd870c52fc22f17a1eae818ae7dca08d04390fc82e3ac1f4ccfc` |
+| 42862760087 | policy | `e756ed99f28816ce6da68d94a5cb0f23bc8da571b3a0e6329cc528ce0b5935fa` |
+| 42862760087 | verification | `ae5607ffd9c234ccf87aeda6f40366cb5159d8b50fc3e096b7bd598e75e235d2` |
+| 42862760087 | native-windows | `454af95080d0f215d9169172b51a9346cab1609534a5827d73646615974eca8a` |
+| 42862760087 | desktop | `5a465f9828f313881f251ebdabef2e9a0ac93c58468de880066f51e54b2c422d` |
+| 42862760087 | android | `be3163b0fe874731ad7bacc2ea22f02179e526cd8b208ab2df44eef851dafc53` |
+| 42862760087 | android-debug | `606926c8064357543e9202f62d804e2689a96ce24cfb49b71b6241e18cbe530c` |
+| 42862760087 | direct-linux | `9122d2b11d3b5bc0a2bf874f94f7b2b2057824917a1dd344c465a7a5f3ea08ec` |
+| 42862760087 | direct-windows | `687aa552a73869e4a75f402af254e1fef097c9a4b5c265d1cabb3bc48f113f36` |
+| 42862760087 | layout | `e90227762e84ffedfb3e74e3e6858e1fe94d56e77caba4ed2ac0bdb952f0a3b7` |
+| 42862760087 | native-interop-windows | `02f604124435680ce3e63c1f91e46bd14e96f482c12494fabfbd88523a440b96` |
+| 42862760087 | native-interop-android | `3d7701c769129884a60930f64a411e3d852d0781a61460caa9ed6c22887b2a63` |
+
+The preceding completed checkpoint is `36466e0245ec9c35d0e7b1bdaf2c544b40c050e0`
 (tree `404089a57be9a1feb8cf1ec830331dc8c3123720`), full run
 [42843336931](https://github.com/ahouchens/mesh-chat/actions/runs/42843336931).
 Fresh local SDK staging, strict policy types, **5,066 required policy/adapter
