@@ -13,7 +13,7 @@ import json
 import os
 from pathlib import Path
 import sys
-from threading import Event
+from threading import Event, Thread, current_thread
 from time import monotonic
 from types import SimpleNamespace
 from uuid import uuid4
@@ -32,6 +32,7 @@ from mesh_chat.core_api.session import Grant
 from mesh_chat.errors import ContactNotApproved, NativeUnavailable, ValidationError
 from mesh_chat.native_windows_webrtc import WindowsNativeWebRTCHost
 from mesh_chat.native_carrier_checkpoint import _binding_context
+from mesh_chat import reconnect_service
 from test_pairing_runtime import native_pairing
 from test_reconnect_service import _add_contact
 from test_webrtc_interface import reticulum
@@ -175,13 +176,29 @@ def begin_manual_case(services, peers, initiator):
     return intents
 
 
+def prepare_manual_contact(service, contact, peer):
+    with peer._dispatch_lock:
+        identity = peer._identity
+        destination = peer._require_profile()["destination_hash"]
+    # Match the surrounding production host-command lock, including the profile
+    # read BEFORE consent's later authority-update write. Do not expose a partly
+    # prepared approved contact to the actual native control worker.
+    with service._dispatch_lock:
+        _add_contact(service, contact, identity, destination)
+        service.reconnect_consent_set(contact, False, True)
+
+
 def finish_manual_case(state, intents):
     for role, service in state.services.items():
         other = "android" if role == "windows" else "windows"
-        capability = state.services[other]._reconnect_profile_for_contact(state.contacts[other])["local_capabilities"]
-        context = state.peers[role].contexts[intents[role]]
-        service._native_control_receive(context["session"], "mesh-onboarding", json.dumps({
-            "type": "connection_capabilities", "document": capability}))
+        with state.services[other]._dispatch_lock:
+            capability = state.services[other]._reconnect_profile_for_contact(state.contacts[other])["local_capabilities"]
+        # Like _handle_native_webrtc_event, serialize the full receive. Never
+        # retain the opposite peer lock while entering this service.
+        with service._dispatch_lock:
+            context = state.peers[role].contexts[intents[role]]
+            service._native_control_receive(context["session"], "mesh-onboarding", json.dumps({
+                "type": "connection_capabilities", "document": capability}))
     def adopted():
         return all(state.peers[role].pairing_status(intents[role])["state"] == "transferred"
             and service._native_carrier_authorized(state.peers[role].contexts[intents[role]]["session"])
@@ -284,8 +301,7 @@ def manual_carriers(native_pairing, monkeypatch, initiator, tmp_path, reticulum)
         for role, service in services.items():
             peer = services["android" if role == "windows" else "windows"]
             contact = "contact-" + role
-            _add_contact(service, contact, peer._identity, peer._require_profile()["destination_hash"])
-            service.reconnect_consent_set(contact, False, True)
+            prepare_manual_contact(service, contact, peer)
             contacts[role] = contact
         # Model the external network/Reticulum registration boundary only after
         # approval, so no isolated contact-bootstrap worker is allocated. Real
@@ -301,6 +317,84 @@ def manual_carriers(native_pairing, monkeypatch, initiator, tmp_path, reticulum)
             controllers=controllers, retirement_scopes={}, drive=lambda check: drive(services, check))
         finish_manual_case(state, intents)
         yield state
+
+
+@pytest.mark.parametrize("overlap", ["refresh", "incoming"])
+def test_contact_preparation_cannot_export_stale_snapshot_capability(native_pairing, monkeypatch, overlap):
+    """Force a native-refresh overlap; import actual signed docs at the peer."""
+    create, _ = native_pairing
+    source, *_ = create()
+    receiver, *_ = create()
+    clock = reconnect_service._now()
+    monkeypatch.setattr(reconnect_service, "_now", lambda: clock)
+    prepare_manual_contact(receiver, "source", source)
+    with receiver._dispatch_lock:
+        incoming = receiver.reconnect_capabilities_get("source")["local_capabilities"]
+        expected_device = receiver._reconnect_device_id()
+        incoming_peer = receiver._require_profile()["destination_hash"]
+    profile_for_contact = source._reconnect_profile_for_contact
+    read, release, attempted, observed = Event(), Event(), Event(), Event()
+    facts, errors = {}, []
+    def capture_profile(*args, **kwargs):
+        profile = profile_for_contact(*args, **kwargs)
+        if current_thread() is preparer and not read.is_set():
+            facts["dispatch_owned"] = source._dispatch_lock._is_owned()
+            read.set()
+            assert release.wait(5), "controlled profile-read gate was not released"
+        return profile
+    monkeypatch.setattr(source, "_reconnect_profile_for_contact", capture_profile)
+    def prepare():
+        try:
+            prepare_manual_contact(source, "receiver", receiver)
+        except BaseException as error:
+            errors.append(error)
+    def refresh():
+        attempted.set()
+        try:
+            # Production native control refresh runs under this dispatch lock.
+            with source._dispatch_lock:
+                if overlap == "incoming":
+                    source.reconnect_capabilities_store(incoming, expected_contact_id="receiver",
+                        expected_peer_destination=incoming_peer)
+                else:
+                    facts["document"] = source.reconnect_capabilities_get("receiver")["local_capabilities"]
+        except BaseException as error:
+            errors.append(error)
+        finally:
+            observed.set()
+    preparer, observer = Thread(target=prepare), Thread(target=refresh)
+    preparer.start()
+    try:
+        assert read.wait(2)
+        observer.start()
+        assert attempted.wait(2)
+        if not facts["dispatch_owned"]:
+            assert observed.wait(2)  # Force unsafe publication before stale write.
+        else:
+            assert not observed.is_set()  # Atomic preparation blocks the refresh.
+    finally:
+        release.set()
+        preparer.join(2)
+        if observer.ident is not None:
+            observer.join(2)
+    assert not preparer.is_alive() and not observer.is_alive()
+    assert not errors, [type(error).__name__ for error in errors]
+    with source._dispatch_lock:
+        if overlap == "incoming":
+            profile = source._reconnect_profile_for_contact("receiver")
+            device_matches = profile.get("remote_device_id") == expected_device
+            document_matches = profile.get("remote_capabilities") == incoming
+            assert (device_matches, document_matches) == (True, True)
+            assert (profile["auto_reconnect"], profile["allow_direct_ip_disclosure"]) == (False, True)
+            return
+        final_document = source.reconnect_capabilities_get("receiver")["local_capabilities"]
+        outgoing_peer = source._require_profile()["destination_hash"]
+    with receiver._dispatch_lock:
+        for document in (facts["document"], final_document):
+            receiver.reconnect_capabilities_store(document, expected_contact_id="source",
+                expected_peer_destination=outgoing_peer)
+        profile = receiver._reconnect_profile_for_contact("source")
+        assert (profile["remote_auto_reconnect"], profile["remote_allow_direct_ip_disclosure"]) == (False, True)
 
 
 @pytest.mark.parametrize("primary_failure", [False, True])
