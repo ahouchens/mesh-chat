@@ -34,8 +34,18 @@ Source audit identifies a fixture defect: direct setup consent and injected
 control calls bypass the dispatch serialization used by production entry points,
 allowing concurrent signed-capability read/modify/write effects. Normal native
 control maintenance is already running, so an omitted explicit pump is not an
-established cause. A narrow test-only serialization correction and controlled
-regressions are in progress; the exact historical CI interleaving remains unknown.
+established cause. Fixture-only correction `c4e6036` now holds the complete consent preparation
+and control receive under the same dispatch serialization as their production
+callers; peer locks are released before entering the target service. Independent
+review closes the finding with no new findings. Two deterministic signed-capability
+regressions first reproduce stale consent publication and lost remote association,
+then pass with the correction. All original 16 composition controls remain and
+the complete owned file passes 18 cases with zero failures, errors or skips.
+The lead verified all ten retained evidence file hashes, immutable source/tree,
+the two semantic failures and exact original case preservation. No product code,
+native maintenance, adoption deadline or retirement assertion changed. The exact
+historical CI interleaving remains unknown. Fresh broader service, required policy,
+boundary and full native qualification remain pending on the integrated source.
 No product timeout, retry, authority or acceptance relaxation is assigned.
 
 Retained `36466e0` / run `42843336931` archive SHA-256 values:

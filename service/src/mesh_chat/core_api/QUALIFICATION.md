@@ -147,5 +147,7 @@ Checkpoint `36466e0` full run `42843336931` verifies 5,066 policy cases,
 1,482 Python UI plus 12 rendered cases and the Windows/Android platform suites.
 General verification fails two composition fixture setups before their test
 bodies; native interoperability is skipped. The fixture bypasses production
-serialization during consent/control setup and is being corrected separately.
+serialization during consent/control setup. Reviewed fixture-only correction
+`c4e6036` closes that finding; 18 local controls pass, including two deterministic
+signed-capability races. Fresh full qualification is pending.
 This run supplies no packaged owner-retirement or cold-start native acceptance.

@@ -42,7 +42,8 @@ Checkpoint `36466e0` full run `42843336931` again verifies the installed Windows
 public-SDK pairing, receipt and same-caller lifetime slice and all required
 Android component suites. General verification fails two loopback composition
 fixture setups; native interoperability is skipped. A test-only serialization
-correction is in progress. These results do not expand the public-consumer or
+correction `c4e6036` is reviewed with 18 local controls passing; fresh full
+qualification is pending. These results do not expand the public-consumer or
 cross-platform acceptance scope.
 
 ## Gaps observed when this proposal was written
