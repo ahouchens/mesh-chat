@@ -70,7 +70,13 @@ Reviewed controller diagnostics `7058909` now label ten existing initialization
 call sites on failure. The original exception, calls, budgets and cleanup remain
 unchanged; 1,093 focused component cases pass. Labels expose no payload or raw
 exception text and do not identify the SDK's implicit capability request versus
-the requested Core operation. Fresh combined qualification is still required. The
+the requested Core operation. Exact-source `379e38a` local gates pass
+5,406 policy cases, 1,752 Python UI + 12 rendered cases and nine Windows
+boundary cases. Full run `42899863270` passes all non-native families but
+fails native initialization: Android `initialize_ice_servers/internal`, Windows
+`initialize_key_wait/RendezvousUnavailable`. The inner capability-versus-ICE
+operation and cause remain unknown. No full native acceptance or expansion of
+public SDK support follows; private same-exchange diagnostics are in design. The
 `qualification.retire_carrier` request has exactly `action`, `operation_id`,
 `request_id`, `logical_session`, `expected_physical`,
 `expected_service_incarnation` and `expected_adapter_epoch`. Action is exactly

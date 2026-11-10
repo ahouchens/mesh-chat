@@ -69,7 +69,13 @@ open; the private controller diagnostics do not extend public SDK support.
 Reviewed failure-only initialization labels `7058909` pass 1,093 focused
 component cases without changing public Core/SDK behavior. These labels name
 the controller call site, not an implicit capability check or inner cause;
-fresh full qualification remains required.
+Exact-source `379e38a` local gates pass
+5,406 policy cases, 1,752 Python UI + 12 rendered cases and nine Windows
+boundary cases. Full run `42899863270` passes all non-native families but
+fails native initialization: Android `initialize_ice_servers/internal`, Windows
+`initialize_key_wait/RendezvousUnavailable`. The inner capability-versus-ICE
+operation and cause remain unknown. No full native acceptance or expansion of
+public SDK support follows; private same-exchange diagnostics are in design.
 No public API/grant, timeout, authority or negative-control relaxation is assigned.
 
 Checkpoint `36466e0` full run `42843336931` again verifies the installed Windows

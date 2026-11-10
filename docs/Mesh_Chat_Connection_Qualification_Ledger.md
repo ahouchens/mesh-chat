@@ -4,7 +4,53 @@
 
 ### Cold-restart containment: full CI completed; native pairing remains unqualified
 
-The latest completed checkpoint is `30c9e4d996715aec9459da803119d1697bfba086`
+The latest completed checkpoint is `379e38ae385a398bfc5a6ec878ac12bc7969560a`
+(tree `2cea47a5971980ac34e63949e5f221a2ced09184`). Fresh SDK staging and
+strict policy types pass. Exact-source local gates pass **5,406 required policy
+cases**, **1,752 Python UI + 12 rendered cases** and **nine Windows boundary
+cases**, without required skips. The full local service run passes **6,636
+cases with 49 unchanged optional/platform skips**, zero failures or errors,
+including all 28 composition controls. The previous inventories are preserved
+with the 95 new initialization diagnostic controls.
+
+Full manual run
+[42899863270](https://github.com/ahouchens/mesh-chat/actions/runs/42899863270)
+completed **failed** on November 10 at 21:29:30 UTC. All non-native families
+pass and independently validate, including exact local/CI policy inventory
+parity, UI/Windows boundaries, packaged Windows and the installed public SDK
+pairing/two-receipt/same-application lifetime slice, **52 Android emulator
+cases**, **71 JVM cases**, all **17 Android distribution hashes**, and each
+Linux/Windows **25 transport + 10 recovery + 12 setup cases**. All 72 layout
+report cases have zero overflow; screenshots were not visually reviewed.
+The exact broader service counts above belong to the local run. Existing
+separate-caller/process, helper-retirement, physical and media limits remain.
+
+The new failure labels narrow Android to `initialize_ice_servers` /
+`PeerFailure` / `internal`. Windows reports `initialize_key_wait` /
+`RendezvousUnavailable`. Both failed during initialization and retain no
+successful native scenario rows, paired authenticated receipts, cold-restart
+iterations or final zero accounting. Bounded inspection of both job logs adds
+no fixed diagnostic discriminator. The typed SDK performs an implicit
+`runtime.capabilities` exchange before the requested `call.ice_servers`, so
+the failing inner operation and exception remain unknown. Existing broker/TLS
+and response-encoding paths are possibilities, not established causes.
+
+The next diagnostic design carries private, bounded operation/stage/category
+metadata through the same authorized exchange, preserving public Core bytes,
+errors, call count and budgets. It is not yet an implemented repair. No
+unchanged-source retry was dispatched. Full native acceptance remains open;
+bootstrap retirement remains deferred until it passes.
+
+Native android archive SHA-256: `9e24455b43718c675488c0230cfc37c5fd2a8a4d5af9a9bb77a86824af921482`;
+report SHA-256: `cc8e7020ebeec59191002baefb46c44e78095d45846d740a2545e48a8ded8df6`.
+
+Native windows archive SHA-256: `312b9202f10d1d24a348234317ed7a617d92f31f572fc52f4ced138dc1e5b931`;
+report SHA-256: `3f3b4870da54174b3b1edb50f25f1815ba9793ecef1795b5efe8e3e016b3e3e5`.
+
+Same-head PR duplicate `42899863619` was cancelled after the full manual
+run became active; it supplies no acceptance.
+
+The preceding checkpoint is `30c9e4d996715aec9459da803119d1697bfba086`
 (tree `3e30ef753eef5ab20940bbb242494f715a9f81d2`). The reviewed private v2
 producer, controller and 28-case real Windows composition are integrated.
 Fresh local SDK staging and strict policy types pass, alongside **5,311 required
@@ -75,8 +121,8 @@ test assertions and the mistyped test-path launch remain separately retained.
 
 The labels add no probe, retry, raw exception text, credential export or Core
 error remapping. A Core call-site label cannot distinguish the SDK's implicit
-capability request from its requested operation. New exact-source combined
-qualification remains required. Bootstrap retirement remains deferred until
+capability request from its requested operation. Exact-source combined qualification at `379e38a` is recorded above; its
+full native run fails during initialization. Bootstrap retirement remains deferred until
 full native qualification.
 
 The preceding checkpoint is `ccd3b5164181aae6de47e1a939f52a2a05464378`
