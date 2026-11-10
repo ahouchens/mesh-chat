@@ -21,6 +21,158 @@ from test_ui_core_boundary_interop_evidence import sample
 from test_ui_core_boundary_interop_artifacts import RECEIVE_ORIGINS
 
 
+def terminal_inventory(*, resources=False, active=0, retiring=0):
+    return {"resources": [{"logical_session": "PRIVATE_LOGICAL", "physical_resource": "PRIVATE_PHYSICAL"}] if resources else [],
+        "host_accounting": {"v": 1, "complete": True, "semantics": "native_allocation_leases",
+            "availability": {name: True for name in evidence.ACCOUNTING}, "capacity": 16,
+            "reserved_count": active + retiring, "creating_count": 0, "allocated_count": active + retiring,
+            "active_count": active, "retiring_count": retiring}}
+
+
+def run_terminal_report(tmp_path, monkeypatch, capsys, *, role="android", polls=None, remaining=3000,
+                        stop_error=False, cleanup_error=False):
+    """Actual main/run/retired/wait; earlier workload and external peers are inert."""
+    import connection_ci
+    from mesh_chat.core_api.requests import parse_request
+    state = SimpleNamespace(now=0.0, events=[], stop_requested=False, reads=0, failures=[],
+                            stop_error=controller.PeerFailure("unavailable"))
+    pending = polls if polls is not None else [terminal_inventory(resources=True, active=1),
+        terminal_inventory(retiring=1), terminal_inventory()]
+    profile, peer_handle = "scoped_profile_AAAA", "scoped_peer_AAAAAAA"
+    class Peer:
+        process = SimpleNamespace(pid=17)
+        processes_started, forced_exits, clean_exits = 1, 0, 0
+        def core(self, operation, params, key=None):
+            assert key is None
+            if operation == "native.command":
+                command = params["command"]
+                if command == "reconnect_consent_set":
+                    assert params["payload"] == {"contact_id": "PRIVATE_CONTACT_ID", "auto_reconnect": False,
+                                                  "allow_direct_ip_disclosure": True}
+                    state.events.append("consent_disabled")
+                    return {}
+                assert command == "native_webrtc_close"
+                state.events.append("compatibility_close")
+                return {"state": "managed"}
+            assert operation == "connection.stop" and params == {"profile": profile, "peer": peer_handle}
+            assert parse_request({"api_version": 1, "request_id": "terminal:stop", "operation": operation,
+                                  "params": params}, {operation}) == (operation, params)
+            state.events.append("connection.stop")
+            if stop_error: raise state.stop_error
+            state.stop_requested = True
+            return {"profile": profile, "peer": peer_handle, "desired": "stopped", "active": False}
+        def inventory(self):
+            state.events.append("inventory")
+            state.reads += 1
+            if not state.stop_requested: return terminal_inventory(resources=True, active=1)
+            return copy.deepcopy(pending[min(state.reads - 1, len(pending) - 1)])
+        def stop(self, **kwargs):
+            state.events.append(("host.stop", kwargs))
+            self.process = None
+            if cleanup_error: raise ValueError("PRIVATE_CLEANUP_ERROR")
+            self.clean_exits += 1
+    peer = Peer()
+    def initialize(instance):
+        state.controller = instance
+        instance.profile, instance.contact, instance.identity = profile, {"id": "PRIVATE_CONTACT_ID", "core_handle": peer_handle}, "a" * 64
+        instance.deadline = state.now + remaining
+    def sleep(seconds):
+        assert seconds == 0.25
+        state.events.append("sleep")
+        state.now += seconds
+    failure_site = controller.Controller.failure_site
+    def observe_failure(instance, error):
+        state.failures.append(error)
+        return failure_site(instance, error)
+    monkeypatch.setattr(controller.Controller, "failure_site", observe_failure)
+    monkeypatch.setattr(controller, "time", SimpleNamespace(monotonic=lambda: state.now, sleep=sleep))
+    monkeypatch.setattr(controller.Controller, "initialize", initialize)
+    monkeypatch.setattr(controller.Controller, "path_case", lambda _, scenario, initiator: state.events.append((scenario, initiator)))
+    monkeypatch.setattr(controller.Controller, "cold_starts", lambda _: state.events.append("cold_starts"))
+    monkeypatch.setattr(controller, "source_identity", lambda _: ("a" * 40, "b" * 40))
+    monkeypatch.setattr(connection_ci, "current_plan", lambda: {"native_workload": "full"})
+    monkeypatch.setattr(controller, "context_from_environment", lambda: {"source_commit": "a" * 40})
+    monkeypatch.setattr(controller, "binding", lambda *_: (None, {}))
+    monkeypatch.setattr(controller, "outbound_services", lambda: {})
+    monkeypatch.setattr(controller, "android_environment", lambda **_: {})
+    monkeypatch.setattr(controller, "AndroidEmulator", lambda: SimpleNamespace(start=lambda *_, **__: None, close=lambda: None))
+    monkeypatch.setattr(controller, "WindowsPeer", lambda *_: peer)
+    monkeypatch.setattr(controller, "AndroidPeer", lambda *_: peer)
+    monkeypatch.setattr(controller, "GithubArtifacts", lambda *_: SimpleNamespace(publish=lambda *_: None, wait=lambda *_, **__: {}, close=lambda: None))
+    monkeypatch.setattr(controller, "Rendezvous", lambda *_: SimpleNamespace(public_manifest=lambda: {}, bind_partner=lambda _: None, close=lambda: None))
+    import check_native_windows_messaging
+    monkeypatch.setattr(check_native_windows_messaging, "descendants", lambda _: [])
+    output = tmp_path / "terminal.json"
+    monkeypatch.setattr(sys, "argv", ["controller", "--role", role, "--workload", "full", "--expected-source", "a" * 40, "--output", str(output)])
+    code = controller.main()
+    captured = capsys.readouterr()
+    return SimpleNamespace(record=json.loads(output.read_text()), code=code, state=state, peer=peer,
+                           output=output.read_text() + captured.out + captured.err)
+
+
+@pytest.mark.parametrize("role", ["windows", "android"])
+def test_terminal_scoped_owner_stop_precedes_strict_retirement_observation(tmp_path, monkeypatch, capsys, role):
+    run = run_terminal_report(tmp_path, monkeypatch, capsys, role=role)
+    assert run.code == 0 and run.state.stop_requested
+    assert "compatibility_close" not in run.state.events
+    terminal = run.state.events[run.state.events.index("consent_disabled"):]
+    assert terminal == ["consent_disabled", "connection.stop", "inventory", "sleep", "inventory", "sleep", "inventory",
+                        ("host.stop", {"delete_profile": True} if role == "android" else {})]
+    assert run.record["execution"]["final_host_accounting"] == terminal_inventory()["host_accounting"]
+    assert "PRIVATE" not in run.output
+    with pytest.raises(ValueError): evidence.verify_report(run.record, "a" * 40, "b" * 40, role)
+
+
+@pytest.mark.parametrize("pending", [
+    pytest.param(terminal_inventory(resources=True), id="logical-resource-with-native-zero"),
+    pytest.param(terminal_inventory(active=1), id="active-native-with-logical-empty"),
+    pytest.param(terminal_inventory(retiring=1), id="retiring-native-with-logical-empty"),
+    pytest.param({**terminal_inventory(), "host_accounting": {
+        **terminal_inventory()["host_accounting"], "reserved_count": 1}}, id="reserved-native"),
+    pytest.param({**terminal_inventory(), "host_accounting": {
+        **terminal_inventory()["host_accounting"], "reserved_count": 1, "creating_count": 1}}, id="creating-native"),
+])
+def test_terminal_desired_stopped_reply_is_not_retirement_ack(tmp_path, monkeypatch, capsys, pending):
+    run = run_terminal_report(tmp_path, monkeypatch, capsys, polls=[pending], remaining=0.5)
+    assert run.state.stop_requested and run.state.events.count("connection.stop") == 1
+    assert run.code == 1 and run.record["phase"] == "clean_host_retirement"
+    assert run.record["failure_type"] == "PeerFailure" and run.record["error_code"] == "scenario_deadline"
+    assert run.state.reads == 2 and run.state.events.count("sleep") == 2 and run.state.now == 0.5
+    assert "execution" not in run.record and "compatibility_close" not in run.state.events
+    assert run.state.events[-1] == ("host.stop", {"crash": True})
+    assert "PRIVATE" not in run.output
+
+
+@pytest.mark.parametrize("remaining,reads,elapsed", [(3000, 120, 30), (0, 0, 0)])
+def test_terminal_owner_stop_preserves_original_local_and_global_wait_budget(tmp_path, monkeypatch, capsys, remaining, reads, elapsed):
+    run = run_terminal_report(tmp_path, monkeypatch, capsys, polls=[terminal_inventory(active=1)], remaining=remaining)
+    assert run.code == 1 and run.record["error_code"] == "scenario_deadline"
+    assert run.state.events.count("connection.stop") == 1 and run.state.reads == reads
+    assert run.state.events.count("sleep") == reads and run.state.now == elapsed
+
+
+@pytest.mark.parametrize("cleanup_error", [False, True])
+def test_terminal_stop_error_keeps_original_main_error_and_attempts_cleanup(tmp_path, monkeypatch, capsys, cleanup_error):
+    run = run_terminal_report(tmp_path, monkeypatch, capsys, stop_error=True, cleanup_error=cleanup_error)
+    assert run.code == 1 and run.record["phase"] == "clean_host_retirement"
+    assert run.record["failure_type"] == "PeerFailure" and run.record["error_code"] == "unavailable"
+    assert run.state.failures == [run.state.stop_error]  # Exact escaping object, even if cleanup fails later.
+    assert run.state.reads == 0 and run.state.events.count("connection.stop") == 1
+    assert "compatibility_close" not in run.state.events and "execution" not in run.record
+    assert run.state.events[-1] == ("host.stop", {"crash": True})
+    assert run.record.get("cleanup_failed", False) is cleanup_error
+    assert "PRIVATE" not in run.output
+
+
+def test_terminal_stop_cannot_turn_unavailable_accounting_into_zero(tmp_path, monkeypatch, capsys):
+    inventory = terminal_inventory()
+    inventory["host_accounting"]["complete"] = False
+    run = run_terminal_report(tmp_path, monkeypatch, capsys, polls=[inventory])
+    assert run.code == 1 and run.state.stop_requested and run.state.reads == 1
+    assert run.record["failure_type"] == "AccountingUnavailable" and run.record["error_code"] == "native_accounting_unavailable"
+    assert "execution" not in run.record
+
+
 @pytest.fixture
 def path_observer(monkeypatch, sample):
     """Actual observe/wait/Samples; only private peer calls and time are scripted."""
