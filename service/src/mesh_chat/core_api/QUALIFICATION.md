@@ -82,6 +82,29 @@ Terminal cleanup instead uses the current scoped Core `connection.stop`, followe
 by the same zero-accounting checks and normal host shutdown. Its desired-state
 reply is not cleanup completion. Full native qualification remains required.
 
+The cold-start setup follow-up is also assigned. After the final manual
+acknowledgment/zero gate, each peer performs the existing local auto-reconnect
+consent update, publishes its returned signed capabilities in the sealed
+`reconnect_capabilities` setup phase, then receives and imports the peer's document.
+The phase accepts exactly `{capabilities:<nonempty string>}`, at most 16KiB of
+UTF-8 text and within the existing 48KiB canonical plaintext bound. Other setup
+schemas, envelope provenance, expiration and one-shot rules remain unchanged.
+Both peers publish before receiving. Each must persist the import through the
+existing signature/recipient/expected-peer validation and check the same contact,
+profile and device association plus mutual consent before its own first crash.
+Publishing alone is insufficient. Capability plaintext contains credentials and
+must not appear in retained reports or logs. Manual cases keep consent disabled;
+the cold-start workload, deadlines and receipt requirements remain unchanged.
+
+This adds one setup artifact per role: full Windows uses ten setup artifacts plus
+one final report, Android eight plus one; quick mode uses four plus one each.
+The run inventory bound remains 100. GitHub's
+[artifact platform release](https://github.blog/changelog/2024-02-12-github-actions-artifacts-v4-is-now-generally-available/)
+and [current upload action documentation](https://github.com/actions/upload-artifact#number-of-artifacts)
+document 500 artifacts per job. The toolkit README's conflicting ten-artifact
+wording is retained in the audit; lock-verified SDK 6.3.1 upload/client/config
+source showed no ten-artifact guard. No SDK or workflow update is required.
+
 The `902b12d` full qualification run `42796005344` executed all 18 native-path
 JVM controls (71 JVM cases overall), all 52 required Android emulator cases and
 the installed Windows platform suites successfully. Its cross-platform native
