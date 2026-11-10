@@ -250,6 +250,23 @@ def test_public_windows_pairing_requires_its_exact_normal_bootstrap_and_receipts
         matrix.collect(tmp_path, source, tree, ["verification"])
 
 
+@pytest.mark.parametrize("key", ["clean_host_exits", "concurrent_owner_refusals", "rejected_owner_exits",
+    "pending_message_before_owner_stop", "reopened_original_message_and_key", "reopened_same_public_identity",
+    "runtime_lock_reacquired", "owner_native_host_shutdown_acknowledgments", "shared_host_sdk_sessions",
+    "closed_sdk_session_survivor_usable", "reattached_sdk_session_same_authorized_state"])
+@pytest.mark.parametrize("fault", ["missing", "false_or_zero", "wrong_type"])
+def test_matrix_revalidates_every_shared_host_lifetime_predicate(tmp_path, key, fault):
+    source, tree, _ = fixture(tmp_path)
+    path = tmp_path / "desktop/windows-independent-pairing.json"
+    record = json.loads(path.read_text())
+    expected = record["checks"][key]
+    if fault == "missing": record["checks"].pop(key)
+    elif fault == "false_or_zero": record["checks"][key] = False if type(expected) is bool else 0
+    else: record["checks"][key] = int(expected) if type(expected) is bool else float(expected)
+    path.write_text(json.dumps(record))
+    with pytest.raises(ValueError): matrix.collect(tmp_path, source, tree, ["verification"])
+
+
 def native_interop_reports(directory, source, tree, artifacts, *, workload="full"):
     from test_ui_core_boundary_interop_controller import interop_reports
     folder = directory / "native-interop"

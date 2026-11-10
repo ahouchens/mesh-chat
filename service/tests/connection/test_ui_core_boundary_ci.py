@@ -86,6 +86,23 @@ def test_normal_installed_windows_runtime_is_a_required_distinct_artifact_bound_
     assert "continue-on-error" not in steps[pairing] and "if" not in steps[pairing]
     assert any("dist/reports/windows-independent-pairing.json" in step["with"]["path"] for step in uploads)
     assert "windows_independent_pairing" in ci.COMPONENTS["verification"]
+    assert any(all(path in step["with"]["path"] for path in (
+        "dist/reports/windows-independent-bootstrap.json", "dist/reports/windows-independent-pairing.json",
+        "dist/reports/windows-independent-sdk/**")) for step in uploads)
+
+
+def test_required_lifetime_evidence_keeps_bootstrap_and_session_scope_distinct():
+    import check_independent_core_consumers as bootstrap
+    import check_independent_core_pairing as pairing
+    from stage_independent_core_consumers import FILES
+    assert bootstrap.CHECKS["clean_host_exits"] == 2 and pairing.CHECKS["clean_host_exits"] == 3
+    assert pairing.CHECKS["shared_host_sdk_sessions"] == 2 and pairing.CHECKS["rejected_owner_exits"] == 1
+    assert {"runtime.mjs", "pairing-check.mjs", "pairing-diagnostics.mjs", "README.md"} <= set(FILES)
+    assert "two SDK sessions in one Node application" in pairing.SCOPE
+    assert "no separate consumer-process exit" in pairing.SCOPE and "isolated-helper retirement" in pairing.SCOPE
+    script = (ROOT / "examples/typescript-independent-consumer/pairing-check.mjs").read_text()
+    assert "deadline = Date.now() + 240000" in script
+    assert "timeout=330" in (ROOT / "scripts/check_independent_core_pairing.py").read_text()
 
 
 def test_android_typed_app_cases_are_required_by_the_artifact_bound_inventory():

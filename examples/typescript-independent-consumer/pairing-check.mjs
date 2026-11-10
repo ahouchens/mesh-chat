@@ -4,7 +4,7 @@ import { connectNamedPipe } from "@mesh-chat/core-client/node";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { setTimeout as pause } from "node:timers/promises";
-import { launchRuntime } from "./runtime.mjs";
+import { launchRuntime, launchRefusedRuntime } from "./runtime.mjs";
 import { freshRelaySettings } from "./relay-settings.mjs";
 import { ERROR_CODES, pairingDiagnostics, probePairingFailure } from "./pairing-diagnostics.mjs";
 import { connectionMessagingReady } from "./connection-readiness.mjs";
@@ -13,6 +13,49 @@ let phase = "arguments";
 const diagnostics = pairingDiagnostics();
 let deadline;
 let failureDeadlineExhausted = false;
+function budget() {
+  const value = Math.min(30000, deadline - Date.now());
+  if (value <= 0) throw new Error("public_pairing_deadline");
+  return value;
+}
+async function request(peer, operation, params) {
+  return peer.client.request(operation, params, { timeoutMs: budget() });
+}
+async function attach(peer, retrySlot = false) {
+  const attachDeadline = retrySlot ? Math.min(deadline, Date.now() + 10000) : deadline;
+  while (true) {
+    let transport;
+    try {
+      transport = await connectNamedPipe(peer.runtime.pipe, Math.min(10000, budget(), attachDeadline - Date.now()));
+      peer.transports.add(transport);
+      const client = await CoreClient.open(transport, { requestTimeoutMs: Math.min(budget(), attachDeadline - Date.now()) });
+      peer.clients.add(client);
+      if (client.capabilities.profiles.length !== 1 || client.capabilities.operations.includes("native.command")) throw new Error();
+      return client;
+    } catch (error) {
+      transport?.close();
+      if (!retrySlot || !(error instanceof CoreError) || error.code !== "resource_exhausted"
+          || Date.now() + 100 >= attachDeadline) throw error;
+      await pause(100); // Bounded attachment to a just-freed session slot, never connection policy.
+    }
+  }
+}
+function closeClient(peer, client) {
+  client.close();
+  peer.clients.delete(client);
+}
+async function retire(peer) {
+  if (peer.retired || !peer.runtime) return;
+  let detachFailed = false;
+  for (const endpoint of [...peer.clients, ...peer.transports]) {
+    try { endpoint.close(); } catch { detachFailed = true; }
+  }
+  const completion = await peer.runtime.stop(Math.max(0, Math.min(30000, deadline - Date.now())));
+  if (completion?.stopped !== true || completion.exit_code !== (peer.rejected ? 2 : 0)
+      || (peer.rejected && (completion.refused !== true || completion.error !== "unavailable"))) throw new Error("retirement_incomplete");
+  peer.retired = true;
+  if (detachFailed) throw new Error("client_detach_incomplete");
+}
 async function wait(read) {
   while (Date.now() < deadline) {
     const value = await read();
@@ -27,15 +70,15 @@ function one(rows, predicate) {
   return matches[0];
 }
 async function snapshot(peer) {
-  const value = await peer.client.request("application.snapshot", {});
+  const value = await request(peer, "application.snapshot", {});
   diagnostics.snapshot(peer.role, value, peer.expectedDestination);
   return value;
 }
 async function create(executable, directory, name, role, owned) {
-  const runtime = await launchRuntime(executable, directory);
-  const peer = { runtime, client: null, role };
-  owned.push(peer); // Retain lifetime even if SDK negotiation fails.
-  peer.client = await CoreClient.open(await connectNamedPipe(runtime.pipe), { requestTimeoutMs: 30000 });
+  const peer = { runtime: null, client: null, role, directory, clients: new Set(), transports: new Set() };
+  owned.push(peer); // Retain lifetime even if startup or SDK negotiation fails.
+  peer.runtime = await launchRuntime(executable, directory, { timeoutMs: budget(), onOwned: runtime => { peer.runtime = runtime; } });
+  peer.client = await attach(peer);
   const client = peer.client;
   if (client.capabilities.profiles.length !== 1 || client.capabilities.operations.includes("native.command")) throw new Error();
   const empty = await snapshot(peer);
@@ -44,6 +87,8 @@ async function create(executable, directory, name, role, owned) {
   const caps = await client.request("runtime.capabilities", {});
   if (caps.profiles.length !== 1) throw new Error();
   peer.profile = caps.profiles[0];
+  peer.operations = [...client.capabilities.operations].sort();
+  peer.displayName = name;
   const identity = await client.request("profile.query", { profile: peer.profile });
   peer.destination = identity.destination;
   const fresh = await snapshot(peer);
@@ -103,12 +148,117 @@ async function send(sender, receiver) {
       message.kind === "chat" && message.direction === direction && message.text === text);
     if (records.length !== 1) throw new Error();
   }
+  return { message: first.message, text };
+}
+
+const PENDING = new Set(["waiting_for_keys", "queued", "sending", "stored_for_delivery"]);
+function enqueueWork(client, peer, work, text = work.text) {
+  return client.request("message.enqueue", { profile: peer.profile, recipient: peer.contact.core_handle, kind: "text", text },
+    { idempotencyKey: work.key, timeoutMs: budget() });
+}
+async function sameState(peer, client, receipt, inboundText) {
+  const caps = await client.request("runtime.capabilities", {}, { timeoutMs: budget() });
+  if (caps.profiles.length !== 1 || caps.profiles[0] !== peer.profile || caps.operations.includes("native.command")
+      || JSON.stringify([...caps.operations].sort()) !== JSON.stringify(peer.operations)) throw new Error();
+  const profile = await client.request("profile.query", { profile: peer.profile }, { timeoutMs: budget() });
+  const view = await client.request("application.snapshot", {}, { timeoutMs: budget() });
+  if (profile.destination !== peer.destination || view.profile?.destination_hash !== peer.destination
+      || view.profile.display_name !== peer.displayName || view.contacts.length !== 1
+      || !view.contacts.some(item => item.core_handle === peer.contact.core_handle
+        && item.destination_hash === peer.expectedDestination && ["approved", "verified"].includes(item.trust))) throw new Error();
+  for (const [text, direction] of [[receipt.text, "outbound"], [inboundText, "inbound"]]) {
+    const rows = view.messages.filter(item => item.kind === "chat" && item.text === text && item.direction === direction);
+    if (rows.length !== 1 || rows[0].contact_id !== peer.contact.id) throw new Error();
+  }
+  const message = await client.request("message.query", { profile: peer.profile, message: receipt.message }, { timeoutMs: budget() });
+  if (message.message !== receipt.message || message.text !== receipt.text || message.recipient !== peer.contact.core_handle
+      || message.state !== "delivered") throw new Error();
+}
+async function pending(peer, work) {
+  const value = await request(peer, "message.query", { profile: peer.profile, message: work.message });
+  const view = await snapshot(peer);
+  const rows = view.messages.filter(item => item.kind === "chat" && item.direction === "outbound" && item.text === work.text);
+  if (!PENDING.has(value.state) || value.message !== work.message || value.text !== work.text
+      || value.recipient !== peer.contact.core_handle || rows.length !== 1 || !PENDING.has(rows[0].state)
+      || rows[0].contact_id !== peer.contact.id
+      || typeof rows[0].id !== "string" || (work.record !== undefined && rows[0].id !== work.record)) throw new Error();
+  work.record = rows[0].id;
+}
+
+async function sharedLifetime(executable, offerer, answerer, receipts, owned) {
+  const checks = {};
+  const original = offerer.client;
+  diagnostics.enter("second_client_attach");
+  const second = await attach(offerer);
+  await sameState(offerer, original, receipts[0], receipts[1].text);
+  await sameState(offerer, second, receipts[0], receipts[1].text);
+  if (offerer.clients.size !== 2) throw new Error();
+  checks.shared_host_sdk_sessions = offerer.clients.size;
+  diagnostics.enter("client_detach_survivor");
+  closeClient(offerer, original);
+  offerer.client = second;
+  await sameState(offerer, second, receipts[0], receipts[1].text);
+  checks.closed_sdk_session_survivor_usable = true;
+  diagnostics.enter("client_reattach");
+  const replacement = await attach(offerer, true);
+  await sameState(offerer, replacement, receipts[0], receipts[1].text);
+  if (offerer.clients.size !== 2) throw new Error();
+  checks.reattached_sdk_session_same_authorized_state = true;
+  diagnostics.enter("competing_owner_refusal");
+  const contender = { role: "contender", rejected: true, runtime: null, clients: new Set(), transports: new Set() };
+  owned.push(contender);
+  contender.runtime = await launchRefusedRuntime(executable, offerer.directory,
+    { timeoutMs: budget(), onOwned: runtime => { contender.runtime = runtime; } });
+  await retire(contender);
+  checks.concurrent_owner_refusals = 1;
+  checks.rejected_owner_exits = 1;
+  await sameState(offerer, second, receipts[0], receipts[1].text);
+  await sameState(offerer, replacement, receipts[0], receipts[1].text);
+  diagnostics.enter("offline_receiver_stop");
+  await retire(answerer); // Positive stopped + exact child exit precede unique work generation.
+  diagnostics.enter("pending_enqueue");
+  const work = { text: "independent-pending:" + randomUUID(), key: randomUUID() };
+  const first = await enqueueWork(second, offerer, work);
+  if (first.accepted !== true || typeof first.message !== "string") throw new Error();
+  work.message = first.message;
+  await pending(offerer, work);
+  const replay = await enqueueWork(replacement, offerer, work);
+  if (replay.accepted !== true || replay.message !== work.message) throw new Error();
+  await pending(offerer, work);
+  checks.pending_message_before_owner_stop = true;
+  diagnostics.enter("pending_owner_stop");
+  await retire(offerer);
+  diagnostics.enter("pending_owner_reopen");
+  const reopened = { ...offerer, runtime: null, client: null, clients: new Set(), transports: new Set(), retired: false, pairing: null };
+  owned.push(reopened);
+  reopened.runtime = await launchRuntime(executable, offerer.directory,
+    { timeoutMs: budget(), onOwned: runtime => { reopened.runtime = runtime; } });
+  reopened.client = await attach(reopened);
+  const reopenedSecond = await attach(reopened);
+  await sameState(reopened, reopened.client, receipts[0], receipts[1].text);
+  await sameState(reopened, reopenedSecond, receipts[0], receipts[1].text);
+  await pending(reopened, work);
+  checks.reopened_same_public_identity = true;
+  checks.runtime_lock_reacquired = true;
+  diagnostics.enter("original_key_replay");
+  const restored = await enqueueWork(reopenedSecond, reopened, work);
+  if (restored.accepted !== true || restored.message !== work.message) throw new Error();
+  try {
+    await enqueueWork(reopened.client, reopened, work, work.text + ":changed");
+    throw new Error();
+  } catch (error) {
+    if (!(error instanceof CoreError) || error.code !== "idempotency_conflict") throw error;
+  }
+  await pending(reopened, work);
+  checks.reopened_original_message_and_key = true;
+  return checks;
 }
 
 async function check(executable, directory) {
   const owned = [];
   diagnostics.start();
   deadline = Date.now() + 240000;
+  let lifetime;
   try {
     phase = "fresh_profiles";
     diagnostics.enter("offerer_create");
@@ -169,13 +319,15 @@ async function check(executable, directory) {
     }
     phase = "authenticated_receipts";
     diagnostics.enter("offerer_receipt");
-    await send(offerer, answerer);
+    const sent = await send(offerer, answerer);
     diagnostics.enter("answerer_receipt");
-    await send(answerer, offerer);
+    const received = await send(answerer, offerer);
     diagnostics.enter("offerer_ready_recheck");
     await messagingReady(offerer);
     diagnostics.enter("answerer_ready_recheck");
     await messagingReady(answerer);
+    phase = "shared_host_lifetime";
+    lifetime = await sharedLifetime(executable, offerer, answerer, [sent, received], owned);
   } catch (error) {
     diagnostics.freezeFailure();
     failureDeadlineExhausted = Date.now() >= deadline;
@@ -184,10 +336,7 @@ async function check(executable, directory) {
   } finally {
     const previous = phase;
     phase = "retirement";
-    const exits = await Promise.allSettled(owned.map(async peer => {
-      try { peer.client?.close(); }
-      finally { await peer.runtime.stop(); }
-    }));
+    const exits = await Promise.allSettled(owned.map(retire));
     if (exits.some(result => result.status !== "fulfilled")) {
       diagnostics.freezeFailure();
       diagnostics.enter("retirement");
@@ -201,7 +350,8 @@ async function check(executable, directory) {
     explicit_contact_decisions: 2, supervisor_transfers: 2, public_messaging_ready: 2,
     transferred_cancel_preserves_delivery: true,
     authenticated_receipts: 2, original_message_key_replay: true, single_inbound_and_outbound_records: true,
-    clean_host_exits: 2 };
+    ...lifetime, clean_host_exits: owned.filter(peer => !peer.rejected && peer.retired).length,
+    owner_native_host_shutdown_acknowledgments: owned.filter(peer => !peer.rejected && peer.retired).length };
 }
 try {
   const args = process.argv.slice(2);

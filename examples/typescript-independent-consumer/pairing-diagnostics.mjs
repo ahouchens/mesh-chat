@@ -6,6 +6,8 @@ export const SUBPHASES = new Set([
   "answerer_relationship_wait", "offerer_ready_wait", "answerer_ready_wait", "transfer_wait",
   "transferred_cancel", "offerer_receipt", "answerer_receipt", "offerer_ready_recheck",
   "answerer_ready_recheck", "retirement",
+  "second_client_attach", "client_detach_survivor", "client_reattach", "competing_owner_refusal",
+  "offline_receiver_stop", "pending_enqueue", "pending_owner_stop", "pending_owner_reopen", "original_key_replay",
 ]);
 const STATES = new Set(["reserved", "offer_ready", "awaiting_approval", "transferred", "retiring", "retired"]);
 export const ERROR_CODES = new Set(["invalid_request", "incompatible_version", "negotiation_required",
@@ -105,7 +107,7 @@ export async function probePairingFailure(owned, diagnostics) {
   const initialized = [];
   const roles = new Set();
   for (const peer of owned) {
-    if (!ROLES.has(peer.role) || roles.has(peer.role) || !peer.client || !peer.profile || !peer.pairing) continue;
+    if (peer.retired || !ROLES.has(peer.role) || roles.has(peer.role) || !peer.client || !peer.profile || !peer.pairing) continue;
     initialized.push(peer);
     roles.add(peer.role);
     if (initialized.length === 2) break;

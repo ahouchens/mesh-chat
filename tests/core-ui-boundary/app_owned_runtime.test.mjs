@@ -2,7 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { observeRuntime } from "../../examples/typescript-independent-consumer/runtime.mjs";
+import { observeRuntime, observeRuntimeRefusal } from "../../examples/typescript-independent-consumer/runtime.mjs";
 
 const pipe = "\\\\.\\pipe\\mesh-chat-independent-component";
 const prelude = `
@@ -67,4 +67,78 @@ test("silent startup has a bounded failure and requests EOF cleanup", async () =
   const runtime = run("process.stdin.on('end',()=>process.exit(0));", 50);
   await assert.rejects(runtime.ready, /app_owned_runtime_unavailable/);
   await assert.rejects(runtime.stop(), /app_owned_runtime_unavailable/);
+});
+
+async function refusal(script, check, timeout = 5000) {
+  const child = spawn(process.execPath, ["--input-type=module", "-e", prelude + script], {
+    stdio: ["pipe", "pipe", "pipe"], windowsHide: true,
+  });
+  const closed = new Promise(resolve => child.once("close", resolve));
+  const runtime = observeRuntimeRefusal(child, pipe, timeout);
+  try { await check(runtime); }
+  finally {
+    if (child.exitCode === null) child.kill(); // Component teardown, never completion evidence.
+    await closed;
+  }
+}
+
+test("expected refusal requires unavailable, partial retirement and exact exit2", async () => {
+  await refusal(`
+    send('runtime_failed',{error:'unavailable'});
+    process.stdin.on('end',()=>{
+      send('runtime_retiring');
+      setTimeout(()=>{send('runtime_stopped');process.exitCode=2;},30);
+    });`, async runtime => {
+    await runtime.ready;
+    assert.deepEqual(await runtime.stop(0), {stopped:true,exit_code:2,refused:true,error:'unavailable'});
+  });
+});
+
+for (const [name, script] of [
+  ["no stopped", "send('runtime_failed',{error:'unavailable'});"],
+  ["no failed", "send('runtime_stopped');"],
+  ["wrong error", "send('runtime_failed',{error:'native_unavailable'});send('runtime_stopped');"],
+  ["started then failed", "send('runtime_started',{pipe});send('runtime_failed',{error:'unavailable'});send('runtime_stopped');"],
+  ["wrong pipe", "send('runtime_started',{pipe:pipe+'other'});send('runtime_failed',{error:'unavailable'});send('runtime_stopped');"],
+  ["duplicate failed", "send('runtime_failed',{error:'unavailable'});send('runtime_failed',{error:'unavailable'});send('runtime_stopped');"],
+  ["extra authority", "send('runtime_failed',{error:'unavailable',grants:['owner']});send('runtime_stopped');"],
+  ["oversized", "const h=Buffer.alloc(4);h.writeUInt32BE(4097);process.stdout.write(h);"],
+  ["malformed", "process.stdout.write(Buffer.from([0,0,0,2,0xff,0xff]));"],
+  ["duplicate stopped", "send('runtime_failed',{error:'unavailable'});send('runtime_stopped');send('runtime_stopped');"],
+  ["wrong exit", "send('runtime_failed',{error:'unavailable'});send('runtime_stopped');"],
+]) {
+  test(`expected refusal rejects ${name}`, async () => {
+    const code = ["wrong exit", "no failed"].includes(name) ? 0 : 2;
+    await refusal(script + `process.stdin.on('end',()=>{process.exitCode=${code};});`, async runtime => {
+      await assert.rejects(runtime.ready, /app_owned_runtime_unavailable/);
+      await assert.rejects(runtime.stop(), /app_owned_runtime_unavailable/);
+    });
+  });
+}
+
+for (const stopped of [false, true]) {
+  test(`refusal ${stopped ? "with" : "without"} stopped but no child exit cannot pass`, async () => {
+    await refusal(`send('runtime_failed',{error:'unavailable'});${stopped ? "send('runtime_stopped');" : ""}
+      setInterval(()=>{},1000);`, async runtime => {
+      await assert.rejects(runtime.ready, /app_owned_runtime_unavailable/);
+      await assert.rejects(runtime.stop(0), /app_owned_runtime_retirement_pending/);
+    }, 500);
+  });
+}
+
+test("exhausted retirement budget still sends EOF and cannot accept a later exit", async () => {
+  const child = spawn(process.execPath, ["--input-type=module", "-e", prelude + `
+    send('runtime_started',{pipe});
+    process.stdin.on('end',()=>setTimeout(()=>{send('runtime_stopped');process.exitCode=0;},50));`],
+    {stdio:["pipe","pipe","pipe"],windowsHide:true});
+  const closed = new Promise(resolve => child.once("close", resolve));
+  const runtime = observeRuntime(child, pipe);
+  try {
+    await runtime.ready;
+    await assert.rejects(runtime.stop(0), /app_owned_runtime_retirement_pending/);
+    assert.equal(await closed, 0); // The failed observation did request EOF; late close is teardown only.
+  } finally {
+    if (child.exitCode === null) child.kill();
+    await closed;
+  }
 });

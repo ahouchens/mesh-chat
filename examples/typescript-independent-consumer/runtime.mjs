@@ -9,8 +9,18 @@ const decoder = new TextDecoder("utf-8", { fatal: true });
 
 // Exported for subprocess protocol checks; no host command or grant interface.
 export function observeRuntime(child, pipe, timeoutMs = 30000) {
+  return observe(child, pipe, timeoutMs, false);
+}
+
+export function observeRuntimeRefusal(child, pipe, timeoutMs = 30000) {
+  return observe(child, pipe, timeoutMs, true);
+}
+
+function observe(child, pipe, timeoutMs, refusal) {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30000) throw new Error("invalid_runtime_budget");
+  const observationDeadline = performance.now() + timeoutMs;
   let pending = Buffer.alloc(0), started = false, stopped = false, failed = false;
-  let closing = false, exited = false, protocolError;
+  let closing = false, exited = false, retiring = false, protocolError;
   let accept, reject, complete;
   const ready = new Promise((yes, no) => { accept = yes; reject = no; });
   const closed = new Promise(yes => { complete = yes; });
@@ -43,17 +53,21 @@ export function observeRuntime(child, pipe, timeoutMs = 30000) {
         const value = JSON.parse(decoder.decode(pending.subarray(4)));
         pending = Buffer.alloc(0);
         if (!value || typeof value !== "object" || Array.isArray(value) || value.v !== 1 || stopped) throw new Error();
-        if (value.type === "runtime_started" && !started && !failed && !closing
+        if (value.type === "runtime_started" && !refusal && !started && !failed && !closing
             && value.pipe === pipe && Object.keys(value).sort().join() === "pipe,type,v") {
+          if (performance.now() > observationDeadline) throw new Error();
           started = true;
           accept();
-        } else if (value.type === "runtime_failed" && !failed
+        } else if (value.type === "runtime_failed" && !failed && (!refusal || (!started && value.error === "unavailable"))
             && typeof value.error === "string" && /^[a-z_]{1,64}$/.test(value.error)
             && Object.keys(value).sort().join() === "error,type,v") {
           failed = true;
-          fail();
+          if (refusal) { closing = true; child.stdin.end(); }
+          else fail();
         } else if (value.type === "runtime_retiring" && (closing || failed)
+            && (!refusal || (failed && !retiring))
             && Object.keys(value).sort().join() === "type,v") {
+          retiring = true;
           closing = true;
         } else if (value.type === "runtime_stopped" && (closing || failed)
             && Object.keys(value).sort().join() === "type,v") {
@@ -64,25 +78,34 @@ export function observeRuntime(child, pipe, timeoutMs = 30000) {
   });
   child.on("close", code => {
     exited = true;
-    if (code !== 0 || pending.length || !stopped || !started) fail();
+    if (code !== (refusal ? 2 : 0) || pending.length || !stopped || (refusal ? !failed : !started)) fail();
+    else if (!protocolError && refusal) {
+      if (performance.now() > observationDeadline) fail();
+      else accept();
+    }
     complete();
   });
   return {
     ready,
-    async stop() {
+    async stop(remainingMs = timeoutMs) {
+      if (!Number.isSafeInteger(remainingMs) || remainingMs < 0 || remainingMs > 30000) throw new Error("invalid_runtime_budget");
+      const alreadyExited = exited, retirementDeadline = performance.now() + remainingMs;
       if (!closing) { closing = true; child.stdin.end(); }
       let deadline;
       try {
         await Promise.race([closed, new Promise((_, no) => {
-          deadline = setTimeout(() => no(new Error("app_owned_runtime_retirement_pending")), timeoutMs);
+          deadline = setTimeout(() => no(new Error("app_owned_runtime_retirement_pending")), remainingMs);
         })]);
       } finally { clearTimeout(deadline); }
+      if (!alreadyExited && performance.now() > retirementDeadline) throw new Error("app_owned_runtime_retirement_pending");
       if (!exited || !stopped || protocolError) throw new Error("app_owned_runtime_unavailable");
+      return { stopped: true, exit_code: refusal ? 2 : 0, ...(refusal ? { refused: true, error: "unavailable" } : {}) };
     },
   };
 }
 
-export async function launchRuntime(executable, dataDirectory) {
+function spawnRuntime(executable, dataDirectory, { timeoutMs = 30000, onOwned = () => {} } = {}, refusal = false) {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30000) throw new Error("invalid_runtime_budget");
   if (process.platform !== "win32" || !isAbsolute(executable) || !isAbsolute(dataDirectory)) {
     throw new Error("explicit_windows_runtime_and_data_required");
   }
@@ -98,11 +121,26 @@ export async function launchRuntime(executable, dataDirectory) {
   const child = spawn(resolve(executable), ["--app-owned-native"], {
     env: environment, stdio: ["pipe", "pipe", "pipe"], windowsHide: true,
   });
-  const runtime = observeRuntime(child, pipe);
+  const runtime = { pipe, ...observe(child, pipe, timeoutMs, refusal) };
+  onOwned(runtime); // The launcher retains the exact child even if startup observation fails.
+  return runtime;
+}
+
+export async function launchRuntime(executable, dataDirectory, options) {
+  const runtime = spawnRuntime(executable, dataDirectory, options);
   try { await runtime.ready; }
   catch (error) {
-    try { await runtime.stop(); } catch { /* Child retains cleanup custody. */ }
+    if (!options?.onOwned) {
+      try { await runtime.stop(); } catch { /* Child retains cleanup custody. */ }
+    }
     throw error;
   }
-  return { pipe, stop: runtime.stop };
+  return runtime;
+}
+
+export async function launchRefusedRuntime(executable, dataDirectory, options) {
+  const runtime = spawnRuntime(executable, dataDirectory, options, true);
+  await runtime.ready; // Failure marker alone never resolves this promise.
+  const completion = await runtime.stop(0);
+  return { ...runtime, completion };
 }
