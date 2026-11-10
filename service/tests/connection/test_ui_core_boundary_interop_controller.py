@@ -2259,6 +2259,231 @@ def test_workload_cannot_be_relabelled_or_substituted_for_the_other_matrix(mode)
         evidence.verify_pair(*reports, "a" * 40, "b" * 40, workload=other)
 
 
+INITIALIZE_CALLS = ["peer.start", "runtime.capabilities", "application.snapshot", "inventory",
+    "settings.update", "call.settings_update", "call.ice_servers", "key.manifest", "key.publish", "key.wait", "key.bind"]
+INITIALIZE_SITES = dict(zip(INITIALIZE_CALLS, ["initialize_peer_start", "initialize_runtime_capabilities",
+    "initialize_snapshot", "initialize_inventory", "initialize_settings_update", "initialize_call_settings_update",
+    "initialize_ice_servers", "initialize_key_publish", "initialize_key_publish", "initialize_key_wait", "initialize_key_bind"]))
+
+
+def run_initialize_report(tmp_path, monkeypatch, capsys, *, role="android", point=None, kind="peer", guard=None,
+                          foreign=False, later_error=False, cleanup_error=False):
+    """Actual initialize/run/main and failure scope; external hosts/setup and later workload are inert."""
+    import connection_ci
+    state = SimpleNamespace(events=[], point=point, guard=guard, errors=[], now=100.0,
+        error=(controller.PeerFailure("internal") if kind == "peer" else
+            controller.RendezvousUnavailable("PRIVATE_URL_TOKEN") if kind == "rendezvous" else ValueError("PRIVATE_ID_URL_CREDENTIAL")),
+        foreign=ValueError("PRIVATE_UNRELATED_ERROR"), cleanup_error=ValueError("PRIVATE_CLEANUP_ERROR"), terminal=False)
+    state.error.failure_site = "PRIVATE_FORGED_SITE"
+    def step(name):
+        state.events.append(name)
+        if state.point == name: raise state.error
+    class Peer:
+        process = SimpleNamespace(pid=17)
+        processes_started, forced_exits, clean_exits = 0, 0, 0
+        def start(self):
+            step("peer.start")
+            self.processes_started += 1
+            return {}
+        def core(self, operation, params, key=None):
+            assert key is None
+            if operation in {"native.command", "connection.stop"}:
+                state.events.append("terminal:" + operation)
+                state.terminal = True
+                return {}
+            step(operation)
+            if operation == "runtime.capabilities": return {"profiles": [] if guard == "profile_count" else ["PRIVATE_PROFILE"]}
+            if operation == "application.snapshot": return {"profile": {"destination_hash": "PRIVATE_DESTINATION"},
+                "contacts": [{}] if guard == "snapshot_contacts" else [],
+                "messages": [{}] if guard == "snapshot_messages" else []}
+            if operation == "call.ice_servers": return {"ice": {"iceServers": []}}
+            assert operation in {"settings.update", "call.settings_update"}
+            if operation == "settings.update":
+                assert params == {"profile": "PRIVATE_PROFILE", "settings": {
+                    "nearby_discovery": False, "lan_fallback": False, "help_route": False}}
+            else:
+                assert params["settings"]["turn_broker_consent"] is True
+                assert params["settings"]["relay_only"] is False and params["settings"]["store_call_signaling"] is True
+            return {}
+        def inventory(self):
+            if state.terminal:
+                state.events.append("terminal:inventory")
+                return terminal_inventory()
+            step("inventory")
+            return terminal_inventory(active=int(guard == "inventory_nonzero"))
+        def stop(self, **kwargs):
+            state.events.append(("host.stop", kwargs))
+            self.process = None
+            if cleanup_error: raise state.cleanup_error
+            if kwargs.get("crash"): self.forced_exits += 1
+            else: self.clean_exits += 1
+    class Transport:
+        def publish(self, phase, value):
+            assert phase == "key" and value == {"public_key": "PRIVATE_KEY_DOC"}
+            step("key.publish")
+        def wait(self, partner, phase, *, timeout):
+            assert phase == "key" and timeout == 900 and partner == ("windows" if role == "android" else "android")
+            step("key.wait")
+            return {"public_key": "PRIVATE_PARTNER_KEY_DOC"}
+        def close(self): state.events.append("transport.close")
+    class Rendezvous:
+        def public_manifest(self):
+            step("key.manifest")
+            return {"public_key": "PRIVATE_KEY_DOC"}
+        def bind_partner(self, value):
+            assert value == {"public_key": "PRIVATE_PARTNER_KEY_DOC"}
+            step("key.bind")
+        def close(self): state.events.append("rendezvous.close")
+    monkeypatch.setattr(controller, "time", SimpleNamespace(monotonic=lambda: state.now,
+        sleep=lambda seconds: pytest.fail("No wait should need a sleep in this fixture")))
+    peer, transport, rendezvous = Peer(), Transport(), Rendezvous()
+    instance = controller.Controller(role, peer, transport, rendezvous, {"source_commit": "a" * 40})
+    def path_case(scenario, initiator):
+        state.events.append("later:path_case")
+        if later_error: raise state.foreign
+        instance.contact = {"id": "PRIVATE_CONTACT", "core_handle": "PRIVATE_PEER"}
+    monkeypatch.setattr(instance, "path_case", path_case)
+    monkeypatch.setattr(instance, "cold_starts", lambda: state.events.append("later:cold_starts"))
+    original_run, original_site = instance.run, instance.failure_site
+    def execute():
+        try: return original_run()
+        except Exception as error:
+            state.original_error = error
+            if foreign:
+                state.escaping_error = state.foreign
+                raise state.foreign
+            state.escaping_error = error
+            raise
+    def observed_site(error):
+        state.errors.append(error)
+        return original_site(error)
+    monkeypatch.setattr(instance, "run", execute)
+    monkeypatch.setattr(instance, "failure_site", observed_site)
+    monkeypatch.setattr(controller, "Controller", lambda *_args, **_kwargs: instance)
+    monkeypatch.setattr(controller, "source_identity", lambda _: ("a" * 40, "b" * 40))
+    monkeypatch.setattr(connection_ci, "current_plan", lambda: {"native_workload": "full"})
+    monkeypatch.setattr(controller, "context_from_environment", lambda: {"source_commit": "a" * 40})
+    monkeypatch.setattr(controller, "binding", lambda *_: (None, {}))
+    monkeypatch.setattr(controller, "outbound_services", lambda: {})
+    monkeypatch.setattr(controller, "android_environment", lambda **_: {})
+    monkeypatch.setattr(controller, "AndroidEmulator", lambda: SimpleNamespace(start=lambda *args, **kwargs: None, close=lambda: None))
+    monkeypatch.setattr(controller, "WindowsPeer", lambda *_: peer)
+    monkeypatch.setattr(controller, "AndroidPeer", lambda *_: peer)
+    monkeypatch.setattr(controller, "GithubArtifacts", lambda *_: transport)
+    monkeypatch.setattr(controller, "Rendezvous", lambda *_: rendezvous)
+    import check_native_windows_messaging
+    monkeypatch.setattr(check_native_windows_messaging, "descendants", lambda _: [])
+    output = tmp_path / "initialize.json"
+    monkeypatch.setattr(sys, "argv", ["controller", "--role", role, "--workload", "full", "--expected-source", "a" * 40, "--output", str(output)])
+    code = controller.main()
+    captured = capsys.readouterr()
+    return SimpleNamespace(record=json.loads(output.read_text()), code=code, state=state, controller=instance,
+        output=output.read_text() + captured.out + captured.err)
+
+
+@pytest.mark.parametrize("point", INITIALIZE_CALLS)
+@pytest.mark.parametrize("role", ["windows", "android"])
+@pytest.mark.parametrize("kind", ["peer", "value"])
+def test_actual_initialize_failure_reports_fixed_call_site_and_original_error(tmp_path, monkeypatch, capsys, point, role, kind):
+    run = run_initialize_report(tmp_path, monkeypatch, capsys, point=point, role=role, kind=kind)
+    assert run.code == 1 and run.record["phase"] == "initialize"
+    assert run.record.get("failure_site") == INITIALIZE_SITES[point]
+    assert run.state.original_error is run.state.error and run.state.errors == [run.state.error]
+    assert run.record["failure_type"] == ("PeerFailure" if kind == "peer" else "ValueError")
+    assert run.record.get("error_code") == ("internal" if kind == "peer" else None)
+    assert [event for event in run.state.events if event in INITIALIZE_CALLS] == INITIALIZE_CALLS[:INITIALIZE_CALLS.index(point) + 1]
+    assert ("host.stop", {"crash": True}) in run.state.events and "later:path_case" not in run.state.events
+    assert "PRIVATE" not in run.output and run.controller.deadline == 3100
+
+
+@pytest.mark.parametrize("guard,point,message", [
+    ("profile_count", "runtime.capabilities", "Native qualification requires one fresh synthetic profile"),
+    ("snapshot_contacts", "application.snapshot", "Initial pairing must not begin with approved contacts or messages"),
+    ("snapshot_messages", "application.snapshot", "Initial pairing must not begin with approved contacts or messages"),
+    ("inventory_nonzero", "inventory", "Native allocation leases have not all retired"),
+])
+@pytest.mark.parametrize("role", ["windows", "android"])
+def test_actual_initialize_guards_keep_existing_error_and_stop_at_call_site(tmp_path, monkeypatch, capsys, guard, point, message, role):
+    run = run_initialize_report(tmp_path, monkeypatch, capsys, role=role, guard=guard)
+    assert run.code == 1 and run.record["phase"] == "initialize"
+    assert run.record.get("failure_site") == INITIALIZE_SITES[point]
+    assert run.state.errors == [run.state.original_error]
+    assert str(run.state.original_error) == message
+    assert [event for event in run.state.events if event in INITIALIZE_CALLS] == INITIALIZE_CALLS[:INITIALIZE_CALLS.index(point) + 1]
+    assert "later:path_case" not in run.state.events and "PRIVATE" not in run.output
+
+
+@pytest.mark.parametrize("role", ["windows", "android"])
+def test_actual_initialize_success_keeps_calls_workload_cleanup_and_report_schema(tmp_path, monkeypatch, capsys, role):
+    run = run_initialize_report(tmp_path, monkeypatch, capsys, role=role)
+    assert run.code == 0 and run.record["passed"] is True
+    assert set(run.record) == {"v", "passed", "evidence_level", "role", "scope", "workload", "context",
+        "source_commit", "source_tree", "platform", "preflight", "artifacts", "execution"}
+    assert [event for event in run.state.events if event in INITIALIZE_CALLS] == INITIALIZE_CALLS
+    assert run.state.events.count("later:path_case") == len(run.controller.workload["paths"])
+    assert run.state.events.count("later:cold_starts") == 1
+    assert run.state.events.count("terminal:native.command") == run.state.events.count("terminal:connection.stop") == 1
+    assert ("host.stop", {"delete_profile": True} if role == "android" else {}) in run.state.events
+    assert run.state.errors == [] and run.controller.deadline == 3100
+    assert set(run.record["execution"]) == {"identity", "scenarios", "receipt_iterations", "processes_started",
+        "forced_exits", "clean_exits", "webview_processes", "final_host_accounting", "cleanup"}
+    # Later workload is inert here; a successful diagnostic fixture cannot qualify native interop.
+    with pytest.raises(ValueError):
+        evidence.verify_report(run.record, "a" * 40, "b" * 40, role)
+
+
+@pytest.mark.parametrize("point", INITIALIZE_CALLS)
+def test_actual_initialize_label_cannot_follow_unrelated_escaping_error(tmp_path, monkeypatch, capsys, point):
+    run = run_initialize_report(tmp_path, monkeypatch, capsys, point=point, foreign=True)
+    assert run.state.original_error is run.state.error and run.state.errors == [run.state.foreign]
+    assert run.code == 1 and "failure_site" not in run.record and "PRIVATE" not in run.output
+
+
+@pytest.mark.parametrize("point", INITIALIZE_CALLS)
+def test_actual_initialize_success_clears_prior_same_error_label(tmp_path, monkeypatch, capsys, point):
+    run = run_initialize_report(tmp_path, monkeypatch, capsys, point=point)
+    assert run.controller.failure_site(run.state.error) == INITIALIZE_SITES[point]
+    run.state.point = None
+    run.state.terminal = False
+    run.controller.initialize()
+    assert run.controller.failure_site(run.state.error) is None
+
+
+@pytest.mark.parametrize("point", ["key.publish", "key.wait", "key.bind"])
+@pytest.mark.parametrize("role", ["windows", "android"])
+def test_actual_initialize_key_rendezvous_unavailable_keeps_type_and_private_text(tmp_path, monkeypatch, capsys, point, role):
+    run = run_initialize_report(tmp_path, monkeypatch, capsys, point=point, role=role, kind="rendezvous")
+    assert run.code == 1 and run.record.get("failure_site") == INITIALIZE_SITES[point]
+    assert run.record["failure_type"] == "RendezvousUnavailable" and "error_code" not in run.record
+    # Existing RendezvousUnavailable handling also consults the site for its fixed receive/publish projection.
+    assert run.state.original_error is run.state.error and run.state.errors == [run.state.error, run.state.error]
+    assert [event for event in run.state.events if event in INITIALIZE_CALLS] == INITIALIZE_CALLS[:INITIALIZE_CALLS.index(point) + 1]
+    assert "PRIVATE" not in run.output
+
+
+def test_actual_initialize_later_unrelated_failure_omits_initialization_label(tmp_path, monkeypatch, capsys):
+    run = run_initialize_report(tmp_path, monkeypatch, capsys, later_error=True)
+    assert run.code == 1 and "failure_site" not in run.record
+    assert run.state.errors == [run.state.foreign] and "PRIVATE" not in run.output
+    assert [event for event in run.state.events if event in INITIALIZE_CALLS] == INITIALIZE_CALLS
+
+
+@pytest.mark.parametrize("point", INITIALIZE_CALLS)
+def test_actual_initialize_cleanup_failure_preserves_primary_error_label(tmp_path, monkeypatch, capsys, point):
+    run = run_initialize_report(tmp_path, monkeypatch, capsys, point=point, cleanup_error=True)
+    assert run.code == 1 and run.record.get("failure_site") == INITIALIZE_SITES[point]
+    assert run.state.original_error is run.state.error and run.state.errors == [run.state.error]
+    assert run.record["cleanup_failed"] is True
+    assert ("host.stop", {"crash": True}) in run.state.events
+    assert "PRIVATE" not in run.output
+
+
+def test_initialize_failure_site_catalog_extends_existing_fixed_labels_only():
+    assert controller.FAILURE_SITES == frozenset(INITIALIZE_SITES.values()) | {
+        "negotiate_settings_update", "pairing_offer_begin", "pairing_answer_begin", "pairing_status",
+        "rendezvous_receive", "rendezvous_publish", "negotiate_inventory", "negotiate_native_stats"}
+
+
 FAILURE_REPORT_CASES = [
     ("android", "negotiate_settings_update", "negotiate_settings_update", "PeerFailure"),
     ("windows", "pairing_offer_begin", "pairing_offer_begin", "PeerFailure"),
