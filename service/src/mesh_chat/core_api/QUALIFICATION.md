@@ -54,6 +54,34 @@ controller memory/fault correlation; export only categories, availability,
 hashes and truthful counters. Never export SDP, credentials, bearer documents,
 vault keys or raw addresses. Unit admission tests are not packaged OS evidence.
 
+The owner-retirement follow-up is assigned, not yet qualified. Its private
+`qualification.retire_carrier` request has exactly `operation_id`, `request_id`,
+`logical_session`, `expected_physical`, `expected_service_incarnation` and
+`expected_adapter_epoch`. The pairing operation identifies this caller's existing
+transferred case; request and epoch values compare against current trusted state
+and do not confer authority. The request nonce is 32 lowercase hexadecimal
+characters. Current synthetic-profile/key, caller, service, identity, host and
+owner bindings are rechecked. Source/run verification remains in the trusted
+controller launch; the profile marker does not attest a source SHA or run.
+
+An accepted request installs a temporary owner hold and invokes normal supervisor
+retirement. It does not persist Stop, change consent, bypass the managed-close
+guard or call native disposal directly. Failed cleanup retains the hold and
+existing retry behavior. Only a real successful cleanup completion followed by
+fresh, revision-checked removal of the old bindings may clear that hold; real
+Stop, quarantine and authority-change fences remain independent.
+
+Existing inventory polls may use exactly `{operation_id,request_id}` to obtain
+the ordinary inventory plus `carrier_retirement:{request_id,state}`. State is
+`pending` or `acknowledged`; ordinary inventory `{}` remains unchanged. Per-case
+success requires matching acknowledgment in the same service/profile scope,
+empty logical inventory and complete zero native lease counts. The retained
+case records `owner_retirement_acknowledged:true`, not the private request or
+resource identifiers. No additional poll, deadline or retry is introduced.
+Terminal cleanup instead uses the current scoped Core `connection.stop`, followed
+by the same zero-accounting checks and normal host shutdown. Its desired-state
+reply is not cleanup completion. Full native qualification remains required.
+
 The `902b12d` full qualification run `42796005344` executed all 18 native-path
 JVM controls (71 JVM cases overall), all 52 required Android emulator cases and
 the installed Windows platform suites successfully. Its cross-platform native
