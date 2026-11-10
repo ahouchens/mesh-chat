@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT / "service/src"))
 from mesh_chat.call_settings import DEFAULT_TURN_BROKER_URL, DEFAULT_SIGNAL_MAILBOX_URL
 from mesh_chat.signal_mailbox import _open as mailbox_open
 from mesh_chat.turn_credentials import fetch_ice_servers
+from native_interop_diagnostics import PreflightDiagnostics
 from test_packaged_lifecycle import source_identity
 
 
@@ -51,14 +52,17 @@ def outbound_services():
             "mailbox_writes_enabled": True, "scope": "outbound health and advertisement only; no allocation or selected path"}
 
 
-def android_environment(adb="adb"):
+def android_environment(adb="adb", *, diagnostics=None):
     if sys.platform != "linux" or not os.access("/dev/kvm", os.R_OK | os.W_OK):
         raise RuntimeError("Required Linux KVM emulator host is unavailable")
-    def command(*args):
-        return subprocess.check_output([adb, *args], text=True, stderr=subprocess.DEVNULL, timeout=15).strip()
-    if command("get-state") != "device" or command("shell", "getprop", "ro.kernel.qemu") != "1":
+    diagnostics = diagnostics if diagnostics is not None else PreflightDiagnostics()
+    def command(site, *args):
+        with diagnostics.scope(site):
+            return subprocess.check_output([adb, *args], text=True, stderr=subprocess.DEVNULL, timeout=15).strip()
+    if (command("android_device_state", "get-state") != "device"
+            or command("android_emulator_property", "shell", "getprop", "ro.kernel.qemu") != "1"):
         raise RuntimeError("Required booted Android emulator is unavailable")
-    if command("shell", "getprop", "ro.product.cpu.abi") != "x86_64":
+    if command("android_abi", "shell", "getprop", "ro.product.cpu.abi") != "x86_64":
         raise RuntimeError("Required staged x86_64 Android host is unavailable")
     return {"emulated": True, "abi": "x86_64", "kvm": True}
 

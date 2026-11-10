@@ -15,6 +15,180 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 import native_interop_peers as peers
+from native_interop_diagnostics import PREFLIGHT_FAILURE_SITES, PreflightDiagnostics
+
+
+ANDROID_START_SITES = (
+    "android_devices", "android_avd_create", "android_root", "android_wait_for_device",
+    "android_root_identity", "android_host_apk_install", "android_test_apk_install", "android_notification_grant",
+)
+ANDROID_ENVIRONMENT_SITES = ("android_device_state", "android_emulator_property", "android_abi")
+
+
+def scripted_android(monkeypatch, tmp_path, *, fault=None, boot_failures=0):
+    """Actual emulator owner with scripted OS boundaries; never starts a process."""
+    import native_interop_preflight as preflight
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("ANDROID_SDK_ROOT", str(tmp_path / "PRIVATE_SDK"))
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+    monkeypatch.setenv("ANDROID_AVD_HOME", "PRIVATE_PREVIOUS_AVD_HOME")
+    monkeypatch.setenv("ANDROID_SERIAL", "PRIVATE_PREVIOUS_SERIAL")
+    def forbidden(*args, **kwargs):
+        pytest.fail("Unexpected OS boundary")
+    fake_os = SimpleNamespace(environ=os.environ, R_OK=os.R_OK, W_OK=os.W_OK,
+        access=lambda path, mode: path == "/dev/kvm" and mode == os.R_OK | os.W_OK, killpg=forbidden)
+    monkeypatch.setattr(peers, "sys", SimpleNamespace(platform="linux"))
+    monkeypatch.setattr(peers, "os", fake_os)
+    monkeypatch.setattr(preflight, "sys", SimpleNamespace(platform="linux"))
+    monkeypatch.setattr(preflight, "os", fake_os)
+    monkeypatch.setattr(peers.shutil, "which", lambda name: "PRIVATE_AVDMANAGER" if name == "avdmanager" else forbidden())
+    emulator = peers.AndroidEmulator()
+    apks = (Path("PRIVATE_HOST.apk"), Path("PRIVATE_TEST.apk"))
+    adb = [str(emulator.sdk / "platform-tools/adb")]
+    own_adb = [*adb, "-s", emulator.serial]
+    shell = [*own_adb, "shell"]
+    byte_options = {"stderr": peers.subprocess.DEVNULL, "timeout": 30}
+    text_options = {"text": True, "stderr": peers.subprocess.DEVNULL, "timeout": 15}
+    commands = {
+        "android_devices": ("check_output", [*adb, "devices"], text_options, "List of devices attached\n"),
+        "android_avd_create": ("run", ["PRIVATE_AVDMANAGER", "create", "avd", "--name", emulator.name,
+            "--package", emulator.IMAGE], {"input": b"no\n", "check": True, "capture_output": True, "timeout": 120}, None),
+        "android_root": ("check_output", [*own_adb, "root"], byte_options, b"restarting adbd as root\n"),
+        "android_wait_for_device": ("check_output", [*own_adb, "wait-for-device"], byte_options, b""),
+        "android_root_identity": ("check_output", [*shell, "id", "-u"], byte_options, b"0\n"),
+        "android_host_apk_install": ("check_output", [*own_adb, "install", "-r", str(apks[0])],
+            {**byte_options, "timeout": 120}, b"Success\n"),
+        "android_test_apk_install": ("check_output", [*own_adb, "install", "-r", str(apks[1])],
+            {**byte_options, "timeout": 120}, b"Success\n"),
+        "android_notification_grant": ("check_output", [*shell, "pm", "grant", peers.AndroidPeer.APP,
+            "android.permission.POST_NOTIFICATIONS"], byte_options, b""),
+        "android_device_state": ("check_output", ["adb", "get-state"], text_options, "device\n"),
+        "android_emulator_property": ("check_output", ["adb", "shell", "getprop", "ro.kernel.qemu"], text_options, "1\n"),
+        "android_abi": ("check_output", ["adb", "shell", "getprop", "ro.product.cpu.abi"], text_options, "x86_64\n"),
+        "boot": ("check_output", [*shell, "getprop", "sys.boot_completed"], {**byte_options, "timeout": 5}, b"1\n"),
+        "kill": ("check_output", [*own_adb, "emu", "kill"], byte_options, b""),
+    }
+    state = SimpleNamespace(calls=[], exit=None, exit_on_launch=None, starts=0, waits=[], now=0, boot_attempts=0, failure=None, fault=fault,
+        emulator=emulator, apks=apks, commands=commands)
+    def command(kind, args, **kwargs):
+        matches = [(site, options, result) for site, (expected_kind, argv, options, result) in commands.items()
+                   if kind == expected_kind and args == argv]
+        assert len(matches) == 1, (kind, args)
+        site, options, result = matches[0]
+        assert kwargs == options
+        state.calls.append(site)
+        if site == state.fault:
+            error = peers.subprocess.CalledProcessError(1, ["PRIVATE_COMMAND"], output=b"PRIVATE_OUTPUT", stderr=b"PRIVATE_STDERR")
+            error.preflight_failure_site = "android_abi"  # Caller data is never attribution.
+            state.failure = error
+            raise error
+        if site == "boot":
+            state.boot_attempts += 1
+            if boot_failures is None or state.boot_attempts <= boot_failures:
+                raise peers.subprocess.CalledProcessError(1, ["PRIVATE_BOOT"], stderr=b"PRIVATE_BOOT_ERROR")
+        if site == "kill": state.exit = 0
+        return result
+    def wait(timeout):
+        state.waits.append(timeout)
+        assert state.exit == 0
+        return state.exit
+    def launch(args, **kwargs):
+        assert args == [str(emulator.sdk / "emulator/emulator"), "-avd", emulator.name, "-port", "5554",
+            "-no-window", "-gpu", "swiftshader_indirect", "-accel", "on", "-no-snapshot", "-noaudio",
+            "-no-boot-anim", "-camera-back", "none", "-camera-front", "none"]
+        assert kwargs == {"stdout": peers.subprocess.DEVNULL, "stderr": peers.subprocess.DEVNULL, "start_new_session": True}
+        state.starts += 1
+        state.exit = state.exit_on_launch
+        return SimpleNamespace(poll=lambda: state.exit, wait=wait)
+    def sleep(seconds):
+        assert seconds == 1
+        state.now += seconds
+    monkeypatch.setattr(peers.subprocess, "check_output", lambda args, **kwargs: command("check_output", args, **kwargs))
+    monkeypatch.setattr(peers.subprocess, "run", lambda args, **kwargs: command("run", args, **kwargs))
+    monkeypatch.setattr(peers.subprocess, "Popen", launch)
+    monkeypatch.setattr(peers, "time", SimpleNamespace(monotonic=lambda: state.now, sleep=sleep))
+    return state
+
+
+def assert_android_cleaned(script):
+    assert not script.emulator.root.exists() and script.emulator.process is None
+    assert os.environ["ANDROID_AVD_HOME"] == "PRIVATE_PREVIOUS_AVD_HOME"
+    assert os.environ["ANDROID_SERIAL"] == "PRIVATE_PREVIOUS_SERIAL"
+    assert script.waits == ([30] if script.starts else [])
+
+
+@pytest.mark.parametrize("site", ANDROID_START_SITES)
+def test_actual_android_start_attributes_exact_command_without_retry_and_cleans_up(monkeypatch, tmp_path, site):
+    script = scripted_android(monkeypatch, tmp_path, fault=site)
+    diagnostics = PreflightDiagnostics()
+    with pytest.raises(peers.subprocess.CalledProcessError) as failure:
+        script.emulator.start(script.apks, diagnostics=diagnostics)
+    assert failure.value is script.failure
+    assert diagnostics.failure_site(failure.value) == site
+    assert diagnostics.failure_site(peers.subprocess.CalledProcessError(1, "PRIVATE_COMMAND")) is None
+    expected = list(ANDROID_START_SITES[:ANDROID_START_SITES.index(site) + 1])
+    if script.starts: expected.insert(2, "boot")
+    if script.starts: expected.append("kill")
+    assert script.calls == expected
+    script.emulator.close()  # Inventory failure is outside start's original cleanup scope.
+    assert_android_cleaned(script)
+
+
+@pytest.mark.parametrize("boot_failures", [1, None])
+def test_boot_poll_failure_still_retries_only_within_original_deadline_without_attribution(monkeypatch, tmp_path, boot_failures):
+    script = scripted_android(monkeypatch, tmp_path, boot_failures=boot_failures)
+    diagnostics = PreflightDiagnostics()
+    if boot_failures is None:
+        with pytest.raises(peers.PeerFailure, match="emulator_boot_deadline") as failure:
+            script.emulator.start(script.apks, diagnostics=diagnostics)
+        assert diagnostics.failure_site(failure.value) is None
+        assert script.boot_attempts == script.now == 600
+        assert script.calls == [*ANDROID_START_SITES[:2], *(["boot"] * 600), "kill"]
+    else:
+        script.emulator.start(script.apks, diagnostics=diagnostics)
+        assert script.boot_attempts == 2 and script.now == 1
+        assert script.calls == [*ANDROID_START_SITES[:2], "boot", "boot", *ANDROID_START_SITES[2:]]
+        script.emulator.close()
+    assert_android_cleaned(script)
+
+
+def test_preflight_observer_clears_success_and_rejects_untrusted_sites():
+    assert PREFLIGHT_FAILURE_SITES == frozenset((*ANDROID_START_SITES, *ANDROID_ENVIRONMENT_SITES))
+    diagnostics = PreflightDiagnostics()
+    error = ValueError("PRIVATE_ERROR")
+    with pytest.raises(ValueError):
+        with diagnostics.scope("android_devices"):
+            raise error
+    assert diagnostics.failure_site(error) == "android_devices"
+    with diagnostics.scope("android_abi"): pass
+    assert diagnostics.failure_site(error) is None
+    for invalid in ("PRIVATE_SITE", [], 1):
+        with pytest.raises(ValueError, match="Unknown preflight"):
+            with diagnostics.scope(invalid): pytest.fail("Invalid scope entered")
+
+
+@pytest.mark.parametrize("fault,code,expected", [
+    ("unowned", "unowned_android_device_present", ["android_devices"]),
+    ("avdmanager", "avdmanager_unavailable", ["android_devices"]),
+    ("nonroot", "required_rootable_kernel_unavailable", [*ANDROID_START_SITES[:2], "boot", *ANDROID_START_SITES[2:5], "kill"]),
+    ("exited", "emulator_exited_during_boot", [*ANDROID_START_SITES[:2]]),
+])
+def test_android_start_value_and_lifetime_guards_remain_fatal_and_unattributed(monkeypatch, tmp_path, fault, code, expected):
+    script = scripted_android(monkeypatch, tmp_path)
+    diagnostics = PreflightDiagnostics()
+    if fault in {"unowned", "nonroot"}:
+        site, result = ("android_devices", "List of devices attached\nPRIVATE_SERIAL\tdevice\n") if fault == "unowned" else ("android_root_identity", b"2000\n")
+        script.commands[site] = (*script.commands[site][:3], result)
+    if fault == "avdmanager": monkeypatch.setattr(peers.shutil, "which", lambda _: None)
+    if fault == "exited": script.exit_on_launch = 1
+    with pytest.raises(peers.PeerFailure) as failure:
+        script.emulator.start(script.apks, diagnostics=diagnostics)
+    assert failure.value.code == code and diagnostics.failure_site(failure.value) is None
+    assert script.calls == expected
+    script.emulator.close()
+    assert not script.emulator.root.exists() and script.emulator.process is None
+    assert os.environ["ANDROID_AVD_HOME"] == "PRIVATE_PREVIOUS_AVD_HOME"
+    assert os.environ["ANDROID_SERIAL"] == "PRIVATE_PREVIOUS_SERIAL"
 
 
 def test_real_socket_control_roundtrip_preserves_core_payload_and_correlation():

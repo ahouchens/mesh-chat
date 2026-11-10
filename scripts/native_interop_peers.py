@@ -20,6 +20,8 @@ import threading
 import time
 from uuid import uuid4
 
+from native_interop_diagnostics import PreflightDiagnostics
+
 ROOT = Path(__file__).resolve().parents[1]
 MAX_FRAME = 4 * 1024 * 1024
 HEADER = struct.Struct(">I")
@@ -430,9 +432,11 @@ class AndroidEmulator:
         return subprocess.check_output([str(self.sdk / "platform-tools/adb"), "-s", self.serial, *arguments],
             stderr=subprocess.DEVNULL, timeout=timeout).decode().strip()
 
-    def start(self, apks):
-        devices = subprocess.check_output([str(self.sdk / "platform-tools/adb"), "devices"],
-            stderr=subprocess.DEVNULL, text=True, timeout=15)
+    def start(self, apks, *, diagnostics=None):
+        diagnostics = diagnostics if diagnostics is not None else PreflightDiagnostics()
+        with diagnostics.scope("android_devices"):
+            devices = subprocess.check_output([str(self.sdk / "platform-tools/adb"), "devices"],
+                stderr=subprocess.DEVNULL, text=True, timeout=15)
         if any(line.strip() for line in devices.splitlines()[1:]):
             raise PeerFailure("unowned_android_device_present")
         self.root.mkdir(exist_ok=False)
@@ -443,8 +447,9 @@ class AndroidEmulator:
             avdmanager = shutil.which("avdmanager")
             if not avdmanager:
                 raise PeerFailure("avdmanager_unavailable")
-            subprocess.run([avdmanager, "create", "avd", "--name", self.name, "--package", self.IMAGE],
-                input=b"no\n", check=True, capture_output=True, timeout=120)
+            with diagnostics.scope("android_avd_create"):
+                subprocess.run([avdmanager, "create", "avd", "--name", self.name, "--package", self.IMAGE],
+                    input=b"no\n", check=True, capture_output=True, timeout=120)
             self.process = subprocess.Popen([str(self.sdk / "emulator/emulator"), "-avd", self.name,
                 "-port", "5554", "-no-window", "-gpu", "swiftshader_indirect", "-accel", "on",
                 "-no-snapshot", "-noaudio", "-no-boot-anim", "-camera-back", "none", "-camera-front", "none"],
@@ -459,13 +464,20 @@ class AndroidEmulator:
                 if booted: break
                 time.sleep(1)
             if not booted: raise PeerFailure("emulator_boot_deadline")
-            self._adb("root")
-            self._adb("wait-for-device")
-            if self._adb("shell", "id", "-u") != "0":
+            with diagnostics.scope("android_root"):
+                self._adb("root")
+            with diagnostics.scope("android_wait_for_device"):
+                self._adb("wait-for-device")
+            with diagnostics.scope("android_root_identity"):
+                uid = self._adb("shell", "id", "-u")
+            if uid != "0":
                 raise PeerFailure("required_rootable_kernel_unavailable")
-            for apk in apks:
-                self._adb("install", "-r", str(apk), timeout=120)
-            self._adb("shell", "pm", "grant", AndroidPeer.APP, "android.permission.POST_NOTIFICATIONS")
+            install_sites = ("android_host_apk_install", "android_test_apk_install")
+            for index, apk in enumerate(apks):
+                with diagnostics.scope(install_sites[index] if index < len(install_sites) else None):
+                    self._adb("install", "-r", str(apk), timeout=120)
+            with diagnostics.scope("android_notification_grant"):
+                self._adb("shell", "pm", "grant", AndroidPeer.APP, "android.permission.POST_NOTIFICATIONS")
         except Exception:
             self.close()
             raise

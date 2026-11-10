@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT / "service/src"))
 from mesh_chat.connection.diagnostics import validated_pairing_retirement
 from native_interop_artifacts import GithubArtifacts, context_from_environment
 from native_interop_evidence import SCENARIOS, Samples, accounting, digest, selection, traffic
+from native_interop_diagnostics import PreflightDiagnostics
 from native_interop_peers import AndroidEmulator, AndroidPeer, PeerFailure, WindowsPeer
 from native_interop_preflight import android_environment, outbound_services
 from native_interop_rendezvous import Rendezvous
@@ -443,6 +444,7 @@ def main():
     plan = required_workload(args.workload)
     result = {"v": 1, "passed": False, "evidence_level": plan["level"], "role": args.role, "scope": plan["scope"], "workload": args.workload}
     peer = transport = rendezvous = controller = emulator = None
+    preflight_diagnostics = PreflightDiagnostics()
     phase = "source_artifact_binding"
     try:
         source, tree = source_identity(args.expected_source)
@@ -456,8 +458,8 @@ def main():
         if args.role == "android":
             from android_qualification import APKS
             emulator = AndroidEmulator()
-            emulator.start(APKS)
-        platform = {"windows": True} if args.role == "windows" else android_environment()
+            emulator.start(APKS, diagnostics=preflight_diagnostics)
+        platform = {"windows": True} if args.role == "windows" else android_environment(diagnostics=preflight_diagnostics)
         preflight = outbound_services()
         key = os.urandom(32)
         if args.role == "windows":
@@ -480,6 +482,9 @@ def main():
                   "phase": controller.phase if controller is not None else phase, "failure_type": type(error).__name__}
         if isinstance(error, PeerFailure): result["error_code"] = error.code
         elif isinstance(getattr(error, "code", None), str): result["error_code"] = PeerFailure(error.code).code
+        if controller is None and phase == "platform_outbound_preflight":
+            site = preflight_diagnostics.failure_site(error)
+            if site is not None: result["preflight_failure_site"] = site
         if controller is not None:
             site = controller.failure_site(error)
             if site is not None: result["failure_site"] = site

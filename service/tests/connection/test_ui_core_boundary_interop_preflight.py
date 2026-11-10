@@ -10,6 +10,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 import native_interop_preflight as probe
+from native_interop_diagnostics import PreflightDiagnostics
 
 
 @pytest.fixture
@@ -70,3 +71,42 @@ def test_preflight_failure_overwrites_stale_success_without_raw_error_details(tm
     record = json.loads(output.read_text())
     assert record["passed"] is False and "skipped" not in record
     assert record["phase"] == "source_environment" and "failure_type" in record
+
+
+@pytest.mark.parametrize("failed_index", [0, 1, 2])
+def test_android_environment_preserves_exact_checked_probe_failure_and_short_circuit(monkeypatch, failed_index):
+    monkeypatch.setattr(probe, "sys", SimpleNamespace(platform="linux"))
+    monkeypatch.setattr(probe, "os", SimpleNamespace(access=lambda *_: True, R_OK=4, W_OK=2))
+    expected = [("android_device_state", ["PRIVATE_ADB", "get-state"], "device"),
+        ("android_emulator_property", ["PRIVATE_ADB", "shell", "getprop", "ro.kernel.qemu"], "1"),
+        ("android_abi", ["PRIVATE_ADB", "shell", "getprop", "ro.product.cpu.abi"], "x86_64")]
+    calls = []
+    error = probe.subprocess.CalledProcessError(1, "PRIVATE_COMMAND", output="PRIVATE_OUTPUT", stderr="PRIVATE_STDERR")
+    def command(args, **kwargs):
+        index = len(calls)
+        calls.append(args)
+        assert args == expected[index][1]
+        assert kwargs == {"text": True, "stderr": probe.subprocess.DEVNULL, "timeout": 15}
+        if index == failed_index: raise error
+        return expected[index][2] + "\n"
+    monkeypatch.setattr(probe.subprocess, "check_output", command)
+    diagnostics = PreflightDiagnostics()
+    with pytest.raises(probe.subprocess.CalledProcessError) as failure:
+        probe.android_environment("PRIVATE_ADB", diagnostics=diagnostics)
+    assert failure.value is error and diagnostics.failure_site(error) == expected[failed_index][0]
+    assert calls == [item[1] for item in expected[:failed_index + 1]]
+
+
+@pytest.mark.parametrize("responses,count", [(["offline"], 1), (["device", "0"], 2), (["device", "1", "arm64-v8a"], 3)])
+def test_android_environment_value_guards_remain_fatal_without_command_failure_attribution(monkeypatch, responses, count):
+    monkeypatch.setattr(probe, "sys", SimpleNamespace(platform="linux"))
+    monkeypatch.setattr(probe, "os", SimpleNamespace(access=lambda *_: True, R_OK=4, W_OK=2))
+    calls = []
+    def command(*args, **kwargs):
+        calls.append(args)
+        return responses[len(calls) - 1]
+    monkeypatch.setattr(probe.subprocess, "check_output", command)
+    diagnostics = PreflightDiagnostics()
+    with pytest.raises(RuntimeError) as failure:
+        probe.android_environment(diagnostics=diagnostics)
+    assert len(calls) == count and diagnostics.failure_site(failure.value) is None
