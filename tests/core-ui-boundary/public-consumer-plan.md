@@ -47,8 +47,14 @@ retry `42862760087` passes Windows public pairing/lifetime and all non-native
 gates but fails native Android under TURN TCP negative-control phase with an
 unclassified `ValueError`; Windows later reports TURN TLS wait-answer timeout.
 No full native acceptance, isolated-helper completion, separate-caller/process,
-physical or media qualification is inferred. Coordination/diagnostic follow-up
-is under review; no timeout, authority or negative-control relaxation is assigned.
+physical or media qualification is inferred. Failure-only diagnostics `b7f323e`
+are reviewed and integrated, with 739 focused component cases passing (667 prior
+cases preserved plus 72 new) and three meaningful original-source failures.
+An original two-controller reproduction demonstrates measurement/cleanup
+overtaking under scripted native boundaries; it does not identify the CI cause.
+The private prepare/completion/commit replacement contract is frozen, with
+implementation, real composition proof and full qualification still pending.
+No public API/grant, timeout, authority or negative-control relaxation is assigned.
 
 Checkpoint `36466e0` full run `42843336931` again verifies the installed Windows
 public-SDK pairing, receipt and same-caller lifetime slice and all required

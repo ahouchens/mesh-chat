@@ -83,6 +83,39 @@ Terminal cleanup instead uses the current scoped Core `connection.stop`, followe
 by the same zero-accounting checks and normal host shutdown. Its desired-state
 reply is not cleanup completion. Full native qualification remains required.
 
+The replacement private v2 contract is frozen; its producer and controller
+implementations are pending integration. It adds required `action` with only
+`prepare` or `commit` to that exact request shape. Missing/unknown actions reject;
+there is no implicit legacy request or wire abort. Preparation returns
+`{request_id,state:"prepared"}` without disposing the current carrier. After all
+local measurements and successful fault cleanup, both peers prepare, publish
+then receive their exact sealed case completion marker, and commit the same
+immutable tuple and nonce. First commit returns `pending`, even if cleanup has
+already completed. Correlated inventory can report `prepared` before commit;
+postcommit controller polling accepts only `pending` or `acknowledged`.
+
+Preparation preserves current traffic and health inspection, permits normal
+failure cleanup and rejects replacement admission. Only a fresh transferred
+pairing context allocated by the current service is eligible. Retained proof
+requires its exact owner's actual retirement, the trusted native `closed` edge,
+successful cleanup completion and fresh bound clearance. Capture the raw physical
+closed edge before logical mapping lookup can discard it. This uses the existing
+trusted in-process callback and nonreused fresh identity, not an independently
+tagged JNI receipt; restored resources are excluded. The sole permitted authority
+successor changes manual-carrier authorization from true to false after an
+attested exact close start. Other active-ticket authority/lifecycle changes
+invalidate irreversibly. An already-completed historical receipt grants no
+authority over a later generation and cannot satisfy a different request nonce.
+
+Markers are exactly `{completed:true}` at
+`case_complete_<scenario>_<initiator>` for the six fixed full cases or the first
+three quick cases. Existing source/run/role binding and deadlines remain. Full
+uploads including reports become 17 Windows/15 Android; quick becomes eight each,
+within the unchanged run inventory cap of 100. Any failure ends the case and uses
+existing owned-host teardown; forced termination is never positive retirement
+proof. The frozen contract SHA-256 is
+`6ca4ca2ccd4807d66e38396258f0361f8721ac0cec255ed8a73b7516dbbd3fed`.
+
 The cold-start setup follow-up is implemented and source-reviewed. After the final manual
 acknowledgment/zero gate, each peer performs the existing local auto-reconnect
 consent update, publishes its returned signed capabilities in the sealed
