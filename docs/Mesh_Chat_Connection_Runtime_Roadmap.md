@@ -10,6 +10,35 @@ composer state, independent SDK distributions and upgrades, supervisor-owned
 native lifecycle/pairing, and the remaining packaged transport/fault matrix.
 The ledger records exact scope; this is not full M2–M5 completion.
 
+The Windows pairing diagnostic follow-up integrates `1f73cdf` at `93a1448`.
+It preserves the original thrown value and its phase, subphase, safe error code,
+deadline flag and first timing before failure probes and final cleanup. Owned
+budget/wait errors use identity-bound fixed origins; unknown thrown values remain
+unknown. Cleanup-only failure still fails qualification. Separate bounded records
+distinguish the original hosts, rejected contender and reopened offerer; attempts
+are counted, while detach, stop and budget fields describe the latest attempt.
+Positive process stop does not turn failed client detach into successful retirement.
+
+Failure probes use the existing public `diagnostics.query` permission and
+operation, with at most four selected current actor observations per role.
+They expose fixed categories without handles, payloads, cursors or timestamps,
+and cannot identify an actor with a pairing intent or establish first cause.
+Roles run concurrently. Because the SDK serializes requests per client, pairing
+status runs first and diagnostics receives only the positive time remaining in
+the same two-second monotonic probe allowance. Exhaustion omits that request;
+no new timeout window, client, retry or authority is introduced.
+
+The focused worker gate passed **578 cases**, zero failures/skips; two installation
+cases were explicitly deselected and remain required in full qualification.
+The lead verified the complete XML/inventory and hashes. Actual application
+controls reproduce the old masking failure and cover primitive throws, secondary
+probe/cleanup failures, queue serialization, distinct owner incarnations and the
+unchanged 4096-byte report bound. Independent immutable review found no actionable
+issues. This is offline component evidence, not installed Windows acceptance or
+a proven repair for the original invitation failure. Exact-source SDK staging,
+types, full policy/UI/Windows gates and full CI remain required. Success checks,
+work/stop/outer deadlines, consent and positive shutdown requirements are unchanged.
+
 The latest completed checkpoint is `1b3a2be94816958d3fe26052e9fbaf5d2f42245c`
 (tree `e1ac699f1b0bd32c07037f5eb9d5dcf5b29b1267`), full run
 [42802755780](https://github.com/ahouchens/mesh-chat/actions/runs/42802755780).
@@ -40,9 +69,9 @@ and UI cases retain the prior root-identity controls and add strict root-command
 diagnostic coverage. The new Android root diagnostic path itself did not run
 in native CI because the Windows prerequisite failed.
 
-The assigned diagnostic follow-up will preserve original work-failure identity and observations,
-report cleanup independently, and use existing public current diagnostics
-with a bounded projection. It is diagnostic work, not a proven product repair
+The diagnostic follow-up recorded above preserves original work-failure identity
+and observations, reports cleanup independently, and uses existing public current
+diagnostics with a bounded projection. It is diagnostic work, not a proven product repair
 or first-cause history. No timeout, consent, receipt, positive shutdown, native
 authority or success criterion is relaxed. SC26 remains partial; the separately
 reviewed helper-retirement implementation stays deferred.
