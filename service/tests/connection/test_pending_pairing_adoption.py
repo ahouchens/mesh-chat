@@ -17,7 +17,7 @@ from mesh_chat.connection.model import (
 )
 from mesh_chat.connection.runtime import ConnectionRuntime
 from mesh_chat.errors import ContactNotApproved
-from test_native_path_evidence import evidence
+from test_native_path_evidence import REQUEST, evidence
 from test_carrier_recovery import recovery
 from test_pairing_runtime import native_pairing, ready_handoff, run_until
 
@@ -203,9 +203,9 @@ def test_fresh_direct_claim_waits_for_owner_commit(native_pairing, monkeypatch):
         return result
     monkeypatch.setattr(composition, '_claim_carrier', pause_after_claim)
     native_calls = []
-    def inspect(resource):
+    def inspect(resource, sample_request):
         native_calls.append(resource)
-        return json.dumps({'ok': True, 'result': evidence(resource, len(native_calls))})
+        return json.dumps({'ok': True, 'result': evidence(resource, len(native_calls), sample_request)})
     first._native_webrtc_host().pathEvidence = inspect
     first.webrtc_attach_native = lambda *args, **kwargs: {'bridge_id': 'fixture-bridge'}
     first.reconnect_path_status = lambda _: {'has_path': True, 'ready': True}
@@ -265,7 +265,7 @@ def test_fresh_direct_claim_waits_for_owner_commit(native_pairing, monkeypatch):
             assert key not in runtime.owner._retired
             assert not runtime.owner._owned_elsewhere(key, lease.resource)
         with pytest.raises(ContactNotApproved, match='authority is unavailable') as caught:
-            first.native_webrtc_path_evidence(session, physical)
+            first.native_webrtc_path_evidence(session, physical, REQUEST)
         assert caught.value.code == 'contact_not_approved'
         assert native_calls == []
         assert first.store.get('contact', 'contact-second')['trust'] == 'approved'
@@ -275,7 +275,7 @@ def test_fresh_direct_claim_waits_for_owner_commit(native_pairing, monkeypatch):
         composition._claim_carrier = original_claim
     first._connection_runtime.now = monotonic
     run_until(first, lambda: first._native_carrier_authorized(session))
-    assert first.native_webrtc_path_evidence(session, physical)['adopted'] is True
+    assert first.native_webrtc_path_evidence(session, physical, REQUEST)['adopted'] is True
     assert len(created) == 1
     row = next(row for row in first.native_webrtc_inspection_resources()['resources'] if row['logical_session'] == session)
     assert row['adopted'] is True and row['owner_state'] == 'authorized'

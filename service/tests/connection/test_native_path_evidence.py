@@ -1,6 +1,8 @@
 """Private evidence validation and current-incarnation/resource trust boundaries."""
 import json
 import time
+import socket
+import urllib.request
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -13,14 +15,31 @@ from mesh_chat.native_windows_webrtc import WindowsNativeWebRTCHost
 from test_native_profile_lifecycle import profile_runtime
 
 
-def evidence(resource="resource", sequence=1):
+REQUEST = "1" * 32
+
+
+@pytest.fixture
+def offline_only(monkeypatch):
+    attempts = []
+    def denied(*args, **kwargs):
+        attempts.append(True)
+        raise AssertionError("Offline evidence control attempted external I/O")
+    monkeypatch.setattr(socket.socket, "connect", denied)
+    monkeypatch.setattr(socket.socket, "connect_ex", denied)
+    monkeypatch.setattr(socket, "create_connection", denied)
+    monkeypatch.setattr(urllib.request.OpenerDirector, "open", denied)
+    yield
+    assert not attempts
+
+
+def evidence(resource="resource", sequence=1, sample_request=REQUEST):
     epoch = "a" * 32
     local, remote = candidate("127.0.0.1", 1234, "host", "udp"), candidate("127.0.0.1", 4321, "host", "udp")
     pair = {"token": pair_token(epoch, resource, local, remote), "local": local, "remote": remote,
             "nominated": True, "relay_protocol": "not_applicable", "relay_socket": None,
             "bytes_sent": None, "bytes_received": None, "rtt_ms": None}
     return observation(resource, epoch, sequence, int(time.monotonic() * 1000), status="selected",
-                       ice_state="completed", dtls_state="connected", channel_state="open", pair=pair)
+                       ice_state="completed", dtls_state="connected", channel_state="open", sample_request=sample_request, pair=pair)
 
 
 @pytest.mark.parametrize("change", ["foreign_resource", "secret", "candidate_secret", "candidate_protocol",
@@ -39,11 +58,11 @@ def test_backend_evidence_cannot_export_foreign_unbounded_or_inferred_informatio
     elif change == "socket_list": value["pair"]["relay_socket"] = ["local", "remote", "protocol"]
     else: value["availability"]["pair_bytes"] = True
     with pytest.raises(NativeUnavailable):
-        validate_observation(value, "resource")
+        validate_observation(value, "resource", REQUEST)
 
 
 @pytest.fixture
-def inspection(profile_runtime):
+def inspection(profile_runtime, offline_only):
     create, native = profile_runtime
     service = create()
     service.create_profile("Synthetic inspector")
@@ -51,10 +70,10 @@ def inspection(profile_runtime):
     service._native_webrtc_live.add("current")
     native.close = lambda _: None
     sequence = 0
-    def inspect(_):
+    def inspect(_, sample_request):
         nonlocal sequence
         sequence += 1
-        return json.dumps({"ok": True, "result": evidence(physical, sequence)})
+        return json.dumps({"ok": True, "result": evidence(physical, sequence, sample_request)})
     native.pathEvidence = inspect
     return service, native, physical
 
@@ -64,7 +83,7 @@ def test_private_inventory_and_evidence_bind_resource_profile_and_owner_without_
     inventory = service.native_webrtc_inspection_resources()
     assert inventory["resources"] == [{"logical_session": "current", "physical_resource": physical,
                                       "adopted": False, "owner_state": "unadopted"}]
-    value = service.native_webrtc_path_evidence("current", physical)
+    value = service.native_webrtc_path_evidence("current", physical, REQUEST)
     assert value["qualification_only"] and value["resource"] == physical
     assert value["service_incarnation"] == inventory["service_incarnation"]
     assert value["profile_incarnation"] == inventory["profile_incarnation"]
@@ -124,8 +143,8 @@ def test_windows_empty_lease_inventory_reports_complete_physical_accounting():
 def test_resource_or_incarnation_change_during_sample_denies_old_observation(inspection, change):
     service, native, physical = inspection
     original = native.pathEvidence
-    def inspect(resource):
-        result = original(resource)
+    def inspect(resource, sample_request):
+        result = original(resource, sample_request)
         if change == "physical": service._native_resources.release("current", physical)
         elif change == "incarnation": service._runtime_incarnation = uuid4().hex
         elif change == "identity": service._identity = RNS.Identity()
@@ -134,7 +153,7 @@ def test_resource_or_incarnation_change_during_sample_denies_old_observation(ins
         return result
     native.pathEvidence = inspect
     with pytest.raises(NativeUnavailable):
-        service.native_webrtc_path_evidence("current", physical)
+        service.native_webrtc_path_evidence("current", physical, REQUEST)
 
 
 def test_adopted_resource_revocation_during_sample_denies_live_path_success(inspection):
@@ -143,22 +162,82 @@ def test_adopted_resource_revocation_during_sample_denies_live_path_success(insp
     service._native_webrtc_profile_sessions["profile"] = "current"
     service._native_carrier_authorized = lambda _: current[0]
     original = native.pathEvidence
-    def inspect(resource):
-        result = original(resource)
+    def inspect(resource, sample_request):
+        result = original(resource, sample_request)
         current[0] = False
         return result
     native.pathEvidence = inspect
     with pytest.raises(ContactNotApproved):
-        service.native_webrtc_path_evidence("current", physical)
+        service.native_webrtc_path_evidence("current", physical, REQUEST)
 
 
-def test_cached_or_replaced_adapter_sample_is_not_a_new_observation(inspection):
+def test_cached_first_adapter_sample_cannot_borrow_current_request(inspection):
     service, native, physical = inspection
-    result = native.pathEvidence(physical)
-    native.pathEvidence = lambda _: result
-    assert service.native_webrtc_path_evidence("current", physical)["sample_sequence"] == 1
+    result = native.pathEvidence(physical, "2" * 32)
+    native.pathEvidence = lambda *_: result
+    with pytest.raises(NativeUnavailable):
+        service.native_webrtc_path_evidence("current", physical, REQUEST)
+    assert not getattr(service, "_native_path_sequences", {})
+
+
+def test_reused_sequence_stays_stale_even_with_matching_request(inspection):
+    service, native, physical = inspection
+    result = native.pathEvidence(physical, REQUEST)
+    native.pathEvidence = lambda *_: result
+    assert service.native_webrtc_path_evidence("current", physical, REQUEST)["sample_sequence"] == 1
     with pytest.raises(NativeUnavailable, match="stale"):
-        service.native_webrtc_path_evidence("current", physical)
+        service.native_webrtc_path_evidence("current", physical, REQUEST)
+
+
+@pytest.mark.parametrize("sample_request", [None, True, 1, [], {}, "", "1" * 31, "1" * 33, "A" * 32, "g" * 32])
+def test_invalid_request_is_rejected_before_sampling_or_sequence_commit(inspection, sample_request):
+    service, native, physical = inspection
+    calls = []
+    native.pathEvidence = lambda *args: calls.append(args)
+    with pytest.raises(NativeUnavailable):
+        service.native_webrtc_path_evidence("current", physical, sample_request)
+    assert calls == [] and not getattr(service, "_native_path_sequences", {})
+
+
+@pytest.mark.parametrize("field,value", [
+    ("sample_request", None), ("sample_request", "2" * 32), ("sample_request", "A" * 32),
+    ("sampled_at_ms", -1), ("sampled_at_ms", True), ("sampled_at_ms", 2**53),
+    ("sampled_at_ms", 1.5), ("sampled_at_ms", "1000"),
+])
+def test_native_shape_and_echo_are_strict_even_on_first_response(inspection, field, value):
+    service, native, physical = inspection
+    original = native.pathEvidence
+    def malformed(resource, request):
+        raw = json.loads(original(resource, request))
+        raw["result"][field] = value
+        return json.dumps(raw)
+    native.pathEvidence = malformed
+    with pytest.raises(NativeUnavailable):
+        service.native_webrtc_path_evidence("current", physical, REQUEST)
+    assert not getattr(service, "_native_path_sequences", {})
+
+
+@pytest.mark.parametrize("elapsed", [-0.000001, float("nan"), float("inf"), float("-inf"), 2.250001])
+def test_service_invalid_elapsed_never_truncates_into_valid_sample(inspection, monkeypatch, elapsed):
+    from mesh_chat import native_webrtc_service as module
+    service, _, physical = inspection
+    ticks = iter([10.0, 10.0 + elapsed])
+    with monkeypatch.context() as patch:
+        patch.setattr(module, "time", SimpleNamespace(monotonic=lambda: next(ticks)))
+        with pytest.raises(NativeUnavailable):
+            service.native_webrtc_path_evidence("current", physical, REQUEST)
+    assert not getattr(service, "_native_path_sequences", {})
+
+
+@pytest.mark.parametrize("elapsed", [0.0, 2.0, 2.25])
+def test_service_preserves_scheduling_envelope_without_changing_consumer_ttl(inspection, monkeypatch, elapsed):
+    from mesh_chat import native_webrtc_service as module
+    service, _, physical = inspection
+    ticks = iter([10.0, 10.0 + elapsed])
+    with monkeypatch.context() as patch:
+        patch.setattr(module, "time", SimpleNamespace(monotonic=lambda: next(ticks)))
+        value = service.native_webrtc_path_evidence("current", physical, REQUEST)
+    assert value["valid_for_ms"] == 2000 and value["sample_elapsed_ms"] == int(elapsed * 1000)
 
 
 @pytest.mark.parametrize("protocol", ["udp", "tcp", "tls"])

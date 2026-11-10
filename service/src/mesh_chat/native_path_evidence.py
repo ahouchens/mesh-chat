@@ -34,9 +34,10 @@ def pair_token(epoch, resource, local, remote):
 
 
 def observation(resource, epoch, sequence, sampled_at_ms, *, status, ice_state,
-                dtls_state, channel_state, pair=None, application=None):
+                dtls_state, channel_state, sample_request, pair=None, application=None):
     return {"v": 1, "resource": resource, "adapter_epoch": epoch,
-            "sample_sequence": sequence, "sampled_at_ms": sampled_at_ms, "status": status,
+            "sample_sequence": sequence, "sampled_at_ms": sampled_at_ms,
+            "sample_request": sample_request, "status": status,
             "ice_state": ice_state, "dtls_state": dtls_state, "channel_state": channel_state,
             "pair": pair, "availability": availability(pair),
             "application": application or {key: 0 for key in COUNTERS}}
@@ -50,13 +51,23 @@ def availability(pair):
             "rtt": pair is not None and pair["rtt_ms"] is not None}
 
 
-def validate_observation(value, resource):
+def validate_sample_request(value):
+    if (type(value) is not str or len(value) != 32
+            or any(character not in "0123456789abcdef" for character in value)):
+        raise NativeUnavailable("Native sample request is invalid")
+    return value
+
+
+def validate_observation(value, resource, sample_request):
     """Reject unbounded/foreign fields rather than exporting backend contents."""
     try:
+        validate_sample_request(sample_request)
         if not isinstance(value, dict) or set(value) != {
             "v", "resource", "adapter_epoch", "sample_sequence", "sampled_at_ms", "status",
-            "ice_state", "dtls_state", "channel_state", "pair", "application", "availability",
+            "sample_request", "ice_state", "dtls_state", "channel_state", "pair", "application", "availability",
         }:
+            raise ValueError
+        if validate_sample_request(value["sample_request"]) != sample_request:
             raise ValueError
         if value["v"] != 1 or type(value["v"]) is not int or value["resource"] != resource:
             raise ValueError
