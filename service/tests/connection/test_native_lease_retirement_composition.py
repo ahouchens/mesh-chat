@@ -558,10 +558,11 @@ def test_two_manual_cases_reverse_initiator_and_old_request_cannot_retire_replac
         with pytest.raises(ValidationError):
             peer.retire_carrier(**{**first[role], "expected_physical": state.physical[role]}, action="commit")
         with pytest.raises(NativeUnavailable):
-            peer.retire_carrier(**{**first[role], "operation_id": state.intents[role], "request_id": uuid4().hex}, action="commit")
+            peer.retire_carrier(**{**first[role], "operation_id": state.intents[role], "request_id": uuid4().hex}, action="prepare")
         assert peer.pairing_cancel(state.intents[role])["state"] == "transferred"
         assert state.controllers[role].native("native_webrtc_close", session_id=state.sessions[role]) == {"state": "managed"}
         assert state.services[role]._native_carrier_authorized(state.sessions[role])
+        assert runtime.owner.snapshot(receipts[role].key) == live
         assert peer.inventory()["host_accounting"] == before
     final = retirement_requests(state)
     request_retirement(state, final)
