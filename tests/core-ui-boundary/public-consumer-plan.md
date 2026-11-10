@@ -75,7 +75,16 @@ boundary cases. Full run `42899863270` passes all non-native families but
 fails native initialization: Android `initialize_ice_servers/internal`, Windows
 `initialize_key_wait/RendezvousUnavailable`. The inner capability-versus-ICE
 operation and cause remain unknown. No full native acceptance or expansion of
-public SDK support follows; private same-exchange diagnostics are in design.
+public SDK support follows. Private same-exchange diagnostics are integrated
+from producer `c6a31bb`/`6246303` and consumer `364eb313`, with inventory
+registration `a996252`. Focused evidence passes 285 producer and 903 consumer
+Python cases, 24 JVM cases and 239 inventory cases. Four compiled Android
+local Binder/Chaquopy controls raise the required optimized inventory to 56;
+device execution and exact-source combined qualification remain pending.
+Only fixed operation/stage/category/cause enums may accompany the same
+correlated internal failure, under the original local caller and initialized
+publication. Public Core responses, SDK surface, grants, call counts and
+deadlines remain unchanged. This does not establish the CI failure cause.
 No public API/grant, timeout, authority or negative-control relaxation is assigned.
 
 Checkpoint `36466e0` full run `42843336931` again verifies the installed Windows

@@ -42,11 +42,30 @@ no fixed diagnostic discriminator. The typed SDK performs an implicit
 the failing inner operation and exception remain unknown. Existing broker/TLS
 and response-encoding paths are possibilities, not established causes.
 
-The next diagnostic design carries private, bounded operation/stage/category
-metadata through the same authorized exchange, preserving public Core bytes,
-errors, call count and budgets. It is not yet an implemented repair. No
-unchanged-source retry was dispatched. Full native acceptance remains open;
-bootstrap retirement remains deferred until it passes.
+The private same-exchange diagnostic is now integrated from producer
+`c6a31bb` plus reviewed correction `6246303`, Android/controller consumer
+`364eb313`, and required Android inventory registration `a996252`. It selects
+only bounded operation, stage, category and cause enums for an existing
+correlated internal failure. The original local caller, cached Core client,
+initialized qualification publication and each frame's isolated result must
+still match; timeout, replacement, success or malformed metadata omits the
+diagnostic. Public Core bytes, errors, request count and deadlines are preserved.
+No broker/TLS repair or claim about the observed CI cause follows.
+
+Independent component evidence preserves the prior selected inventories:
+**285 producer Python cases** (207 prior plus 78 new), **903 consumer Python
+cases** (885 prior plus 18 new), **24 JVM cases**, and **239 required-inventory
+cases** (219 prior plus 20 new) pass. The producer corrections have three
+semantic RED controls; the producer, consumer and required-inventory additions
+also retain their initial semantic RED evidence. All source and final artifact
+hashes were independently checked. Four new Android local Binder/Chaquopy
+instrumentation methods compile and are required by the optimized emulator
+inventory, increasing it from 52 to **56**; they have not yet run on a device.
+This is component evidence, not combined qualification or native acceptance.
+
+Fresh SDK staging, exact-source full local gates and a new full CI run are
+pending. No unchanged-source retry was dispatched. Full native acceptance
+remains open; bootstrap retirement remains deferred until it passes.
 
 The preceding checkpoint is `30c9e4d996715aec9459da803119d1697bfba086`
 (tree `3e30ef753eef5ab20940bbb242494f715a9f81d2`). The reviewed private v2
