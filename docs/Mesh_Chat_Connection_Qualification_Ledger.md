@@ -2,9 +2,61 @@
 
 ## Integration revalidation (2026-11-09)
 
-### AGP repair and timing diagnostics: full CI dispatched
+### Cold-restart containment: full CI completed; native pairing remains unqualified
 
-The current shared checkpoint is `a3b6ebc5836128a39bb1cd98bcbca39410f00d42`
+The current shared checkpoint is `33d30884ef900e6649c7fcec80e2eb7ce9fef83b`
+(tree `f6168f0d8600cefc2078ff85113f9aecf543b04a`). Full manual qualification
+[42745577407](https://github.com/ahouchens/mesh-chat/actions/runs/42745577407)
+completed **failed** at 03:17:11 UTC on November 10. All six families and the
+native `full` workload were selected; duplicate PR run `42745583983` was canceled.
+There is no aggregate pass or release/default promotion.
+
+Exact-source local SDK staging and strict policy types pass. All **3,784 policy
+cases**, **694 Python plus 12 rendered UI cases**, and **nine Windows boundary
+cases** pass with zero skips. Policy takes 393.61s and includes all six installed
+runtime-SDK lifecycle cases, all 33 independent admission/restart cases and all
+90 controller cases, separately checked in the XML.
+
+The lead independently reconstructs the corresponding CI policy/UI inventories,
+the complete retained Windows report set, Android's 52 emulator and 62 JVM cases
+with 17 artifact bindings, and both direct platforms' 25/10/12 cases. All pass.
+The actual frozen Windows executable is 54,592,111 bytes with SHA-256
+`e27b71dea27686005252a12da03403544073343b48b4457c1c8e33364010a1fe`.
+Direct binaries and the absent WebView2 probe retain runner-reported hashes.
+Layout is runner PASS with all archive entries hashed; images were not retained
+or visually reviewed locally. These results do not establish successful OS
+authentication, cross-platform receipts, media or physical-device qualification.
+
+Both actual native peers fail in `direct_supervisor_owned_pairing_windows` with
+`PeerFailure`, `supervisor_pairing_retired` and the new fixed diagnostic
+`failure_site: pairing_status`. Android gets through settings, offer receive and
+answer admission before observing terminal pairing state. The previous Android
+`invalid_request` does not reproduce in this run. The status projection does not
+identify why the pairing retired; source and guarded offline diagnosis continue.
+No timeout, authority check, payload validation or workload requirement is relaxed,
+and no additional live relay/TURN probe is introduced.
+
+This candidate includes the ordinary-host containment, independent restart
+regressions, fixed call-site diagnostics and seven-line test-only clock correction
+described below. Native pending-action recovery remains unavailable; resource-owner
+retirement and document-bound native authority are still separate prerequisites.
+
+Verified archive provenance for `33d3088` / run `42745577407`:
+
+- selection `13731451753`: `006989282c9c475c29c34e39af4e56e8813480562078dcfc1232ff80f1b21761`.
+- policy `13730094713`: `2cbbfcf6e214e982cb79f7180ce14f8531b5e4b2e305ecd46aa3c5a998f216f5`.
+- verification `13731651106`: `13b46b53995b7f7b75bf8e1e980cb5e6932cd0c05978f5fbbc11b48f09a30cfe`.
+- desktop `13731820168`: `86e5542fbb6a599f5669f4938076bda5c2a2a4587c745af489340842a3f6dd40`.
+- native-windows `13730913559`: `dbfd3f6da8704e03f19eb7bd90d05a025558c0f5898387a0cd4bab6475ff3557`.
+- android `13732316479`: `433051aeca447ab0a56fdebf1960ed6008191c9f1dfa341eb1201b696cee0cef`.
+- android-debug `13732501103`: `4720f056773a6599c2b5680143a3868c64afc2036c40d182beb19b70dc7e10e5`.
+- direct-linux `13732506595`: `d33ee0aa26bc1f85c6443b102388460fefc3a4aa47b58d33fee2701fe0affce6`.
+- direct-windows `13732925759`: `caa93e06c6285def5c9793d2808b51ba036ef26836f8635d94453de497a084b6`.
+- layout `13730823167`: `2af8aebf012d7b1d007439136d0b184767b357dbbcbe99fa2e98bea97dfe39e9`.
+- native-interop-android `13732032647`: `cc1ba4e98195f4196a50113e61f800abadb35769fcecc081d09e43ee2e512518`.
+- native-interop-windows `13733025004`: `23bd3823a63e54199fdb3b94014a798c470c76460f6ef71cd58be42217b5f5e0`.
+
+The previous shared checkpoint is `a3b6ebc5836128a39bb1cd98bcbca39410f00d42`
 (tree `cfb4d1e92e819193a98f5f62995d0c79fdad3432`). Full manual qualification
 [42736168066](https://github.com/ahouchens/mesh-chat/actions/runs/42736168066)
 completed failed at 01:58:59 UTC on November 10. Retained selection confirms all six families and native workload
