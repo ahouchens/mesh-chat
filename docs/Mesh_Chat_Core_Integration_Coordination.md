@@ -11,6 +11,35 @@ reports. Exact evidence and limits are in the ledger. Wave 2 is activated below.
 Existing human authorization covers continued implementation, integration and
 worker follow-ups without another permission request.
 
+The rendezvous diagnostic follow-up integrates `bdd2ff6` and `b0888ec` at
+`b8d77e6`. It records fixed stage/reason labels at known transport origins,
+bound in memory to the exact escaping receive error. An HTTP status is optional
+and comes only from an observed standard HTTP error during an initial API or
+redirected blob open; it must be an exact integer in 100..599. The controller
+checks the same receive error and validates the complete allowed projection.
+Foreign, stale, replaced, malformed or throwing observations add no fields.
+Raw error text, URLs, headers, bodies and handshake material are never projected.
+
+The existing failure type, wrapper messages, phase/site/substage and cleanup
+remain intact. New calls, success and close clear the observation. Upload and
+success reports gain no fields. Response context entry/read/exit has a fixed
+`read_failed` label; non-decoding parser failures retain `transport_failed`,
+while known JSON/encoding decode failures use `json_invalid`. Root review caught
+and corrected a stale read label across that parser boundary. All request counts,
+receive/open/poll budgets, bearer separation and provenance/digest/envelope checks
+are preserved. The receive budget remains a polling deadline with in-flight I/O,
+not a newly strict end-to-end cutoff. There is no retry or acceptance change.
+
+The focused suite passes **645 cases**, zero failures/skips. It includes actual
+controller report paths with scripted transport faults, negative identity and
+redaction controls, and pre-change regressions for the missing fields and parser
+mislabeling. Root independently verified XML/inventory/hashes; final immutable
+review found no remaining actionable issues. These are offline controls, not a
+repair for the unobserved `c0b3cf7` cause. Exact-source local and full CI gates
+remain required. The revised helper-retirement interface has A/B design acceptance
+after C's post-fence retirement-only registration correction; production remains
+unassigned pending full native qualification.
+
 The latest completed checkpoint is `c0b3cf7558972b8560bac52e5154674d25603c86`
 (tree `4304e0adbee1da7e694fc58b90bf05e933fce518`), full run
 [42810308484](https://github.com/ahouchens/mesh-chat/actions/runs/42810308484).
@@ -47,7 +76,7 @@ consumer-process exit, cross-caller/user/app isolation, isolated-helper retireme
 pending-message delivery after restart, Android credential UI or media coexistence.
 The earlier `1b3a2be` invitation failure remains unexplained by this later pass.
 
-A narrow follow-up will retain fixed rendezvous stage/reason and an observed,
+The follow-up recorded above retains fixed rendezvous stage/reason and an observed,
 validated HTTP status only for the same escaping transport error. It adds no
 request, retry, timeout, fallback or acceptance change and exports no raw error,
 URL, header, body or handshake material. SC26 remains partial. Helper-retirement
