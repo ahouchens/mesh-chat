@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import sys
 import threading
 import uuid
 from collections import deque
@@ -575,6 +576,7 @@ def core_exchange(caller: str, frame_b64: str, scope: str = "consumer") -> str:
 
     from .core_api.android_host import exchange
     from .core_api.wire_codec import encode_frame
+    from ._qualification_failure_observer import note
 
     try:
         if not isinstance(caller, str) or not isinstance(frame_b64, str) \
@@ -588,6 +590,7 @@ def core_exchange(caller: str, frame_b64: str, scope: str = "consumer") -> str:
             raise ValidationError("Core API frame is not valid base64") from exc
         with _service_lock:
             host, service, installing = _profile_host, _service, _profile_installing
+            note("route", service, host, installing, _service_binding, _event_incarnation)
         if installing and host is None:
             reply = encode_frame({"api_version": 1, "request_id": None, "ok": False,
                 "error": {"code": "unavailable", "retry_after_ms": None}})
@@ -595,6 +598,7 @@ def core_exchange(caller: str, frame_b64: str, scope: str = "consumer") -> str:
             reply = host.exchange(caller, frame, scope) if host is not None else exchange(service, caller, frame, scope)
         return base64.b64encode(reply).decode("ascii")
     except Exception:
+        note("discard")
         return base64.b64encode(encode_frame({
             "api_version": 1, "request_id": None, "ok": False,
             "error": {"code": "invalid_request", "retry_after_ms": None},
@@ -614,6 +618,12 @@ def _close_service() -> None:
         _event_overflow = False
     service = _retiring_service
     if service is not None:
+        qualification = sys.modules.get("mesh_chat.core_api.qualification_host")
+        if qualification is not None:
+            try:
+                qualification._forget_android_publication(service)
+            except Exception:
+                pass
         from .core_api.android_host import retire
         service._shutdown.set()
         publication_error = None

@@ -10,6 +10,7 @@ from typing import Protocol
 from .limits import MAX_FRAME_BYTES
 from .requests import REQUEST_ID
 from .wire_codec import decode_frame, encode_frame
+from .._qualification_failure_observer import note
 
 
 class RequestSession(Protocol):
@@ -52,13 +53,31 @@ class FramedSession:
             try:
                 value = decode_frame(frame)
             except (ValueError, TypeError, RecursionError):
+                note("discard")
                 self.close()
                 return encode_frame(_error("invalid_request"))
+            operation = value.get("operation") if isinstance(value, dict) else None
+            note("frame", _correlation(value), operation)
+            stage = "session_escape"
             try:
-                return encode_frame(self._session.request(value))
-            except Exception:
+                result = self._session.request(value)
+                stage = "frame_encode"
+                response = encode_frame(result)
+                # Inspect only selected source response scalars, never give the
+                # diagnostic custody helper a public response or encoded bytes.
+                try:
+                    failure = result.get("error") if type(result) is dict and result.get("ok") is False else None
+                    code = failure.get("code") if type(failure) is dict else None
+                    note("seal", _correlation(result), code)
+                except Exception:
+                    note("discard")
+                return response
+            except Exception as error:
+                note("wire_failure", error, stage)
                 self.close()
-                return encode_frame(_error("internal", _correlation(value)))
+                response = encode_frame(_error("internal", _correlation(value)))
+                note("seal", _correlation(value), "internal")
+                return response
 
     def serve(self, reader, writer):
         """Drive one binary stream serially, without queuing work or responses.

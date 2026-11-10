@@ -15,6 +15,7 @@ import uuid
 from typing import Protocol
 
 from ..errors import ContactNotApproved, StorageUnavailable, ValidationError
+from .._qualification_failure_observer import note
 from .views import (call_ice_view, call_media_view, call_settings_view, device_removal_view, draft_view,
     workspace_admin_request_view, workspace_authority_loss_view, workspace_authority_offer_view,
     workspace_edge_view, workspace_member_remove_view, workspace_channel_state_view,
@@ -39,6 +40,7 @@ from .views import (call_ice_view, call_media_view, call_settings_view, device_r
     workspace_list_view, workspace_member_role_view, workspace_members_view,
     workspace_invitation_create_view, workspace_preview_view, workspace_requests_view,
 )
+from .calls import CallIceObservation
 from .errors import ApiFailure, failure_code
 from .limits import MAX_FRAME_BYTES, MAX_REQUEST_JSON_DEPTH, MAX_REQUEST_JSON_TOKENS
 from .composer import Composer, COMPOSER_LIMITS
@@ -452,6 +454,7 @@ class CoreSession:
                 if self._stopped:
                     raise ApiFailure("forbidden")
                 grant = self._grant()
+                note("grant", grant.caller)
                 operation, params = parse_request(value, self._operations)
                 key = value.get("idempotency_key") if isinstance(value, dict) else None
                 permission = PERMISSION_BY_OPERATION.get(operation)
@@ -463,17 +466,23 @@ class CoreSession:
                 if extra is not None and extra not in grant.permissions:
                     raise ApiFailure("forbidden")
                 result = self._execute(grant, operation, params, key)
+                note("success")
                 return {"api_version": 1, "request_id": request_id, "ok": True, "result": result}
             except ApiFailure as error:
                 code = failure_code(error)
+                note("failure", error, code)
             except ValidationError as error:
                 code = failure_code(error)
-            except ContactNotApproved:
+                note("failure", error, code)
+            except ContactNotApproved as error:
                 code = "forbidden"
-            except StorageUnavailable:
+                note("failure", error, code)
+            except StorageUnavailable as error:
                 code = "unavailable"
-            except Exception:
+                note("failure", error, code)
+            except Exception as error:
                 code = "internal"
+                note("failure", error, code)
         return {"api_version": 1, "request_id": request_id, "ok": False,
                 "error": {"code": code, "retry_after_ms": None}}
 
@@ -594,7 +603,11 @@ class CoreSession:
         profiles = {self._handle(grant, "profile", profile, profile): profile for profile in grant.profiles}
         if operation == "runtime.capabilities":
             self._negotiated = True
-            return self._capabilities(profiles)
+            try:
+                return self._capabilities(profiles)
+            except Exception as error:
+                note("caught", error, "capabilities")
+                raise
         if not self._negotiated:
             raise ApiFailure("negotiation_required")
         if operation in WORKSPACE_OPERATIONS:
@@ -753,7 +766,18 @@ class CoreSession:
             if operation == "call.settings_update":
                 observation = self._calls.update(profile, params["settings"])
             elif operation == "call.ice_servers":
-                return call_ice_view(params["profile"], self._calls.ice(profile))
+                try:
+                    observation = self._calls.ice(profile)
+                except Exception as error:
+                    note("caught", error, "ice_adapter")
+                    raise
+                try:
+                    return call_ice_view(params["profile"], observation)
+                except Exception as error:
+                    invalid_observation = (type(observation) is CallIceObservation
+                                           and not isinstance(observation.ice, dict))
+                    note("caught", error, "ice_view", "invalid_observation" if invalid_observation else None)
+                    raise
             elif operation == "call.control":
                 if callable(getattr(self._calls, "control_scoped", None)):
                     return {"profile": params["profile"], "result": self._calls.control_scoped(
