@@ -134,9 +134,13 @@ class ConnectionRuntime:
                 ticket.acknowledged = True
                 self._context_revision += 1
 
-    def _commit_handoff(self, operation, resource, target):
+    def _commit_handoff(self, operation, resource, target, *, contact_id=None):
         with self._lock:
             profile = self._profile_values.get(target)
+            if contact_id is not None:
+                if profile is not None and profile.get("contact_id") != contact_id:
+                    return False
+                profile = {**(profile or {}), "contact_id": contact_id}
             if self._is_fenced(target, profile or {}):
                 return False
             return self.owner.commit_handoff(operation, resource, target, self.now())
@@ -324,7 +328,8 @@ class ConnectionRuntime:
                     try:
                         if self._handoff is not None:
                             self._handoff(event.operation, event.allocated,
-                                lambda resource, target: self._commit_handoff(event.operation, resource, target))
+                                lambda resource, target, *, contact_id=None: self._commit_handoff(
+                                    event.operation, resource, target, contact_id=contact_id))
                     except Exception:
                         # Commit is the receipt. A callback may lose its return
                         # after committing or even after target adoption.
