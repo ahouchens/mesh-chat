@@ -4,6 +4,34 @@ from contextlib import contextmanager
 from subprocess import CalledProcessError
 
 
+RENDEZVOUS_REASONS = {
+    "inventory_request": frozenset({"http_rejected", "response_empty", "response_oversized",
+                                     "json_invalid", "read_failed", "transport_failed"}),
+    "archive_request": frozenset({"http_rejected", "redirect_invalid", "response_empty", "response_oversized",
+                                   "read_failed", "transport_failed"}),
+    "blob_request": frozenset({"http_rejected", "response_empty", "response_oversized", "read_failed", "transport_failed"}),
+    "inventory_check": frozenset({"inventory_invalid", "duplicate_identity", "missing_identity"}),
+    "partner_wait": frozenset({"deadline_exhausted"}),
+    "transport_state": frozenset({"closed"}),
+}
+
+
+def rendezvous_observation(value):
+    required = {"rendezvous_stage", "rendezvous_reason"}
+    if (type(value) is not dict or not required <= set(value)
+            or set(value) - required - {"rendezvous_http_status"}):
+        return {}
+    stage, reason = value["rendezvous_stage"], value["rendezvous_reason"]
+    if (type(stage) is not str or stage not in RENDEZVOUS_REASONS
+            or type(reason) is not str or reason not in RENDEZVOUS_REASONS[stage]):
+        return {}
+    if "rendezvous_http_status" in value:
+        status = value["rendezvous_http_status"]
+        if type(status) is not int or not 100 <= status <= 599 or reason != "http_rejected":
+            return {}
+    return dict(value)
+
+
 PREFLIGHT_FAILURE_SITES = frozenset({
     "android_devices", "android_avd_create", "android_root", "android_wait_for_device",
     "android_root_identity", "android_host_apk_install", "android_test_apk_install",

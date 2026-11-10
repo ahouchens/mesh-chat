@@ -179,3 +179,273 @@ def test_closing_artifact_transport_fences_later_publish_and_wait(tmp_path):
             transport.wait("android", "key")
     finally:
         peer.close()
+
+
+def scripted_receive(tmp_path, monkeypatch, fault="inventory_http", *, status=403, role="windows", phase="key"):
+    """Actual request/wait with inert stdlib opener boundaries, no network."""
+    state = SimpleNamespace(fault=fault, status=status, calls=[], sleeps=[], now=0.0, original_http=None)
+    state.bundle = {"producer_job": backend.PRODUCER_JOBS[role], "PRIVATE_BODY": "PRIVATE_PAYLOAD"}
+    state.metadata, state.blob = archive(state.bundle)
+    state.metadata["name"] = artifact_name(CONTEXT, role, phase)
+    state.transport = backend.GithubArtifacts(CONTEXT, "android" if role == "windows" else "windows", tmp_path,
+        environment=environment("android" if role == "windows" else "windows"), clock=lambda: state.now,
+        sleep=lambda seconds: (state.sleeps.append(seconds), setattr(state, "now", state.now + seconds)))
+    state.role, state.phase = role, phase
+    class Response(BytesIO):
+        @property
+        def status(self): raise AssertionError("Normal response status must not be inspected")
+        def getcode(self): raise AssertionError("Normal response getcode must not be inspected")
+        def __enter__(self):
+            if state.fault == "context_enter": raise OSError("PRIVATE_CONTEXT_ERROR")
+            return super().__enter__()
+        def __exit__(self, *args):
+            result = super().__exit__(*args)
+            if state.fault == "context_exit": raise OSError("PRIVATE_CONTEXT_ERROR")
+            return result
+        def read(self, limit):
+            if state.fault == "read_timeout": raise TimeoutError("PRIVATE_TIMEOUT")
+            if state.fault == "read_http": raise urllib.error.HTTPError("PRIVATE_URL", 409, "PRIVATE_READ_ERROR", {}, None)
+            return super().read(limit)
+    class ForgedFailure(OSError):
+        @property
+        def code(self): raise AssertionError("Non-HTTP code must not be inspected")
+    class Opener:
+        def open(self, request, timeout):
+            stage = ("inventory_request" if request.full_url.endswith("/artifacts?per_page=100")
+                     else "blob_request" if request.full_url.startswith("https://synthetic.invalid/") else "archive_request")
+            state.calls.append({"stage": stage, "timeout": timeout, "bearer": request.get_header("Authorization") is not None})
+            if state.fault == "inventory_http" and stage == "inventory_request" or state.fault == "archive_http" and stage == "archive_request":
+                state.original_http = urllib.error.HTTPError(request.full_url, state.status, "PRIVATE_HTTP_MESSAGE", {}, None)
+                raise state.original_http
+            if state.fault == "open_timeout": raise TimeoutError("PRIVATE_TIMEOUT deadline_exhausted")
+            if state.fault == "url_timeout": raise urllib.error.URLError(TimeoutError("PRIVATE_TIMEOUT"))
+            if state.fault == "forged_code": raise ForgedFailure("PRIVATE_ERROR_ARGS")
+            if stage == "inventory_request":
+                inventory = {"total_count": 1, "artifacts": [state.metadata]}
+                if state.fault == "inventory_shape": inventory["artifacts"] = "PRIVATE_ROWS"
+                if state.fault == "inventory_count": inventory["total_count"] = True
+                if state.fault == "inventory_bound": inventory["total_count"] = 101
+                if state.fault == "duplicate": inventory = {"total_count": 2, "artifacts": [state.metadata, state.metadata]}
+                if state.fault == "missing_id": inventory["artifacts"] = [{**state.metadata, "id": True}]
+                if state.fault == "deadline": inventory = {"total_count": 0, "artifacts": []}
+                data = json.dumps(inventory).encode()
+                if state.fault == "empty": data = b""
+                if state.fault == "oversized": data = b"X" * (backend.MAX_API_RESPONSE + 1)
+                if state.fault == "json_invalid": data = b"PRIVATE_NOT_JSON"
+                if state.fault == "json_encoding": data = b"\xff"
+                return Response(data)
+            if stage == "archive_request" and state.fault in {"blob_http", "blob_timeout", "blob_empty", "blob_oversized", "redirect_invalid", "redirect_parse"}:
+                location = ("http://synthetic.invalid/PRIVATE_SIGNED" if state.fault == "redirect_invalid" else
+                            "https://[PRIVATE_INVALID" if state.fault == "redirect_parse" else "https://synthetic.invalid/PRIVATE_SIGNED")
+                raise urllib.error.HTTPError(request.full_url, 302, "PRIVATE_REDIRECT", {"Location": location}, None)
+            if stage == "blob_request" and state.fault == "blob_http":
+                state.original_http = urllib.error.HTTPError(request.full_url, state.status, "PRIVATE_BLOB_ERROR", {}, None)
+                raise state.original_http
+            if stage == "blob_request" and state.fault == "blob_timeout": raise TimeoutError("PRIVATE_BLOB_TIMEOUT")
+            return Response(b"" if state.fault == "blob_empty" else
+                            b"X" * (backend.MAX_ARCHIVE + 1) if state.fault == "blob_oversized" else state.blob)
+    monkeypatch.setattr(backend.urllib.request, "build_opener", lambda *_: Opener())
+    return state
+
+
+RECEIVE_ORIGINS = [
+    ("inventory_http", "inventory_request", "http_rejected", 1),
+    ("archive_http", "archive_request", "http_rejected", 2),
+    ("blob_http", "blob_request", "http_rejected", 3),
+    ("redirect_invalid", "archive_request", "redirect_invalid", 2),
+    ("redirect_parse", "archive_request", "redirect_invalid", 2),
+    ("open_timeout", "inventory_request", "transport_failed", 1),
+    ("url_timeout", "inventory_request", "transport_failed", 1),
+    ("forged_code", "inventory_request", "transport_failed", 1),
+    ("blob_timeout", "blob_request", "transport_failed", 3),
+    ("read_timeout", "inventory_request", "read_failed", 1),
+    ("read_http", "inventory_request", "read_failed", 1),
+    ("context_enter", "inventory_request", "read_failed", 1),
+    ("context_exit", "inventory_request", "read_failed", 1),
+    ("empty", "inventory_request", "response_empty", 1),
+    ("oversized", "inventory_request", "response_oversized", 1),
+    ("blob_empty", "blob_request", "response_empty", 3),
+    ("blob_oversized", "blob_request", "response_oversized", 3),
+    ("json_invalid", "inventory_request", "json_invalid", 1),
+    ("json_encoding", "inventory_request", "json_invalid", 1),
+    ("inventory_shape", "inventory_check", "inventory_invalid", 1),
+    ("inventory_count", "inventory_check", "inventory_invalid", 1),
+    ("inventory_bound", "inventory_check", "inventory_invalid", 1),
+    ("duplicate", "inventory_check", "duplicate_identity", 1),
+    ("missing_id", "inventory_check", "missing_identity", 1),
+    ("deadline", "partner_wait", "deadline_exhausted", 60),
+]
+
+
+@pytest.mark.parametrize("fault,stage,reason,count", RECEIVE_ORIGINS)
+def test_exact_receive_origin_preserves_failure_identity_budget_and_redaction(tmp_path, monkeypatch, fault, stage, reason, count):
+    state = scripted_receive(tmp_path, monkeypatch, fault)
+    created = []
+    unavailable = state.transport._unavailable
+    def create(*args):
+        error = unavailable(*args)
+        created.append(error)
+        return error
+    monkeypatch.setattr(state.transport, "_unavailable", create)
+    with pytest.raises(backend.RendezvousUnavailable) as caught:
+        state.transport.wait(state.role, state.phase, timeout=180)
+    assert type(caught.value) is backend.RendezvousUnavailable and created == [caught.value]
+    expected = {"rendezvous_stage": stage, "rendezvous_reason": reason}
+    if fault.endswith("http") and fault != "read_http": expected["rendezvous_http_status"] = 403
+    selected = state.transport.failure_observation(caught.value)
+    assert selected == expected
+    assert state.transport.failure_observation(state.original_http) == {}
+    assert state.transport.failure_observation(backend.RendezvousUnavailable("PRIVATE_FOREIGN")) == {}
+    selected["rendezvous_stage"] = "PRIVATE_MUTATION"
+    assert state.transport.failure_observation(caught.value) == expected
+    assert len(state.calls) == count and all(call["timeout"] == 10 for call in state.calls)
+    assert all(call["bearer"] is (call["stage"] != "blob_request") for call in state.calls)
+    assert state.sleeps == ([3] * 60 if fault == "deadline" else [])
+    assert "PRIVATE" not in json.dumps(expected) + str(caught.value)
+
+
+class StatusInt(int):
+    pass
+
+
+@pytest.mark.parametrize("status", [100, 302, 599, True, StatusInt(403), 403.0, "403", None, 99, 600])
+def test_http_status_is_observed_exact_integer_only_at_open(tmp_path, monkeypatch, status):
+    state = scripted_receive(tmp_path, monkeypatch, status=status)
+    with pytest.raises(backend.RendezvousUnavailable) as caught:
+        state.transport.wait(state.role, state.phase)
+    observed = state.transport.failure_observation(caught.value)
+    if type(status) is int and 100 <= status <= 599: assert observed["rendezvous_http_status"] == status
+    else: assert "rendezvous_http_status" not in observed
+    assert len(state.calls) == 1 and observed["rendezvous_reason"] == "http_rejected"
+
+
+@pytest.mark.parametrize("status", [302, 409, 500, 599])
+def test_redirected_open_status_is_not_replaced_by_initial_302(tmp_path, monkeypatch, status):
+    state = scripted_receive(tmp_path, monkeypatch, "blob_http", status=status)
+    with pytest.raises(backend.RendezvousUnavailable) as caught:
+        state.transport.wait(state.role, state.phase)
+    state.original_http.code = 100  # Capture occurred at the actual failing open.
+    assert state.transport.failure_observation(caught.value) == {
+        "rendezvous_stage": "blob_request", "rendezvous_reason": "http_rejected", "rendezvous_http_status": status}
+    assert [call["bearer"] for call in state.calls] == [True, True, False]
+    assert str(caught.value) == "GitHub artifact transport is unavailable"
+
+
+def test_http_error_subclass_cannot_supply_status_properties(tmp_path, monkeypatch):
+    state = scripted_receive(tmp_path, monkeypatch)
+    class NonstandardHTTPError(urllib.error.HTTPError):
+        @property
+        def code(self): raise AssertionError("Subclass code must not be inspected for diagnostics")
+        @code.setter
+        def code(self, value): pass
+    class Opener:
+        def open(self, request, timeout):
+            raise NonstandardHTTPError(request.full_url, 403, "PRIVATE_HTTP_ERROR", {}, None)
+    monkeypatch.setattr(backend.urllib.request, "build_opener", lambda *_: Opener())
+    with pytest.raises(backend.RendezvousUnavailable) as caught:
+        state.transport.wait(state.role, state.phase)
+    assert state.transport.failure_observation(caught.value) == {
+        "rendezvous_stage": "inventory_request", "rendezvous_reason": "http_rejected"}
+
+
+@pytest.mark.parametrize("fault", ["digest", "producer", "archive"])
+def test_verification_failure_retains_original_type_without_transport_provenance(tmp_path, monkeypatch, fault):
+    state = scripted_receive(tmp_path, monkeypatch, "success")
+    if fault == "digest": state.metadata["digest"] = "sha256:" + "0" * 64
+    elif fault == "producer":
+        state.bundle["producer_job"] = "PRIVATE_JOB"
+        state.metadata, state.blob = archive(state.bundle)
+    else:
+        state.blob = b"PRIVATE_NOT_AN_ARCHIVE"
+        state.metadata["size_in_bytes"] = len(state.blob)
+        state.metadata["digest"] = "sha256:" + hashlib.sha256(state.blob).hexdigest()
+    with pytest.raises(zipfile.BadZipFile if fault == "archive" else ValueError) as caught:
+        state.transport.wait(state.role, state.phase)
+    assert state.transport.failure_observation(caught.value) == {} and len(state.calls) == 2
+
+
+@pytest.mark.parametrize("activity", ["wait_success", "request_success", "request_failure", "publish", "close", "invalid_wait"])
+def test_new_transport_activity_cannot_resurrect_previous_receive_failure(tmp_path, monkeypatch, activity):
+    state = scripted_receive(tmp_path, monkeypatch)
+    with pytest.raises(backend.RendezvousUnavailable) as caught:
+        state.transport.wait(state.role, state.phase)
+    error = caught.value
+    assert state.transport.failure_observation(error)
+    state.fault = "success"
+    if activity == "wait_success":
+        assert state.transport.wait(state.role, state.phase) == state.bundle
+    elif activity == "request_success":
+        state.transport._request("/artifacts?per_page=100")
+    elif activity == "request_failure":
+        state.fault = "inventory_http"
+        with pytest.raises(backend.RendezvousUnavailable) as later:
+            state.transport._request("/artifacts?per_page=100")
+        assert state.transport.failure_observation(later.value) == {}  # Not a receive operation.
+    elif activity == "publish":
+        with pytest.raises(ValueError): state.transport.publish("key", {"PRIVATE_BODY": "PRIVATE_PAYLOAD"})
+    elif activity == "invalid_wait":
+        with pytest.raises(ValueError): state.transport.wait(state.role, state.phase, timeout=0)
+    else: state.transport.close()
+    assert state.transport.failure_observation(error) == {}
+
+
+def test_closed_wait_origin_and_replaced_nested_error_do_not_mix(tmp_path, monkeypatch):
+    state = scripted_receive(tmp_path, monkeypatch)
+    original_wait = state.transport._wait
+    original_errors = []
+    def replaced(*args):
+        try: return original_wait(*args)
+        except backend.RendezvousUnavailable as error:
+            original_errors.append(error)
+            raise ValueError("PRIVATE_CLEANUP_SUBSTITUTION") from None
+    monkeypatch.setattr(state.transport, "_wait", replaced)
+    with pytest.raises(ValueError): state.transport.wait(state.role, state.phase)
+    assert state.transport.failure_observation(original_errors[0]) == {}
+    monkeypatch.setattr(state.transport, "_wait", original_wait)
+    state.transport.close()
+    with pytest.raises(backend.RendezvousUnavailable) as caught:
+        state.transport.wait(state.role, state.phase)
+    assert state.transport.failure_observation(caught.value) == {
+        "rendezvous_stage": "transport_state", "rendezvous_reason": "closed"}
+    assert len(state.calls) == 1
+
+
+class SelectedString(str):
+    pass
+
+
+@pytest.mark.parametrize("projection", [
+    pytest.param(value, id=label) for label, value in (
+        ("non-object", []), ("missing", {"rendezvous_stage": "inventory_request"}),
+        ("stage", {"rendezvous_stage": "PRIVATE_STAGE", "rendezvous_reason": "http_rejected"}),
+        ("stage-type", {"rendezvous_stage": [], "rendezvous_reason": "http_rejected"}),
+        ("stage-subclass", {"rendezvous_stage": SelectedString("inventory_request"), "rendezvous_reason": "http_rejected"}),
+        ("reason", {"rendezvous_stage": "inventory_request", "rendezvous_reason": "PRIVATE_REASON"}),
+        ("reason-type", {"rendezvous_stage": "inventory_request", "rendezvous_reason": []}),
+        ("combination", {"rendezvous_stage": "partner_wait", "rendezvous_reason": "http_rejected"}),
+        ("extra", {"rendezvous_stage": "inventory_request", "rendezvous_reason": "http_rejected", "url": "PRIVATE_URL"}),
+        ("status-bool", {"rendezvous_stage": "inventory_request", "rendezvous_reason": "http_rejected", "rendezvous_http_status": True}),
+        ("status-subclass", {"rendezvous_stage": "inventory_request", "rendezvous_reason": "http_rejected", "rendezvous_http_status": StatusInt(403)}),
+        ("status-float", {"rendezvous_stage": "inventory_request", "rendezvous_reason": "http_rejected", "rendezvous_http_status": 403.0}),
+        ("status-string", {"rendezvous_stage": "inventory_request", "rendezvous_reason": "http_rejected", "rendezvous_http_status": "403"}),
+        ("status-small", {"rendezvous_stage": "inventory_request", "rendezvous_reason": "http_rejected", "rendezvous_http_status": 99}),
+        ("status-large", {"rendezvous_stage": "inventory_request", "rendezvous_reason": "http_rejected", "rendezvous_http_status": 600}),
+        ("status-provenance", {"rendezvous_stage": "inventory_request", "rendezvous_reason": "read_failed", "rendezvous_http_status": 403}),
+    )
+])
+def test_receive_projection_validation_omits_unknown_extra_or_wrong_type_fields(projection):
+    from native_interop_diagnostics import rendezvous_observation
+    assert rendezvous_observation(projection) == {}
+
+
+def test_fixed_receive_projection_has_only_literal_stages_and_reasons():
+    from native_interop_diagnostics import RENDEZVOUS_REASONS, rendezvous_observation
+    assert set(RENDEZVOUS_REASONS) == {"inventory_request", "archive_request", "blob_request", "inventory_check", "partner_wait", "transport_state"}
+    assert set().union(*RENDEZVOUS_REASONS.values()) == {
+        "http_rejected", "redirect_invalid", "response_empty", "response_oversized", "json_invalid", "read_failed",
+        "transport_failed", "inventory_invalid", "duplicate_identity", "missing_identity", "deadline_exhausted", "closed"}
+    for stage, reasons in RENDEZVOUS_REASONS.items():
+        for reason in reasons:
+            value = {"rendezvous_stage": stage, "rendezvous_reason": reason}
+            selected = rendezvous_observation(value)
+            assert selected == value and selected is not value

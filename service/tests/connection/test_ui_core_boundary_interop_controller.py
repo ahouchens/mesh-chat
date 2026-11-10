@@ -18,6 +18,7 @@ from test_ui_core_boundary_interop_peers import (
     ANDROID_ENVIRONMENT_SITES, ANDROID_START_SITES, assert_android_cleaned, scripted_android,
 )
 from test_ui_core_boundary_interop_evidence import sample
+from test_ui_core_boundary_interop_artifacts import RECEIVE_ORIGINS
 
 
 @pytest.fixture
@@ -207,7 +208,7 @@ def test_old_or_missing_invocation_echo_fails_even_before_readiness_filter(path_
     assert state.controller.samples.previous == {} and len(state.challenges) == 1
 
 
-def run_approval_report(tmp_path, monkeypatch, capsys, path_observer, role, fault):
+def run_approval_report(tmp_path, monkeypatch, capsys, path_observer, role, fault, *, transport=None):
     """Actual main/pair/path_case/observe/Samples; all product/host boundaries doubled."""
     import connection_ci
     state = path_observer
@@ -319,7 +320,8 @@ def run_approval_report(tmp_path, monkeypatch, capsys, path_observer, role, faul
     monkeypatch.setattr(controller, "AndroidEmulator", lambda: SimpleNamespace(start=lambda *_, **__: None, close=lambda: None))
     monkeypatch.setattr(controller, "WindowsPeer", lambda *_: peer)
     monkeypatch.setattr(controller, "AndroidPeer", lambda *_: peer)
-    monkeypatch.setattr(controller, "GithubArtifacts", lambda *_: SimpleNamespace(publish=publish, wait=receive, close=lambda: None))
+    monkeypatch.setattr(controller, "GithubArtifacts", lambda *_: transport if transport is not None else
+        SimpleNamespace(publish=publish, wait=receive, close=lambda: None))
     monkeypatch.setattr(controller, "Rendezvous", lambda *_: SimpleNamespace(seal=lambda _, value: value, open=lambda _, value: value, close=lambda: None))
     output = tmp_path / "approval.json"
     monkeypatch.setattr(sys, "argv", ["controller", "--role", role, "--workload", "full", "--expected-source", "a" * 40, "--output", str(output)])
@@ -327,6 +329,120 @@ def run_approval_report(tmp_path, monkeypatch, capsys, path_observer, role, faul
     captured = capsys.readouterr()
     return SimpleNamespace(record=json.loads(output.read_text()), code=code, state=state,
         output=output.read_text() + captured.out + captured.err)
+
+
+def test_receive_http_failure_reports_only_safe_origin_and_status(tmp_path, monkeypatch, capsys, path_observer):
+    import native_interop_artifacts as artifacts
+    from test_ui_core_boundary_interop_artifacts import CONTEXT, environment
+    transport = artifacts.GithubArtifacts(CONTEXT, "windows", tmp_path, environment=environment("windows"))
+    calls = []
+    class Opener:
+        def open(self, request, timeout):
+            calls.append(timeout)
+            raise artifacts.urllib.error.HTTPError(request.full_url, 403, "PRIVATE_HTTP_TEXT",
+                {"PRIVATE_HEADER": "PRIVATE_TOKEN"}, None)
+    monkeypatch.setattr(artifacts.urllib.request, "build_opener", lambda *_: Opener())
+    run = run_approval_report(tmp_path, monkeypatch, capsys, path_observer, "windows", "", transport=transport)
+    assert run.code == 1 and run.record["failure_type"] == "RendezvousUnavailable"
+    assert run.record["phase"] == "explicit_contact_approval"
+    assert run.record["failure_site"] == "rendezvous_receive" and run.record["failure_substage"] == "approval_acknowledgment"
+    assert run.record.get("rendezvous_stage") == "inventory_request"
+    assert run.record.get("rendezvous_reason") == "http_rejected"
+    assert run.record.get("rendezvous_http_status") == 403
+    assert calls == [10] and "PRIVATE_" not in run.output
+
+
+@pytest.mark.parametrize("fault,stage,reason,count", RECEIVE_ORIGINS)
+def test_actual_receive_report_validates_every_transport_origin(tmp_path, monkeypatch, capsys, path_observer, fault, stage, reason, count):
+    from test_ui_core_boundary_interop_artifacts import scripted_receive
+    state = scripted_receive(tmp_path, monkeypatch, fault, role="android", phase="approved")
+    observed_errors, created_errors = [], []
+    observation, unavailable = state.transport.failure_observation, state.transport._unavailable
+    def observe(error):
+        observed_errors.append(error)
+        return observation(error)
+    def create(*args):
+        error = unavailable(*args)
+        created_errors.append(error)
+        return error
+    monkeypatch.setattr(state.transport, "failure_observation", observe)
+    monkeypatch.setattr(state.transport, "_unavailable", create)
+    run = run_approval_report(tmp_path, monkeypatch, capsys, path_observer, "windows", "", transport=state.transport)
+    assert run.code == 1 and run.record["failure_type"] == "RendezvousUnavailable"
+    assert run.record["phase"] == "explicit_contact_approval"
+    assert run.record["failure_site"] == "rendezvous_receive" and run.record["failure_substage"] == "approval_acknowledgment"
+    expected = {"rendezvous_stage": stage, "rendezvous_reason": reason}
+    if fault.endswith("http") and fault != "read_http": expected["rendezvous_http_status"] = 403
+    assert {key: value for key, value in run.record.items() if key.startswith("rendezvous_")} == expected
+    assert set(run.record) == {"v", "passed", "evidence_level", "role", "scope", "workload", "phase",
+        "failure_type", "failure_site", "failure_substage"} | set(expected)
+    assert len(created_errors) == 1 and observed_errors == created_errors
+    assert len(state.calls) == count and "PRIVATE" not in run.output
+    assert state.transport._token is None  # Existing main cleanup was not skipped.
+
+
+@pytest.mark.parametrize("fault", ["throw", "none", "extra", "unknown", "wrong_status", "object"])
+def test_faulty_receive_observer_cannot_replace_primary_or_skip_cleanup(tmp_path, monkeypatch, capsys, path_observer, fault):
+    from test_ui_core_boundary_interop_artifacts import scripted_receive
+    state = scripted_receive(tmp_path, monkeypatch, role="android", phase="approved")
+    def broken(error):
+        if fault == "throw": raise RuntimeError("PRIVATE_OBSERVER_ERROR")
+        if fault == "none": return None
+        if fault == "object": return SimpleNamespace(rendezvous_stage="inventory_request", rendezvous_reason="http_rejected")
+        value = {"rendezvous_stage": "inventory_request", "rendezvous_reason": "http_rejected"}
+        if fault == "extra": value["url"] = "PRIVATE_URL"
+        if fault == "unknown": value["rendezvous_reason"] = "PRIVATE_REASON"
+        if fault == "wrong_status": value["rendezvous_http_status"] = True
+        return value
+    monkeypatch.setattr(state.transport, "failure_observation", broken)
+    run = run_approval_report(tmp_path, monkeypatch, capsys, path_observer, "windows", "", transport=state.transport)
+    assert run.code == 1 and run.record["failure_type"] == "RendezvousUnavailable"
+    assert run.record["phase"] == "explicit_contact_approval" and run.record["failure_substage"] == "approval_acknowledgment"
+    assert not any(key.startswith("rendezvous_") for key in run.record)
+    assert state.transport._token is None and len(state.calls) == 1 and "PRIVATE" not in run.output
+
+
+@pytest.mark.parametrize("activity", ["replace", "replace_same_type", "wait_success", "request_success", "publish", "close"])
+def test_receive_metadata_omits_replaced_or_stale_same_exception(tmp_path, monkeypatch, capsys, path_observer, activity):
+    import native_interop_artifacts as artifacts
+    from test_ui_core_boundary_interop_artifacts import scripted_receive
+    state = scripted_receive(tmp_path, monkeypatch, role="android", phase="approved")
+    original_wait = state.transport.wait
+    def intercepted(*args, **kwargs):
+        try: return original_wait(*args, **kwargs)
+        except artifacts.RendezvousUnavailable as original:
+            if activity in {"replace", "replace_same_type"}:
+                error = artifacts.RendezvousUnavailable("PRIVATE_REPLACED") if activity == "replace_same_type" else ValueError("PRIVATE_CLEANUP_ERROR")
+                error.rendezvous_stage, error.rendezvous_reason, error.rendezvous_http_status = "inventory_request", "http_rejected", 403
+                raise error
+            state.fault = "success"
+            if activity == "wait_success": original_wait(*args, **kwargs)
+            elif activity == "request_success": state.transport._request("/artifacts?per_page=100")
+            elif activity == "publish":
+                with pytest.raises(ValueError): state.transport.publish("key", {"PRIVATE_BODY": "PRIVATE_PAYLOAD"})
+            else: state.transport.close()
+            raise original
+    monkeypatch.setattr(state.transport, "wait", intercepted)
+    run = run_approval_report(tmp_path, monkeypatch, capsys, path_observer, "windows", "", transport=state.transport)
+    assert run.code == 1 and run.record["phase"] == "explicit_contact_approval"
+    assert run.record["failure_type"] == ("ValueError" if activity == "replace" else "RendezvousUnavailable")
+    assert run.record["failure_site"] == "rendezvous_receive" and run.record["failure_substage"] == "approval_acknowledgment"
+    assert not any(key.startswith("rendezvous_") for key in run.record)
+    assert state.transport._token is None and "PRIVATE" not in run.output
+
+
+def test_forged_receive_exception_attributes_supply_no_provenance(tmp_path, monkeypatch, capsys, path_observer):
+    import native_interop_artifacts as artifacts
+    from test_ui_core_boundary_interop_artifacts import scripted_receive
+    state = scripted_receive(tmp_path, monkeypatch, role="android", phase="approved")
+    error = artifacts.RendezvousUnavailable("PRIVATE_FOREIGN")
+    error.rendezvous_stage, error.rendezvous_reason, error.rendezvous_http_status = "inventory_request", "http_rejected", 403
+    class Opener:
+        def open(self, *args, **kwargs): raise error
+    monkeypatch.setattr(artifacts.urllib.request, "build_opener", lambda *_: Opener())
+    run = run_approval_report(tmp_path, monkeypatch, capsys, path_observer, "windows", "", transport=state.transport)
+    assert run.record["failure_type"] == "RendezvousUnavailable" and run.record["failure_site"] == "rendezvous_receive"
+    assert not any(key.startswith("rendezvous_") for key in run.record) and "PRIVATE" not in run.output
 
 
 APPROVAL_CASES = [

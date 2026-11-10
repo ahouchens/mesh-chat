@@ -14,9 +14,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "service/src"))
 
 from mesh_chat.connection.diagnostics import validated_pairing_retirement
-from native_interop_artifacts import GithubArtifacts, context_from_environment
+from native_interop_artifacts import GithubArtifacts, RendezvousUnavailable, context_from_environment
 from native_interop_evidence import SCENARIOS, SAMPLE_REJECTION_REASONS, Samples, accounting, digest, selection, traffic
-from native_interop_diagnostics import PreflightDiagnostics
+from native_interop_diagnostics import PreflightDiagnostics, rendezvous_observation
 from native_interop_peers import AndroidEmulator, AndroidPeer, PeerFailure, WindowsPeer
 from native_interop_preflight import android_environment, outbound_services
 from native_interop_rendezvous import Rendezvous
@@ -141,6 +141,15 @@ class Controller:
     def failure_site(self, error):
         observed = self._operation_failure
         return observed[1] if observed is not None and observed[0] is error and observed[1] in FAILURE_SITES else None
+
+    def failure_rendezvous(self, error):
+        if type(error) is not RendezvousUnavailable or self.failure_site(error) != "rendezvous_receive":
+            return {}
+        try:
+            return rendezvous_observation(self.transport.failure_observation(error))
+        except Exception:
+            # Missing or faulty diagnostic observers must not replace the original failure.
+            return {}
 
     def failure_pairing(self, error):
         observed = self._pairing_failure
@@ -554,6 +563,7 @@ def main():
             if site is not None: result["failure_site"] = site
             result.update(controller.failure_pairing(error))
             result.update(controller.failure_observation(error))
+            result.update(controller.failure_rendezvous(error))
     finally:
         if peer is not None and peer.process is not None:
             try: peer.stop(crash=True)

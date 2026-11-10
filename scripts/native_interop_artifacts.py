@@ -1,6 +1,7 @@
 """Bounded same-run REST downloads and official Actions-SDK setup uploads."""
 
 import json
+from contextlib import contextmanager
 import os
 from pathlib import Path
 import subprocess
@@ -51,43 +52,91 @@ class GithubArtifacts:
             raise RendezvousUnavailable("Unexpected publishing job, role or authenticated run")
         self.directory.mkdir(parents=True, exist_ok=True)
         self._published = set()
+        self._receiving = False
+        self._receive_failure = None
+
+    @contextmanager
+    def _receive_scope(self):
+        self._receive_failure = None
+        self._receiving = True
+        try:
+            yield
+        except Exception as error:
+            if self._receive_failure is not None and self._receive_failure[0] is not error:
+                self._receive_failure = None
+            raise
+        else:
+            self._receive_failure = None
+        finally:
+            self._receiving = False
+
+    def _unavailable(self, stage, reason, message, http_error=None):
+        error = RendezvousUnavailable(message)
+        if self._receiving:
+            selected = {"rendezvous_stage": stage, "rendezvous_reason": reason}
+            if type(http_error) is urllib.error.HTTPError:
+                try: status = http_error.code
+                except Exception: status = None
+                if type(status) is int and 100 <= status <= 599:
+                    selected["rendezvous_http_status"] = status
+            self._receive_failure = error, selected
+        return error
+
+    def failure_observation(self, error):
+        observed = self._receive_failure
+        return dict(observed[1]) if observed is not None and observed[0] is error else {}
 
     def _live(self):
         if self._token is None:
-            raise RendezvousUnavailable("Bootstrap artifact transport is closed")
+            raise self._unavailable("transport_state", "closed", "Bootstrap artifact transport is closed")
 
     def _request(self, path, *, binary=False):
+        self._receive_failure = None
         self._live()
         url = API + path
         request = urllib.request.Request(url, headers={"Authorization": "Bearer " + self._token,
             "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": API_VERSION,
             "User-Agent": "mesh-native-qualification/1"})
         opener = urllib.request.build_opener(NoRedirect())
+        stage = "archive_request" if binary else "inventory_request"
+        reason = "transport_failed"
         try:
             try:
                 response = opener.open(request, timeout=10)
             except urllib.error.HTTPError as redirect:
                 if not binary or redirect.code != 302:
-                    raise RendezvousUnavailable("GitHub artifact request rejected") from None
+                    raise self._unavailable(stage, "http_rejected", "GitHub artifact request rejected", redirect) from None
+                reason = "redirect_invalid"
                 location = redirect.headers.get("Location", "")
                 target = urllib.parse.urlsplit(location)
                 if target.scheme != "https" or not target.hostname or target.username or target.password or target.fragment:
-                    raise RendezvousUnavailable("Invalid artifact download location")
+                    raise self._unavailable(stage, "redirect_invalid", "Invalid artifact download location")
                 # The repository token is NEVER forwarded to signed blob storage.
-                response = opener.open(urllib.request.Request(location), timeout=10)
+                stage, reason = "blob_request", "transport_failed"
+                try:
+                    response = opener.open(urllib.request.Request(location), timeout=10)
+                except urllib.error.HTTPError as error:
+                    raise self._unavailable(stage, "http_rejected", "GitHub artifact transport is unavailable", error) from None
             limit = MAX_ARCHIVE if binary else MAX_API_RESPONSE
+            reason = "read_failed"
             with response:
                 data = response.read(limit + 1)
             if not data or len(data) > limit:
-                raise RendezvousUnavailable("GitHub response exceeds its qualification budget")
-            return data if binary else json.loads(data)
+                raise self._unavailable(stage, "response_empty" if not data else "response_oversized",
+                                        "GitHub response exceeds its qualification budget")
+            if binary: return data
+            try:
+                return json.loads(data)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                raise self._unavailable(stage, "json_invalid", "GitHub artifact transport is unavailable") from None
         except RendezvousUnavailable:
             raise
         except Exception:
             # Do not include request URLs, signed URLs, bearer headers or raw bodies.
-            raise RendezvousUnavailable("GitHub artifact transport is unavailable") from None
+            raise self._unavailable(stage, reason, "GitHub artifact transport is unavailable") from None
 
     def publish(self, phase, bundle):
+        self._receive_failure = None
         self._live()
         name = artifact_name(self.context, self.role, phase)
         if phase in self._published or not isinstance(bundle, dict) or len(canonical(bundle)) > MAX_BLOB:
@@ -116,6 +165,10 @@ class GithubArtifacts:
         return {"id": result["id"], "size": result["size"], "name": name}
 
     def wait(self, role, phase, *, timeout=900):
+        with self._receive_scope():
+            return self._wait(role, phase, timeout)
+
+    def _wait(self, role, phase, timeout):
         self._live()
         if type(timeout) not in {int, float} or not 0 < timeout <= 900:
             raise ValueError("Artifact wait deadline is out of bounds")
@@ -127,21 +180,22 @@ class GithubArtifacts:
             entries = inventory.get("artifacts") if isinstance(inventory, dict) else None
             if (not isinstance(entries, list) or len(entries) > 100 or not all(isinstance(item, dict) for item in entries)
                     or type(inventory.get("total_count")) is not int or inventory["total_count"] > 100):
-                raise RendezvousUnavailable("Artifact inventory exceeds its bounded run budget")
+                raise self._unavailable("inventory_check", "inventory_invalid", "Artifact inventory exceeds its bounded run budget")
             matching = [value for value in entries if value.get("name") == name]
             if len(matching) > 1:
-                raise RendezvousUnavailable("Duplicate bootstrap artifact identity")
+                raise self._unavailable("inventory_check", "duplicate_identity", "Duplicate bootstrap artifact identity")
             if matching:
                 metadata = matching[0]
                 identifier = metadata.get("id")
                 if type(identifier) is not int or identifier <= 0:
-                    raise RendezvousUnavailable("Missing bootstrap artifact identity")
+                    raise self._unavailable("inventory_check", "missing_identity", "Missing bootstrap artifact identity")
                 archive = self._request(f"/repos/{self.context['repository']}/actions/artifacts/{identifier}/zip", binary=True)
                 return verify_artifact(metadata, archive, self.context, role, phase)
             self.sleep(min(3, max(0, deadline - self.clock())))
-        raise RendezvousUnavailable("Required partner bootstrap artifact did not arrive before deadline")
+        raise self._unavailable("partner_wait", "deadline_exhausted", "Required partner bootstrap artifact did not arrive before deadline")
 
     def close(self):
         # Official artifact retention is one day. Private keys and decoded
         # shareables never enter this transport; temporary bundles are removed.
         self._token = None
+        self._receive_failure = None
