@@ -14,7 +14,7 @@ worker follow-ups without another permission request.
 The current shared checkpoint is `a3b6ebc5836128a39bb1cd98bcbca39410f00d42`
 (tree `cfb4d1e92e819193a98f5f62995d0c79fdad3432`). Full manual qualification
 [42736168066](https://github.com/ahouchens/mesh-chat/actions/runs/42736168066)
-is active. Retained selection confirms all six families and native workload
+completed failed at 01:58:59 UTC on November 10. Retained selection confirms all six families and native workload
 `full`; duplicate PR run `42736166905` was canceled. Exact SDK staging and strict
 policy types pass locally, followed by **3,739 required policy cases**, **675
 Python plus 12 rendered UI cases**, and **nine Windows components**, all with
@@ -40,9 +40,36 @@ Native pending-action recovery remains unavailable. C's reviewed direct-JNI
 design can share native Started/dispatch authority, but document-bound ingress
 and reply delivery remain separate prerequisites. No native wiring, successful
 OS authentication, renderer-crash recovery, public capability expansion or
-release/default promotion is inferred from these component passes. A/D also
-review whether old-host uncertain generic receipts can strand fresh-host actions;
-that cold-restart compatibility question is not yet resolved or accepted.
+release/default promotion is inferred from these component passes.
+
+The lead independently validates all 3,739 CI policy cases, the 675/12 UI
+boundary, the complete retained Windows report set, Android's 52 device and 62
+JVM cases with 17 artifact bindings, and both direct platforms' 25/10/12 cases.
+The frozen Windows executable hashes to
+`076ebfc0b883647fdbe52e742d2e7e8a78bc81c6d78156b42249af64bd5c4fed`.
+The direct binaries and absent WebView2 probe remain runner-reported hashes.
+
+Native interoperability now passes source/artifact admission and reaches
+`direct_supervisor_owned_pairing_windows`. Android reports `PeerFailure` with
+`invalid_request`; Windows reports `PeerFailure` with
+`supervisor_pairing_retired`. The phase spans multiple calls and does not identify
+the root cause. Offline payload-path controls pass with explicit native/mailbox
+doubles; no extra live probe or cross-platform receipt success is claimed.
+D is adding fixed-enum failure-site diagnostics without changing requests,
+checks, deadlines or workload and without recording sensitive payloads.
+
+A/D independently reproduced an ordinary-host cold-restart regression introduced
+by the protected dispatch fence. Containment `4018fca`, integrated at `197392d`,
+restores prior behavior only for ordinary catalogs without protected-admission
+authority or private evidence. Configured catalogs use the sealed monotonic
+`host_profile_admission_policy/current` authority; missing ports or a new Core
+UUID cannot downgrade it. Existing ambiguous dispatch slots remain protected.
+D's `fda1283` and `cf2d0e2` regressions are integrated at `6ab9d92`; all 33
+independent cases pass locally with zero skips. A reports 182 focused passes,
+with six installed-SDK cases omitted from that focused run. New exact-source
+staging and full gates are still required. This containment is not a native
+owner-retirement protocol, migration of old ambiguous protected catalogs, or an
+older-binary rollback guarantee.
 
 The previous shared checkpoint is `733c38b0d084435557ae1d40e640038c8f3e1aa2`
 (tree `c6f51445f0049b42b95138c2c168ee5394475c22`). Full manual qualification

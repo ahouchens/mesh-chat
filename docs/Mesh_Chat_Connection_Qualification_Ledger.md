@@ -7,7 +7,7 @@
 The current shared checkpoint is `a3b6ebc5836128a39bb1cd98bcbca39410f00d42`
 (tree `cfb4d1e92e819193a98f5f62995d0c79fdad3432`). Full manual qualification
 [42736168066](https://github.com/ahouchens/mesh-chat/actions/runs/42736168066)
-is active. Retained selection confirms all six families and native workload
+completed failed at 01:58:59 UTC on November 10. Retained selection confirms all six families and native workload
 `full`; duplicate PR run `42736166905` was canceled. Exact SDK staging and strict
 policy types pass locally, followed by **3,739 required policy cases**, **675
 Python plus 12 rendered UI cases**, and **nine Windows components**, all with
@@ -33,9 +33,49 @@ Native pending-action recovery remains unavailable. C's reviewed direct-JNI
 design can share native Started/dispatch authority, but document-bound ingress
 and reply delivery remain separate prerequisites. No native wiring, successful
 OS authentication, renderer-crash recovery, public capability expansion or
-release/default promotion is inferred from these component passes. A/D also
-review whether old-host uncertain generic receipts can strand fresh-host actions;
-that cold-restart compatibility question is not yet resolved or accepted.
+release/default promotion is inferred from these component passes.
+
+The lead independently validates all 3,739 CI policy cases, the 675/12 UI
+boundary, the complete retained Windows report set, Android's 52 device and 62
+JVM cases with 17 artifact bindings, and both direct platforms' 25/10/12 cases.
+The frozen Windows executable hashes to
+`076ebfc0b883647fdbe52e742d2e7e8a78bc81c6d78156b42249af64bd5c4fed`.
+The direct binaries and absent WebView2 probe remain runner-reported hashes.
+
+Native interoperability now passes source/artifact admission and reaches
+`direct_supervisor_owned_pairing_windows`. Android reports `PeerFailure` with
+`invalid_request`; Windows reports `PeerFailure` with
+`supervisor_pairing_retired`. The phase spans multiple calls and does not identify
+the root cause. Offline payload-path controls pass with explicit native/mailbox
+doubles; no extra live probe or cross-platform receipt success is claimed.
+D is adding fixed-enum failure-site diagnostics without changing requests,
+checks, deadlines or workload and without recording sensitive payloads.
+
+A/D independently reproduced an ordinary-host cold-restart regression introduced
+by the protected dispatch fence. Containment `4018fca`, integrated at `197392d`,
+restores prior behavior only for ordinary catalogs without protected-admission
+authority or private evidence. Configured catalogs use the sealed monotonic
+`host_profile_admission_policy/current` authority; missing ports or a new Core
+UUID cannot downgrade it. Existing ambiguous dispatch slots remain protected.
+D's `fda1283` and `cf2d0e2` regressions are integrated at `6ab9d92`; all 33
+independent cases pass locally with zero skips. A reports 182 focused passes,
+with six installed-SDK cases omitted from that focused run. New exact-source
+staging and full gates are still required. This containment is not a native
+owner-retirement protocol, migration of old ambiguous protected catalogs, or an
+older-binary rollback guarantee.
+
+Verified archive provenance for `a3b6ebc` / run `42736168066`:
+
+- Policy `13727920510`: `d079e9634b359db4cd6c3aed30f57708ff1447bd86969c26046ef02f9b71742f`.
+- Broader verification `13728305269`: `e9e978d9f11882a47752917126dd71aa71badd44b8b3545ba357cd003a08c6d8`.
+- Desktop `13727077357`: `a97115ea33a8fb47889d0b4f657b979626c43bef31b624d135430aac3585595a`.
+- Native Windows `13727601349`: `852d26d82fb42327887f2c471fc758cd16dab820ae5565b662c74c5191dce2d9`.
+- Android qualification `13727309152`: `2bfd0b3106b38215fa171d3686add30f3d3bc4b627e53ba01b220aca3a96bb3b`.
+- Android debug `13727833012`: `55706a2636077f7c5897e400f61142b564745264efcbdf431548e02d394bef16`; all 179 entries hashed, only required small evidence retained.
+- Linux direct `13727244143`: `9eddf81c5343540cc4b013fce29bf1817a6de64aa897180993f0ae2d57d8cb6e`.
+- Windows direct `13728303072`: `53b269e06be79e846f4bf105924ee8eaa9c748cd07ac13bbad782ce2492e928f`.
+- Failed native Android `13728445860`: `5ae962e9bbf71124ad94df8b5ed78e8ff94ccbed3f7c8084ad553f72942b9034`.
+- Failed native Windows `13727514108`: `a226951f6bb2728ff0157848abd50704d9689c0c00da1fa01d672e077f0cf2b6`.
 
 The previous shared checkpoint is `733c38b0d084435557ae1d40e640038c8f3e1aa2`
 (tree `c6f51445f0049b42b95138c2c168ee5394475c22`). Full manual qualification
