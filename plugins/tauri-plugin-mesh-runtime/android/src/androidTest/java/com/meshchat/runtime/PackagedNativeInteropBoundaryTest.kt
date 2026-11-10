@@ -25,6 +25,7 @@ class PackagedNativeInteropBoundaryTest {
         val context = instrumentation.targetContext
         val nonce = InstrumentationRegistry.getArguments().getString("mesh_interop_nonce") ?: error("Missing controller admission")
         check(nonce.matches(Regex("[a-f0-9]{64}")))
+        BootstrapClient.configure(context)
         NativeWebRtcBridge.attach(context)
         if (!Python.isStarted()) Python.start(AndroidPlatform(context))
         val python = Python.getInstance()
