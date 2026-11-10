@@ -3026,7 +3026,14 @@ def test_workspace_decline_is_scoped_and_terminal_close_invalidates_requests(
 
 def test_eight_person_workspace_catches_up_concurrent_invites_and_admin_changes(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from mesh_chat import workspace_service as workspace_service_module
+
+    # The recording network never acknowledges delivery. Keep prior controls
+    # below their retry deadline while checking exact administrative fanout.
+    now = time.time()
+    monkeypatch.setattr(workspace_service_module, "time", SimpleNamespace(time=lambda: now))
     owner_identity = RNS.Identity()
     owner_root = tmp_path / "owner-eight"
     owner_vault_key = os.urandom(32)
