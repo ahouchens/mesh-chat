@@ -443,7 +443,10 @@ class NativePairingServiceMixin:
             self._native_pairing_check(context)
             if context["source"] != source or target is None:
                 raise ContactNotApproved("Native pairing transfer authority changed")
-            if not commit(Resource("native", context["physical"]), target):
+            profile = self._reconnect_profile(target.profile_id)
+            if connection_key(profile) != target:
+                raise ContactNotApproved("Native pairing target changed")
+            if not commit(Resource("native", context["physical"]), target, contact_id=profile["contact_id"]):
                 raise NativeUnavailable("Native pairing transfer lease changed")
             # A failed return after this assignment is safe: the supervisor
             # owns pending physical custody until the exact target adopts it.

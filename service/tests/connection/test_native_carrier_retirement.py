@@ -203,6 +203,53 @@ def test_missing_cached_profile_cannot_bypass_target_or_terminal_hold(owned_runt
     f.runtime._profile_values[f.state.key] = f.profile
 
 
+@pytest.mark.parametrize("denial", ["stop_read_failure", "authority", "none"])
+def test_uncached_device_handoff_obeys_trusted_contact_fence(denial):
+    """Actual Stop/owner/handoff methods; verified target/profile reads are domain doubles."""
+    from mesh_chat.connection.model import ConnectionKey
+    from mesh_chat.service import MeshChatService
+    from test_pairing_runtime import ready_handoff
+    owner, source = ready_handoff()
+    runtime = ConnectionRuntime("epoch", lambda *_: SimpleNamespace(),
+        profiles=lambda: {"profiles": []}, execution=lambda: Execution.AVAILABLE,
+        activate=lambda _: pytest.fail("Unexpected activation"), now=lambda: .2)
+    runtime.owner = owner
+    target = ConnectionKey("contact", "contact:remote", "local", "remote")
+    profile = {"id": target.profile_id, "contact_id": "contact", "local_device_id": "local",
+               "remote_device_id": "remote", "scope_kind": "contact"}
+    service = object.__new__(MeshChatService)
+    service._dispatch_lock, service._native_webrtc_lock = threading.RLock(), threading.RLock()
+    service._connection_runtime, service.store = runtime, SimpleNamespace()
+    context = {"source": source.resource, "physical": "physical", "state": "awaiting_approval", "code": "opaque"}
+    service._native_pairing_context = lambda _: context
+    service._native_pairing_target = lambda _: target
+    service._native_pairing_check = lambda _: None
+    service._reconnect_profile = lambda _: dict(profile)
+    service.retire_unmanaged_native_connections = lambda _: pytest.fail("Stop read failure reached native cleanup")
+    reads = []
+    def failed_read():
+        reads.append(True)
+        raise OSError("Controlled Stop profile read failure")
+    service._reconnect_profiles_raw = failed_read
+    if denial == "stop_read_failure":
+        with pytest.raises(OSError, match="Stop profile read failure"):
+            service.reconnect_stop("contact")
+        assert reads == [True] and "contact" in runtime._contact_fences
+    elif denial == "authority":
+        token = runtime.begin_authority_change("contact")
+        assert runtime._authority_changes["contact"] == token
+    assert target not in runtime._profile_values and target not in runtime._veto
+    def commit(resource, key, **association):
+        return runtime._commit_handoff(source.operation, resource, key, **association)
+    if denial == "none":
+        service._native_pairing_handoff(source.operation, source.resource, commit)
+        assert context["state"] == "transferred" and owner.handoff_committed(source.operation)
+    else:
+        with pytest.raises(NativeUnavailable):
+            service._native_pairing_handoff(source.operation, source.resource, commit)
+        assert context["state"] == "awaiting_approval" and not owner.handoff_committed(source.operation)
+
+
 @pytest.fixture
 def qualified_owner(native_pairing, tmp_path):
     """Real signed pairing/handoff, approved-contact rows; native transport is modeled."""
