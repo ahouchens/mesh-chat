@@ -17,6 +17,7 @@ from .composition import bind_service_stream
 from .limits import MAX_FRAME_BYTES
 from .session import Grant
 from .wire_codec import encode_frame
+from .._qualification_failure_observer import note
 
 
 # Third-party consumers may pair and connect, but never administer a vault.
@@ -82,6 +83,7 @@ def exchange(service, caller, frame, scope="consumer"):
                                           private_profile_bootstrap=scope == "owner",
                                           private_composer_legacy=scope == "owner")
             _sessions[key] = session
+        note("admit", service, name, scope)
         reply = session.exchange(bytes(frame))
         if session.stopped:
             _sessions.pop(key, None)

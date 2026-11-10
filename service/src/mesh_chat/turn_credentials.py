@@ -12,6 +12,7 @@ except ImportError:  # Older mobile builds may not bundle CA data yet.
 
 from .call_settings import _url, validate_broker_url
 from .errors import NetworkUnavailable
+from ._qualification_failure_observer import note
 
 MAX_RESPONSE_BYTES = 64 * 1024
 MAX_ICE_SERVERS = 8
@@ -20,36 +21,63 @@ DEFAULT_TTL_SECONDS = 3600
 
 
 def fetch_ice_servers(broker_url: str, *, timeout: float = 8.0) -> list[dict[str, Any]]:
-    broker_url = validate_broker_url(broker_url)
+    try:
+        broker_url = validate_broker_url(broker_url)
+    except Exception as error:
+        note("caught", error, "broker_url")
+        raise
     separator = "&" if "?" in broker_url else "?"
-    request = urllib.request.Request(
-        f"{broker_url}{separator}ttl={DEFAULT_TTL_SECONDS}",
-        headers={
-            "Accept": "application/json",
-            "User-Agent": "mesh-chat-turn-broker/1",
-        },
-    )
+    try:
+        request = urllib.request.Request(
+            f"{broker_url}{separator}ttl={DEFAULT_TTL_SECONDS}",
+            headers={
+                "Accept": "application/json",
+                "User-Agent": "mesh-chat-turn-broker/1",
+            },
+        )
+    except Exception as error:
+        note("caught", error, "broker_request")
+        raise
+    stage = "tls_context"
     try:
         context = (
             ssl.create_default_context(cafile=certifi.where())
             if certifi is not None
             else ssl.create_default_context()
         )
+        stage = "broker_open"
         with urllib.request.urlopen(request, timeout=timeout, context=context) as response:
-            if response.status != 200:
-                raise NetworkUnavailable("TURN credential broker rejected the request")
-            body = response.read(MAX_RESPONSE_BYTES + 1)
-    except NetworkUnavailable:
+            try:
+                stage = "broker_status"
+                if response.status != 200:
+                    raise NetworkUnavailable("TURN credential broker rejected the request")
+                stage = "broker_read"
+                body = response.read(MAX_RESPONSE_BYTES + 1)
+            except Exception as error:
+                note("caught", error, stage)
+                raise
+            finally:
+                stage = "broker_open"  # A distinct context-exit failure replaces the body error.
+    except NetworkUnavailable as error:
+        note("caught", error, stage)
         raise
     except Exception as exc:
+        note("caught", exc, stage)
         raise NetworkUnavailable("TURN credentials are unavailable") from exc
     if len(body) > MAX_RESPONSE_BYTES:
-        raise NetworkUnavailable("TURN credential broker returned too much data")
+        error = NetworkUnavailable("TURN credential broker returned too much data")
+        note("caught", error, "broker_size")
+        raise error
     try:
         payload = json.loads(body)
     except Exception as exc:
+        note("caught", exc, "broker_json")
         raise NetworkUnavailable("TURN credential broker returned invalid JSON") from exc
-    return validate_ice_servers(payload)
+    try:
+        return validate_ice_servers(payload)
+    except Exception as error:
+        note("caught", error, "broker_validate")
+        raise
 
 
 def validate_ice_servers(payload: Any) -> list[dict[str, Any]]:

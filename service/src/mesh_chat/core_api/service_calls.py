@@ -1,5 +1,6 @@
 """Private adapter for typed call settings through the existing domain rules."""
 import re
+from .._qualification_failure_observer import note
 
 from ..errors import MailboxRateLimited, MailboxUnauthorized, NetworkUnavailable, ValidationError
 from ..call_manager import CallOutcomeRequiresResync, CallOperationCapacityExceeded
@@ -84,10 +85,20 @@ class ServiceCallSettings:
             try:
                 value = self._service.call_ice_servers()
             except ValidationError as error:
+                note("caught", error, "ice_service")
                 raise ApiFailure("invalid_request") from error
+            except Exception as error:
+                note("caught", error, "ice_service")
+                raise
             if not isinstance(value, dict):
-                raise ApiFailure("internal")
-            return CallIceObservation(dict(value))
+                error = ApiFailure("internal")
+                note("caught", error, "ice_return", "invalid_observation")
+                raise error
+            try:
+                return CallIceObservation(dict(value))
+            except Exception as error:
+                note("caught", error, "ice_return")
+                raise
 
 
     def call_ids(self, profile):

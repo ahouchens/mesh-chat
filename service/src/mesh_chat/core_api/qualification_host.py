@@ -9,7 +9,9 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import weakref
+from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
 
@@ -22,6 +24,120 @@ COMMANDS = frozenset({"qualification.inventory", "qualification.path_evidence",
                       "qualification.retire_carrier"}) | PAIRING_COMMANDS
 MARKER = ".mesh-qualification-v1"
 _android_service = None
+_android_publication = None
+
+
+def _forget_android_publication(service):
+    """Release only the exact initialized generation being retired."""
+    global _android_service, _android_publication
+    if _android_publication is not None and _android_publication.service() is service:
+        _android_publication = None
+        _android_service = None
+
+
+@dataclass(frozen=True)
+class _AndroidPublication:
+    service: object
+    incarnation: str
+    identity: object
+    identity_hash: bytes
+    store: object
+    publication: tuple
+    event: str
+    binding: str
+
+    def matches_route(self, service, publication, event):
+        return (service is self.service() and service is not None
+                and not service._shutdown.is_set() and service.store is self.store
+                and service._identity is self.identity and self.identity.hash == self.identity_hash
+                and service._runtime_incarnation == self.incarnation
+                and publication is self.publication and event == self.event)
+
+    def current(self):
+        from .. import mobile_bridge as mobile
+        with mobile._service_lock:
+            return (mobile._profile_host is None and not mobile._profile_installing
+                    and _android_service is not None and _android_service() is self.service()
+                    and self.matches_route(mobile._service, mobile._service_binding, mobile._event_incarnation))
+
+
+def _capture_android_publication():
+    from .. import mobile_bridge as mobile
+    service = _android_service() if _android_service is not None else None
+    if (service is None or service is not mobile._service or service._identity is None
+            or service._shutdown.is_set() or mobile._profile_host is not None or mobile._profile_installing
+            or type(mobile._service_binding) is not tuple or type(mobile._event_incarnation) is not str):
+        return None
+    incarnation, identity = service._runtime_incarnation, service._identity
+    profile = hashlib.sha256((incarnation + identity.hash.hex()).encode("ascii")).hexdigest()[:32]
+    binding = incarnation + profile
+    if type(binding) is not str or re.fullmatch(r"[0-9a-f]{64}", binding) is None:
+        return None
+    return _AndroidPublication(weakref.ref(service), incarnation, identity, bytes(identity.hash), service.store,
+                               mobile._service_binding, mobile._event_incarnation, binding)
+
+
+def android_observed_core_exchange(caller: str, frame_b64: str, scope: str,
+                                   qualification_binding: str, sink: object) -> str:
+    """Private worker entry; secondary diagnostics never alter the one exchange."""
+    from .. import mobile_bridge
+    observer = invocation = token = snapshot = None
+    try:
+        from .. import _qualification_failure_observer as observer
+        publication = _android_publication
+        if (type(caller) is str and type(scope) is str and scope == "owner"
+                and type(qualification_binding) is str
+                and re.fullmatch(r"[0-9a-f]{64}", qualification_binding) is not None
+                and publication is not None and qualification_binding == publication.binding):
+            _android_own_uid()
+            if publication.current():
+                invocation = observer.Invocation(publication, caller, scope)
+        token = observer.enter(invocation)
+    except Exception:
+        if invocation is not None:
+            invocation.disabled = True
+        try:
+            if observer is not None:
+                observer.clear()
+        except Exception:
+            pass
+    try:
+        primary = mobile_bridge.core_exchange(caller, frame_b64, scope)
+        try:
+            if invocation is not None and not invocation.disabled and not invocation.closed:
+                snapshot = invocation.snapshot()
+                if not publication.current():
+                    snapshot = None
+        except Exception:
+            snapshot = None
+    finally:
+        try:
+            if invocation is not None:
+                invocation.close()
+        except Exception:
+            snapshot = None
+        finally:
+            if invocation is not None:
+                invocation.closed = True
+                invocation.leaf = invocation.outcome = None
+                invocation.publication = None
+            try:
+                if token is not None:
+                    observer.reset(token)
+            except Exception:
+                snapshot = None
+                try:
+                    observer.clear()
+                except Exception:
+                    pass
+    if snapshot is not None:
+        try:
+            # All Core, service and framing locks have been released here.
+            if publication.current():
+                sink.set(snapshot)
+        except Exception:
+            pass
+    return primary
 
 
 def _marker_tag(path, key, nonce):
@@ -265,7 +381,7 @@ def android_initialize(raw):
     Only an existing qualification marker allows a cold-start reopen.
     """
     def initialize():
-        global _android_service
+        global _android_service, _android_publication
         from .. import mobile_bridge
         if not isinstance(raw, str) or len(raw.encode("utf-8")) > 16384:
             raise ValidationError("Qualification initialization is invalid")
@@ -284,6 +400,11 @@ def android_initialize(raw):
                 raise ValidationError("Qualification mobile initialization failed")
             mark_initialized_profile(initial)
             _android_service = weakref.ref(mobile_bridge._service)
+            _android_publication = None
+            try:
+                _android_publication = _capture_android_publication()
+            except Exception:
+                pass
             return response["result"]
     return _android_result(initialize)
 
