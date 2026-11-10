@@ -23,11 +23,16 @@ both isolated controls and the entire repeated suite pass with normal access.
 The rendered UI gate likewise passes after its sandbox configuration-read block.
 
 CI policy independently reconstructs all 3,612 exact required cases with no
-failures/skips. Windows runner steps now pass both strengthened normal bootstrap
-and public pairing/receipts (23:54:40–23:55:21 UTC). Retained Windows report/binary
-verification remains pending; later packaged UI/crash and native gates are not
-yet accepted. Android is executing its device suites; actual independent
-publication and its two new cases remain pending. No full platform acceptance.
+failures/skips. Windows retained evidence now independently passes strengthened
+normal bootstrap (including two constructed-network observations), public SDK
+pairing and two authenticated receipts, packaged WebView2 pairing/transport,
+service lifecycle/crash, native control and native lifecycle. All reports bind
+to the exact 54,572,232-byte frozen executable independently hashed in its archive.
+Native lifecycle includes 100 channel pairs/controls and three cold starts;
+these remain control/resource evidence, separate from public message receipts.
+The WebView2 probe executable is not retained, so its digest remains a runner
+claim. Android is executing its device suites; actual independent publication
+and its two new cases remain pending. No full combined platform acceptance.
 
 The lead has integrated C's startup repair `a62ad39` and Android generated-source
 repair `44e74a3`, plus D's bootstrap regression gate `62ceee0`. C and A independently
