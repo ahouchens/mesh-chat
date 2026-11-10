@@ -15,7 +15,7 @@ from uuid import UUID, uuid4, uuid5
 
 from .call_manager import CallOutcomeRequiresResync
 from .connection.model import Resource
-from .connection.reconcile import connection_key
+from .connection.reconcile import authority_signature, connection_key
 from .errors import ContactNotApproved, NativeUnavailable, ValidationError
 from .signal_mailbox import parse_pairing
 
@@ -39,19 +39,79 @@ class NativePairingServiceMixin:
 
     def _native_retirement_context(self, operation_id):
         context = getattr(self, "_native_pairing_contexts", {}).get(operation_id)
-        if (context is None or context["state"] != "transferred" or not context["admitted"]
-                or context["runtime_epoch"] != self._runtime_incarnation
-                or context["identity"]() is not self._identity
-                or context["host"] is not self._native_webrtc_host()
-                or context["authorized"]() is not True):
+        try:
+            valid = (context is not None and context["state"] == "transferred" and context["admitted"]
+                     and context["runtime_epoch"] == self._runtime_incarnation
+                     and context["identity"]() is self._identity
+                     and context["host"] is self._native_webrtc_host()
+                     and context["authorized"]() is True)
+        except Exception:
+            valid = False
+        if not valid:
+            self.native_pairing_invalidate_retirement(operation_id)
             raise ContactNotApproved("Carrier retirement context is unavailable")
         return context
 
-    def native_pairing_retire_carrier(self, operation_id, *, request_id, logical_session,
+    def native_pairing_invalidate_retirement(self, operation_id):
+        with self._dispatch_lock:
+            context = getattr(self, "_native_pairing_contexts", {}).get(operation_id)
+            record = context.get("carrier_retirement") if context is not None else None
+            if record is not None:
+                record.runtime.invalidate_carrier_retirement(record.ticket)
+
+    def _native_retirement_record(self, context):
+        record = context.get("carrier_retirement")
+        if record is None:
+            raise NativeUnavailable("Carrier retirement request is unavailable")
+        if (record.runtime is not self._connection_runtime or record.host is not self._native_webrtc_host()
+                or record.identity is not self._identity):
+            record.runtime.invalidate_carrier_retirement(record.ticket)
+            raise NativeUnavailable("Carrier retirement request changed")
+        if not record.ticket.acknowledged:
+            try:
+                _, logical, physical, incarnation, epoch = record.request
+                current = self._native_resources.physical(logical)
+                sequence = getattr(self, "_native_path_sequences", {}).get(physical)
+                profile = self._reconnect_profile(record.ticket.key.profile_id)
+                public = self._reconnect_profile_public(profile)
+                signature = authority_signature({**public, "manual_carrier_authorized":
+                    self.native_manual_carrier_authorized(profile["id"])})
+                valid = (incarnation == self._runtime_incarnation
+                         and (context["session"], context["physical"]) == (logical, physical)
+                         and logical not in getattr(self, "_native_recovered_bindings", {})
+                         and current in (physical, None)
+                         and (record.ticket.close_started or current == physical)
+                         and (sequence is not None or record.ticket.close_started)
+                         and (sequence is None or sequence[0] == epoch)
+                         and connection_key(profile) == record.ticket.key
+                         and profile.get("contact_id") == record.ticket.contact_id
+                         and profile.get("state") != "stopped"
+                         and ((record.ticket.projection_revision is None and signature == record.ticket.signature) or (
+                             record.ticket.close_started and signature == record.ticket.cleared_signature)))
+            except Exception:
+                self._native_pairing_retirement_proof_failed(record)
+                raise
+            if not valid:
+                self._native_pairing_retirement_proof_failed(record)
+                raise ContactNotApproved("Carrier retirement authority changed")
+        return record
+
+    @staticmethod
+    def _native_pairing_retirement_proof_failed(record):
+        try:
+            record.runtime.invalidate_carrier_retirement(record.ticket)
+        except Exception:
+            # A proof observer must never prevent exact native disposal. The
+            # request remains unusable even if its guard release also failed.
+            if not record.ticket.acknowledged:
+                record.ticket.invalidated = True
+
+    def native_pairing_retire_carrier(self, operation_id, *, action, request_id, logical_session,
                                      expected_physical, expected_service_incarnation,
                                      expected_adapter_epoch):
         with self._dispatch_lock, self._native_webrtc_lock:
-            self._require_native_work()
+            if type(action) is not str or action not in {"prepare", "commit"}:
+                raise ValidationError("Carrier retirement action is invalid")
             context = self._native_retirement_context(operation_id)
             request = (request_id, logical_session, expected_physical,
                        expected_service_incarnation, expected_adapter_epoch)
@@ -59,11 +119,22 @@ class NativePairingServiceMixin:
             if previous is not None:
                 if previous.request != request:
                     raise ValidationError("Carrier retirement request changed")
+                record = self._native_retirement_record(context)
+                if action == "commit" and not record.ticket.committed and not record.ticket.acknowledged:
+                    try:
+                        record.runtime.commit_carrier_retirement(record.ticket)
+                    except ValueError as error:
+                        raise NativeUnavailable("Carrier retirement owner changed") from error
+                    return {"request_id": request_id, "state": "pending"}
                 return self.native_pairing_retirement_observation(operation_id, request_id)
+            if action != "prepare":
+                raise NativeUnavailable("Carrier retirement preparation is unavailable")
+            self._require_native_work()
             if (expected_service_incarnation != self._runtime_incarnation
                     or context["session"] != logical_session or context["physical"] != expected_physical
                     or logical_session not in self._native_webrtc_live
                     or logical_session in self._native_webrtc_creating
+                    or logical_session in getattr(self, "_native_recovered_bindings", {})
                     or not self._native_resources.current(logical_session, expected_physical)
                     or getattr(self, "_native_path_sequences", {}).get(expected_physical, (None,))[0]
                        != expected_adapter_epoch):
@@ -86,31 +157,65 @@ class NativePairingServiceMixin:
             key = connection_key(profile)
             state = runtime.owner.snapshot(key)
             try:
-                ticket = runtime.begin_carrier_retirement(
-                    key, Resource("native", expected_physical), state.generation, state.authority.revision)
+                ticket = runtime.prepare_carrier_retirement(
+                    key, Resource("native", expected_physical), state.generation, state.authority.revision,
+                    contact_id=profile["contact_id"],
+                    signature=authority_signature({**self._reconnect_profile_public(profile),
+                                                   "manual_carrier_authorized": True}))
             except ValueError as error:
                 raise NativeUnavailable("Carrier retirement owner changed") from error
             context["carrier_retirement"] = _CarrierRetirement(
                 request, ticket, runtime, context["host"], self._identity)
-            return {"request_id": request_id, "state": "pending"}
+            return {"request_id": request_id, "state": "prepared"}
 
     def native_pairing_retirement_observation(self, operation_id, request_id):
         with self._dispatch_lock:
             context = self._native_retirement_context(operation_id)
-            record = context.get("carrier_retirement")
-            if (record is None or record.request[0] != request_id
-                    or record.runtime is not self._connection_runtime
-                    or record.host is not self._native_webrtc_host()
-                    or record.identity is not self._identity):
+            record = self._native_retirement_record(context)
+            if record.request[0] != request_id:
                 raise NativeUnavailable("Carrier retirement request is unavailable")
-            return {"request_id": request_id,
-                    "state": record.runtime.carrier_retirement_status(record.ticket)}
+            try:
+                return {"request_id": request_id,
+                        "state": record.runtime.carrier_retirement_status(record.ticket)}
+            except ValueError as error:
+                raise NativeUnavailable("Carrier retirement request is unavailable") from error
 
     def native_pairing_retirement_pending(self):
         with self._dispatch_lock:
-            return any(record is not None and record.runtime.carrier_retirement_status(record.ticket) != "acknowledged"
+            return any(record is not None and not record.ticket.acknowledged
                        for context in getattr(self, "_native_pairing_contexts", {}).values()
                        for record in (context.get("carrier_retirement"),))
+
+    def _native_pairing_retirement_edge(self, physical, *, closed=False):
+        """Trusted exact physical lifecycle edge; never infer it from absence."""
+        for context in getattr(self, "_native_pairing_contexts", {}).values():
+            record = context.get("carrier_retirement")
+            if record is None or record.request[2] != physical or record.ticket.acknowledged:
+                continue
+            try:
+                self._native_retirement_context(context["id"])
+                record = self._native_retirement_record(context)
+                if closed:
+                    record.runtime.carrier_retirement_native_closed(record.ticket)
+                else:
+                    record.runtime.carrier_retirement_close_started(record.ticket)
+            except Exception:
+                self._native_pairing_retirement_proof_failed(record)
+
+    def _native_pairing_retirement_projections(self):
+        projections = []
+        for context in getattr(self, "_native_pairing_contexts", {}).values():
+            record = context.get("carrier_retirement")
+            if record is None or record.ticket.acknowledged or record.ticket.invalidated:
+                continue
+            try:
+                self._native_retirement_context(context["id"])
+                self._native_retirement_record(context)
+                if record.ticket.close_started:
+                    projections.append(record.ticket)
+            except Exception:
+                self._native_pairing_retirement_proof_failed(record)
+        return tuple(projections)
 
     def _native_pairing_retirement_clearances(self):
         """Fresh local absence facts; only runtime cleanup results acknowledge disposal."""
@@ -124,6 +229,8 @@ class NativePairingServiceMixin:
                     or context["runtime_epoch"] != self._runtime_incarnation):
                 continue
             try:
+                self._native_retirement_context(context["id"])
+                self._native_retirement_record(context)
                 if self._native_retirement_cleared(record):
                     clearances.append(record.ticket)
             except Exception:

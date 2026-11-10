@@ -19,6 +19,32 @@ def initial(**changes):
     return replace(state, **changes)
 
 
+def test_prepared_retirement_allows_health_inspection_and_failure_but_never_replaces():
+    resource = Resource("native", "exact-current")
+    state = initial(retirement_prepared=True,
+        carrier=Carrier(resource, 1, Health.OPEN, Bridge.READY, 0))
+    inspected = transition(state, Tick(0))
+    work, = inspected.effects
+    assert work.phase is Phase.INSPECT and work.resource == resource
+    lost = transition(inspected.state, Result(work.operation, 1,
+        observed_health=Health.ABSENT, observed_bridge=Bridge.DETACHED))
+    assert Retire(resource) in lost.effects and lost.state.carrier is None
+    for now in (60, 600):
+        waiting = transition(lost.state, Tick(now))
+        assert waiting.effects == () and waiting.state.generation == state.generation
+    released = transition(lost.state, ContextChanged(601, retirement_prepared=False))
+    assert transition(released.state, Tick(602)).effects[0].phase is Phase.DISCOVER
+
+
+def test_prepared_guard_does_not_hold_permanent_stop_cleanup():
+    resource = Resource("native", "exact-current")
+    state = initial(retirement_prepared=True,
+        carrier=Carrier(resource, 1, Health.OPEN, Bridge.READY, 0))
+    stopped = transition(state, ContextChanged(1, desired=Desired.STOPPED))
+    assert Retire(resource) in stopped.effects and stopped.state.carrier is None
+    assert transition(stopped.state, Tick(600)).effects == ()
+
+
 def begin(state=None, now=0):
     result = transition(state or initial(), Tick(now))
     if result.effects and result.effects[0].phase is Phase.DISCOVER:

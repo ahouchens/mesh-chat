@@ -24,6 +24,15 @@ class CarrierRetirement:
     resource: Resource
     generation: int
     revision: int
+    admission: object
+    signature: tuple
+    cleared_signature: tuple
+    contact_id: str | None
+    committed: bool = False
+    invalidated: bool = False
+    close_started: bool = False
+    native_acknowledged: bool = False
+    projection_revision: int | None = None
     cleanup_acknowledged: bool = False
     acknowledged: bool = False
 
@@ -75,61 +84,116 @@ class ConnectionRuntime:
             identifiers.add(("workspace", profile["workspace_id"]))
         return identifiers
 
-    def _is_fenced(self, key, profile):
+    def _is_fenced(self, key, profile, *, include_retirement=True):
         identifiers = self._authority_identifiers(key, profile)
         return (self._quarantined or self._stop.is_set()
-                or key in self._veto or key in self._carrier_retirements
+                or key in self._veto or (include_retirement
+                    and key in self._carrier_retirements and self._carrier_retirements[key].committed)
                 or bool(identifiers & self._contact_fences)
                 or bool(identifiers & self._authority_changes.keys())
                 or (self._all_fenced and not identifiers & self._resumed))
 
-    def begin_carrier_retirement(self, key, resource, generation, revision):
-        """Temporarily deny one owner without changing durable connection intent."""
+    def prepare_carrier_retirement(self, key, resource, generation, revision, *, contact_id, signature=None):
+        """Capture initial exact authority; keep current traffic and health work."""
         with self._lock:
             profile = self._profile_values.get(key)
             if (profile is None or key.scope != "contact"
+                    or not isinstance(contact_id, str) or not contact_id
+                    or profile.get("contact_id") != contact_id
                     or profile.get("auto_reconnect") is not False
-                    or self._is_fenced(key, profile)):
+                    or key in self._carrier_retirements
+                    or self._is_fenced(key, {**profile, "contact_id": contact_id})
+                    or profile.get("manual_carrier_authorized") is not True
+                    or (signature is not None and signature != authority_signature(profile))
+                    or self._signatures.get(key) != (authority_signature(profile), revision)):
                 raise ValueError("Carrier retirement authority is unavailable")
-            ticket = CarrierRetirement(self.owner.runtime_epoch, key, resource, generation, revision)
+            admission = self.owner.prepare_carrier_retirement(key, resource, generation, revision, self.now())
+            ticket = CarrierRetirement(self.owner.runtime_epoch, key, resource, generation, revision,
+                admission, authority_signature(profile), authority_signature({**profile,
+                    "manual_carrier_authorized": False}), profile.get("contact_id"))
             self._carrier_retirements[key] = ticket
             self._context_revision += 1
-            try:
-                accepted = self.owner.retire_current_carrier(
-                    key, resource, generation, revision, self.now())
-            except Exception:
-                del self._carrier_retirements[key]
-                self._context_revision += 1
-                raise
-            if not accepted:
-                del self._carrier_retirements[key]
-                self._context_revision += 1
-                raise ValueError("Carrier retirement owner changed")
             return ticket
+
+    def invalidate_carrier_retirement(self, ticket):
+        with self._lock:
+            if ticket.acknowledged:
+                return
+            ticket.invalidated = True
+            self.owner.release_carrier_retirement(ticket.admission, self.now(), invalidated=True)
+            if self._carrier_retirements.get(ticket.key) is ticket:
+                del self._carrier_retirements[ticket.key]
+            self._context_revision += 1
+
+    def _check_carrier_retirement(self, ticket):
+        if ticket.runtime_epoch != self.owner.runtime_epoch or ticket.invalidated:
+            raise ValueError("Carrier retirement is unavailable")
+        if ticket.acknowledged:
+            return
+        profile = self._profile_values.get(ticket.key)
+        if (self._carrier_retirements.get(ticket.key) is not ticket or profile is None
+                or profile.get("contact_id") != ticket.contact_id
+                or self._is_fenced(ticket.key, profile, include_retirement=False)
+                or not self.owner.retirement_admission_valid(ticket.admission)):
+            self.invalidate_carrier_retirement(ticket)
+            raise ValueError("Carrier retirement is unavailable")
+
+    def commit_carrier_retirement(self, ticket):
+        with self._lock:
+            self._check_carrier_retirement(ticket)
+            if ticket.acknowledged or ticket.committed:
+                return
+            try:
+                self.owner.commit_carrier_retirement(ticket.admission, self.now())
+            except ValueError:
+                self.invalidate_carrier_retirement(ticket)
+                raise
+            ticket.committed = True
+            self._context_revision += 1
+
+    def carrier_retirement_close_started(self, ticket):
+        with self._lock:
+            self._check_carrier_retirement(ticket)
+            if ticket.acknowledged or not ticket.admission.retired:
+                return False
+            if not ticket.close_started:
+                ticket.close_started = True
+                self._context_revision += 1
+            return True
+
+    def carrier_retirement_native_closed(self, ticket):
+        with self._lock:
+            self._check_carrier_retirement(ticket)
+            if ticket.close_started and ticket.admission.retired:
+                ticket.native_acknowledged = True
+                self._context_revision += 1
 
     def carrier_retirement_status(self, ticket):
         with self._lock:
-            if (ticket.runtime_epoch != self.owner.runtime_epoch
-                    or (not ticket.acknowledged
-                        and self._carrier_retirements.get(ticket.key) is not ticket)):
-                raise ValueError("Carrier retirement is unavailable")
-            return "acknowledged" if ticket.acknowledged else "pending"
+            self._check_carrier_retirement(ticket)
+            return "acknowledged" if ticket.acknowledged else "pending" if ticket.committed else "prepared"
 
     def cleanup_acknowledged_retirements(self):
         with self._lock:
             return tuple(ticket for ticket in self._carrier_retirements.values()
-                         if ticket.cleanup_acknowledged)
+                         if ticket.committed and not ticket.invalidated and ticket.admission.retired
+                         and ticket.native_acknowledged and ticket.cleanup_acknowledged)
 
     def _clear_carrier_retirements(self, clearances, seen):
         for ticket in clearances:
             if (self._carrier_retirements.get(ticket.key) is ticket
-                    and ticket.cleanup_acknowledged and ticket.key in seen):
+                    and ticket in self.cleanup_acknowledged_retirements() and ticket.key in seen):
+                try:
+                    self._check_carrier_retirement(ticket)
+                except ValueError:
+                    continue
                 profile = self._profile_values[ticket.key]
                 state = self.owner.snapshot(ticket.key)
                 if (profile.get("auto_reconnect") is not False
                         or profile.get("manual_carrier_authorized") is not False
                         or state.generation != ticket.generation or state.carrier is not None):
                     continue
+                self.owner.release_carrier_retirement(ticket.admission, self.now())
                 del self._carrier_retirements[ticket.key]
                 ticket.acknowledged = True
                 self._context_revision += 1
@@ -141,7 +205,7 @@ class ConnectionRuntime:
                 if profile is not None and profile.get("contact_id") != contact_id:
                     return False
                 profile = {**(profile or {}), "contact_id": contact_id}
-            if self._is_fenced(target, profile or {}):
+            if target in self._carrier_retirements or self._is_fenced(target, profile or {}):
                 return False
             return self.owner.commit_handoff(operation, resource, target, self.now())
 
@@ -157,6 +221,9 @@ class ConnectionRuntime:
             self._authority_changes[authority_id] = token
             for key, profile in self._profile_values.items():
                 if authority_id in self._authority_identifiers(key, profile):
+                    ticket = self._carrier_retirements.get(key)
+                    if ticket is not None:
+                        self.invalidate_carrier_retirement(ticket)
                     self.owner.dispatch(key, ContextChanged(self.now(), desired=Desired.STOPPED))
             return token
 
@@ -219,6 +286,9 @@ class ConnectionRuntime:
                 self._resumed.discard(contact_id)
             for key, profile in self._profile_values.items():
                 if contact_id is None or contact_id in {profile.get("contact_id"), key.profile_id}:
+                    ticket = self._carrier_retirements.get(key)
+                    if ticket is not None:
+                        self.invalidate_carrier_retirement(ticket)
                     self._veto.add(key)
                     self.owner.dispatch(key, ContextChanged(self.now(), desired=Desired.STOPPED))
             self.owner.revoke_handoffs(None if contact_id is None else {
@@ -273,6 +343,28 @@ class ConnectionRuntime:
                 signature = authority_signature(profile)
                 previous = self._signatures.get(key)
                 revision = 1 if previous is None else previous[1] + (previous[0] != signature)
+                ticket = self._carrier_retirements.get(key)
+                if ticket is not None:
+                    valid = (execution is Execution.AVAILABLE and profile.get("state") != "stopped"
+                             and profile.get("contact_id") == ticket.contact_id
+                             and not self._is_fenced(key, profile, include_retirement=False)
+                             and self.owner.retirement_admission_valid(ticket.admission))
+                    if valid and (signature, revision) == (ticket.signature, ticket.revision):
+                        valid = ticket.projection_revision is None
+                    elif valid and (signature, revision) == (ticket.cleared_signature, ticket.revision + 1):
+                        if ticket.projection_revision is None:
+                            valid = (ticket in payload.get("retirement_projections", ())
+                                     and ticket.close_started and ticket.admission.retired
+                                     and previous == (ticket.signature, ticket.revision)
+                                     and self.owner.allow_retirement_projection(ticket.admission, revision))
+                            if valid:
+                                ticket.projection_revision = revision
+                        else:
+                            valid = revision == ticket.projection_revision
+                    else:
+                        valid = False
+                    if not valid:
+                        self.invalidate_carrier_retirement(ticket)
                 if previous is not None and key not in self._profile_values:
                     self.owner.restore(key)
                 intent = Desired.STOPPED if self._is_fenced(key, profile) else desired(profile)
@@ -284,6 +376,9 @@ class ConnectionRuntime:
                 self._signatures[key] = (signature, revision)
                 self._profile_values[key] = dict(profile)
             for key in self._profile_values.keys() - seen:
+                ticket = self._carrier_retirements.get(key)
+                if ticket is not None:
+                    self.invalidate_carrier_retirement(ticket)
                 self._veto.add(key)
                 self.owner.retire(key, now)
                 del self._profile_values[key]
@@ -302,10 +397,11 @@ class ConnectionRuntime:
                     self._record_failure("cleanup_failed")
                 else:
                     self._cleanup_failed.discard(event.resource)
-                    self.owner.resource_released(event.resource)
                     with self._lock:
+                        self.owner.resource_released(event.resource)
                         for ticket in self._carrier_retirements.values():
-                            if ticket.resource == event.resource:
+                            if (ticket.resource == event.resource and ticket.admission.retired
+                                    and not ticket.invalidated):
                                 ticket.cleanup_acknowledged = True
             else:
                 if isinstance(event, Failed):

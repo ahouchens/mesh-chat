@@ -32,6 +32,17 @@ class _PairingTrace:
     retirement: _PairingRetirement | None = None
 
 
+@dataclass(eq=False)
+class _CarrierRetirementAdmission:
+    key: ConnectionKey
+    resource: Resource
+    generation: int
+    revision: int
+    successor: int | None = None
+    retired: bool = False
+    invalidated: bool = False
+
+
 class ConnectionSupervisor:
     def __init__(self, runtime_epoch: str, policy: Policy = Policy()):
         self.runtime_epoch = runtime_epoch
@@ -49,6 +60,8 @@ class ConnectionSupervisor:
         # One trace per already registered pairing actor, never per poll/result.
         # Bindings stay private; the shared payload-free Record ring is unchanged.
         self._pairing_traces: dict[ConnectionKey, _PairingTrace] = {}
+        self._carrier_retirements: dict[ConnectionKey, _CarrierRetirementAdmission] = {}
+        self._committing_retirement: _CarrierRetirementAdmission | None = None
         self.diagnostics = Diagnostics(policy.max_diagnostics)
 
     def register(self, state: ConnectionState):
@@ -94,6 +107,103 @@ class ConnectionSupervisor:
         with self._lock:
             return tuple(self._states.values())
 
+    def prepare_carrier_retirement(self, key, resource, generation, revision, now):
+        """Admit one current owner without stopping its carrier or inspection."""
+        with self._lock:
+            state = self._states.get(key)
+            if (state is None or key in self._carrier_retirements or key.scope != "contact"
+                    or key in self._retired or state.runtime_epoch != self.runtime_epoch
+                    or state.generation != generation or state.authority.revision != revision
+                    or not state.authority.authorized or state.desired is not Desired.ENABLED
+                    or state.execution is not Execution.AVAILABLE
+                    or state.carrier is None or state.carrier.resource != resource
+                    or state.carrier.health is not Health.OPEN or state.carrier.bridge is not Bridge.READY
+                    or resource in self._retiring or self._owned_elsewhere(key, resource)
+                    or any(lease.resource == resource or lease.target == key for lease in self._handoffs.values())
+                    or (state.negotiation is not None and state.negotiation.phase is not Phase.INSPECT)):
+                raise ValueError("Carrier retirement owner changed")
+            admission = _CarrierRetirementAdmission(key, resource, generation, revision)
+            self._carrier_retirements[key] = admission
+            self.dispatch(key, ContextChanged(now, retirement_prepared=True))
+            return admission
+
+    def retirement_admission_valid(self, admission):
+        with self._lock:
+            state = self._states.get(admission.key)
+            return bool(self._carrier_retirements.get(admission.key) is admission
+                        and not admission.invalidated and state is not None
+                        and state.runtime_epoch == self.runtime_epoch
+                        and state.generation == admission.generation
+                        and state.authority.revision in {admission.revision, admission.successor}
+                        and state.execution is Execution.AVAILABLE
+                        and (state.carrier is None or state.carrier.resource == admission.resource))
+
+    def allow_retirement_projection(self, admission, revision):
+        """The runtime has attested the one exact cleanup-derived revision."""
+        with self._lock:
+            state = self._states.get(admission.key)
+            if (not self.retirement_admission_valid(admission) or not admission.retired
+                    or admission.successor is not None or revision != admission.revision + 1
+                    or state is None or state.carrier is not None
+                    or state.authority.revision != admission.revision):
+                return False
+            admission.successor = revision
+            return True
+
+    def release_carrier_retirement(self, admission, now, *, invalidated=False):
+        with self._lock:
+            if invalidated:
+                admission.invalidated = True
+            if self._carrier_retirements.get(admission.key) is admission:
+                del self._carrier_retirements[admission.key]
+                self.dispatch(admission.key, ContextChanged(now, retirement_prepared=False))
+
+    def commit_carrier_retirement(self, admission, now):
+        with self._lock:
+            if not self.retirement_admission_valid(admission):
+                raise ValueError("Carrier retirement owner changed")
+            state = self._states[admission.key]
+            if admission.retired:
+                if state.carrier is not None:
+                    raise ValueError("Carrier retirement owner changed")
+                return
+            if (state.carrier is None or state.carrier.resource != admission.resource
+                    or not state.authority.authorized or state.desired is not Desired.ENABLED):
+                raise ValueError("Carrier retirement owner changed")
+            self._committing_retirement = admission
+            try:
+                self.dispatch(admission.key, ContextChanged(now, desired=Desired.STOPPED))
+            finally:
+                self._committing_retirement = None
+
+    def _observe_carrier_retirement(self, state, event, result):
+        admission = self._carrier_retirements.get(state.key)
+        if admission is None:
+            return result
+        invalid = (state.generation != admission.generation
+                   or result.state.generation != admission.generation
+                   or result.state.authority.revision not in {admission.revision, admission.successor}
+                   or result.state.execution is not Execution.AVAILABLE
+                   or (not result.state.authority.authorized
+                       and result.state.authority.revision != admission.successor)
+                   or (result.state.carrier is not None and result.state.carrier.resource != admission.resource))
+        if isinstance(event, ContextChanged):
+            projection = admission.retired and event.authority is not None and (
+                event.authority.revision == admission.successor)
+            invalid |= (event.desired is Desired.STOPPED and state.desired is not Desired.STOPPED
+                        and self._committing_retirement is not admission and not projection)
+        if invalid:
+            admission.invalidated = True
+            del self._carrier_retirements[state.key]
+            return replace(result, state=replace(result.state, retirement_prepared=False))
+        current = not isinstance(event, (Result, Failed, Adopted)) or (
+            state.negotiation is not None and state.negotiation.operation == event.operation)
+        if (current and state.carrier is not None and state.carrier.resource == admission.resource
+                and result.state.carrier is None
+                and Retire(admission.resource) in result.effects):
+            admission.retired = True
+        return result
+
     def is_current(self, work: Work):
         with self._lock:
             state = self._states.get(work.operation.key)
@@ -123,7 +233,7 @@ class ConnectionSupervisor:
                     event = Failed(event.operation, event.now, Failure.INTERNAL)
                 elif event.allocated in self._retiring:
                     event = Failed(event.operation, event.now, Failure.TRANSIENT)
-            result = transition(state, event)
+            result = self._observe_carrier_retirement(state, event, transition(state, event))
             result = replace(result, state=replace(result.state, sequence=max(
                 state.sequence + 1, result.state.sequence)))
             self._trace_pairing_retirement(state, event, result)
@@ -229,6 +339,7 @@ class ConnectionSupervisor:
                 self.reject_handoff(operation)
                 return False
             if (lease is None or lease.target is not None or target.scope == "pairing"
+                    or target in self._carrier_retirements
                     or resource.adapter_epoch != lease.source.adapter_epoch
                     or any(other.resource == resource for source, other in self._handoffs.items()
                            if source != operation)

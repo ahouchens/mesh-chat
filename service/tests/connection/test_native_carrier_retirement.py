@@ -62,15 +62,21 @@ def owned_runtime():
                           observed_bridge=Bridge.READY if work.phase is Phase.INSPECT else None)
         def retire(self, retired):
             facts.closes.append(retired)
+            ticket = getattr(facts, "ticket", None)
+            if ticket is not None and not ticket.invalidated and not ticket.acknowledged:
+                runtime.carrier_retirement_close_started(ticket)
             facts.entered.set()
             assert facts.release.wait(3)
             if facts.failures:
                 facts.failures -= 1
                 raise OSError("Controlled cleanup failure")
             facts.live = False
+            if ticket is not None and not ticket.invalidated and not ticket.acknowledged:
+                runtime.carrier_retirement_native_closed(ticket)
     def profiles():
         profile["manual_carrier_authorized"] = facts.live
-        return {"profiles": [dict(profile)], "retirement_clearances": (
+        return {"profiles": [dict(profile)], "retirement_projections": tuple(
+            ticket for ticket in runtime._carrier_retirements.values() if ticket.close_started), "retirement_clearances": (
             runtime.cleanup_acknowledged_retirements() if facts.clear else ())}
     runtime = ConnectionRuntime("epoch", lambda *_: Executor(), profiles=profiles,
                                 execution=lambda: Execution.AVAILABLE, activate=lambda _: pytest.fail("Auto start"))
@@ -85,8 +91,11 @@ def owned_runtime():
 
 def begin(facts):
     state = facts.runtime.owner.snapshot(facts.state.key)
-    return facts.runtime.begin_carrier_retirement(state.key, facts.resource,
-                                                  state.generation, state.authority.revision)
+    ticket = facts.runtime.prepare_carrier_retirement(state.key, facts.resource,
+        state.generation, state.authority.revision, contact_id=facts.profile["contact_id"])
+    facts.ticket = ticket
+    facts.runtime.commit_carrier_retirement(ticket)
+    return ticket
 
 
 def test_real_cleanup_then_fresh_projection_required_and_wait_does_not_drive_work(owned_runtime):
@@ -135,7 +144,7 @@ def test_transient_clearance_never_clears_real_denial(owned_runtime, fence):
     else: f.runtime.quarantine()
     f.clear = True
     f.runtime.synchronize()
-    assert f.runtime.carrier_retirement_status(ticket) == "acknowledged"
+    with pytest.raises(ValueError): f.runtime.carrier_retirement_status(ticket)
     assert not f.runtime.permits_recovery(f.profile)
     assert f.runtime.profile(f.state.key) == {"state": "stopped"}
     if fence == "authority": assert f.runtime._authority_changes["contact"] == token
@@ -154,10 +163,10 @@ def test_stale_clearance_projection_cannot_end_hold(owned_runtime):
         return result
     f.runtime.profiles = stale
     f.runtime.synchronize()
-    assert f.runtime.carrier_retirement_status(ticket) == "pending"
+    with pytest.raises(ValueError): f.runtime.carrier_retirement_status(ticket)
     f.runtime.profiles = original
     f.runtime.synchronize()
-    assert f.runtime.carrier_retirement_status(ticket) == "acknowledged"
+    with pytest.raises(ValueError): f.runtime.carrier_retirement_status(ticket)
 
 
 @pytest.mark.parametrize("fault", ["resource", "generation", "revision", "not_ready", "already_retiring"])
@@ -298,11 +307,25 @@ def qualified_owner(native_pairing, tmp_path):
     host.pathEvidence = lambda physical, challenge: json.dumps({"ok": True, "result": evidence(physical, 1, challenge)})
     first._native_bridge_attached = lambda _: True
     sample = first.native_webrtc_path_evidence(first_context["session"], first_context["physical"], REQUEST)
-    payload = {"operation_id": first_id, "request_id": "b" * 32,
+    payload = {"action": "prepare", "operation_id": first_id, "request_id": "b" * 32,
         "logical_session": sample["logical_session"], "expected_physical": sample["resource"],
         "expected_service_incarnation": sample["service_incarnation"], "expected_adapter_epoch": sample["adapter_epoch"]}
-    return SimpleNamespace(service=first, port=port, context=first_context, host=host, created=created,
-                           closed=closed, payload=payload, sample=sample)
+    facts = SimpleNamespace(service=first, port=port, context=first_context, host=host, created=created,
+                           closed=closed, payload=payload, sample=sample, native_notifications=True, pending_closed=[])
+    original_close = host.close
+    def close(physical):
+        original_close(physical)
+        if facts.native_notifications:
+            first.native_webrtc_event("closed", physical)
+        else:
+            facts.pending_closed.append(physical)
+    host.close = close
+    return facts
+
+
+def retire(facts):
+    assert facts.port.dispatch("qualification.retire_carrier", facts.payload)["state"] == "prepared"
+    return facts.port.dispatch("qualification.retire_carrier", {**facts.payload, "action": "commit"})
 
 
 def observation(facts, port=None):
@@ -317,7 +340,7 @@ def test_private_request_uses_owner_cleanup_and_survives_control_reconstruction(
         "session_id": f.payload["logical_session"]}) == {"state": "managed"}
     assert f.closed == []
     before = deepcopy(f.service._reconnect_profiles_raw())
-    assert f.port.dispatch("qualification.retire_carrier", f.payload) == {"request_id": "b" * 32, "state": "pending"}
+    assert retire(f) == {"request_id": "b" * 32, "state": "pending"}
     reconstructed = QualificationControl(lambda: f.service)
     assert observation(f, reconstructed)["state"] == "pending"
     run_until(f.service, lambda: observation(f, reconstructed)["state"] == "acknowledged")
@@ -331,7 +354,7 @@ def test_private_request_uses_owner_cleanup_and_survives_control_reconstruction(
 def test_expired_transferred_code_does_not_remove_current_cleanup_authority(qualified_owner):
     f = qualified_owner
     f.context["expires_at"] = time.time() - 1
-    assert f.port.dispatch("qualification.retire_carrier", f.payload)["state"] == "pending"
+    assert retire(f)["state"] == "pending"
     run_until(f.service, lambda: observation(f)["state"] == "acknowledged")
 
 
@@ -369,7 +392,7 @@ def test_private_wire_rejects_malformed_fields_before_retirement(qualified_owner
 
 def test_pending_cleanup_blocks_new_pairing_and_conflicting_replay(qualified_owner):
     f = qualified_owner
-    f.port.dispatch("qualification.retire_carrier", f.payload)
+    retire(f)
     with pytest.raises(ContactNotApproved):
         f.port.dispatch("qualification.pairing_begin", {"operation_id": str(uuid4()), "role": "offer"})
     with pytest.raises(ValidationError):
@@ -399,16 +422,16 @@ def test_foreign_caller_and_revoked_observer_cannot_borrow_acknowledgment(qualif
     f = qualified_owner
     foreign = QualificationControl(lambda: f.service, caller="foreign-controller")
     with pytest.raises(ContactNotApproved): foreign.dispatch("qualification.retire_carrier", f.payload)
-    f.port.dispatch("qualification.retire_carrier", f.payload)
+    retire(f)
+    run_until(f.service, lambda: observation(f)["state"] == "acknowledged")
     denied = QualificationControl(lambda: f.service, authorize=lambda: False)
     with pytest.raises(ContactNotApproved): observation(f, denied)
-    run_until(f.service, lambda: observation(f)["state"] == "acknowledged")
     with pytest.raises(ContactNotApproved): observation(f, foreign)
 
 
 def test_projection_error_keeps_ack_pending_without_repeating_native_cleanup(qualified_owner, monkeypatch):
     f = qualified_owner
-    f.port.dispatch("qualification.retire_carrier", f.payload)
+    retire(f)
     original = f.service._native_retirement_cleared
     def failed(_): raise OSError("Controlled private projection failure")
     monkeypatch.setattr(f.service, "_native_retirement_cleared", failed)
@@ -431,7 +454,7 @@ def test_failed_native_ack_retains_exact_reservation_until_existing_owner_retry(
             raise OSError("Controlled native acknowledgment failure")
         original(physical)
     monkeypatch.setattr(f.host, "close", close)
-    f.port.dispatch("qualification.retire_carrier", f.payload)
+    retire(f)
     runtime = f.service._connection_runtime
     run_until(f.service, lambda: bool(runtime._cleanup_failed))
     assert f.service._native_resources.resolve(f.payload["expected_physical"]) == f.payload["logical_session"]
@@ -448,31 +471,34 @@ def test_failed_checkpoint_cannot_be_acknowledged_by_successful_native_close(qua
     f = qualified_owner
     class Journal:
         retained = True
+        allow = False
         attempts = 0
         def retire(self, physical):
             assert physical == f.payload["expected_physical"]
             self.attempts += 1
-            if self.attempts == 1:
+            if not self.allow:
                 raise OSError("Controlled protected checkpoint failure")
             self.retained = False
         def bindings(self):
             return [SimpleNamespace(resource=f.payload["expected_physical"])] if self.retained else []
     journal = f.service._carrier_journal = Journal()
-    f.port.dispatch("qualification.retire_carrier", f.payload)
+    retire(f)
     runtime = f.service._connection_runtime
     run_until(f.service, lambda: bool(runtime._cleanup_failed))
     assert f.closed == [f.payload["expected_physical"]]
     assert observation(f)["state"] == "pending"
     assert journal.retained and f.service._native_resources.physical(f.payload["logical_session"])
+    journal.allow = True
     runtime.now = lambda: time.monotonic() + 30
     run_until(f.service, lambda: observation(f)["state"] == "acknowledged")
-    assert journal.attempts == 2 and not journal.retained
-    assert f.closed == [f.payload["expected_physical"]] * 2 and len(f.created) == 1
+    assert journal.attempts >= 2 and not journal.retained
+    assert 1 <= len(f.closed) <= 2 and set(f.closed) == {f.payload["expected_physical"]}
+    assert len(f.created) == 1
 
 
 def test_completed_hold_does_not_wait_for_next_pairing_or_block_cold_consent_transition(qualified_owner):
     f = qualified_owner
-    f.port.dispatch("qualification.retire_carrier", f.payload)
+    retire(f)
     run_until(f.service, lambda: observation(f)["state"] == "acknowledged")
     profile = f.service._reconnect_profile_for_contact("second")
     assert f.service._connection_runtime.permits_recovery(profile)

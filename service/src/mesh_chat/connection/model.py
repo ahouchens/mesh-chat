@@ -174,6 +174,7 @@ class ConnectionState:
     inspect_at: float = 0
     blocked: bool = False
     pairing_terminal: bool = False
+    retirement_prepared: bool = False
     reason: str = "idle"
     policy: Policy = Policy()
 
@@ -191,6 +192,7 @@ class ContextChanged:
     desired: Desired | None = None
     execution: Execution | None = None
     network_available: bool | None = None
+    retirement_prepared: bool | None = None
 
 
 @dataclass(frozen=True)
