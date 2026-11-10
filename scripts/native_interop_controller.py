@@ -26,7 +26,10 @@ from test_packaged_lifecycle import source_identity
 
 OFFERS = {"direct": "offer", **{name: "offer_" + name for name in SCENARIOS[1:5]}}
 FAILURE_SITES = frozenset({"negotiate_settings_update", "pairing_offer_begin", "pairing_answer_begin",
-    "pairing_status", "rendezvous_receive", "rendezvous_publish", "negotiate_inventory", "negotiate_native_stats"})
+    "pairing_status", "rendezvous_receive", "rendezvous_publish", "negotiate_inventory", "negotiate_native_stats",
+    "initialize_peer_start", "initialize_runtime_capabilities", "initialize_snapshot", "initialize_inventory",
+    "initialize_settings_update", "initialize_call_settings_update", "initialize_ice_servers",
+    "initialize_key_publish", "initialize_key_wait", "initialize_key_bind"})
 FAILURE_SUBSTAGES = frozenset({
     "pending_contact_wait", "implicit_contact_guard", "contact_decision", "approved_contact_wait",
     "reconnect_consent", "approval_ready_observation", "approval_acknowledgment", "transferred_status_wait",
@@ -275,25 +278,32 @@ class Controller:
 
     def initialize(self):
         from mesh_chat.call_settings import DEFAULT_SIGNAL_MAILBOX_URL, DEFAULT_TURN_BROKER_URL, DEFAULT_STUN_URLS
-        self.peer.start()
-        profiles = self.core("runtime.capabilities")["profiles"]
-        if len(profiles) != 1:
-            raise ValueError("Native qualification requires one fresh synthetic profile")
+        with self._failure_scope("initialize_peer_start"):
+            self.peer.start()
+        with self._failure_scope("initialize_runtime_capabilities"):
+            profiles = self.core("runtime.capabilities")["profiles"]
+            if len(profiles) != 1:
+                raise ValueError("Native qualification requires one fresh synthetic profile")
         self.profile = profiles[0]
-        fresh = self.snapshot()
-        if fresh.get("contacts") or fresh.get("messages"):
-            raise ValueError("Initial pairing must not begin with approved contacts or messages")
-        accounting(self.peer.inventory().get("host_accounting"), empty=True)
+        with self._failure_scope("initialize_snapshot"):
+            fresh = self.snapshot()
+            if fresh.get("contacts") or fresh.get("messages"):
+                raise ValueError("Initial pairing must not begin with approved contacts or messages")
+        with self._failure_scope("initialize_inventory"):
+            accounting(self.peer.inventory().get("host_accounting"), empty=True)
         self.identity = digest(fresh["profile"]["destination_hash"])
-        self.core("settings.update", {"profile": self.profile, "settings": {
-            "nearby_discovery": False, "lan_fallback": False, "help_route": False}})
+        with self._failure_scope("initialize_settings_update"):
+            self.core("settings.update", {"profile": self.profile, "settings": {
+                "nearby_discovery": False, "lan_fallback": False, "help_route": False}})
         self.default_call_settings = {
             "stun_urls": list(DEFAULT_STUN_URLS), "turn_broker_url": DEFAULT_TURN_BROKER_URL,
             "turn_broker_consent": True, "signal_mailbox_url": DEFAULT_SIGNAL_MAILBOX_URL,
             "turn_url": None, "turn_username": None, "turn_credential": None,
             "relay_only": False, "store_call_signaling": True}
-        self.core("call.settings_update", {"profile": self.profile, "settings": self.default_call_settings})
-        self.broker_ice = self.core("call.ice_servers", {"profile": self.profile})["ice"]
+        with self._failure_scope("initialize_call_settings_update"):
+            self.core("call.settings_update", {"profile": self.profile, "settings": self.default_call_settings})
+        with self._failure_scope("initialize_ice_servers"):
+            self.broker_ice = self.core("call.ice_servers", {"profile": self.profile})["ice"]
 
     def pairing_status(self):
         with self._failure_scope("pairing_status"):
@@ -656,8 +666,12 @@ class Controller:
 
     def run(self):
         self.initialize()
-        self.transport.publish("key", self.rendezvous.public_manifest())
-        self.rendezvous.bind_partner(self.transport.wait(self.partner, "key", timeout=900))
+        with self._failure_scope("initialize_key_publish"):
+            self.transport.publish("key", self.rendezvous.public_manifest())
+        with self._failure_scope("initialize_key_wait"):
+            partner_key = self.transport.wait(self.partner, "key", timeout=900)
+        with self._failure_scope("initialize_key_bind"):
+            self.rendezvous.bind_partner(partner_key)
         # Both roles execute this fixed source-bound inventory. Keep bootstrap
         # uploads bounded at Windows 16 / Android 14 (quick 7 each), plus one final report.
         for scenario, initiator in self.workload["paths"]: self.path_case(scenario, initiator)
