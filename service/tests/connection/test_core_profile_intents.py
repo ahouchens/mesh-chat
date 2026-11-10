@@ -207,7 +207,7 @@ def test_generic_admission_rechecks_alias_in_transaction_snapshot(producer, monk
     ticket = r["prepare"]()
     # Models an optimistic alias read racing a completed private reservation.
     monkeypatch.setattr(r["intents"].ledger, "alias", lambda *_: None)
-    assert r["invoke"]("profile.lock", {"profile": r["profiles"]["beta"]}, "private-original-key-0001")["error"]["code"] == "idempotency_conflict"
+    assert r["invoke"]("profile.select", {"profile": r["profiles"]["beta"]}, "private-original-key-0001")["error"]["code"] == "idempotency_conflict"
     assert len(r["meta"].list(OPERATIONS)) == 1
     assert r["meta"].get(OPERATIONS, ticket["intent_ref"])["state"] == "prepared"
     assert r["invoke"]("profile.lock", {"profile": r["profiles"]["alpha"]}, "private-original-key-0001")["error"]["code"] == "unavailable"
@@ -315,6 +315,54 @@ def test_first_claim_rejection_is_no_effect_but_later_rejection_preserves_unknow
     row = r["meta"].get(OPERATIONS, second["intent_ref"])
     assert row["state"] == "intent" and row["ever_dispatched"]
     assert r["intents"].ledger.slot()["identity"] == second["intent_ref"]
+
+
+@pytest.mark.parametrize("earlier_uncertain", [False, True])
+def test_post_claim_grant_denial_distinguishes_first_from_earlier_attempt(producer, monkeypatch, earlier_uncertain):
+    r = producer
+    ticket = r["prepare"]()
+    lifecycle = r["host"].lifecycle
+    original_mutate = lifecycle.mutate
+    if earlier_uncertain:
+        def uncertain(*_args, **_kwargs):
+            raise NativeUnavailable("prior invocation outcome cannot be inferred")
+        monkeypatch.setattr(lifecycle, "mutate", uncertain)
+        with pytest.raises(NativeUnavailable):
+            resume(r, ticket)
+        monkeypatch.setattr(lifecycle, "mutate", original_mutate)
+    original_claim = r["origin"].claim_dispatch
+    original_grant = r["grants"][0]
+    def revoke_after_claim(*args, **kwargs):
+        admission = original_claim(*args, **kwargs)
+        r["grants"][0] = replace(original_grant, permissions=frozenset())
+        return admission
+    monkeypatch.setattr(r["origin"], "claim_dispatch", revoke_after_claim)
+    with pytest.raises(ApiFailure, match="forbidden"):
+        resume(r, ticket)
+    assert not r["first"]._store_closed
+    row = r["meta"].get(OPERATIONS, ticket["intent_ref"])
+    assert row["state"] == ("intent" if earlier_uncertain else "rejected_no_effect")
+    assert (r["intents"].ledger.slot() is not None) == earlier_uncertain
+    r["grants"][0] = original_grant
+    monkeypatch.setattr(r["origin"], "claim_dispatch", original_claim)
+    response = r["invoke"]("profile.lock", {"profile": r["profiles"]["alpha"]}, "another-post-denial-key")
+    if earlier_uncertain:
+        assert response["error"]["code"] == "unavailable"
+        assert resume(r, ticket)["historical_outcome"] == "applied"
+    else:
+        assert response["ok"]
+
+
+def test_wrong_target_prepared_action_cannot_acquire_dispatch_custody(producer):
+    r = producer
+    ticket = r["prepare"](profile="beta")
+    assert not ticket["replay_eligible"]
+    with pytest.raises(ApiFailure, match="invalid_request"):
+        resume(r, ticket)
+    assert r["meta"].get(OPERATIONS, ticket["intent_ref"])["state"] == "prepared"
+    assert r["intents"].ledger.slot() is None
+    r["intents"].withdraw(r["authorize"], intent_ref=ticket["intent_ref"], attachment=r["attachment"])
+    assert r["invoke"]("profile.lock", {"profile": r["profiles"]["alpha"]}, "valid-after-bad-target-key")["ok"]
 
 
 def test_bound_unlock_credential_is_intent_document_and_single_use_bound(producer):
