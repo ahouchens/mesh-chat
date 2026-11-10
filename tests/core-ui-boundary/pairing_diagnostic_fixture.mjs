@@ -63,6 +63,11 @@ function enqueue(owner, recipient, text, key) {
   if (saved) {
     if (saved.text!==text) {
       if (fault === "changed_payload_succeeds") return {accepted:true,message:saved.message};
+      if (fault === "changed_payload_insert_then_conflict") {
+        owner.store.messages.push({...saved.record,id:"PRIVATE_CONFLICT_MESSAGE",text});
+        log({event:"conflict_insert",outbound_records:owner.store.messages.filter(item=>item.direction==="outbound").length,
+          matching_changed:owner.store.messages.filter(item=>item.text===text).length,error_code:"idempotency_conflict"});
+      }
       throw new CoreError("idempotency_conflict");
     }
     if (pending && fault === "replay_duplicate") owner.store.messages.push({...saved.record,id:"duplicate"});

@@ -183,6 +183,13 @@ async function pending(peer, work) {
       || rows[0].contact_id !== peer.contact.id
       || typeof rows[0].id !== "string" || (work.record !== undefined && rows[0].id !== work.record)) throw new Error();
   work.record = rows[0].id;
+  return view;
+}
+function outboundIds(peer, view) {
+  const ids = view.messages.filter(item => item.direction === "outbound" && item.contact_id === peer.contact.id)
+    .map(item => item.id);
+  if (ids.some(id => typeof id !== "string") || new Set(ids).size !== ids.length) throw new Error();
+  return ids.sort();
 }
 
 async function sharedLifetime(executable, offerer, answerer, receipts, owned) {
@@ -237,7 +244,7 @@ async function sharedLifetime(executable, offerer, answerer, receipts, owned) {
   const reopenedSecond = await attach(reopened);
   await sameState(reopened, reopened.client, receipts[0], receipts[1].text);
   await sameState(reopened, reopenedSecond, receipts[0], receipts[1].text);
-  await pending(reopened, work);
+  const beforeReplay = outboundIds(reopened, await pending(reopened, work));
   checks.reopened_same_public_identity = true;
   checks.runtime_lock_reacquired = true;
   diagnostics.enter("original_key_replay");
@@ -249,7 +256,8 @@ async function sharedLifetime(executable, offerer, answerer, receipts, owned) {
   } catch (error) {
     if (!(error instanceof CoreError) || error.code !== "idempotency_conflict") throw error;
   }
-  await pending(reopened, work);
+  const afterReplay = outboundIds(reopened, await pending(reopened, work));
+  if (JSON.stringify(afterReplay) !== JSON.stringify(beforeReplay)) throw new Error();
   checks.reopened_original_message_and_key = true;
   return checks;
 }
