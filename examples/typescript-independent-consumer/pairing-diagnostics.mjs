@@ -1,4 +1,4 @@
-// Last observations only: never query Core or retain public documents/handles.
+// Bounded current observations; never retain public documents or handles.
 export const SUBPHASES = new Set([
   "arguments", "offerer_create", "answerer_create", "identity_distinct",
   "offer_begin", "offer_code_wait", "answer_begin", "invitation_wait", "invitation_guard",
@@ -16,15 +16,58 @@ export const ERROR_CODES = new Set(["invalid_request", "incompatible_version", "
 const ROLES = new Set(["offerer", "answerer"]);
 const SERVICE_ERRORS = new Set(["network_start_failed", "network_interface_unavailable"]);
 const bound = value => Math.min(value, 256);
+export const FAILURE_ORIGINS = new Set(["budget_deadline", "wait_deadline", "core_error", "cleanup_failure", "unknown"]);
+export const ACTOR_ENUMS = {
+  desired: new Set(["enabled", "stopped"]),
+  execution: new Set(["available", "paused", "locked", "shutting_down"]),
+  negotiation: new Set(["idle", "discover", "request", "wait_request", "wait_offer", "gather_offer",
+    "gather_answer", "publish_offer", "publish_answer", "wait_answer", "apply_answer", "checking", "attach", "path", "inspect"]),
+};
+ACTOR_ENUMS.reason = new Set([...ACTOR_ENUMS.negotiation, "unknown", "ineligible", "ready", "pending",
+  "health_unknown", "bridge_retry_wait", "blocked", "retry_wait", "network_unavailable", "signaling_unavailable",
+  "carrier_lost", "phase_timeout", "transient", "rate_limited", "configuration", "invalid_document", "revoked",
+  "unsupported", "internal", "invalid_adoption", "wrong_resource", "missing_observation", "invalid_pending",
+  "unverified_resource", "missing_carrier", "context_changed", "observed", "poll_wait"]);
+const record = value => value !== null && typeof value === "object" && !Array.isArray(value);
+
+export function publicDiagnosticObservation(value) {
+  // Current, unassociated actors: neither pairing identity nor first-cause history.
+  if (!record(value) || typeof value.available !== "boolean" || !Array.isArray(value.connections)
+      || value.connections.length > 4 || !Number.isSafeInteger(value.total_connections) || value.total_connections < 0
+      || value.connections.length !== Math.min(value.total_connections, 4) || typeof value.truncated !== "boolean"
+      || value.truncated !== (value.total_connections > value.connections.length)
+      || (value.runtime_failure !== null && typeof value.runtime_failure !== "string")
+      || (!value.available && (value.total_connections !== 0 || value.runtime_failure !== null))) {
+    return { query_outcome: "invalid_result" };
+  }
+  const connections = [];
+  for (const row of value.connections) {
+    if (!record(row) || !record(row.observation)) return { query_outcome: "invalid_result" };
+    const selected = {};
+    for (const [field, choices] of Object.entries(ACTOR_ENUMS)) {
+      const item = row.observation[field];
+      if (typeof item !== "string") return { query_outcome: "invalid_result" };
+      selected[field] = choices.has(item) ? item : "unknown";
+    }
+    connections.push(selected);
+  }
+  return { query_outcome: "ok", available: value.available,
+    runtime_failure: [null, "adapter_quarantined", "cleanup_failed"].includes(value.runtime_failure)
+      ? value.runtime_failure : "unknown",
+    total_connections: bound(value.total_connections), truncated: value.truncated, connections };
+}
 
 export function pairingDiagnostics(monotonicNow = () => performance.now()) {
   let subphase = "arguments";
   let failureProbe;
+  let publicDiagnostics;
+  let failureOrigin = "unknown";
   let startedAt;
   let failureFrozen = false;
   const stageTiming = { offsets_ms: {}, clipped: false };
   let postAcceptReads;
   const peers = {};
+  const cleanup = [];
   function mark(name) {
     if (startedAt === undefined || failureFrozen) return;
     const elapsed = Math.floor(monotonicNow() - startedAt);
@@ -45,6 +88,7 @@ export function pairingDiagnostics(monotonicNow = () => performance.now()) {
     start() { startedAt = monotonicNow(); },
     enter(value) {
       if (!SUBPHASES.has(value)) throw new Error("invalid_diagnostic_subphase");
+      if (failureFrozen) return;
       subphase = value;
       if (value === "invitation_accept") mark("invitation_accept_started");
     },
@@ -56,11 +100,15 @@ export function pairingDiagnostics(monotonicNow = () => performance.now()) {
     },
     pendingAttempt() { count("attempts"); },
     pendingComplete() { count("completed"); },
-    freezeFailure() {
+    freezeFailure(origin = "unknown") {
+      if (failureFrozen) return;
+      if (!FAILURE_ORIGINS.has(origin)) throw new Error("invalid_failure_origin");
       mark("failure_observed");
+      failureOrigin = origin;
       failureFrozen = true;
     },
     snapshot(role, value, expectedDestination) {
+      if (failureFrozen) return;
       if (!Array.isArray(value?.contacts) || !Array.isArray(value?.contact_invitations)) return;
       const contacts = value.contacts;
       const invitations = value.contact_invitations;
@@ -82,28 +130,41 @@ export function pairingDiagnostics(monotonicNow = () => performance.now()) {
       };
     },
     pairing(role, value) {
+      if (failureFrozen) return;
       peer(role).last_pairing = {
         state: STATES.has(value?.state) ? value.state : "unknown",
         code_present: typeof value?.pairing_code === "string" && value.pairing_code.length > 0,
       };
     },
     connections(role, total, checked, ready) {
+      if (failureFrozen) return;
       peer(role).last_connections = {
         total: bound(total), checked: bound(checked), ready: bound(ready),
         counts_capped: total > 256 || checked > 256 || ready > 256,
       };
     },
     probe(value) { failureProbe = value; },
+    publicProbe(value) { publicDiagnostics = value; },
+    owned(role, incarnation) {
+      if (!["offerer", "answerer", "contender"].includes(role) || !Number.isInteger(incarnation)
+          || incarnation < 1 || incarnation > (role === "offerer" ? 2 : 1) || cleanup.length >= 4
+          || cleanup.some(item => item.role === role && item.incarnation === incarnation)) throw new Error("invalid_cleanup_slot");
+      const facts = { role, incarnation, attempts: 0, detach: "not_attempted", stop: "not_attempted", retired: false };
+      cleanup.push(facts);
+      return facts;
+    },
     failure(deadlineExhausted = false) {
-      return { subphase, deadline_exhausted: deadlineExhausted, peers: structuredClone(peers),
+      return { subphase, deadline_exhausted: deadlineExhausted, failure_origin: failureOrigin,
+        peers: structuredClone(peers), cleanup: structuredClone(cleanup),
         ...(startedAt !== undefined ? { stage_timing: structuredClone(stageTiming) } : {}),
         ...(postAcceptReads ? { post_accept_reads: structuredClone(postAcceptReads) } : {}),
-        ...(failureProbe !== undefined ? { failure_probe: structuredClone(failureProbe) } : {}) };
+        ...(failureProbe !== undefined ? { failure_probe: structuredClone(failureProbe) } : {}),
+        ...(publicDiagnostics !== undefined ? { public_diagnostics: structuredClone(publicDiagnostics) } : {}) };
     },
   };
 }
 
-export async function probePairingFailure(owned, diagnostics) {
+export async function probePairingFailure(owned, diagnostics, monotonicNow = () => performance.now()) {
   const initialized = [];
   const roles = new Set();
   for (const peer of owned) {
@@ -112,11 +173,27 @@ export async function probePairingFailure(owned, diagnostics) {
     roles.add(peer.role);
     if (initialized.length === 2) break;
   }
-  const results = await Promise.allSettled(initialized.map(async peer => {
-    const value = await peer.client.request("peer.pairing_query", {profile: peer.profile, pairing: peer.pairing}, {timeoutMs: 2000});
-    if (!STATES.has(value?.state) || !Number.isFinite(value?.expires_at)) return {query_outcome: "invalid_result"};
-    return {query_outcome: "ok", state: value.state, expired: value.expires_at <= Date.now() / 1000};
+  const probes = initialized.map(peer => ({peer, deadline: monotonicNow() + 2000}));
+  const results = await Promise.allSettled(probes.map(async ({peer, deadline}) => {
+    let pairing;
+    try {
+      const value = await peer.client.request("peer.pairing_query", {profile: peer.profile, pairing: peer.pairing}, {timeoutMs: 2000});
+      pairing = STATES.has(value?.state) && Number.isFinite(value?.expires_at)
+        ? {query_outcome: "ok", state: value.state, expired: value.expires_at <= Date.now() / 1000}
+        : {query_outcome: "invalid_result"};
+    } catch { pairing = {query_outcome: "failed"}; }
+    const remaining = Math.floor(deadline - monotonicNow());
+    let actors = {query_outcome: "not_attempted", reason: "deadline_exhausted"};
+    if (Number.isSafeInteger(remaining) && remaining > 0 && remaining <= 2000) {
+      try {
+        actors = publicDiagnosticObservation(await peer.client.request("diagnostics.query",
+          {profile: peer.profile, limit: 4}, {timeoutMs: remaining}));
+      } catch { actors = {query_outcome: "failed"}; }
+    }
+    return {pairing, actors};
   }));
   diagnostics.probe(Object.fromEntries(initialized.map((peer, index) => [peer.role,
-    results[index].status === "fulfilled" ? results[index].value : {query_outcome: "failed"}])));
+    results[index].status === "fulfilled" ? results[index].value.pairing : {query_outcome: "failed"}])));
+  diagnostics.publicProbe(Object.fromEntries(initialized.map((peer, index) => [peer.role,
+    results[index].status === "fulfilled" ? results[index].value.actors : {query_outcome: "failed"}])));
 }

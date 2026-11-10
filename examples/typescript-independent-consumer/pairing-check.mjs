@@ -13,9 +13,25 @@ let phase = "arguments";
 const diagnostics = pairingDiagnostics();
 let deadline;
 let failureDeadlineExhausted = false;
+let primaryFailure;
+let localDeadlineFailure;
+function workDeadline(origin) {
+  const error = new Error("public_pairing_deadline");
+  localDeadlineFailure = { error, origin };
+  return error;
+}
+function freezeFailure(error, origin) {
+  if (primaryFailure) return;
+  const code = error instanceof CoreError && ERROR_CODES.has(error.code) ? error.code : "unavailable";
+  const selected = origin ?? (localDeadlineFailure && localDeadlineFailure.error === error ? localDeadlineFailure.origin
+    : error instanceof CoreError && ERROR_CODES.has(error.code) ? "core_error" : "unknown");
+  failureDeadlineExhausted = Date.now() >= deadline;
+  diagnostics.freezeFailure(selected);
+  primaryFailure = { error, phase, code };
+}
 function budget() {
   const value = Math.min(30000, deadline - Date.now());
-  if (value <= 0) throw new Error("public_pairing_deadline");
+  if (value <= 0) throw workDeadline("budget_deadline");
   return value;
 }
 async function request(peer, operation, params) {
@@ -47,13 +63,24 @@ function closeClient(peer, client) {
 async function retire(peer) {
   if (peer.retired || !peer.runtime) return;
   let detachFailed = false;
+  const facts = peer.cleanup;
+  facts.attempts++;
   for (const endpoint of [...peer.clients, ...peer.transports]) {
     try { endpoint.close(); } catch { detachFailed = true; }
   }
-  const completion = await peer.runtime.stop(Math.max(0, Math.min(30000, deadline - Date.now())));
-  if (completion?.stopped !== true || completion.exit_code !== (peer.rejected ? 2 : 0)
-      || (peer.rejected && (completion.refused !== true || completion.error !== "unavailable"))) throw new Error("retirement_incomplete");
+  facts.detach = detachFailed ? "failed" : "ok";
+  facts.budget_ms = Math.max(0, Math.min(30000, deadline - Date.now()));
+  try {
+    const completion = await peer.runtime.stop(facts.budget_ms);
+    if (completion?.stopped !== true || completion.exit_code !== (peer.rejected ? 2 : 0)
+        || (peer.rejected && (completion.refused !== true || completion.error !== "unavailable"))) throw new Error("retirement_incomplete");
+    facts.stop = "completed";
+  } catch (error) {
+    facts.stop = "failed";
+    throw error;
+  }
   peer.retired = true;
+  facts.retired = !detachFailed;
   if (detachFailed) throw new Error("client_detach_incomplete");
 }
 async function wait(read) {
@@ -62,7 +89,15 @@ async function wait(read) {
     if (value) return value;
     await pause(100);
   }
-  throw new Error("public_pairing_deadline");
+  throw workDeadline("wait_deadline");
+}
+function own(owned, peer) {
+  peer.incarnation = owned.filter(item => item.role === peer.role).length + 1;
+  owned.push(peer);
+}
+function retainRuntime(peer, runtime) {
+  peer.runtime = runtime;
+  peer.cleanup ??= diagnostics.owned(peer.role, peer.incarnation);
 }
 function one(rows, predicate) {
   const matches = rows.filter(predicate);
@@ -76,8 +111,9 @@ async function snapshot(peer) {
 }
 async function create(executable, directory, name, role, owned) {
   const peer = { runtime: null, client: null, role, directory, clients: new Set(), transports: new Set() };
-  owned.push(peer); // Retain lifetime even if startup or SDK negotiation fails.
-  peer.runtime = await launchRuntime(executable, directory, { timeoutMs: budget(), onOwned: runtime => { peer.runtime = runtime; } });
+  own(owned, peer); // Retain lifetime even if startup or SDK negotiation fails.
+  retainRuntime(peer, await launchRuntime(executable, directory,
+    { timeoutMs: budget(), onOwned: runtime => { retainRuntime(peer, runtime); } }));
   peer.client = await attach(peer);
   const client = peer.client;
   if (client.capabilities.profiles.length !== 1 || client.capabilities.operations.includes("native.command")) throw new Error();
@@ -213,9 +249,9 @@ async function sharedLifetime(executable, offerer, answerer, receipts, owned) {
   checks.reattached_sdk_session_same_authorized_state = true;
   diagnostics.enter("competing_owner_refusal");
   const contender = { role: "contender", rejected: true, runtime: null, clients: new Set(), transports: new Set() };
-  owned.push(contender);
-  contender.runtime = await launchRefusedRuntime(executable, offerer.directory,
-    { timeoutMs: budget(), onOwned: runtime => { contender.runtime = runtime; } });
+  own(owned, contender);
+  retainRuntime(contender, await launchRefusedRuntime(executable, offerer.directory,
+    { timeoutMs: budget(), onOwned: runtime => { retainRuntime(contender, runtime); } }));
   await retire(contender);
   checks.concurrent_owner_refusals = 1;
   checks.rejected_owner_exits = 1;
@@ -236,10 +272,10 @@ async function sharedLifetime(executable, offerer, answerer, receipts, owned) {
   diagnostics.enter("pending_owner_stop");
   await retire(offerer);
   diagnostics.enter("pending_owner_reopen");
-  const reopened = { ...offerer, runtime: null, client: null, clients: new Set(), transports: new Set(), retired: false, pairing: null };
-  owned.push(reopened);
-  reopened.runtime = await launchRuntime(executable, offerer.directory,
-    { timeoutMs: budget(), onOwned: runtime => { reopened.runtime = runtime; } });
+  const reopened = { ...offerer, runtime: null, cleanup: null, client: null, clients: new Set(), transports: new Set(), retired: false, pairing: null };
+  own(owned, reopened);
+  retainRuntime(reopened, await launchRuntime(executable, offerer.directory,
+    { timeoutMs: budget(), onOwned: runtime => { retainRuntime(reopened, runtime); } }));
   reopened.client = await attach(reopened);
   const reopenedSecond = await attach(reopened);
   await sameState(reopened, reopened.client, receipts[0], receipts[1].text);
@@ -337,21 +373,22 @@ async function check(executable, directory) {
     phase = "shared_host_lifetime";
     lifetime = await sharedLifetime(executable, offerer, answerer, [sent, received], owned);
   } catch (error) {
-    diagnostics.freezeFailure();
-    failureDeadlineExhausted = Date.now() >= deadline;
-    await probePairingFailure(owned, diagnostics);
+    freezeFailure(error);
+    try { await probePairingFailure(owned, diagnostics); } catch { /* Diagnostic failure never replaces work failure. */ }
     throw error;
   } finally {
     const previous = phase;
     phase = "retirement";
     const exits = await Promise.allSettled(owned.map(retire));
     if (exits.some(result => result.status !== "fulfilled")) {
-      diagnostics.freezeFailure();
-      diagnostics.enter("retirement");
-      failureDeadlineExhausted = Date.now() >= deadline;
-      throw new Error("retirement_incomplete");
+      if (!primaryFailure) {
+        diagnostics.enter("retirement");
+        const error = new Error("retirement_incomplete");
+        freezeFailure(error, "cleanup_failure");
+        throw error;
+      }
     }
-    phase = previous;
+    phase = primaryFailure?.phase ?? previous;
   }
   return { fresh_profiles: 2, alternate_paths_disabled: true, direct_disclosure_consented: false,
     relay_only_requested: true, broker_consent: true,
@@ -366,7 +403,8 @@ try {
   if (args.length !== 4 || args[0] !== "--runtime" || args[2] !== "--data-directory") throw new Error();
   process.stdout.write(JSON.stringify(await check(args[1], args[3])) + "\n");
 } catch (error) {
-  const code = error instanceof CoreError && ERROR_CODES.has(error.code) ? error.code : "unavailable";
+  const code = primaryFailure && primaryFailure.error === error ? primaryFailure.code
+    : error instanceof CoreError && ERROR_CODES.has(error.code) ? error.code : "unavailable";
   process.stdout.write(JSON.stringify({ passed: false, phase, error_code: code,
     diagnostics: diagnostics.failure(failureDeadlineExhausted) }) + "\n");
   process.stderr.write("Independent public pairing check failed.\n");

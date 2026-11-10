@@ -18,9 +18,17 @@ function log(value) {
 let accepted = false;
 let approved = false;
 let answered = false;
+let originalWorkError;
+let hasOriginalWorkError = false;
 class CoreError extends Error {
   constructor(code) { super("PRIVATE_ERROR_TEXT"); this.code = code; }
+  static [Symbol.hasInstance](error) {
+    if (hasOriginalWorkError) log({event:"error_identity",original:error === originalWorkError});
+    return Function.prototype[Symbol.hasInstance].call(this,error);
+  }
 }
+function throwWork(value) { originalWorkError = value; hasOriginalWorkError = true; throw value; }
+function failWork(code) { throwWork(new CoreError(code)); }
 const destination = role => "PRIVATE_DESTINATION_" + role;
 const other = role => role === "offerer" ? "answerer" : "offerer";
 function halt(name) { if (fault === name) expired = true; }
@@ -43,6 +51,7 @@ function launch(_executable, directory, options = {}, rejected = false) {
   const runtime = {pipe:owner,stop:async remaining => {
     log({event:"stop",role:rejected ? "contender" : role,incarnation,remaining});
     if (probeMode === "retirement_failure" || (fault === "refused_alive" && rejected)
+        || (probeMode === "zero_budget_failure" && remaining === 0)
         || fault === "startup_observation_failure"
         || (fault === "final_exit_missing" && role === "offerer" && incarnation === 2)) throw new Error("PRIVATE_RETIREMENT_ERROR");
     if (!(fault === "receiver_not_exited" && role === "answerer")) owner.alive=false;
@@ -107,16 +116,29 @@ globalThis.__diagnosticFixture = {
         closed=true;owner.sessions--;
         log({event:"close",role,incarnation:owner.incarnation,session});
         if (fault === "detach_stops_owner" && role === "offerer" && session===1) owner.alive=false;
+        if (probeMode === "detach_failure" || (fault === "final_detach_failure" && owner.incarnation===2)) throw new Error("PRIVATE_DETACH_ERROR");
       },
       async request(operation, _params, options) {
         log({event: "request", role, operation,incarnation:owner.incarnation,session,timeout:options?.timeoutMs});
         if (closed || !owner.alive) throw new CoreError("unavailable");
         if (operation === "peer.pairing_query") {
           log({event: "probe", role, timeout: options?.timeoutMs});
+          if (probeMode === "mutate_error" && originalWorkError) originalWorkError.code="PRIVATE_MUTATED_CODE";
           if (probeMode === "reject") throw new CoreError("PRIVATE_PROBE_ERROR");
           if (probeMode === "invalid") return {state: "PRIVATE_STATE", expires_at: "PRIVATE_TIMESTAMP"};
           if (probeMode === "advance_clock") expired = true;
           return {state: "transferred", expires_at: started / 1000 - 1, pairing_code: "PRIVATE_CODE", sdp: "PRIVATE_SDP"};
+        }
+        if (operation === "diagnostics.query") {
+          log({event:"public_probe",role,limit:_params.limit,timeout:options?.timeoutMs});
+          if (probeMode === "reject" || probeMode === "diagnostic_throw") throw new Error("PRIVATE_DIAGNOSTIC_ERROR");
+          if (probeMode === "invalid") return {available:1,connections:"PRIVATE_ROWS"};
+          if (probeMode === "projection_throw") return Object.defineProperty({available:true},"connections",{
+            get(){throw new Error("PRIVATE_PROJECTION_ERROR");}});
+          return {profile:"PRIVATE_PROFILE",captured_at:started,available:true,runtime_failure:null,
+            total_connections:1,truncated:false,connections:[{connection:"PRIVATE_CONNECTION",observation:{
+              desired:"enabled",execution:"available",negotiation:"checking",reason:"phase_timeout",
+              runtime_epoch:"PRIVATE_EPOCH",sequence:12,sdp:"PRIVATE_SDP"}}]};
         }
         if (operation === "runtime.capabilities") return { profiles: ["PRIVATE_PROFILE"], operations:
           fault === "extra_authority" && session===2 ? ["native.command"] :
@@ -147,7 +169,7 @@ globalThis.__diagnosticFixture = {
           turn_configured: false, turn_broker_url: null, signal_mailbox_url: null, store_call_signaling: true,
           turn_broker_consent: true, relay_only: true } };
         if (operation === "application.snapshot") {
-          if (fault === "create_failure") throw new CoreError("forbidden");
+          if (fault === "create_failure") failWork("forbidden");
           if (accepted && role === "offerer") {
             log({event: "post_accept_snapshot", role});
             if (fault === "pending_read_reject") { elapsed = 1500; throw new CoreError("unavailable"); }
@@ -159,6 +181,7 @@ globalThis.__diagnosticFixture = {
           if (answered && role === "answerer" && !accepted) {
             if (fault === "invitation_wait") halt(fault);
             else invitations = [{ id: "PRIVATE_INVITATION", state: "pending", token: "PRIVATE_TOKEN" }];
+            if (fault === "invitation_budget") elapsed=240001;
           }
           if (accepted) {
             let trust = approved ? "approved" : "pending_request";
@@ -185,8 +208,14 @@ globalThis.__diagnosticFixture = {
             contacts, contact_invitations: invitations, messages };
         }
         if (operation === "contact.invitation") {
-          if (fault === "invitation_accept") throw new CoreError("forbidden");
-          if (fault === "unsafe_error") throw new CoreError("private_token");
+          if (fault === "throw_undefined") throwWork(undefined);
+          if (fault === "throw_null") throwWork(null);
+          if (fault === "throw_number") throwWork(17);
+          if (fault === "throw_string") throwWork("PRIVATE_THROWN_VALUE");
+          if (fault === "throw_false") throwWork(false);
+          if (fault === "invitation_accept") failWork("forbidden");
+          if (fault === "unsafe_error") failWork("private_token");
+          if (fault === "forged_deadline_message") throw new Error("public_pairing_deadline");
           accepted = true;
           elapsed = fault === "late_accept" ? 240100 : 1000;
           log({event: "accept_returned", role});
@@ -218,6 +247,11 @@ const sources = {
   "@mesh-chat/core-client/node": "export const {connectNamedPipe}=globalThis.__diagnosticFixture;",
   "./runtime.mjs": "export const {launchRuntime,launchRefusedRuntime}=globalThis.__diagnosticFixture;",
 };
+if (probeMode === "observer_throw") {
+  const actual = JSON.stringify(new URL("../../examples/typescript-independent-consumer/pairing-diagnostics.mjs",import.meta.url).href);
+  sources["./pairing-diagnostics.mjs"] = `export * from ${actual}; import {probePairingFailure as probe} from ${actual};
+    export async function probePairingFailure(...args){await probe(...args);throw new Error('PRIVATE_OBSERVER_ERROR');}`;
+}
 registerHooks({ resolve(specifier, context, nextResolve) {
   if (Object.hasOwn(sources, specifier)) return {
     url: "data:text/javascript," + encodeURIComponent(sources[specifier]), shortCircuit: true,

@@ -49,6 +49,21 @@ SNAPSHOT_FLAGS = {"matching_pending_request", "matching_approved_contact", "coun
 SERVICE_ERRORS = {None, "network_start_failed", "network_interface_unavailable", "unknown"}
 CONNECTION_COUNTS = {"total", "checked", "ready"}
 TIMING_FIELDS = ("invitation_accept_started", "invitation_accept_returned", "pending_request_wait_entered", "failure_observed")
+FAILURE_ORIGINS = {"budget_deadline", "wait_deadline", "core_error", "cleanup_failure", "unknown"}
+ACTOR_ENUMS = {
+    "desired": {"enabled", "stopped"},
+    "execution": {"available", "paused", "locked", "shutting_down"},
+    "negotiation": {"idle", "discover", "request", "wait_request", "wait_offer", "gather_offer",
+                    "gather_answer", "publish_offer", "publish_answer", "wait_answer", "apply_answer",
+                    "checking", "attach", "path", "inspect"},
+}
+ACTOR_ENUMS["reason"] = ACTOR_ENUMS["negotiation"] | {
+    "unknown", "ineligible", "ready", "pending", "health_unknown", "bridge_retry_wait", "blocked",
+    "retry_wait", "network_unavailable", "signaling_unavailable", "carrier_lost", "phase_timeout",
+    "transient", "rate_limited", "configuration", "invalid_document", "revoked", "unsupported", "internal",
+    "invalid_adoption", "wrong_resource", "missing_observation", "invalid_pending", "unverified_resource",
+    "missing_carrier", "context_changed", "observed", "poll_wait",
+}
 ERROR_CODES = {"invalid_request", "incompatible_version", "negotiation_required", "unsupported_operation",
     "unauthenticated", "forbidden", "not_found", "locked", "conflict", "idempotency_conflict",
     "idempotency_expired", "resync_required", "resource_exhausted", "rate_limited", "unavailable", "internal"}
@@ -61,6 +76,64 @@ def bounded_observation(value, counts, flags, extra=frozenset()):
         raise ValueError("Pairing failure observations contain unsafe or unbounded fields")
 
 
+def cleanup_details(rows):
+    if not isinstance(rows, list) or len(rows) > 4:
+        raise ValueError("Pairing cleanup slots are unbounded")
+    slots = set()
+    for row in rows:
+        if (not isinstance(row, dict) or set(row) - {"role", "incarnation", "attempts", "detach", "stop", "retired", "budget_ms"}
+                or not {"role", "incarnation", "attempts", "detach", "stop", "retired"} <= set(row)
+                or type(row["role"]) is not str or row["role"] not in {"offerer", "answerer", "contender"}
+                or type(row["incarnation"]) is not int or not 1 <= row["incarnation"] <= (2 if row["role"] == "offerer" else 1)
+                or type(row["attempts"]) is not int or not 0 <= row["attempts"] <= 2
+                or type(row["detach"]) is not str or row["detach"] not in {"not_attempted", "ok", "failed"}
+                or type(row["stop"]) is not str or row["stop"] not in {"not_attempted", "completed", "failed"}
+                or type(row["retired"]) is not bool
+                or row["retired"] != (row["detach"] == "ok" and row["stop"] == "completed")):
+            raise ValueError("Pairing cleanup facts are invalid")
+        slot = row["role"], row["incarnation"]
+        if slot in slots:
+            raise ValueError("Pairing cleanup slot is duplicated")
+        slots.add(slot)
+        attempted = row["attempts"] > 0
+        if (("budget_ms" in row) != attempted
+                or (attempted and (type(row["budget_ms"]) is not int or not 0 <= row["budget_ms"] <= 30000))
+                or (row["detach"] != "not_attempted") != attempted or (row["stop"] != "not_attempted") != attempted):
+            raise ValueError("Pairing cleanup attempt provenance is invalid")
+
+
+def public_diagnostic_details(probe):
+    if not isinstance(probe, dict) or set(probe) - {"offerer", "answerer"}:
+        raise ValueError("Public diagnostic roles are invalid")
+    for value in probe.values():
+        if not isinstance(value, dict):
+            raise ValueError("Public diagnostic result is invalid")
+        outcome = value.get("query_outcome")
+        if outcome == "not_attempted":
+            if value != {"query_outcome": "not_attempted", "reason": "deadline_exhausted"}:
+                raise ValueError("Public diagnostic deadline outcome is invalid")
+        elif type(outcome) is str and outcome in {"failed", "invalid_result"}:
+            if set(value) != {"query_outcome"}:
+                raise ValueError("Public diagnostic failure has extra fields")
+        elif outcome == "ok":
+            if (set(value) != {"query_outcome", "available", "runtime_failure", "total_connections", "truncated", "connections"}
+                    or type(value["available"]) is not bool or type(value["truncated"]) is not bool
+                    or type(value["total_connections"]) is not int or not 0 <= value["total_connections"] <= 256
+                    or (value["runtime_failure"] is not None and (type(value["runtime_failure"]) is not str
+                        or value["runtime_failure"] not in {"adapter_quarantined", "cleanup_failed", "unknown"}))
+                    or not isinstance(value["connections"], list) or len(value["connections"]) != min(value["total_connections"], 4)
+                    or value["truncated"] != (value["total_connections"] > len(value["connections"]))
+                    or (not value["available"] and (value["total_connections"] != 0 or value["runtime_failure"] is not None))):
+                raise ValueError("Public diagnostic projection is invalid")
+            for row in value["connections"]:
+                if (not isinstance(row, dict) or set(row) != set(ACTOR_ENUMS)
+                        or any(type(row[key]) is not str or row[key] not in choices | {"unknown"}
+                               for key, choices in ACTOR_ENUMS.items())):
+                    raise ValueError("Public diagnostic actor projection is invalid")
+        else:
+            raise ValueError("Public diagnostic outcome is invalid")
+
+
 def failure_details(value):
     if (not isinstance(value, dict) or set(value) != {"passed", "phase", "error_code", "diagnostics"}
             or value["passed"] is not False or value["phase"] not in PHASES
@@ -68,12 +141,19 @@ def failure_details(value):
         raise ValueError("Pairing failure envelope is invalid")
     diagnostics = value["diagnostics"]
     if (not isinstance(diagnostics, dict) or set(diagnostics) - {
-                "subphase", "deadline_exhausted", "peers", "failure_probe", "stage_timing", "post_accept_reads"}
-            or not {"subphase", "deadline_exhausted", "peers"} <= set(diagnostics)
+                "subphase", "deadline_exhausted", "peers", "failure_probe", "stage_timing", "post_accept_reads",
+                "failure_origin", "cleanup", "public_diagnostics"}
+            or not {"subphase", "deadline_exhausted", "peers", "failure_origin", "cleanup"} <= set(diagnostics)
             or diagnostics["subphase"] not in SUBPHASES[value["phase"]]
             or type(diagnostics["deadline_exhausted"]) is not bool
             or not isinstance(diagnostics["peers"], dict) or set(diagnostics["peers"]) - {"offerer", "answerer"}):
         raise ValueError("Pairing failure subphase or roles are invalid")
+    if (type(diagnostics["failure_origin"]) is not str or diagnostics["failure_origin"] not in FAILURE_ORIGINS
+            or (diagnostics["failure_origin"] == "cleanup_failure" and value["phase"] != "retirement")):
+        raise ValueError("Pairing failure origin is invalid")
+    cleanup_details(diagnostics["cleanup"])
+    if "public_diagnostics" in diagnostics:
+        public_diagnostic_details(diagnostics["public_diagnostics"])
     if ("stage_timing" in diagnostics) != (value["phase"] != "arguments"):
         raise ValueError("Pairing failure has no stage timing provenance")
     offsets = {}
