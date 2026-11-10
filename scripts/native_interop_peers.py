@@ -61,14 +61,15 @@ def retirement_correlation(operation_id, request_id):
 
 
 def retirement_payload(operation_id, request_id, logical_session, expected_physical,
-                       expected_service_incarnation, expected_adapter_epoch):
+                       expected_service_incarnation, expected_adapter_epoch, *, action=None):
     payload = retirement_correlation(operation_id, request_id)
-    if (not payload or any(type(value) is not str or not 1 <= len(value) <= 128
-                          or any(ord(char) < 0x20 for char in value) for value in (logical_session, expected_physical))
+    if (type(action) is not str or action not in {"prepare", "commit"}
+            or not payload or any(type(value) is not str or re.fullmatch(r"[A-Za-z0-9_-]{1,128}", value) is None
+                          for value in (logical_session, expected_physical))
             or any(type(value) is not str or re.fullmatch(r"[a-f0-9]{32}", value) is None
                    for value in (expected_service_incarnation, expected_adapter_epoch))):
         raise PeerFailure("invalid_carrier_retirement_request")
-    return {**payload, "logical_session": logical_session, "expected_physical": expected_physical,
+    return {"action": action, **payload, "logical_session": logical_session, "expected_physical": expected_physical,
             "expected_service_incarnation": expected_service_incarnation, "expected_adapter_epoch": expected_adapter_epoch}
 
 
@@ -231,9 +232,9 @@ class WindowsPeer:
         return self.private("qualification.inventory", payload) if payload else self.private("qualification.inventory")
 
     def retire_carrier(self, operation_id, request_id, logical_session, expected_physical,
-                       expected_service_incarnation, expected_adapter_epoch):
+                       expected_service_incarnation, expected_adapter_epoch, *, action=None):
         return self.private("qualification.retire_carrier", retirement_payload(operation_id, request_id,
-            logical_session, expected_physical, expected_service_incarnation, expected_adapter_epoch))
+            logical_session, expected_physical, expected_service_incarnation, expected_adapter_epoch, action=action))
 
     def path(self, logical, physical, sample_request):
         return self.private("qualification.path_evidence", {"logical_session": logical, "expected_physical": physical,
@@ -399,9 +400,9 @@ class AndroidPeer:
             "payload": retirement_correlation(operation_id, request_id)})
 
     def retire_carrier(self, operation_id, request_id, logical_session, expected_physical,
-                       expected_service_incarnation, expected_adapter_epoch):
+                       expected_service_incarnation, expected_adapter_epoch, *, action=None):
         return self._request("inspect", {"command": "qualification.retire_carrier", "payload": retirement_payload(
-            operation_id, request_id, logical_session, expected_physical, expected_service_incarnation, expected_adapter_epoch)})
+            operation_id, request_id, logical_session, expected_physical, expected_service_incarnation, expected_adapter_epoch, action=action)})
 
     def path(self, logical, physical, sample_request):
         return self._request("inspect", {"command": "qualification.path_evidence", "payload": {

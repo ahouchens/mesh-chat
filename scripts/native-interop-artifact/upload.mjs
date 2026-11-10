@@ -20,7 +20,9 @@ try {
       || context.source_commit !== process.env.GITHUB_SHA) throw new Error();
   const phase = value.public_key ? "key" : value.phase;
   const phases = ["key", "offer", "offer_turn_udp", "offer_turn_tcp", "offer_turn_tls", "offer_impaired", "answer", "approved", "impaired_ready", "control", "result", "reconnect_capabilities",
-    ...["negative_ready_", "negative_checked_"].flatMap(prefix => ["turn_tcp", "turn_tls", "impaired"].map(scenario => prefix + scenario))];
+    ...["negative_ready_", "negative_checked_"].flatMap(prefix => ["turn_tcp", "turn_tls", "impaired"].map(scenario => prefix + scenario)),
+    "case_complete_direct_windows", "case_complete_direct_android", "case_complete_turn_udp_windows",
+    "case_complete_turn_tcp_windows", "case_complete_turn_tls_windows", "case_complete_impaired_windows"];
   if (!phases.includes(phase)) throw new Error();
   const expected = `mesh-native-v1-${context.run_id}-${context.run_attempt}-${context.source_commit.slice(0, 12)}-${role}-${phase}`;
   if (name !== expected || !process.env.ACTIONS_RUNTIME_TOKEN) throw new Error();
