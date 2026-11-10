@@ -13,6 +13,7 @@ from uuid import uuid4
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "service/src"))
 
+from mesh_chat.connection.diagnostics import validated_pairing_retirement
 from native_interop_artifacts import GithubArtifacts, context_from_environment
 from native_interop_evidence import SCENARIOS, Samples, accounting, digest, selection, traffic
 from native_interop_peers import AndroidEmulator, AndroidPeer, PeerFailure, WindowsPeer
@@ -80,6 +81,7 @@ class Controller:
         self.identity = None
         self.pairing = None
         self._operation_failure: tuple[Exception, str] | None = None
+        self._pairing_failure: tuple[Exception, str, dict[str, str] | None] | None = None
         self.workload = required_workload(workload)
 
     @contextmanager
@@ -87,6 +89,7 @@ class Controller:
         if site not in FAILURE_SITES:
             raise ValueError("Unknown native diagnostic site")
         self._operation_failure = None
+        self._pairing_failure = None
         try:
             yield
         except Exception as error:
@@ -96,10 +99,20 @@ class Controller:
             raise
         else:
             self._operation_failure = None
+            self._pairing_failure = None
 
     def failure_site(self, error):
         observed = self._operation_failure
         return observed[1] if observed is not None and observed[0] is error and observed[1] in FAILURE_SITES else None
+
+    def failure_pairing(self, error):
+        observed = self._pairing_failure
+        if observed is None or observed[0] is not error or self.failure_site(error) != "pairing_status":
+            return {}
+        selected: dict[str, object] = {"pairing_state": observed[1]}
+        if observed[2] is not None:
+            selected["pairing_retirement"] = dict(observed[2])
+        return selected
 
     def wait(self, action, *, timeout=90, interval=0.25):
         deadline = min(self.deadline, time.monotonic() + timeout)
@@ -155,7 +168,9 @@ class Controller:
             if value.get("operation_id") != self.pairing:
                 raise PeerFailure("invalid_pairing_identity")
             if value.get("state") in {"retired", "retiring"}:
-                raise PeerFailure("supervisor_pairing_retired")
+                error = PeerFailure("supervisor_pairing_retired")
+                self._pairing_failure = error, value["state"], validated_pairing_retirement(value.get("retirement"))
+                raise error
             return value
 
     def negotiate(self, scenario, initiator):
@@ -468,6 +483,7 @@ def main():
         if controller is not None:
             site = controller.failure_site(error)
             if site is not None: result["failure_site"] = site
+            result.update(controller.failure_pairing(error))
     finally:
         if peer is not None and peer.process is not None:
             try: peer.stop(crash=True)
