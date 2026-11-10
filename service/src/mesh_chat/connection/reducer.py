@@ -101,6 +101,8 @@ def _tick(state: ConnectionState, event: Tick) -> Transition:
         if event.now >= state.retry_at and not state.blocked:
             return _work(state, Phase.ATTACH, carrier.resource, event.now)
         return Transition(state, reason="bridge_retry_wait")
+    if state.retirement_prepared:
+        return Transition(state, reason="retirement_prepared")
     if state.blocked or event.now < state.retry_at:
         return Transition(state, reason="blocked" if state.blocked else "retry_wait")
     state = replace(state, generation=state.generation + 1)
@@ -116,7 +118,7 @@ def _context(state: ConnectionState, event: ContextChanged) -> Transition:
     if event.authority and event.authority.revision < state.authority.revision:
         return Transition(state, reason="stale_authority")
     changed = {name: getattr(event, name) for name in
-               ("authority", "desired", "execution", "network_available")
+               ("authority", "desired", "execution", "network_available", "retirement_prepared")
                if getattr(event, name) is not None}
     if state.key.scope == "pairing" and state.pairing_terminal:
         changed["desired"] = Desired.STOPPED

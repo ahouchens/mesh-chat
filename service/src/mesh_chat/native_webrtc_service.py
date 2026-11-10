@@ -255,6 +255,9 @@ class NativeWebRTCServiceMixin(NativePairingServiceMixin, NativeWebRTCControlMix
                 return
             if event != "closed" and not self._native_work_allowed():
                 return
+            if event == "closed" and data == "":
+                with self._native_webrtc_lock:
+                    self._native_pairing_retirement_edge(session_id, closed=True)
             # Resolve at consumption time: a queued event from a released
             # physical peer must not target a later reuse of its public ID.
             session_id = self._native_resources.resolve(session_id)
@@ -622,11 +625,13 @@ class NativeWebRTCServiceMixin(NativePairingServiceMixin, NativeWebRTCControlMix
     def native_webrtc_close(self, session_id: Any, *, expected_physical: str | None = None) -> dict[str, Any]:
         if not isinstance(session_id, str):
             raise ValidationError("Native WebRTC session is invalid")
-        with self._native_webrtc_lock:
+        with self._dispatch_lock, self._native_webrtc_lock:
             physical = self._native_resources.physical(session_id)
             if expected_physical is not None and physical != expected_physical:
                 return {"state": "closed"}
             was_live = session_id in self._native_webrtc_live
+            if physical is not None and was_live:
+                self._native_pairing_retirement_edge(physical)
             self._native_webrtc_live.discard(session_id)
             self._native_startup_packets.discard(physical)
         from .native_onboarding_bootstrap import retire

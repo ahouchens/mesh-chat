@@ -113,11 +113,10 @@ class QualificationControl:
                 return service.native_webrtc_inspection_resources()
             operation = self._retirement_operation(service, payload, {"operation_id", "request_id"})
             with service._dispatch_lock:
+                retirement = service.native_pairing_retirement_observation(operation, payload["request_id"])
                 result = service.native_webrtc_inspection_resources()
-                result["carrier_retirement"] = service.native_pairing_retirement_observation(
-                    operation, payload["request_id"])
-                if self._pairing_service() is not service:
-                    raise ContactNotApproved("Qualification service changed")
+                result["carrier_retirement"] = retirement
+                self._retirement_service(service, operation)
                 return result
         if set(payload) != {"logical_session", "expected_physical", "sample_request"} or any(
             not isinstance(value, str) or not 1 <= len(value) <= 128
@@ -142,14 +141,24 @@ class QualificationControl:
         if set(payload) != fields:
             raise ValidationError("Qualification retirement request is invalid")
         validate_sample_request(payload["request_id"])
-        if self._pairing_service() is not service:
-            raise ContactNotApproved("Qualification service changed")
-        return self._operation_id(service, payload["operation_id"])
+        operation = self._operation_id(service, payload["operation_id"])
+        self._retirement_service(service, operation)
+        return operation
+
+    def _retirement_service(self, service, operation):
+        try:
+            if self._pairing_service() is not service:
+                raise ContactNotApproved("Qualification service changed")
+        except ContactNotApproved:
+            service.native_pairing_invalidate_retirement(operation)
+            raise
 
     def _retire_carrier(self, service, payload):
         operation = self._retirement_operation(service, payload, {
-            "operation_id", "request_id", "logical_session", "expected_physical",
+            "action", "operation_id", "request_id", "logical_session", "expected_physical",
             "expected_service_incarnation", "expected_adapter_epoch"})
+        if type(payload["action"]) is not str or payload["action"] not in {"prepare", "commit"}:
+            raise ValidationError("Qualification retirement action is invalid")
         for name in ("expected_service_incarnation", "expected_adapter_epoch"):
             validate_sample_request(payload[name])
         if any(type(payload[name]) is not str or not 1 <= len(payload[name]) <= 128
@@ -158,8 +167,7 @@ class QualificationControl:
                for name in ("logical_session", "expected_physical")):
             raise ValidationError("Qualification retirement resource is invalid")
         with service._dispatch_lock:
-            if self._pairing_service() is not service:
-                raise ContactNotApproved("Qualification service changed")
+            self._retirement_service(service, operation)
             return service.native_pairing_retire_carrier(operation, **{
                 name: value for name, value in payload.items() if name != "operation_id"})
 

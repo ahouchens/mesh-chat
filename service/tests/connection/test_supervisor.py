@@ -4,7 +4,7 @@ import pytest
 
 from mesh_chat.connection.model import (
     Adopted, Authority, Bridge, Carrier, ConnectionKey, ConnectionState, ContextChanged, Desired,
-    Failed, Failure, Health, Policy, Resource, Result, Retire, Tick, Work,
+    Failed, Failure, Health, Observed, Operation, Policy, Resource, Result, Retire, Tick, Work,
 )
 from mesh_chat.connection.supervisor import ConnectionSupervisor, CapacityExceeded
 
@@ -12,6 +12,54 @@ from mesh_chat.connection.supervisor import ConnectionSupervisor, CapacityExceed
 def actor(name, **changes):
     return replace(ConnectionState(ConnectionKey("personal", name, "local", None),
                    "epoch", Authority(1, True, True, True), Desired.ENABLED), **changes)
+
+
+def prepared_owner():
+    owner = ConnectionSupervisor("epoch")
+    resource = Resource("native", "exact-carrier")
+    state = replace(actor("prepared"), key=ConnectionKey("contact", "prepared", "local", "remote"),
+        carrier=Carrier(resource, 1, Health.OPEN, Bridge.READY, 5))
+    owner.register(state)
+    admission = owner.prepare_carrier_retirement(state.key, resource, 0, 1, 5)
+    return owner, state, admission
+
+
+def test_only_actual_current_carrier_surrender_is_owner_retirement_witness():
+    owner, state, admission = prepared_owner()
+    owner.dispatch(state.key, Observed(admission.resource, 4, Health.ABSENT, Bridge.DETACHED))
+    assert not admission.retired
+    owner.tick(6)
+    work, = owner.drain()
+    stale = replace(work.operation, sequence=work.operation.sequence + 1)
+    owner.dispatch(state.key, Result(stale, 7, allocated=admission.resource,
+        observed_health=Health.ABSENT, observed_bridge=Bridge.DETACHED))
+    assert not admission.retired and owner.snapshot(state.key).carrier is not None
+    owner.dispatch(state.key, Result(work.operation, 8,
+        observed_health=Health.ABSENT, observed_bridge=Bridge.DETACHED))
+    assert admission.retired and Retire(admission.resource) in owner.drain()
+
+
+def test_same_revision_authorization_denial_invalidates_instead_of_certifying_cleanup():
+    owner, state, admission = prepared_owner()
+    owner.dispatch(state.key, ContextChanged(6, authority=replace(state.authority, authorized=False)))
+    assert admission.invalidated and not admission.retired
+    assert Retire(admission.resource) in owner.drain()
+
+
+def test_prepared_target_rejects_handoff_before_acceptance_without_holding_candidate():
+    from test_pairing_runtime import ready_handoff
+    owner, source = ready_handoff()
+    resource = Resource("native", "current-target")
+    state = replace(actor("target"), key=ConnectionKey("contact", "target", "local", "remote"),
+        carrier=Carrier(resource, 1, Health.OPEN, Bridge.READY, 0))
+    owner.register(state)
+    admission = owner.prepare_carrier_retirement(state.key, resource, 0, 1, .2)
+    candidate = Resource("native", "replacement-candidate")
+    assert not owner.commit_handoff(source.operation, candidate, state.key, .3)
+    assert owner._handoffs[source.operation].target is None
+    assert candidate not in owner._retiring and owner.snapshot(state.key).carrier.resource == resource
+    owner.release_carrier_retirement(admission, .4, invalidated=True)
+    assert owner.commit_handoff(source.operation, candidate, state.key, .5)
 
 
 def test_concurrency_bound_and_fair_admission():
