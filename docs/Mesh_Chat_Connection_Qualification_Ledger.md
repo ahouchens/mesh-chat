@@ -55,14 +55,25 @@ Failed reports retain no successful case rows for independent receipt/path
 replay, 100 iterations, cold restarts or final zero accounting. No full native
 acceptance or aggregate pass follows from source-reachable progress.
 
-There is no third unchanged retry. A source-level coordination concern is under
-independent review: one controller can request owner retirement while its peer
-still performs final selected-path/counter/cleanup observations. A deterministic
-original-controller reproducer and minimal synchronization/escaping-error
-diagnostic design are in progress; no source correction or causal claim is yet
-accepted. Preserve actual kernel drops, receipt rejection while blocked, exact
-owner acknowledgment and global zero accounting. Bootstrap retirement remains
-deferred; no timeout, retry-budget, authority or acceptance relaxation is assigned.
+There is no third unchanged retry. A deterministic two-controller reproduction
+on the unchanged `ccd3b51` source now demonstrates the coordination defect:
+one peer enters retirement while its partner still needs its final selected-path
+measurement or fault cleanup. Both runs contain **one passing ordered control
+and two intentional semantic failures**, with no errors or skips. The actual
+controller methods and strict checks execute; Core delivery, native observations,
+kernel faults, transport, retirement effects and acknowledgments are scripted.
+The lead verified all 14 source/evidence artifacts. This establishes ordering
+vulnerability under those boundaries, not native proof or the CI failure cause.
+
+Failure-only, fixed-enum diagnostics are being implemented without changing
+exceptions, deadlines, queries or acceptance. A separate exact-owner preparation,
+peer completion exchange and retirement commit contract is under review; it is
+not frozen or implemented. Preparation must preserve real cleanup receipts if
+remote closure retires an owner before its local commit, deny replacement, and
+honor every permanent fence. Measurement synchronization alone is insufficient.
+Preserve actual kernel drops, receipt rejection while blocked, exact owner
+acknowledgment and global zero accounting. Bootstrap retirement remains deferred;
+no timeout, retry-budget, authority or acceptance relaxation is assigned.
 
 Retained `ccd3b51` full-run archive SHA-256 values:
 
