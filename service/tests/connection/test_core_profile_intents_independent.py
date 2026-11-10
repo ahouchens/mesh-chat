@@ -377,6 +377,7 @@ def native_credential(r, host, profile):
 def test_acknowledged_native_owner_close_allows_fresh_actions_without_rewriting_unknown_history(platform_host, monkeypatch, loss, action):
     r = platform_host
     assert r.host.core.profile_intents.origin is None and r.host.core.profile_intents.binding is None
+    assert r.meta.get("host_profile_admission_policy", "current") is None
     profile, history = ordinary_request_with_lost_result(r, monkeypatch, loss)
     previous = r.host.context()["host_generation"], r.host.core.lifecycle.query()["host_incarnation"]
     r.host.close()  # Real production close: drain lifecycle, deny old admission, close catalog.
@@ -448,3 +449,111 @@ def test_new_core_uuid_and_missing_private_ports_cannot_drop_existing_private_cu
         assert row(p, ticket) == history and p.meta.get("host_profile_dispatch", "current") == slot
     finally:
         stream.close()
+
+
+def closed_catalog_successor(p):
+    """Actual Core resource/store teardown; not proof of private native retirement."""
+    with p.host._lock:
+        assert p.host.lifecycle.retire_for_host_shutdown()["state"] == "locked"
+        for session in tuple(p.host._sessions): session.detach()
+        p.meta.close()
+    catalog = VaultStore(p.base["meta_root"], p.base["meta_key"], allow_unprotected_for_tests=True)
+    successor = CoreRuntimeHost(catalog, tuple(p.host.profiles.values()), selected="alpha",
+        publish=p.base["published"].append, credential_authorizer=lambda *_: True)
+    assert successor.lifecycle.query()["host_incarnation"] != p.host.lifecycle.query()["host_incarnation"]
+    assert successor.profile_intents.origin is None and successor.profile_intents.binding is None
+    return catalog, successor
+
+
+def core_frames(host, authorize):
+    stream = host.bind(authorize)
+    def call(operation, params=None, key=None):
+        frame = {"api_version": 1, "request_id": "independent:containment", "operation": operation, "params": params or {}}
+        if key is not None: frame["idempotency_key"] = key
+        return decode_frame(stream.exchange(encode_frame(frame)))
+    assert call("runtime.capabilities")["ok"]
+    return stream, call
+
+
+@pytest.mark.parametrize("loss", ["admission", "completion"])
+def test_configured_generic_custody_before_any_private_reservation_survives_port_removal(protected, monkeypatch, loss):
+    p = protected
+    assert not p.meta.list("host_profile_operation") and not p.meta.list("host_profile_alias")
+    original = lose_catalog_return(p, monkeypatch, "intent" if loss == "admission" else "complete",
+        committed=loss == "admission")
+    key = "configured-generic-before-private-key"
+    failed = p.request("profile.lock", {"profile": p.handles["alpha"]}, key)
+    assert not failed["ok"] and failed["error"]["code"] == "unavailable"
+    monkeypatch.setattr(p.meta, "conditional_put_and_delete", original)
+    history, slot = p.meta.list("host_profile_operation"), p.meta.get("host_profile_dispatch", "current")
+    assert len(history) == 1 and history[0]["state"] == "intent" and history[0].get("version") != 2
+    assert slot is not None and not p.meta.list("host_profile_alias")
+    catalog, successor = closed_catalog_successor(p)
+    stream, call = core_frames(successor, lambda: p.authority[0])
+    try:
+        assert catalog.list("host_profile_operation") == history and not catalog.list("host_profile_alias")
+        old = call("profile.lock", {"profile": p.handles["alpha"]}, key)
+        assert not old["ok"] and old["error"]["code"] == "resync_required"
+        denied = call("profile.lock", {"profile": p.handles["alpha"]}, "configured-generic-replacement-key")
+        assert not denied["ok"] and denied["error"]["code"] == "unavailable"
+        assert catalog.list("host_profile_operation") == history
+        assert catalog.get("host_profile_dispatch", "current") == slot
+    finally:
+        stream.close()
+        catalog.close()
+
+
+def test_configured_catalog_remains_protected_without_private_history_or_current_slot(protected, monkeypatch):
+    p = protected
+    assert p.request("profile.lock", {"profile": p.handles["alpha"]}, "configured-complete-generic-key")["ok"]
+    history = p.meta.list("host_profile_operation")
+    assert len(history) == 1 and history[0]["state"] == "complete" and history[0].get("version") != 2
+    assert not p.meta.list("host_profile_alias") and p.meta.get("host_profile_dispatch", "current") is None
+    catalog, successor = closed_catalog_successor(p)
+    stream, call = core_frames(successor, lambda: p.authority[0])
+    try:
+        boundary = SimpleNamespace(meta=catalog)
+        original = lose_catalog_return(boundary, monkeypatch, "intent", committed=True)
+        failed = call("profile.lock", {"profile": p.handles["alpha"]}, "configured-after-port-removal-key")
+        assert not failed["ok"] and failed["error"]["code"] == "unavailable"
+        monkeypatch.setattr(catalog, "conditional_put_and_delete", original)
+        assert catalog.get("host_profile_dispatch", "current") is not None
+        before = catalog.list("host_profile_operation")
+        blocked = call("profile.lock", {"profile": p.handles["alpha"]}, "configured-cannot-overtake-new-key")
+        assert not blocked["ok"] and blocked["error"]["code"] == "unavailable"
+        assert catalog.list("host_profile_operation") == before and all(item in before for item in history)
+    finally:
+        stream.close()
+        catalog.close()
+
+
+def test_existing_premarking_ordinary_slot_never_auto_migrates_to_unprotected_admission(runtime, monkeypatch):
+    r = runtime
+    assert r["host"].profile_intents.origin is None and r["host"].profile_intents.binding is None
+    p = SimpleNamespace(host=r["host"], meta=r["meta"], base=r)
+    assert p.meta.get("host_profile_admission_policy", "current") is None
+    original = lose_catalog_return(p, monkeypatch, "intent", committed=True)
+    failed = r["invoke"]("profile.lock", {"profile": r["profiles"]["alpha"]}, "ambiguous-premarking-original")
+    assert not failed["ok"] and failed["error"]["code"] == "unavailable"
+    monkeypatch.setattr(p.meta, "conditional_put_and_delete", original)
+    entries = list(p.meta.items("host_profile_operation"))
+    assert len(entries) == 1 and entries[0][1]["state"] == "intent" and entries[0][1].get("version") != 2
+    identity, receipt = entries[0]
+    # Exact pre-marker protocol fixture: persist the old slot with real CAS,
+    # without rewriting the unknown receipt, deleting authority or claiming effects.
+    slot = {"identity": identity}
+    p.meta.conditional_put_and_delete(
+        {("host_profile_operation", identity): receipt,
+         ("host_profile_dispatch", "current"): p.meta.get("host_profile_dispatch", "current")},
+        [("host_profile_dispatch", "current", slot)])
+    assert not p.meta.list("host_profile_alias")
+    catalog, successor = closed_catalog_successor(p)
+    stream, call = core_frames(successor, lambda: r["grants"][0])
+    try:
+        denied = call("profile.lock", {"profile": r["profiles"]["alpha"]}, "ambiguous-premarking-fresh-key")
+        assert not denied["ok"] and denied["error"]["code"] == "unavailable"
+        assert catalog.get("host_profile_operation", identity) == receipt
+        assert catalog.get("host_profile_dispatch", "current") == slot
+    finally:
+        stream.close()
+        catalog.close()
