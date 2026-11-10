@@ -1,7 +1,7 @@
 """Drive the production supervisor without running I/O in its critical section."""
 
 from collections import OrderedDict
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from queue import Empty
 from random import SystemRandom
 from threading import Event, RLock, Thread
@@ -9,12 +9,23 @@ from time import monotonic
 
 from .effects import BoundedEffectRunner, CleanupResult
 from .model import (
-    ConnectionState, ContextChanged, Desired, Execution, Failed,
-    Failure, Policy, Result, Retire, Work,
+    ConnectionKey, ConnectionState, ContextChanged, Desired, Execution, Failed,
+    Failure, Policy, Resource, Result, Retire, Work,
 )
 from .projection import snapshot
 from .reconcile import authority, authority_signature, connection_key, desired
 from .supervisor import CapacityExceeded, ConnectionSupervisor
+
+
+@dataclass(eq=False)
+class CarrierRetirement:
+    runtime_epoch: str
+    key: ConnectionKey
+    resource: Resource
+    generation: int
+    revision: int
+    cleanup_acknowledged: bool = False
+    acknowledged: bool = False
 
 
 class ConnectionRuntime:
@@ -36,6 +47,7 @@ class ConnectionRuntime:
         self._resumed = set()
         self._context_revision = 0
         self._authority_changes = {}
+        self._carrier_retirements = {}
         self._pending = OrderedDict()
         self._cleanup_failed = set()
         self._stop = Event()
@@ -66,9 +78,68 @@ class ConnectionRuntime:
     def _is_fenced(self, key, profile):
         identifiers = self._authority_identifiers(key, profile)
         return (self._quarantined or self._stop.is_set()
-                or key in self._veto or bool(identifiers & self._contact_fences)
+                or key in self._veto or key in self._carrier_retirements
+                or bool(identifiers & self._contact_fences)
                 or bool(identifiers & self._authority_changes.keys())
                 or (self._all_fenced and not identifiers & self._resumed))
+
+    def begin_carrier_retirement(self, key, resource, generation, revision):
+        """Temporarily deny one owner without changing durable connection intent."""
+        with self._lock:
+            profile = self._profile_values.get(key)
+            if (profile is None or key.scope != "contact"
+                    or profile.get("auto_reconnect") is not False
+                    or self._is_fenced(key, profile)):
+                raise ValueError("Carrier retirement authority is unavailable")
+            ticket = CarrierRetirement(self.owner.runtime_epoch, key, resource, generation, revision)
+            self._carrier_retirements[key] = ticket
+            self._context_revision += 1
+            try:
+                accepted = self.owner.retire_current_carrier(
+                    key, resource, generation, revision, self.now())
+            except Exception:
+                del self._carrier_retirements[key]
+                self._context_revision += 1
+                raise
+            if not accepted:
+                del self._carrier_retirements[key]
+                self._context_revision += 1
+                raise ValueError("Carrier retirement owner changed")
+            return ticket
+
+    def carrier_retirement_status(self, ticket):
+        with self._lock:
+            if (ticket.runtime_epoch != self.owner.runtime_epoch
+                    or (not ticket.acknowledged
+                        and self._carrier_retirements.get(ticket.key) is not ticket)):
+                raise ValueError("Carrier retirement is unavailable")
+            return "acknowledged" if ticket.acknowledged else "pending"
+
+    def cleanup_acknowledged_retirements(self):
+        with self._lock:
+            return tuple(ticket for ticket in self._carrier_retirements.values()
+                         if ticket.cleanup_acknowledged)
+
+    def _clear_carrier_retirements(self, clearances, seen):
+        for ticket in clearances:
+            if (self._carrier_retirements.get(ticket.key) is ticket
+                    and ticket.cleanup_acknowledged and ticket.key in seen):
+                profile = self._profile_values[ticket.key]
+                state = self.owner.snapshot(ticket.key)
+                if (profile.get("auto_reconnect") is not False
+                        or profile.get("manual_carrier_authorized") is not False
+                        or state.generation != ticket.generation or state.carrier is not None):
+                    continue
+                del self._carrier_retirements[ticket.key]
+                ticket.acknowledged = True
+                self._context_revision += 1
+
+    def _commit_handoff(self, operation, resource, target):
+        with self._lock:
+            profile = self._profile_values.get(target)
+            if self._is_fenced(target, profile or {}):
+                return False
+            return self.owner.commit_handoff(operation, resource, target, self.now())
 
     def begin_authority_change(self, authority_id):
         """Deny effects and packets before a protected authority write can fail."""
@@ -213,6 +284,7 @@ class ConnectionRuntime:
                 self.owner.retire(key, now)
                 del self._profile_values[key]
             self._profile_keys = profile_keys
+            self._clear_carrier_retirements(payload.get("retirement_clearances", ()), seen)
 
     def _completions(self):
         while True:
@@ -227,6 +299,10 @@ class ConnectionRuntime:
                 else:
                     self._cleanup_failed.discard(event.resource)
                     self.owner.resource_released(event.resource)
+                    with self._lock:
+                        for ticket in self._carrier_retirements.values():
+                            if ticket.resource == event.resource:
+                                ticket.cleanup_acknowledged = True
             else:
                 if isinstance(event, Failed):
                     event = replace(event, jitter=self._random())
@@ -248,7 +324,7 @@ class ConnectionRuntime:
                     try:
                         if self._handoff is not None:
                             self._handoff(event.operation, event.allocated,
-                                lambda resource, target: self.owner.commit_handoff(event.operation, resource, target, self.now()))
+                                lambda resource, target: self._commit_handoff(event.operation, resource, target))
                     except Exception:
                         # Commit is the receipt. A callback may lose its return
                         # after committing or even after target adoption.
