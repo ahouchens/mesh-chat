@@ -15,7 +15,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 import native_interop_peers as peers
-from native_interop_diagnostics import PREFLIGHT_FAILURE_SITES, PreflightDiagnostics
+from native_interop_diagnostics import PREFLIGHT_FAILURE_SITES, ROOT_FAILURE_REASONS, PreflightDiagnostics
 
 
 @pytest.mark.parametrize("role", ["windows", "android"])
@@ -67,7 +67,8 @@ ANDROID_START_SITES = (
 ANDROID_ENVIRONMENT_SITES = ("android_device_state", "android_emulator_property", "android_abi")
 
 
-def scripted_android(monkeypatch, tmp_path, *, fault=None, boot_failures=0):
+def scripted_android(monkeypatch, tmp_path, *, fault=None, boot_failures=0,
+                     failure_status=1, failure_stderr=b"PRIVATE_STDERR"):
     """Actual emulator owner with scripted OS boundaries; never starts a process."""
     import native_interop_preflight as preflight
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
@@ -95,7 +96,7 @@ def scripted_android(monkeypatch, tmp_path, *, fault=None, boot_failures=0):
         "android_devices": ("check_output", [*adb, "devices"], text_options, "List of devices attached\n"),
         "android_avd_create": ("run", ["PRIVATE_AVDMANAGER", "create", "avd", "--name", emulator.name,
             "--package", emulator.IMAGE], {"input": b"no\n", "check": True, "capture_output": True, "timeout": 120}, None),
-        "android_root": ("check_output", [*own_adb, "root"], byte_options, b"restarting adbd as root\n"),
+        "android_root": ("check_output", [*own_adb, "root"], {**byte_options, "stderr": peers.subprocess.PIPE}, b"restarting adbd as root\n"),
         "android_wait_for_device": ("check_output", [*own_adb, "wait-for-device"], byte_options, b""),
         "android_root_identity": ("check_output", [*shell, "id", "-u"], byte_options, b"0\n"),
         "android_host_apk_install": ("check_output", [*own_adb, "install", "-r", str(apks[0])],
@@ -120,7 +121,8 @@ def scripted_android(monkeypatch, tmp_path, *, fault=None, boot_failures=0):
         assert kwargs == options
         state.calls.append(site)
         if site == state.fault:
-            error = peers.subprocess.CalledProcessError(1, ["PRIVATE_COMMAND"], output=b"PRIVATE_OUTPUT", stderr=b"PRIVATE_STDERR")
+            error = peers.subprocess.CalledProcessError(failure_status, ["PRIVATE_COMMAND"],
+                output=b"PRIVATE_OUTPUT", stderr=failure_stderr)
             error.preflight_failure_site = "android_abi"  # Caller data is never attribution.
             state.failure = error
             raise error
@@ -207,6 +209,139 @@ def test_preflight_observer_clears_success_and_rejects_untrusted_sites():
     for invalid in ("PRIVATE_SITE", [], 1):
         with pytest.raises(ValueError, match="Unknown preflight"):
             with diagnostics.scope(invalid): pytest.fail("Invalid scope entered")
+
+
+ROOT_DIAGNOSTICS = [
+    pytest.param(b"adb: unable to connect for root: PRIVATE_SERIAL\n", "connect_failure", id="connect"),
+    pytest.param(b"adb: error while reading for root: PRIVATE_PATH\n", "read_failure", id="read"),
+    pytest.param(b"adb: unexpected output length for root\n", "unexpected_output_length", id="length"),
+    pytest.param(b"timeout expired while waiting for device\n", "wait_for_device_timeout", id="wait-timeout"),
+]
+
+
+def observed_command_error(error, site="android_root"):
+    diagnostics = PreflightDiagnostics()
+    with pytest.raises(type(error)) as caught:
+        with diagnostics.scope(site):
+            raise error
+    assert caught.value is error
+    return diagnostics
+
+
+@pytest.mark.parametrize("stderr,reason", ROOT_DIAGNOSTICS)
+@pytest.mark.parametrize("text", [False, True])
+def test_root_diagnostic_families_are_fixed_redacted_and_failure_only(stderr, reason, text):
+    if text: stderr = stderr.decode("ascii")
+    error = peers.subprocess.CalledProcessError(1, "PRIVATE_COMMAND", output=b"PRIVATE_OUTPUT", stderr=stderr)
+    diagnostics = observed_command_error(error)
+    observation = diagnostics.failure_observation(error)
+    assert observation == {"preflight_exit_status": 1, "preflight_root_reason": reason}
+    assert reason in ROOT_FAILURE_REASONS and "PRIVATE_" not in json.dumps(observation)
+    assert diagnostics.failure_site(error) == "android_root"
+    assert diagnostics.failure_observation(peers.subprocess.CalledProcessError(1, "PRIVATE_COMMAND")) == {}
+
+
+@pytest.mark.parametrize("status", [-64, -1, 1, 255])
+def test_checked_command_status_is_snapshotted_once_for_same_error(status):
+    error = peers.subprocess.CalledProcessError(status, "PRIVATE_COMMAND",
+        stderr=b"adb: unable to connect for root: PRIVATE_SUFFIX\n")
+    diagnostics = observed_command_error(error)
+    error.returncode = 0
+    error.stderr = b"PRIVATE_CHANGED_STDERR"
+    error.preflight_root_reason = "PRIVATE_FORGED_REASON"
+    observation = diagnostics.failure_observation(error)
+    assert observation == {"preflight_exit_status": status, "preflight_root_reason": "connect_failure"}
+    observation["preflight_root_reason"] = "PRIVATE_MUTATION"
+    assert diagnostics.failure_observation(error)["preflight_root_reason"] == "connect_failure"
+    with diagnostics.scope("android_abi"): pass
+    assert diagnostics.failure_observation(error) == {}
+
+
+class DiagnosticInt(int):
+    pass
+
+
+class DiagnosticBytes(bytes):
+    pass
+
+
+class DiagnosticString(str):
+    pass
+
+
+class UnreadableDiagnostic:
+    def __str__(self): raise AssertionError("Must not coerce private diagnostics")
+    def __len__(self): raise AssertionError("Must not inspect arbitrary diagnostics")
+    def __int__(self): raise AssertionError("Must not coerce status")
+
+
+@pytest.mark.parametrize("status", [
+    pytest.param(value, id=label) for label, value in (
+        ("zero", 0), ("below", -65), ("above", 256), ("true", True), ("false", False),
+        ("float", 1.0), ("nan", float("nan")), ("inf", float("inf")), ("string", "1"),
+        ("none", None), ("huge", 10 ** 1000), ("int-subclass", DiagnosticInt(1)),
+        ("unreadable", UnreadableDiagnostic()),
+    )
+])
+def test_invalid_command_status_is_omitted_without_coercion(status):
+    error = peers.subprocess.CalledProcessError(status, "PRIVATE_COMMAND", stderr=b"PRIVATE_STDERR")
+    assert observed_command_error(error).failure_observation(error) == {"preflight_root_reason": "unclassified"}
+
+
+@pytest.mark.parametrize("stderr", [
+    pytest.param(value, id=label) for label, value in (
+        ("empty", b""), ("none", None), ("unknown", b"PRIVATE_STDERR"),
+        ("unknown-line", b"adb: unable to connect for root: PRIVATE\nPRIVATE_OTHER\n"),
+        ("conflict", b"adb: unable to connect for root: PRIVATE\nadb: error while reading for root: PRIVATE\n"),
+        ("overlong", b"adb: unable to connect for root: " + b"X" * 4096),
+        ("unicode-bytes-overlong", "adb: unable to connect for root: " + "\u00e9" * 2048),
+        ("surrogate", "adb: unable to connect for root: \ud800"),
+        ("bytes-subclass", DiagnosticBytes(b"adb: unable to connect for root: PRIVATE")),
+        ("str-subclass", DiagnosticString("adb: unable to connect for root: PRIVATE")),
+        ("wrong-command", b"adb: unable to connect for unroot: PRIVATE\n"),
+        ("unanchored", b"PRIVATE adb: unable to connect for root: PRIVATE\n"),
+        ("length-suffix", b"adb: unexpected output length for rootPRIVATE\n"),
+        ("timeout-suffix", b"timeout expired while waiting for devicePRIVATE\n"),
+        ("unreadable", UnreadableDiagnostic()),
+    )
+])
+def test_unknown_oversized_conflicting_or_nonexact_stderr_is_unclassified(stderr):
+    error = peers.subprocess.CalledProcessError(1, "PRIVATE_COMMAND", stderr=stderr,
+        output=b"adb: unable to connect for root: PRIVATE_STDOUT")
+    assert observed_command_error(error).failure_observation(error) == {
+        "preflight_exit_status": 1, "preflight_root_reason": "unclassified"}
+
+
+@pytest.mark.parametrize("text", [False, True])
+@pytest.mark.parametrize("size,reason", [(4096, "connect_failure"), (4097, "unclassified")])
+def test_root_stderr_byte_limit_is_inclusive_without_truncating_to_a_match(text, size, reason):
+    prefix = b"adb: unable to connect for root: "
+    stderr = prefix + b"X" * (size - len(prefix))
+    if text: stderr = stderr.decode("ascii")
+    error = peers.subprocess.CalledProcessError(255, "PRIVATE_COMMAND", stderr=stderr)
+    assert observed_command_error(error).failure_observation(error)["preflight_root_reason"] == reason
+
+
+@pytest.mark.parametrize("site", sorted(PREFLIGHT_FAILURE_SITES - {"android_root"}))
+def test_root_reason_never_comes_from_other_command_stderr(site):
+    error = peers.subprocess.CalledProcessError(1, "PRIVATE_COMMAND",
+        stderr=b"adb: error while reading for root: PRIVATE_SUFFIX")
+    assert observed_command_error(error, site).failure_observation(error) == {"preflight_exit_status": 1}
+
+
+def test_nonstandard_exceptions_cannot_supply_command_diagnostics():
+    class ForeignCommandError(peers.subprocess.CalledProcessError):
+        @property
+        def stderr(self): raise AssertionError("Must not read subclass properties")
+        @stderr.setter
+        def stderr(self, value): pass
+    for error in (ForeignCommandError(1, "PRIVATE_COMMAND"), ValueError("PRIVATE_ERROR"),
+                  peers.subprocess.TimeoutExpired("PRIVATE_COMMAND", 30)):
+        error.returncode = 1
+        error.preflight_root_reason = "connect_failure"
+        assert observed_command_error(error).failure_observation(error) == {}
+    assert ROOT_FAILURE_REASONS == frozenset({
+        "connect_failure", "read_failure", "unexpected_output_length", "wait_for_device_timeout", "unclassified"})
 
 
 @pytest.mark.parametrize("fault,code,expected", [
