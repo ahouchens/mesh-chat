@@ -66,6 +66,10 @@ other non-native families. Native Android fails in initialization with `internal
 Windows later reports `RendezvousUnavailable`. The exact Android operation and
 cause are unclassified. Full cross-platform and isolated-helper acceptance remain
 open; the private controller diagnostics do not extend public SDK support.
+Reviewed failure-only initialization labels `7058909` pass 1,093 focused
+component cases without changing public Core/SDK behavior. These labels name
+the controller call site, not an implicit capability check or inner cause;
+fresh full qualification remains required.
 No public API/grant, timeout, authority or negative-control relaxation is assigned.
 
 Checkpoint `36466e0` full run `42843336931` again verifies the installed Windows

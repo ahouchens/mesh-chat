@@ -46,12 +46,22 @@ Independent producer and consumer source audits find no concrete new defect
 explaining this failure. Startup errors ordinarily become
 `android_host_start_failed`; a later correlated Core `internal` response is a
 source-consistent route, not a retained operation trace. An unchanged broker
-credential error path is one possibility, not the selected cause. The next
-bounded change adds fixed initialization call-site failure labels with the same
-escaping error, call order, cleanup and budgets. It adds no probe, retry, raw
-exception text, credential export or Core error remapping. A Core call-site
-label cannot distinguish the SDK's implicit capability request from its requested
-operation. Bootstrap retirement remains deferred until full native qualification.
+credential error path is one possibility, not the selected cause. Reviewed failure-only diagnostics `7058909` are now integrated. Ten fixed
+initialization call-site labels preserve the same escaping error, call order,
+cleanup and budgets. All **1,093 focused cases pass without skips**, preserving
+the prior 998 and adding 95. Eleven original-source semantic failures demonstrate
+the missing labels. Tests execute actual initialization/run/reporting paths with
+scripted external boundaries and check both roles, errors and guards, unchanged
+successful reports, stale-label rejection, sensitive-data omission and cleanup
+failure custody. Independent source comparison preserves the underlying calls
+and explicit raised expressions. This is diagnostic component evidence, not a
+repair or identification of the original Android cause.
+
+The labels add no probe, retry, raw exception text, credential export or Core
+error remapping. A Core call-site label cannot distinguish the SDK's implicit
+capability request from its requested operation. New exact-source combined
+qualification remains required. Bootstrap retirement remains deferred until
+full native qualification.
 
 The preceding checkpoint is `ccd3b5164181aae6de47e1a939f52a2a05464378`
 (tree `39fd544a48f0461a4828f3f6339d274902f9e7b1`). Reviewed fixture

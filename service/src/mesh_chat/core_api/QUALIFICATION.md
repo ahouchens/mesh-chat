@@ -65,7 +65,12 @@ Windows boundary cases and all 28 composition controls. Full run `42886878229`
 passes all non-native families but fails native initialization: Android reports
 `PeerFailure/internal`, Windows later `RendezvousUnavailable`. The phase spans
 several setup calls and the initial key exchange; the failing Android operation
-and inner cause remain unidentified. No full native acceptance is established. The
+and inner cause remain unidentified. No full native acceptance is established.
+Reviewed controller diagnostics `7058909` now label ten existing initialization
+call sites on failure. The original exception, calls, budgets and cleanup remain
+unchanged; 1,093 focused component cases pass. Labels expose no payload or raw
+exception text and do not identify the SDK's implicit capability request versus
+the requested Core operation. Fresh combined qualification is still required. The
 `qualification.retire_carrier` request has exactly `action`, `operation_id`,
 `request_id`, `logical_session`, `expected_physical`,
 `expected_service_incarnation` and `expected_adapter_epoch`. Action is exactly
