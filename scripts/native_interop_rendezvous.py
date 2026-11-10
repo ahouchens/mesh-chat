@@ -26,12 +26,13 @@ OFFER_PHASES = {"offer", "offer_turn_udp", "offer_turn_tcp", "offer_turn_tls", "
 NEGATIVE_CASES = {"turn_tcp", "turn_tls", "impaired"}
 APPROVAL_PHASES = {"approved", "impaired_ready"} | {
     prefix + scenario for prefix in ("negative_ready_", "negative_checked_") for scenario in NEGATIVE_CASES}
-PHASES = OFFER_PHASES | APPROVAL_PHASES | {"answer", "control", "result"}
+PHASES = OFFER_PHASES | APPROVAL_PHASES | {"answer", "control", "result", "reconnect_capabilities"}
 KEY_TTL = 7200
 MESSAGE_TTL = 600
 MAX_BLOB = 96 * 1024
 MAX_ARCHIVE = 128 * 1024
 MAX_SHAREABLE = 48 * 1024
+MAX_CAPABILITY_BYTES = 16 * 1024
 DOMAIN = b"mesh-native-ci-bootstrap:v1:"
 
 
@@ -66,6 +67,10 @@ def checked_payload(phase, value):
                  and 0 < len(value["shareable"].encode("utf-8")) <= MAX_SHAREABLE)
     elif phase in APPROVAL_PHASES:
         valid = set(value) == {"approved"} and type(value["approved"]) is bool
+    elif phase == "reconnect_capabilities":
+        valid = (set(value) == {"capabilities"} and type(value["capabilities"]) is str
+                 and 0 < len(value["capabilities"].encode("utf-8")) <= MAX_CAPABILITY_BYTES
+                 and len(canonical(value)) <= MAX_SHAREABLE)
     elif phase == "control":
         valid = (set(value) == {"scenarios", "iterations", "cold_start_every"}
                  and isinstance(value["scenarios"], list) and 0 < len(value["scenarios"]) <= 8

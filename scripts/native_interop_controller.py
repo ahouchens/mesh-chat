@@ -19,7 +19,7 @@ from native_interop_evidence import SCENARIOS, SAMPLE_REJECTION_REASONS, Samples
 from native_interop_diagnostics import PreflightDiagnostics, rendezvous_observation
 from native_interop_peers import AndroidEmulator, AndroidPeer, PeerFailure, WindowsPeer
 from native_interop_preflight import android_environment, outbound_services
-from native_interop_rendezvous import Rendezvous
+from native_interop_rendezvous import Rendezvous, checked_payload
 from native_interop_workload import workload as required_workload
 from test_packaged_lifecycle import source_identity
 
@@ -66,6 +66,16 @@ def carrier_retirement_state(value, request_id, *, admission=False):
             or value["state"] not in ({"pending"} if admission else {"pending", "acknowledged"})):
         raise PeerFailure("invalid_carrier_retirement_reply")
     return value["state"]
+
+
+def reconnect_association(profile, contact):
+    fields = ("id", "contact_id", "destination_hash", "local_device_id", "remote_device_id")
+    if (type(profile) is not dict
+            or any(type(profile.get(name)) is not str or not profile[name] for name in fields)
+            or profile["contact_id"] != contact["id"] or profile["destination_hash"] != contact["destination_hash"]
+            or profile.get("auto_reconnect") is not True):
+        raise ValueError("Cold-start reconnect consent has inconsistent association")
+    return {name: profile[name] for name in fields}
 
 
 def selected_ice(value, scenario):
@@ -533,8 +543,18 @@ class Controller:
     def cold_starts(self):
         self.phase = "cold_start_receipts"
         self.core("call.settings_update", {"profile": self.profile, "settings": self.default_call_settings})
-        self.native("reconnect_consent_set", contact_id=self.contact["id"], auto_reconnect=True,
+        consent = self.native("reconnect_consent_set", contact_id=self.contact["id"], auto_reconnect=True,
                     allow_direct_ip_disclosure=True)
+        association = reconnect_association(consent["profile"], self.contact)
+        payload = checked_payload("reconnect_capabilities", {"capabilities": consent["capabilities"]})
+        self.publish("reconnect_capabilities", payload)
+        partner = checked_payload("reconnect_capabilities", self.receive("reconnect_capabilities"))
+        stored = self.native("reconnect_capabilities_store", document=partner["capabilities"],
+            expected_contact_id=self.contact["id"], expected_peer_destination=self.contact["destination_hash"])
+        if (type(stored) is not dict or stored.get("pending") is not False
+                or reconnect_association(stored.get("profile"), self.contact) != association
+                or stored["profile"].get("peer_auto_reconnect") is not True):
+            raise ValueError("Cold-start reconnect consent is not reciprocal")
         previous_message = None
         warm_resources = None
         warm_host = None
@@ -577,7 +597,7 @@ class Controller:
         self.transport.publish("key", self.rendezvous.public_manifest())
         self.rendezvous.bind_partner(self.transport.wait(self.partner, "key", timeout=900))
         # Both roles execute this fixed source-bound inventory. Keep bootstrap
-        # uploads <=9/job, leaving room for the final retained report artifact.
+        # uploads bounded at Windows 10 / Android 8 (quick 4 each), plus one final report.
         for scenario, initiator in self.workload["paths"]: self.path_case(scenario, initiator)
         self.cold_starts()
         self.phase = "clean_host_retirement"

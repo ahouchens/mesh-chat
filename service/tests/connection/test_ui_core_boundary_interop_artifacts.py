@@ -3,7 +3,10 @@
 import hashlib
 from io import BytesIO
 import json
+import os
 from pathlib import Path
+import shutil
+import subprocess
 import sys
 from types import SimpleNamespace
 import urllib.error
@@ -13,7 +16,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 import native_interop_artifacts as backend
-from native_interop_rendezvous import Rendezvous, artifact_name, canonical
+from native_interop_rendezvous import Rendezvous, artifact_name, canonical, encoded
 
 CONTEXT = {"repository": "example/mesh", "repository_id": 123, "run_id": 456,
            "run_attempt": 1, "source_commit": "a" * 40}
@@ -468,3 +471,60 @@ def test_decoder_value_error_cannot_inherit_completed_response_read_origin(tmp_p
     assert state.transport.failure_observation(caught.value) == {
         "rendezvous_stage": "inventory_request", "rendezvous_reason": "transport_failed"}
     assert len(state.calls) == 1
+
+
+@pytest.mark.parametrize("role", ["windows", "android"])
+@pytest.mark.parametrize("fault", [None, "unknown_phase", "plaintext", "extra_field", "wrong_job", "wrong_source", "nonce", "ciphertext"])
+def test_actual_node_upload_accepts_only_sealed_cold_phase_without_sdk_or_network(tmp_path, role, fault):
+    """Execute the real upload validator with a local inert ArtifactClient module."""
+    node = os.environ.get("MESH_NODE") or shutil.which("node")
+    assert node, "Node is required for the upload validator control"
+    source = Path(__file__).resolve().parents[3] / "scripts/native-interop-artifact/upload.mjs"
+    script = tmp_path / "upload.mjs"
+    script.write_bytes(source.read_bytes())
+    package = tmp_path / "node_modules/@actions/artifact"
+    package.mkdir(parents=True)
+    (package / "package.json").write_text(json.dumps({"type": "module", "exports": "./index.mjs"}))
+    (package / "index.mjs").write_text('''
+import { readFile, writeFile } from "node:fs/promises";
+export class DefaultArtifactClient {
+  async uploadArtifact(name, files, root, options) {
+    const body = JSON.parse(await readFile(files[0], "utf8"));
+    await writeFile(process.env.MESH_UPLOAD_OBSERVATION, JSON.stringify({name, files, root, options, body}));
+    return {id: 17, size: 123};
+  }
+}
+''')
+    sender = Rendezvous(CONTEXT, role)
+    partner = Rendezvous(CONTEXT, "android" if role == "windows" else "windows")
+    sender.bind_partner(partner.public_manifest())
+    try:
+        phase = "reconnect_capabilities"
+        sealed = sender.seal(phase, {"capabilities": "PRIVATE_SIGNED_CREDENTIALS"})
+        env = {**os.environ, **environment(role), "ACTIONS_RUNTIME_TOKEN": "PRIVATE_TEST_RUNTIME_TOKEN",
+               "MESH_UPLOAD_OBSERVATION": str(tmp_path / "observed.json")}
+        if fault == "unknown_phase": sealed["phase"] = "reconnect_documents"
+        elif fault == "plaintext": sealed = {"capabilities": "PRIVATE_SIGNED_CREDENTIALS"}
+        elif fault == "extra_field": sealed["capabilities"] = "PRIVATE_SIGNED_CREDENTIALS"
+        elif fault == "wrong_job": env["GITHUB_JOB"] = "untrusted"
+        elif fault == "wrong_source": sealed["context"]["source_commit"] = "b" * 40
+        elif fault == "nonce": sealed["nonce"] = "short"
+        elif fault == "ciphertext": sealed["ciphertext"] = encoded(b"x" * (48 * 1024 + 1025))
+        bundle = tmp_path / "bundle.json"
+        bundle.write_bytes(canonical(sealed))
+        result = subprocess.run([node, str(script), artifact_name(CONTEXT, role, phase), str(bundle)],
+            env=env, capture_output=True, text=True, check=False, timeout=10)
+        assert result.stderr == "" and "PRIVATE" not in result.stdout
+        if fault is None:
+            assert result.returncode == 0 and json.loads(result.stdout) == {"passed": True, "id": 17, "size": 123}
+            observed = json.loads((tmp_path / "observed.json").read_text())
+            assert observed["body"] == sealed
+            assert observed["options"] == {"retentionDays": 1, "compressionLevel": 0}
+            assert observed["files"] == [str(bundle)]
+            assert "PRIVATE" not in json.dumps(observed)
+        else:
+            assert result.returncode == 1 and json.loads(result.stdout) == {"passed": False}
+            assert not (tmp_path / "observed.json").exists()
+    finally:
+        sender.close()
+        partner.close()

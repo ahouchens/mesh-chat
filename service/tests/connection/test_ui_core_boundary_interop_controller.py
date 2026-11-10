@@ -21,6 +21,363 @@ from test_ui_core_boundary_interop_evidence import sample
 from test_ui_core_boundary_interop_artifacts import RECEIVE_ORIGINS
 
 
+def cold_setup_controller(monkeypatch, *, role="windows", consent=None, imported=None, received=None):
+    association = {"id": "PRIVATE_RECONNECT_PROFILE", "contact_id": "PRIVATE_CONTACT",
+        "destination_hash": "a" * 32, "local_device_id": "PRIVATE_LOCAL_DEVICE", "remote_device_id": "PRIVATE_REMOTE_DEVICE"}
+    state = SimpleNamespace(events=[], stop=RuntimeError("first_crash_barrier"), association=association)
+    consent = consent if consent is not None else {"profile": {**association, "auto_reconnect": True,
+        "peer_auto_reconnect": False}, "capabilities": "PRIVATE_SIGNED_CAPABILITIES"}
+    imported = imported if imported is not None else {"profile": {**association, "auto_reconnect": True,
+        "peer_auto_reconnect": True}, "pending": False}
+    state.consent, state.imported = consent, imported
+    state.received = received if received is not None else {"capabilities": "PRIVATE_PEER_CAPABILITIES"}
+    state.fail_command, state.failure = None, controller.PeerFailure("unavailable")
+    class Peer:
+        def core(self, operation, params, key=None):
+            state.events.append((operation, copy.deepcopy(params)))
+            if operation == "call.settings_update": return {}
+            assert operation == "native.command"
+            if params["command"] == state.fail_command: raise state.failure
+            if params["command"] == "reconnect_consent_set": return copy.deepcopy(state.consent)
+            assert params["command"] == "reconnect_capabilities_store"
+            return copy.deepcopy(state.imported)
+        def inventory(self):
+            state.events.append("inventory")
+            return {"service_incarnation": "old"}
+        def stop(self, **kwargs):
+            state.events.append(("stop", kwargs))
+            raise state.stop
+    instance = controller.Controller(role, Peer(), None, None, {})
+    instance.profile = "PRIVATE_CORE_PROFILE"
+    instance.contact = {"id": "PRIVATE_CONTACT", "destination_hash": "a" * 32}
+    instance.default_call_settings = {"signal_mailbox_url": "https://synthetic.invalid"}
+    def publish(phase, value): state.events.append(("publish", phase, copy.deepcopy(value)))
+    def receive(phase):
+        state.events.append(("receive", phase))
+        return state.received
+    monkeypatch.setattr(instance, "publish", publish)
+    monkeypatch.setattr(instance, "receive", receive)
+    state.controller = instance
+    return state
+
+
+@pytest.mark.parametrize("role", ["windows", "android"])
+def test_cold_consent_is_published_then_imported_before_first_crash(monkeypatch, role):
+    state = cold_setup_controller(monkeypatch, role=role)
+    with pytest.raises(RuntimeError) as failure: state.controller.cold_starts()
+    assert failure.value is state.stop
+    commands = [event[1]["command"] for event in state.events if isinstance(event, tuple) and event[0] == "native.command"]
+    assert commands == ["reconnect_consent_set", "reconnect_capabilities_store"]
+    assert state.events[2:4] == [("publish", "reconnect_capabilities", {"capabilities": "PRIVATE_SIGNED_CAPABILITIES"}),
+                                  ("receive", "reconnect_capabilities")]
+    assert state.events[4] == ("native.command", {"command": "reconnect_capabilities_store", "payload": {
+        "document": "PRIVATE_PEER_CAPABILITIES", "expected_contact_id": "PRIVATE_CONTACT", "expected_peer_destination": "a" * 32}})
+    assert state.events[-2:] == ["inventory", ("stop", {"crash": True})]
+
+
+@pytest.mark.parametrize("field", ["id", "contact_id", "destination_hash", "local_device_id", "remote_device_id"])
+@pytest.mark.parametrize("poison", [None, "", 7, "PRIVATE_REPLACED_ASSOCIATION"])
+def test_cold_import_cannot_change_any_profile_or_device_association(monkeypatch, field, poison):
+    state = cold_setup_controller(monkeypatch)
+    state.imported["profile"][field] = poison
+    with pytest.raises(ValueError): state.controller.cold_starts()
+    assert "inventory" not in state.events and not any(event[0] == "stop" for event in state.events)
+
+
+@pytest.mark.parametrize("field", ["pending", "auto_reconnect", "peer_auto_reconnect"])
+@pytest.mark.parametrize("poison", [None, 0, 1, "true", {}, []])
+def test_cold_import_requires_exact_mutual_consent_and_nonpending(monkeypatch, field, poison):
+    state = cold_setup_controller(monkeypatch)
+    selected = state.imported if field == "pending" else state.imported["profile"]
+    selected[field] = poison
+    with pytest.raises(ValueError): state.controller.cold_starts()
+    assert "inventory" not in state.events
+
+
+@pytest.mark.parametrize("fault", ["pending_true", "pending_missing", "profile_missing", "profile_none", "local_false", "peer_false"])
+def test_cold_import_declined_or_stale_result_cannot_reach_crash(monkeypatch, fault):
+    state = cold_setup_controller(monkeypatch)
+    if fault == "pending_true": state.imported["pending"] = True
+    elif fault == "pending_missing": del state.imported["pending"]
+    elif fault == "profile_missing": del state.imported["profile"]
+    elif fault == "profile_none": state.imported["profile"] = None
+    else: state.imported["profile"]["auto_reconnect" if fault == "local_false" else "peer_auto_reconnect"] = False
+    with pytest.raises(ValueError): state.controller.cold_starts()
+    assert "inventory" not in state.events
+
+
+@pytest.mark.parametrize("fault", ["contact", "destination", "local_missing", "remote_missing", "disabled", "not_bool", "capability_missing", "capability_large"])
+def test_cold_local_consent_must_target_current_complete_association_before_publish(monkeypatch, fault):
+    state = cold_setup_controller(monkeypatch)
+    profile = state.consent["profile"]
+    if fault == "contact": profile["contact_id"] = "PRIVATE_OTHER_CONTACT"
+    elif fault == "destination": profile["destination_hash"] = "b" * 32
+    elif fault == "local_missing": del profile["local_device_id"]
+    elif fault == "remote_missing": del profile["remote_device_id"]
+    elif fault == "disabled": profile["auto_reconnect"] = False
+    elif fault == "not_bool": profile["auto_reconnect"] = 1
+    elif fault == "capability_missing": state.consent["capabilities"] = ""
+    else: state.consent["capabilities"] = "x" * 16385
+    with pytest.raises(ValueError): state.controller.cold_starts()
+    assert len(state.events) == 2 and "inventory" not in state.events
+
+
+@pytest.mark.parametrize("received", [{}, {"capabilities": ""}, {"capabilities": None},
+    {"capabilities": "x", "profile": {}}, {"capabilities": "x" * 16385}])
+def test_cold_peer_payload_is_exact_and_bounded_before_product_import(monkeypatch, received):
+    state = cold_setup_controller(monkeypatch, received=received)
+    with pytest.raises(ValueError): state.controller.cold_starts()
+    assert len(state.events) == 4 and "inventory" not in state.events
+
+
+@pytest.mark.parametrize("command", ["reconnect_consent_set", "reconnect_capabilities_store"])
+def test_cold_product_error_keeps_original_identity_without_retry_or_crash(monkeypatch, command):
+    state = cold_setup_controller(monkeypatch)
+    state.fail_command = command
+    deadline = state.controller.deadline
+    with pytest.raises(controller.PeerFailure) as failure: state.controller.cold_starts()
+    assert failure.value is state.failure and state.controller.deadline == deadline
+    assert sum(isinstance(event, tuple) and event[0] == "native.command" and event[1]["command"] == command
+               for event in state.events) == 1
+    assert "inventory" not in state.events and not state.controller.cycles
+
+
+@pytest.mark.parametrize("mode,iterations,restarts", [("quick", 5, 1), ("full", 100, 10)])
+@pytest.mark.parametrize("role", ["windows", "android"])
+def test_cold_setup_keeps_actual_loop_schedule_receipt_checks_and_native_deltas(monkeypatch, sample, mode, iterations, restarts, role):
+    """Actual cold loop/projections; observations/receipts/processes are DTO doubles."""
+    state = cold_setup_controller(monkeypatch, role=role)
+    instance, peer = state.controller, state.controller.peer
+    instance.workload = controller.required_workload(mode)
+    state.incarnation, state.observations, state.exchanges, state.deliveries, state.stops = 1, 0, [], [], []
+    def inventory():
+        return {**terminal_inventory(resources=True, active=1), "service_incarnation": str(state.incarnation)}
+    def stop(**kwargs):
+        assert state.events[4][0] == "native.command" and state.events[4][1]["command"] == "reconnect_capabilities_store"
+        state.stops.append((len(state.exchanges), kwargs))
+    def start():
+        state.incarnation += 1
+        return inventory()
+    core = peer.core
+    def core_call(operation, params, key=None):
+        if operation == "runtime.capabilities": return {"profiles": [instance.profile]}
+        return core(operation, params, key)
+    monkeypatch.setattr(peer, "inventory", inventory)
+    monkeypatch.setattr(peer, "stop", stop)
+    monkeypatch.setattr(peer, "start", start, raising=False)
+    monkeypatch.setattr(peer, "core", core_call)
+    monkeypatch.setattr(instance, "approved_contact", lambda: instance.contact)
+    monkeypatch.setattr(instance, "snapshot", lambda: {"profile": {"destination_hash": "PRIVATE_DURABLE_IDENTITY"}})
+    instance.identity = evidence.digest("PRIVATE_DURABLE_IDENTITY")
+    def observe(logical=None, ready=False):
+        assert ready is True
+        state.observations += 1
+        value = copy.deepcopy(sample[0])
+        value["service_incarnation"] = str(state.incarnation)
+        value["sample_sequence"] = state.observations
+        value["application"] = dict.fromkeys(evidence.APPLICATION, state.observations)
+        return value
+    def exchange(scenario, index):
+        assert scenario == "cold_start_receipts"
+        state.exchanges.append(index)
+        return {"outbound": "a" * 64, "inbound": "b" * 64}, "PRIVATE_MESSAGE_" + str(index)
+    monkeypatch.setattr(instance, "observe", observe)
+    monkeypatch.setattr(instance, "exchange", exchange)
+    monkeypatch.setattr(instance, "delivered", lambda message: state.deliveries.append(message) or True)
+    deadline = instance.deadline
+    instance.cold_starts()
+    assert instance.deadline == deadline and len(instance.cycles) == iterations
+    assert state.exchanges == list(range(iterations)) and len(state.deliveries) == iterations - 1
+    assert state.stops == [(index, {"crash": True}) for index in range(0, iterations, 10)]
+    assert len(state.stops) == restarts and state.observations == iterations * 2
+    assert [cycle["cold_start"] for cycle in instance.cycles] == [index % 10 == 0 for index in range(iterations)]
+    for cycle in instance.cycles:
+        assert cycle["native_delta"] == dict.fromkeys(evidence.APPLICATION, 1)
+        assert cycle["native_resources"] == cycle["warm_baseline_resources"] == 1
+        assert cycle["host_accounting"] == cycle["warm_baseline_host_accounting"]
+    assert "PRIVATE" not in json.dumps(instance.cycles)
+    assert len([event for event in state.events if isinstance(event, tuple) and event[0] == "publish"]) == 1
+
+
+@pytest.mark.parametrize("mode", ["quick", "full"])
+@pytest.mark.parametrize("failure_index", [None, -1])
+def test_run_enters_cold_consent_only_after_last_required_manual_retirement(monkeypatch, mode, failure_index):
+    state = cold_setup_controller(monkeypatch)
+    instance = state.controller
+    instance.workload = controller.required_workload(mode)
+    paths = instance.workload["paths"]
+    events = []
+    instance.transport = SimpleNamespace(publish=lambda *args: events.append("key_publish"), wait=lambda *args, **kwargs: {})
+    instance.rendezvous = SimpleNamespace(public_manifest=lambda: {}, bind_partner=lambda _: events.append("key_bind"))
+    monkeypatch.setattr(instance, "initialize", lambda: None)
+    def path_case(scenario, initiator):
+        if failure_index is not None and (scenario, initiator) == paths[failure_index]: raise state.failure
+        events.append((scenario, initiator, "owner_ack_and_global_zero"))
+    monkeypatch.setattr(instance, "path_case", path_case)
+    with pytest.raises((RuntimeError, controller.PeerFailure)) as failure: instance.run()
+    if failure_index is not None:
+        assert failure.value is state.failure and not state.events
+    else:
+        assert failure.value is state.stop
+        assert events == ["key_publish", "key_bind", *[(scenario, initiator, "owner_ack_and_global_zero") for scenario, initiator in paths]]
+        assert state.events[0][0] == "call.settings_update"
+
+
+@pytest.fixture
+def signed_cold_services(tmp_path, monkeypatch):
+    """Actual encrypted stores and signatures; no network, carrier or native host."""
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1]))
+    from test_reconnect_service import _pair
+    from mesh_chat.service import MeshChatService
+    monkeypatch.setattr(MeshChatService, "_start_network", lambda *_: None)
+    first, first_contact, second, second_contact = _pair(tmp_path)
+    services, contacts, documents = [first, second], [first_contact, second_contact], []
+    try:
+        for service, contact in zip(services, contacts):
+            result = service._execute("reconnect_consent_set", {"contact_id": contact,
+                "auto_reconnect": False, "allow_direct_ip_disclosure": True})
+            assert result["native_shared"] is False and not service._native_webrtc_live
+            documents.append(result["capabilities"])
+        for index, service in enumerate(services):
+            service._execute("reconnect_capabilities_store", {"document": documents[1 - index],
+                "expected_contact_id": contacts[index],
+                "expected_peer_destination": service.store.get("contact", contacts[index])["destination_hash"]})
+            profile = service.reconnect_profiles()["profiles"][0]
+            assert profile["auto_reconnect"] is False and profile["peer_auto_reconnect"] is False
+        yield SimpleNamespace(services=services, contacts=contacts, old_documents=documents, root=tmp_path)
+    finally:
+        for service in services: service.close()
+
+
+def signed_cold_controller(state, index, transport):
+    service, contact_id = state.services[index], state.contacts[index]
+    contact = service.store.get("contact", contact_id)
+    class Peer:
+        def core(self, operation, params, key=None):
+            if operation == "call.settings_update":
+                state.events.append((index, "settings"))
+                return service.update_call_settings(params["settings"])
+            assert operation == "native.command"
+            command = params["command"]
+            state.events.append((index, command))
+            result = service._execute(command, params["payload"])
+            if command == "reconnect_consent_set":
+                assert result["native_shared"] is False
+                assert result["profile"]["peer_auto_reconnect"] is False
+            return result
+        def inventory(self): return {"service_incarnation": "old"}
+        def stop(self, **kwargs):
+            assert kwargs == {"crash": True}
+            profile = service.reconnect_profiles()["profiles"][0]
+            assert profile["auto_reconnect"] is True and profile["peer_auto_reconnect"] is True
+            state.events.append((index, "first_crash"))
+            raise state.stop
+    role = ("windows", "android")[index]
+    instance = controller.Controller(role, Peer(), transport, state.rendezvous[index], state.context)
+    instance.profile, instance.contact = "PRIVATE_CORE_PROFILE", contact
+    instance.default_call_settings = service._call_settings.to_dict()
+    return instance
+
+
+def test_actual_signed_cold_exchange_persists_both_consents_before_each_own_crash(signed_cold_services, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    from uuid import uuid4
+    from test_reconnect_reopen import _reopen
+    from native_interop_rendezvous import Rendezvous, canonical
+    state = signed_cold_services
+    state.context = {"repository": "example/mesh", "repository_id": 123, "run_id": 456,
+        "run_attempt": 1, "source_commit": "a" * 40}
+    state.rendezvous = [Rendezvous(state.context, role) for role in ("windows", "android")]
+    for index in range(2): state.rendezvous[index].bind_partner(state.rendezvous[1 - index].public_manifest())
+    state.events, state.stop = [], RuntimeError("first_crash_barrier")
+    sealed, barrier = {}, Barrier(2)
+    class Transport:
+        def __init__(self, index): self.index = index
+        def publish(self, phase, value):
+            assert phase == "reconnect_capabilities" and self.index not in sealed
+            assert set(value) == {"v", "context", "phase", "sender", "recipient", "producer_job", "created_at", "expires_at", "nonce", "ciphertext"}
+            assert b'"capabilities"' not in canonical(value)
+            sealed[self.index] = copy.deepcopy(value)
+            state.events.append((self.index, "publish"))
+            barrier.wait(timeout=5)
+        def wait(self, role, phase, timeout):
+            assert self.index in sealed and 1 - self.index in sealed and timeout == 180
+            assert phase == "reconnect_capabilities" and role == ("android" if self.index == 0 else "windows")
+            state.events.append((self.index, "receive"))
+            return sealed[1 - self.index]
+    try:
+        instances = [signed_cold_controller(state, index, Transport(index)) for index in range(2)]
+        def run(instance):
+            with pytest.raises(RuntimeError) as failure: instance.cold_starts()
+            assert failure.value is state.stop
+        with ThreadPoolExecutor(max_workers=2) as executor: list(executor.map(run, instances))
+        for index in range(2):
+            assert [event for peer, event in state.events if peer == index] == ["settings", "reconnect_consent_set",
+                "publish", "receive", "reconnect_capabilities_store", "first_crash"]
+            assert instances[index].cycles == []
+            assert "capabilities" not in vars(instances[index])
+        before = [service.reconnect_profiles()["profiles"][0] for service in state.services]
+        for service in state.services: service.close()
+        state.services[:] = [_reopen(state.root / name, monkeypatch) for name in ("alex", "blair")]
+        for index, service in enumerate(state.services):
+            profile = service.reconnect_profiles()["profiles"][0]
+            for field in ("id", "contact_id", "local_device_id", "remote_device_id"):
+                assert profile[field] == before[index][field]
+            assert profile["auto_reconnect"] is True and profile["peer_auto_reconnect"] is True
+            assert profile["effective"]["ready"] is True
+            request = service.reconnect_request_create(state.contacts[index], uuid4().hex)
+            assert state.services[1 - index].verify_reconnect_request(request["document"])
+    finally:
+        for rendezvous in state.rendezvous: rendezvous.close()
+
+
+@pytest.mark.parametrize("fault", ["wrong_peer", "wrong_recipient", "signature", "stale_false", "changed_device"])
+def test_actual_signed_cold_import_rejects_foreign_forged_stale_or_rebound_peer(signed_cold_services, fault):
+    import RNS
+    from mesh_chat.errors import IdentityMismatch, ValidationError
+    from mesh_chat.reconnect import create_connection_capabilities, verify_connection_capabilities
+    from native_interop_rendezvous import Rendezvous
+    state = signed_cold_services
+    state.context = {"repository": "example/mesh", "repository_id": 123, "run_id": 456,
+        "run_attempt": 1, "source_commit": "a" * 40}
+    state.events, state.stop = [], RuntimeError("must_not_reach_crash")
+    state.rendezvous = [Rendezvous(state.context, role) for role in ("windows", "android")]
+    for index in range(2): state.rendezvous[index].bind_partner(state.rendezvous[1 - index].public_manifest())
+    remote = state.services[1]
+    document = remote._execute("reconnect_consent_set", {"contact_id": state.contacts[1],
+        "auto_reconnect": True, "allow_direct_ip_disclosure": True})["capabilities"]
+    if fault == "stale_false": document = state.old_documents[1]
+    elif fault == "signature":
+        value = json.loads(document)
+        value["auto_reconnect"] = False
+        document = json.dumps(value)
+    else:
+        valid = verify_connection_capabilities(document)
+        document = create_connection_capabilities(RNS.Identity() if fault == "wrong_peer" else remote._call_identity(),
+            peer_destination="0" * 32 if fault == "wrong_recipient" else valid.peer_destination,
+            device_id="dev-other-device" if fault == "changed_device" else valid.device_id,
+            transports=["webrtc"], auto_reconnect=True, allow_direct_ip_disclosure=True,
+            mailbox_url=valid.mailbox_url, mailbox_pair_token=valid.mailbox_pair_token,
+            mailbox_secret=valid.mailbox_secret, mailbox_expires_at=0,
+            persistent=True, encrypted=True, now=valid.issued_at + 1)
+    sealed = state.rendezvous[1].seal("reconnect_capabilities", {"capabilities": document})
+    class Transport:
+        def publish(self, phase, value): state.events.append((0, "publish"))
+        def wait(self, role, phase, timeout):
+            assert state.events[-1] == (0, "publish")
+            state.events.append((0, "receive"))
+            return sealed
+    try:
+        instance = signed_cold_controller(state, 0, Transport())
+        with pytest.raises((ValueError, IdentityMismatch, ValidationError)): instance.cold_starts()
+        assert (0, "first_crash") not in state.events and instance.cycles == []
+        assert [event for _, event in state.events].count("reconnect_capabilities_store") == 1
+        assert (1, "first_crash") not in state.events
+    finally:
+        for rendezvous in state.rendezvous: rendezvous.close()
+
+
 def terminal_inventory(*, resources=False, active=0, retiring=0):
     return {"resources": [{"logical_session": "PRIVATE_LOGICAL", "physical_resource": "PRIVATE_PHYSICAL"}] if resources else [],
         "host_accounting": {"v": 1, "complete": True, "semantics": "native_allocation_leases",
@@ -1467,11 +1824,14 @@ def test_transport_filtering_uses_one_broker_url_and_never_counts_configuration_
     with pytest.raises(ValueError): controller.selected_ice({"iceServers": []}, "turn_tls")
 
 
-def test_fixed_plan_and_phase_inventory_fit_ten_artifacts_per_job_including_final_report():
+def test_fixed_plan_and_phase_inventory_keep_explicit_bounded_setup_uploads():
     assert checked_payload("control", {"scenarios": list(evidence.SCENARIOS), "iterations": 100, "cold_start_every": 10})
-    windows = {"key", *OFFER_PHASES, *("negative_checked_" + name for name in ("turn_tcp", "turn_tls", "impaired"))}
-    android = {"key", "offer", "approved", "impaired_ready", *("negative_ready_" + name for name in ("turn_tcp", "turn_tls", "impaired"))}
-    assert len(windows) + 1 == 10 and len(android) + 1 <= 10
+    windows = {"key", "reconnect_capabilities", *OFFER_PHASES, *("negative_checked_" + name for name in ("turn_tcp", "turn_tls", "impaired"))}
+    android = {"key", "reconnect_capabilities", "offer", "approved", "impaired_ready", *("negative_ready_" + name for name in ("turn_tcp", "turn_tls", "impaired"))}
+    assert len(windows) == 10 and len(android) == 8
+    assert len(windows) + 1 == 11 and len(android) + 1 == 9
+    assert len({"key", "offer", "offer_turn_udp", "reconnect_capabilities"}) + 1 == 5
+    assert len({"key", "offer", "approved", "reconnect_capabilities"}) + 1 == 5
     assert all(name in APPROVAL_PHASES for name in windows | android if name.startswith("negative"))
 
 
