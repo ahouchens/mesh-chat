@@ -63,12 +63,39 @@ receipt is demonstrated. The earlier `supervisor_pairing_retired` cause remains
 unproven; the new exact-actor diagnostics were not reached in this run.
 
 D is assigned bounded, fixed-literal startup failure-site attribution with exact
-exception identity and privacy controls. A separately reviews the Windows channel
-bootstrap failure. Startup commands, retries, checks, deadlines, cleanup and
+exception identity and privacy controls. A extends the existing test diagnostic response with bounded workspace
+bootstrap metadata. Startup commands, retries, checks, deadlines, cleanup and
 successful report shapes must remain unchanged unless a separate reproduced
 defect justifies a reviewed repair. No additional live probe or heavy local build
 is introduced. Native pending-action recovery remains unavailable; document-bound
 authority and positive resource-owner retirement remain separate prerequisites.
+
+The follow-on startup patch `5b28833` adds a separate
+`preflight_failure_site` with eleven fixed literals, tied only to the exact
+exception escaping a checked Android startup/environment command. It preserves
+the previous phase, exception type, error code and pairing diagnostic fields.
+Successful reports omit the new field. Command order/count/options, fatal guards,
+the 600-second boot deadline, polling interval and cleanup are unchanged. The
+lead reviewed the complete patch and reran **211 focused cases**, all passing
+with zero skips, including the actual scripted startup and report paths, stale
+and foreign exceptions, cleanup substitution and private-data exclusion.
+
+The separate test-only patch `b237e47` extends the existing
+`recovery_diagnostic` response with bounded workspace bootstrap metadata. It
+reads at most nine workspace rows and 65 rows from each of five other tables,
+then projects at most eight workspaces and 64 rows per kind with explicit
+truncation. Attempts cap at 32; states/reasons are fixed literals and times become
+due/future/terminal classifications. Identifiers, documents, keys, certificate
+material, message text and raw errors are omitted. Incomplete/malformed reads
+remain unknown. The unchanged failure path makes no additional RPC, sends or
+reconciliation call; its 25-second bound and original assertions remain intact.
+The lead reviewed both changed test files and reran **30 offline cases**, all
+passing with zero skips. These include privacy, limits, cross-workspace presence,
+malformed inputs and bounded read-only collection.
+
+Neither patch identifies or repairs the underlying CI failure. Complete
+exact-source local and full CI qualification of the combined candidate is next;
+the passing focused controls are not native or cross-platform acceptance.
 
 The previous shared checkpoint is `33d30884ef900e6649c7fcec80e2eb7ce9fef83b`
 (tree `f6168f0d8600cefc2078ff85113f9aecf543b04a`). Full manual qualification
