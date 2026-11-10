@@ -19,6 +19,14 @@ that pending message after restart.
 Successful Android credential UI, independent cross-platform receipts, native
 helper cleanup, media coexistence and the supported release matrix remain open.
 
+The later `c0b3cf7` full run `42810308484` again passes installed Windows
+bootstrap, public pairing, two receipts and the same-application lifetime slice
+described above. Native Windows fails receiving the approval acknowledgment;
+Android reaches a direct-receipt scenario deadline. Full cross-platform native
+acceptance remains unfulfilled; these separate failures do not identify a common
+cause or explain the earlier installed invitation failure. The next diagnostic
+change preserves transport failure while selecting only safe origin metadata.
+
 ## Gaps observed when this proposal was written
 
 The following observations motivated the implementation; they are historical,

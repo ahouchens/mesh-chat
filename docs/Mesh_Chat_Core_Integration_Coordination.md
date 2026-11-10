@@ -11,6 +11,49 @@ reports. Exact evidence and limits are in the ledger. Wave 2 is activated below.
 Existing human authorization covers continued implementation, integration and
 worker follow-ups without another permission request.
 
+The latest completed checkpoint is `c0b3cf7558972b8560bac52e5154674d25603c86`
+(tree `4304e0adbee1da7e694fc58b90bf05e933fce518`), full run
+[42810308484](https://github.com/ahouchens/mesh-chat/actions/runs/42810308484).
+The required gate **failed native Windows–Android interoperability**. Windows
+reports `RendezvousUnavailable` during explicit contact approval, at
+`rendezvous_receive` / `approval_acknowledgment`. Android reports `PeerFailure`
+with `scenario_deadline` during `direct_authenticated_receipts`. These reports
+do not establish a common cause. Transport code collapses HTTP, redirect, read,
+response/inventory validation and polling failures into the Windows error type;
+the exact branch and HTTP status are absent from both retained report and bounded
+log inspection. Partner artifact metadata does not prove what Windows received.
+
+Source reachability shows Windows accepted its initial local ready/path
+observation before waiting for acknowledgment. That observation did not enforce
+the later scenario-specific candidate type or positive traffic deltas. The failed
+report retains no sample to replay independently. Neither this progress nor
+Android's later phase qualifies correlated receipts, the full native scenario
+matrix, impairment, repeated cycles or final resource accounting.
+
+Independently verified passes: **4,651 policy cases**, **1,130 Python UI + 12
+rendered cases**, **nine Windows boundary cases**, **52 Android emulator cases**,
+**71 JVM cases**, and Linux/Windows **25 transport + 10 recovery + 12 setup cases**
+each, all with zero skips. All 17 Android binary/distribution hashes validate.
+The 72 layout cases report no overflow; screenshots were not visually reviewed.
+Exact-source local SDK staging, strict types and policy/UI/Windows gates pass.
+Both worker-deselected installation cases executed in the full policy gate.
+
+Installed Windows bootstrap, public pairing and two authenticated receipts pass.
+The lifetime slice covers two sessions in the same Node application/caller,
+detach-survivor/reattach, competing-owner refusal with exit status 2, and original
+pending-message/key identity across trusted owner stop/reopen. Three owned hosts
+exit positively and the runtime lock is reacquired. This does not prove separate
+consumer-process exit, cross-caller/user/app isolation, isolated-helper retirement,
+pending-message delivery after restart, Android credential UI or media coexistence.
+The earlier `1b3a2be` invitation failure remains unexplained by this later pass.
+
+A narrow follow-up will retain fixed rendezvous stage/reason and an observed,
+validated HTTP status only for the same escaping transport error. It adds no
+request, retry, timeout, fallback or acceptance change and exports no raw error,
+URL, header, body or handshake material. SC26 remains partial. Helper-retirement
+production remains deferred; its private-interface review separately requires
+retirement-only registration to remain legal after fencing productive startup.
+
 The Windows pairing diagnostic follow-up integrates `1f73cdf` at `93a1448`.
 It preserves the original thrown value and its phase, subphase, safe error code,
 deadline flag and first timing before failure probes and final cleanup. Owned
@@ -37,10 +80,11 @@ probe/cleanup failures, queue serialization, distinct owner incarnations and the
 unchanged 4096-byte report bound. Independent immutable review found no actionable
 issues. This is offline component evidence, not installed Windows acceptance or
 a proven repair for the original invitation failure. Exact-source SDK staging,
-types, full policy/UI/Windows gates and full CI remain required. Success checks,
+types, local gates and installed Windows CI passed at `c0b3cf7`; full CI failed
+native interoperability as recorded above. Success checks,
 work/stop/outer deadlines, consent and positive shutdown requirements are unchanged.
 
-The latest completed checkpoint is `1b3a2be94816958d3fe26052e9fbaf5d2f42245c`
+The earlier completed checkpoint is `1b3a2be94816958d3fe26052e9fbaf5d2f42245c`
 (tree `e1ac699f1b0bd32c07037f5eb9d5dcf5b29b1267`), full run
 [42802755780](https://github.com/ahouchens/mesh-chat/actions/runs/42802755780).
 The required gate **failed Windows installed public-SDK pairing**; native

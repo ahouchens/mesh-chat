@@ -68,3 +68,15 @@ direct suites. Installed Windows public pairing fails; final cleanup masks the
 original work failure. Native interop is skipped, so no current pairing,
 shared-host lifetime or Windows–Android acceptance is inferred from this run.
 The earlier Windows lifetime pass remains bound to `902b12d`.
+
+The later `c0b3cf7` full run `42810308484` passes 4,651 policy cases,
+1,130 Python UI plus 12 rendered cases, nine Windows boundary cases, installed
+Windows bootstrap/public pairing/two receipts and same-app lifetime checks,
+52 Android emulator and 71 JVM cases, and all controlled direct suites. Native
+Windows fails at `rendezvous_receive` / `approval_acknowledgment` with
+`RendezvousUnavailable`; Android fails during `direct_authenticated_receipts`
+with `PeerFailure` / `scenario_deadline`. Windows reached initial local readiness
+validation, but that is not retained scenario-specific sample/receipt acceptance.
+The exact transport branch is unrecorded. Full native qualification and isolated
+helper retirement remain unfulfilled; no timeout/retry/authority relaxation is
+authorized by these passing component/platform checks.
