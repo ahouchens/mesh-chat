@@ -14,6 +14,7 @@ from pathlib import Path
 from uuid import UUID
 
 from ..errors import ContactNotApproved, ValidationError
+from ..connection.diagnostics import validated_pairing_retirement
 
 PAIRING_COMMANDS = frozenset({"qualification.pairing_begin", "qualification.pairing_status", "qualification.pairing_cancel"})
 COMMANDS = frozenset({"qualification.inventory", "qualification.path_evidence"}) | PAIRING_COMMANDS
@@ -167,11 +168,16 @@ class QualificationControl:
                 pairing_code=payload.get("pairing_code"),
                 allow_direct_ip_disclosure=payload.get("allow_direct_ip_disclosure", False))
         elif command == "qualification.pairing_status":
-            result = service.native_pairing_status(operation_id)
+            result = service.native_pairing_qualification_status(operation_id)
         else:
             result = service.native_pairing_cancel(operation_id)
-        return {"operation_id": payload["operation_id"], **{key: result[key] for key in
-                ("state", "expires_at", "pairing_code") if key in result}}
+        projected = {"operation_id": payload["operation_id"], **{key: result[key] for key in
+                     ("state", "expires_at", "pairing_code") if key in result}}
+        if command == "qualification.pairing_status" and result.get("state") in {"retiring", "retired"}:
+            retirement = validated_pairing_retirement(result.get("retirement"))
+            if retirement is not None:
+                projected["retirement"] = retirement
+        return projected
 
 
 def _android_own_uid():

@@ -1,19 +1,35 @@
 """Serialized actor ownership and fair, bounded admission; no external I/O."""
 
 from collections import OrderedDict
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from threading import RLock
 
-from .diagnostics import Diagnostics
+from .diagnostics import Diagnostics, validated_pairing_retirement
 from .model import (
     Adopted, Cancel, ConnectionKey, ConnectionState, ContextChanged, Desired, Event,
-    Failed, Failure, HandoffLease, Operation, Policy, Resource, Result, Retire, Work,
+    Failed, Failure, HandoffLease, Operation, Phase, Policy, Resource, Result, Retire, Tick, Work,
 )
 from .reducer import transition
 
 
 class CapacityExceeded(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class _PairingRetirement:
+    operation: Operation
+    source: Resource
+    phase: Phase
+    event: str
+    reason: str
+
+
+@dataclass
+class _PairingTrace:
+    source: Work | None = None
+    last_work: Work | None = None
+    retirement: _PairingRetirement | None = None
 
 
 class ConnectionSupervisor:
@@ -30,6 +46,9 @@ class ConnectionSupervisor:
         self._handoffs: dict[Operation, HandoffLease] = {}
         self._surrendered = {}
         self._handoff_committed = set()
+        # One trace per already registered pairing actor, never per poll/result.
+        # Bindings stay private; the shared payload-free Record ring is unchanged.
+        self._pairing_traces: dict[ConnectionKey, _PairingTrace] = {}
         self.diagnostics = Diagnostics(policy.max_diagnostics)
 
     def register(self, state: ConnectionState):
@@ -39,6 +58,8 @@ class ConnectionSupervisor:
             if len(self._states) >= self.policy.max_actors:
                 raise CapacityExceeded("Connection actor capacity reached")
             self._states[state.key] = replace(state, policy=self.policy)
+            if state.key.scope == "pairing":
+                self._pairing_traces[state.key] = _PairingTrace()
 
     def snapshot(self, key: ConnectionKey):
         with self._lock:
@@ -80,6 +101,7 @@ class ConnectionSupervisor:
             result = transition(state, event)
             result = replace(result, state=replace(result.state, sequence=max(
                 state.sequence + 1, result.state.sequence)))
+            self._trace_pairing_retirement(state, event, result)
             self._states[key] = result.state
             if (isinstance(event, Result) and event.handoff and event.allocated
                     and state.negotiation and state.negotiation.operation == event.operation
@@ -114,6 +136,66 @@ class ConnectionSupervisor:
                 raise CapacityExceeded("Connection cleanup must complete")
             return result.state
 
+    def _trace_pairing_retirement(self, state, event, result):
+        trace = self._pairing_traces.get(state.key)
+        if trace is None:
+            return
+        for effect in result.effects:
+            if isinstance(effect, Work):
+                if trace.source is None and effect.phase is Phase.DISCOVER:
+                    trace.source = effect
+                if (trace.source is not None and effect.resource == trace.source.resource
+                        and effect.operation.key == trace.source.operation.key
+                        and effect.operation.runtime_epoch == trace.source.operation.runtime_epoch
+                        and effect.operation.generation == trace.source.operation.generation):
+                    trace.last_work = effect
+        step, anchor = state.negotiation, trace.source
+        if (trace.retirement is not None or step is None or anchor is None
+                or step.resource != anchor.resource
+                or not any(isinstance(effect, Retire) and effect.resource == step.resource
+                           for effect in result.effects)):
+            return
+        if isinstance(event, (Result, Failed, Adopted)):
+            if step.operation is None or event.operation != step.operation:
+                return  # Cleanup of a stale result is not this actor's cause.
+            operation = step.operation
+        elif isinstance(event, (Tick, ContextChanged)):
+            operation = step.operation
+            if operation is None:
+                last = trace.last_work
+                if last is None or (last.phase, last.resource) != (step.phase, step.resource):
+                    return
+                operation = last.operation
+        else:
+            return
+        if (operation.key != state.key or operation.runtime_epoch != self.runtime_epoch
+                or operation.generation != state.generation
+                or operation.generation != anchor.operation.generation
+                or operation.policy_revision != state.authority.revision):
+            return
+        event_name = {Tick: "tick", Failed: "failed", Result: "result", Adopted: "adopted",
+                      ContextChanged: "context_changed"}.get(type(event), "unknown")
+        trace.retirement = _PairingRetirement(operation, anchor.resource, step.phase,
+                                             event_name, result.reason)
+
+    def pairing_retirement_diagnostic(self, *, key, runtime_epoch, source):
+        """Read only the cause bound to this native intent's original source."""
+        unknown = {"phase": "unknown", "event": "unknown", "reason": "unknown"}
+        with self._lock:
+            trace = self._pairing_traces.get(key)
+            if trace is None or trace.source is None or trace.retirement is None:
+                return unknown
+            anchor, cause = trace.source, trace.retirement
+            if (runtime_epoch != self.runtime_epoch or source != anchor.resource
+                    or cause.source != source or anchor.operation.key != key
+                    or cause.operation.key != key
+                    or anchor.operation.runtime_epoch != runtime_epoch
+                    or cause.operation.runtime_epoch != runtime_epoch
+                    or cause.operation.generation != anchor.operation.generation):
+                return unknown
+            return validated_pairing_retirement({"phase": cause.phase.value, "event": cause.event,
+                                                 "reason": cause.reason}) or unknown
+
     def commit_handoff(self, operation: Operation, resource: Resource, target: ConnectionKey, now: float):
         """Atomically bind pending custody to one receiver, before publication."""
         with self._lock:
@@ -141,6 +223,15 @@ class ConnectionSupervisor:
         with self._lock:
             lease = self._handoffs.pop(operation, None)
             if lease is not None:
+                trace = self._pairing_traces.get(operation.key)
+                if (trace is not None and trace.source is not None and trace.last_work is not None
+                        and trace.retirement is None and trace.last_work.operation == operation
+                        and trace.last_work.phase is Phase.CHECKING
+                        and trace.source.resource == lease.source
+                        and trace.source.operation.runtime_epoch == operation.runtime_epoch
+                        and trace.source.operation.generation == operation.generation):
+                    trace.retirement = _PairingRetirement(operation, lease.source, Phase.CHECKING,
+                                                         "handoff_rejected", "handoff_rejected")
                 self._control[Retire(lease.resource)] = None
                 self._retiring.add(lease.resource)
 
