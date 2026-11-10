@@ -20,7 +20,57 @@ and scenario rows below to complete; their named remaining obligations still
 apply, including packaged cross-platform transport and unavailable physical
 qualification.
 
-The current shared checkpoint is `33d30884ef900e6649c7fcec80e2eb7ce9fef83b`
+The current shared checkpoint is `e7630c8b6ed1feda6b3ef049336be309179b6075`
+(tree `07beb0ed2d1859b66fe14b19f6ee7fbb4ec2663b`). Full manual qualification
+[42752889278](https://github.com/ahouchens/mesh-chat/actions/runs/42752889278)
+completed **failed**. Selection independently confirms all six families and the
+native `full` workload; duplicate PR run `42752866780` was canceled. There is no
+aggregate pass or release/default promotion.
+
+All exact-source local gates pass: SDK staging, strict model/reducer types,
+**3,859 policy cases**, **737 Python plus 12 rendered UI cases**, and **nine
+Windows boundary cases**, with zero skips. The policy run takes 399.07s and
+includes all six installed-runtime SDK cases, 33 independent admission cases,
+133 controller cases and 32 new retirement diagnostic cases, separately checked
+against the retained XML and inventory.
+
+The lead independently reconstructs the corresponding CI policy/UI inventories,
+complete Windows packaged report set, Android's **52 emulator and 62 JVM cases**
+with **17 artifact bindings**, and Linux direct's **25/10/12 cases**. These pass.
+The frozen Windows executable is 54,596,632 bytes with SHA-256
+`dc4373f98ac9b8c2e634af655f4bde630340b7b7fc147e95d8a49875dd2aa265`.
+The WebView2 probe and direct binaries retain runner-reported hashes; the layout
+job passes with 72 no-overflow report cases and all archive entries hashed, but
+its PNGs were not retained or visually reviewed locally.
+
+Windows direct fabric and recovery pass **25 and 10 cases** respectively. Its
+setup inventory contains **12 executed cases, 11 passes, one failure and zero
+skips**; no passing setup JSON exists. The `unhosted_joiner-native-suspend` case
+fails at `test_direct_setup_pipeline.py:258`, awaiting the general channel after
+membership becomes active. This happens **before** the suspension branch runs.
+Both retained peer diagnostics show authenticated, connected recovery paths;
+the channel-bootstrap receive/pending-control boundary is under read-only review.
+Neither a suspension defect nor a timing-only explanation is established.
+
+Native Android fails **before controller construction or pairing**, with
+`phase: platform_outbound_preflight` and `failure_type: CalledProcessError`.
+The retained report does not identify the checked command. Eleven offline
+scripted-subprocess controls reproduce that attribution gap; they do not identify
+the CI cause. Native Windows then fails in `initialize` with
+`RendezvousUnavailable` while awaiting its partner's bootstrap artifact. No new
+pairing-retirement cause, successful cross-platform pairing, selected path or
+receipt is demonstrated. The earlier `supervisor_pairing_retired` cause remains
+unproven; the new exact-actor diagnostics were not reached in this run.
+
+D is assigned bounded, fixed-literal startup failure-site attribution with exact
+exception identity and privacy controls. A separately reviews the Windows channel
+bootstrap failure. Startup commands, retries, checks, deadlines, cleanup and
+successful report shapes must remain unchanged unless a separate reproduced
+defect justifies a reviewed repair. No additional live probe or heavy local build
+is introduced. Native pending-action recovery remains unavailable; document-bound
+authority and positive resource-owner retirement remain separate prerequisites.
+
+The previous shared checkpoint is `33d30884ef900e6649c7fcec80e2eb7ce9fef83b`
 (tree `f6168f0d8600cefc2078ff85113f9aecf543b04a`). Full manual qualification
 [42745577407](https://github.com/ahouchens/mesh-chat/actions/runs/42745577407)
 completed **failed** at 03:17:11 UTC on November 10. All six families and the
