@@ -176,6 +176,168 @@ def test_empty_inventory_still_returns_no_sample(path_observer):
     assert state.events == ["inventory"] and state.controller.samples.previous == {}
 
 
+MISSING_PAIRING_STATE = object()
+
+
+@pytest.fixture
+def negotiating_peer(monkeypatch):
+    """Actual negotiate/wait/status scopes; inert peer and rendezvous boundaries."""
+    state = SimpleNamespace(now=10.0, events=[], sleeps=[], on_sleep=None, status_value="awaiting_approval",
+        foreign=False, stats_error=None, stats_value={"data_channel_state": "open"},
+        resources=[{"logical_session": "logical-session", "physical_resource": "physical"}])
+    def sleep(seconds):
+        state.sleeps.append(seconds)
+        state.now += seconds
+        if state.on_sleep is not None: state.on_sleep()
+    monkeypatch.setattr(controller, "time", SimpleNamespace(monotonic=lambda: state.now, sleep=sleep))
+    def make(role):
+        offer_status_read = False
+        def begin(operation, pairing_role, **kwargs):
+            state.operation = operation
+            state.events.append("begin_" + pairing_role)
+            assert kwargs["direct"] is True
+            return {"operation_id": operation}
+        def status(operation):
+            nonlocal offer_status_read
+            assert operation == state.operation
+            if role == "windows" and not offer_status_read:
+                offer_status_read = True
+                state.events.append("offer_status")
+                return {"operation_id": operation, "state": "offer_ready", "pairing_code": "offline-code"}
+            state.events.append("status")
+            reply = {"operation_id": "foreign-operation" if state.foreign else operation,
+                "retirement": retirement_example()}
+            if state.status_value is not MISSING_PAIRING_STATE: reply["state"] = copy.deepcopy(state.status_value)
+            return reply
+        def inventory():
+            state.events.append("inventory")
+            return {"resources": copy.deepcopy(state.resources)}
+        def core(operation, params, key=None):
+            assert key is None
+            if operation == "call.settings_update":
+                state.events.append("settings")
+                return {}
+            assert operation == "native.command" and params == {
+                "command": "native_webrtc_stats", "payload": {"session_id": "logical-session"}}
+            state.events.append("stats")
+            if state.stats_error is not None: raise state.stats_error
+            return state.stats_value
+        def receive(partner, phase, *, timeout):
+            assert (partner, phase, timeout) == ("windows", "offer", 180)
+            state.events.append("receive")
+            return {"shareable": "offline-code"}
+        def publish(phase, value):
+            assert (phase, value) == ("offer", {"shareable": "offline-code"})
+            state.events.append("publish")
+        peer = SimpleNamespace(pairing_begin=begin, pairing_status=status, inventory=inventory, core=core)
+        instance = controller.Controller(role, peer, SimpleNamespace(wait=receive, publish=publish),
+            SimpleNamespace(open=lambda phase, value: value, seal=lambda phase, value: value), {})
+        instance.profile = "offline-profile"
+        instance.default_call_settings = {}
+        instance.broker_ice = {"iceServers": [{"urls": ["stun:offline.invalid"]}]}
+        state.controller = instance
+        state.prefix = (["settings", "begin_offer", "offer_status", "publish"] if role == "windows"
+                        else ["settings", "receive", "begin_answer"])
+        return state
+    return make
+
+
+@pytest.mark.parametrize("role", ["windows", "android"])
+def test_negotiate_defers_reserved_before_inventory_and_stats_then_observes_same_resource(negotiating_peer, role):
+    state = negotiating_peer(role)
+    state.status_value = "reserved"
+    def ready(): state.status_value = "awaiting_approval"
+    state.on_sleep = ready
+    assert state.controller.negotiate("direct", "windows") == ("logical-session", None)
+    assert state.events == [*state.prefix, "status", "status", "inventory", "stats"]
+    assert state.resources == [{"logical_session": "logical-session", "physical_resource": "physical"}]
+    assert state.sleeps == [0.25]
+
+
+@pytest.mark.parametrize("role", ["windows", "android"])
+@pytest.mark.parametrize("value", [MISSING_PAIRING_STATE, None, False, True, 0, 1, "unknown", "RESERVED",
+    PendingState("reserved"), "offer_ready", "awaiting_approval", "transferred"])
+def test_negotiate_nonreserved_or_missing_state_keeps_original_sampling(negotiating_peer, role, value):
+    state = negotiating_peer(role)
+    state.status_value = value
+    assert state.controller.negotiate("direct", "windows") == ("logical-session", None)
+    assert state.events == [*state.prefix, "status", "inventory", "stats"] and state.sleeps == []
+
+
+@pytest.mark.parametrize("value", [[], {}])
+def test_negotiate_unhashable_status_keeps_original_status_failure(negotiating_peer, value):
+    state = negotiating_peer("android")
+    state.status_value = value
+    with pytest.raises(TypeError) as failure:
+        state.controller.negotiate("direct", "windows")
+    assert state.controller.failure_site(failure.value) == "pairing_status"
+    assert state.events == [*state.prefix, "status"] and state.sleeps == []
+
+
+@pytest.mark.parametrize("role", ["windows", "android"])
+@pytest.mark.parametrize("terminal", ["retired", "retiring", "foreign"])
+def test_negotiate_reserved_gate_preserves_existing_terminal_and_identity_failures(negotiating_peer, role, terminal):
+    state = negotiating_peer(role)
+    state.status_value = "reserved" if terminal == "foreign" else terminal
+    state.foreign = terminal == "foreign"
+    with pytest.raises(controller.PeerFailure) as failure:
+        state.controller.negotiate("direct", "windows")
+    assert failure.value.code == ("invalid_pairing_identity" if terminal == "foreign" else "supervisor_pairing_retired")
+    assert state.controller.failure_site(failure.value) == "pairing_status"
+    expected = {} if terminal == "foreign" else {"pairing_state": terminal, "pairing_retirement": retirement_example()}
+    assert state.controller.failure_pairing(failure.value) == expected
+    assert state.events == [*state.prefix, "status"] and state.sleeps == []
+
+
+@pytest.mark.parametrize("role", ["windows", "android"])
+@pytest.mark.parametrize("remaining,polls", [(120, 480), (0.5, 2)])
+def test_negotiate_reserved_uses_existing_deadline_and_cadence(negotiating_peer, role, remaining, polls):
+    state = negotiating_peer(role)
+    state.status_value = "reserved"
+    if remaining < 120: state.controller.deadline = state.now + remaining
+    with pytest.raises(controller.PeerFailure) as failure:
+        state.controller.negotiate("direct", "windows")
+    assert failure.value.code == "scenario_deadline" and state.controller.failure_site(failure.value) is None
+    assert state.now == 10 + remaining and state.sleeps == [0.25] * polls
+    assert state.events == [*state.prefix, *(["status"] * polls)]
+
+
+@pytest.mark.parametrize("role", ["windows", "android"])
+@pytest.mark.parametrize("released", ["stats_error", "retired", "foreign"])
+def test_negotiate_after_reserved_preserves_original_error_and_site(negotiating_peer, role, released):
+    state = negotiating_peer(role)
+    state.status_value = "reserved"
+    error = controller.PeerFailure("invalid_request")
+    def finish():
+        state.status_value = "retired" if released == "retired" else "awaiting_approval"
+        state.foreign = released == "foreign"
+        if released == "stats_error": state.stats_error = error
+    state.on_sleep = finish
+    with pytest.raises(controller.PeerFailure) as failure:
+        state.controller.negotiate("direct", "windows")
+    tail = ["status", "status"]
+    if released == "stats_error":
+        assert failure.value is error and state.controller.failure_site(error) == "negotiate_native_stats"
+        assert state.controller.failure_pairing(error) == {}
+        tail += ["inventory", "stats"]
+    else:
+        assert failure.value.code == ("invalid_pairing_identity" if released == "foreign" else "supervisor_pairing_retired")
+        assert state.controller.failure_site(failure.value) == "pairing_status"
+    assert state.events == [*state.prefix, *tail] and state.sleeps == [0.25]
+
+
+@pytest.mark.parametrize("role", ["windows", "android"])
+def test_negotiate_created_status_still_requires_original_open_channel_stats(negotiating_peer, role):
+    state = negotiating_peer(role)
+    state.status_value = "offer_ready"
+    state.stats_value = {"data_channel_state": "connecting"}
+    def open_channel(): state.stats_value = {"data_channel_state": "open"}
+    state.on_sleep = open_channel
+    assert state.controller.negotiate("direct", "windows") == ("logical-session", None)
+    assert state.events == [*state.prefix, "status", "inventory", "stats", "status", "inventory", "stats"]
+    assert state.sleeps == [0.25]
+
+
 def run_android_preflight_report(tmp_path, monkeypatch, capsys, *, site=None, fault=None):
     """Actual main/start/environment; all subprocess and external services scripted."""
     import android_qualification

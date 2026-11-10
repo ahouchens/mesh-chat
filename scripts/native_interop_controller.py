@@ -197,7 +197,9 @@ class Controller:
                 admitted = self.peer.pairing_begin(self.pairing, "answer", pairing_code=code, direct=scenario == "direct")
                 if admitted.get("operation_id") != self.pairing: raise PeerFailure("invalid_pairing_identity")
         def open_session():
-            self.pairing_status()
+            status = self.pairing_status()
+            if type(status.get("state")) is str and status["state"] == "reserved":
+                return None
             with self._failure_scope("negotiate_inventory"):
                 resources = self.peer.inventory()["resources"]
                 if len(resources) != 1: return None
