@@ -37,8 +37,14 @@ selected paths, Android receipts or physical execution.
 D's repair accepts the exact signature protection value, whether rendered
 symbolically as `signature` or numerically as `0x2`. It does not mask extra flags.
 The actual decoded APK manifest and negative authority/process cases cover the
-failure; production manifests and runtime behavior are unchanged. Full installed
-Android and cross-platform qualification remain pending for this source.
+failure; production manifests and runtime behavior are unchanged. Android now
+independently passes **52 exact installed-device cases**, **62 JVM cases** with
+zero skips, and **17 distribution/binary hash bindings**. This includes both
+ordinary app-owned independent-consumer cases, Maven publication, application
+lifecycle and cold-process restart. Native Windows–Android interoperability is
+now running; it is a separate gate. Successful OS credential UI, cross-platform
+message receipts, media and physical execution are not established by these
+Android component results.
 
 Previous full combined qualification
 [42723779984](https://github.com/ahouchens/mesh-chat/actions/runs/42723779984)

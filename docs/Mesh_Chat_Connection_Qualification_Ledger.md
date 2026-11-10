@@ -30,8 +30,28 @@ selected paths, Android receipts or physical execution.
 D's repair accepts the exact signature protection value, whether rendered
 symbolically as `signature` or numerically as `0x2`. It does not mask extra flags.
 The actual decoded APK manifest and negative authority/process cases cover the
-failure; production manifests and runtime behavior are unchanged. Full installed
-Android and cross-platform qualification remain pending for this source.
+failure; production manifests and runtime behavior are unchanged. Android now
+independently passes **52 exact installed-device cases**, **62 JVM cases** with
+zero skips, and **17 distribution/binary hash bindings**. This includes both
+ordinary app-owned independent-consumer cases, Maven publication, application
+lifecycle and cold-process restart. Native Windows–Android interoperability is
+now running; it is a separate gate. Successful OS credential UI, cross-platform
+message receipts, media and physical execution are not established by these
+Android component results.
+
+At `733c38b`, Android qualification archive `13725011496` has SHA-256
+`b2d6986d76a80af40311cef5c2713249c8f9bb9d4cd679544f4d3df1032bbf44`;
+debug archive `13724901774` has
+`d89a7454577709399c6e6eddea571657bd4b3acec705b2690132849140b46735`.
+All 179 entries are independently indexed and hashed, including the 17 artifacts
+required by the report. The five device suites contain 21 WebRTC, 10 signaling,
+13 Core API, six separate Binder-consumer and two app-owned independent-consumer
+cases. The last suite's run ID is `09c6cd6337c541b4a2cff8a35eb91a71`.
+Source consumer files and Maven metadata are independently checked against the
+exact Git source and archive entries. Broad verification archive `13722974519`
+has SHA-256 `fcf37cd3cd4388b5645d2d1768e9f1c0b4795454f672070dce35272f57d0e2bf`;
+its 670 Python and 12 rendered cases independently pass. Broader automated
+completion remains a runner summary because full-suite XML is not retained.
 
 Previous full combined qualification
 [42723779984](https://github.com/ahouchens/mesh-chat/actions/runs/42723779984)
