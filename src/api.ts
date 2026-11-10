@@ -194,15 +194,6 @@ export async function coreApiProfile(): Promise<{
   return invokeCoreCommand("core_api_profile");
 }
 
-export async function coreApiSendMessage(
-  destination: string,
-  text: string,
-  idempotencyKey: string,
-  admit: CoreRequestAdmission = admitCoreRequest,
-): Promise<unknown> {
-  return admit(() => invokeCoreCommand("core_api_send_message", { destination, text, idempotencyKey }));
-}
-
 export async function coreApiRequest<T>(
   operation: string,
   params: Record<string, unknown> = {},
@@ -310,14 +301,6 @@ export async function coreApiAcceptInvitation(
     document,
     i2p_consent: i2pConsent,
   }));
-}
-
-export async function coreApiDraftSet(destination: string, text: string, admit: CoreRequestAdmission = admitCoreRequest): Promise<unknown> {
-  return admit(() => invokeCoreCommand("core_api_draft_set", { destination, text }));
-}
-
-export async function coreApiDraftGet(destination: string): Promise<unknown> {
-  return invokeCoreCommand("core_api_draft_get", { destination });
 }
 
 export async function coreApiCallSettings(): Promise<Record<string, unknown>> {

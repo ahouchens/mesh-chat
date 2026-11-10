@@ -22,8 +22,6 @@ const api = vi.hoisted(() => {
     serviceCommand(kind === "personal" ? "preview_invitation" : kind === "workspace" ? "preview_workspace_invitation" : "preview_workspace_device_link",
       kind === "device_link" ? { device_link: document } : { invitation: document })),
   coreApiAcceptInvitation: vi.fn(async (invitation: string, i2pConsent = false): Promise<unknown> => serviceCommand("accept_invitation", { invitation, ...(i2pConsent ? { i2p_consent: true } : {}) })),
-  coreApiDraftGet: vi.fn(),
-  coreApiDraftSet: vi.fn(),
   coreApiCreateGroup: vi.fn(async (name: string, policy: string, destinations: string[]): Promise<{ group: string; name: string; posting_policy: string }> => {
     const memberIds = destinations.map((destination) => destination === approved.destination_hash ? approved.id : destination);
     const created = await serviceCommand("create_group", { title: name, member_ids: memberIds, posting_policy: policy }) as { id?: string; title?: string; posting_policy?: string };
@@ -214,7 +212,6 @@ const api = vi.hoisted(() => {
   coreApiCloseGroup: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiRemoveGroupMember: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiSendGroupMessage: vi.fn(async (_handle: string, text: string): Promise<unknown> => serviceCommand("send_group_message", { group_id: group.id, text })),
-  coreApiSendMessage: vi.fn(),
   endCallAudio: vi.fn(async () => ({ active: false })),
   initializeService: vi.fn(),
   lockService: vi.fn(),
@@ -518,6 +515,10 @@ beforeEach(() => { composerUi.fixture = new ComposerHostFixture(); });
 async function directComposerInput(): Promise<HTMLTextAreaElement> {
   await waitFor(() => expect(screen.getByRole("textbox", { name: "Message Taylor" })).toHaveProperty("readOnly", false));
   return screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Taylor" });
+}
+
+function expectNoLegacyDirectWrites(): void {
+  expect(api.serviceCommand.mock.calls.filter(([command]) => command === "send_message" || command === "save_draft")).toEqual([]);
 }
 
 afterEach(async () => {
@@ -3987,8 +3988,7 @@ describe("connected conversation", () => {
     fireEvent.change(composer, { target: { value: "typed draft" } });
     await waitFor(() => expect(composerUi.update).toHaveBeenCalledWith(
       expect.any(String), "typed draft", expect.any(String)), { timeout: 2000 });
-    expect(api.coreApiDraftSet).not.toHaveBeenCalled();
-    expect(api.serviceCommand).not.toHaveBeenCalledWith("save_draft", expect.anything());
+    expectNoLegacyDirectWrites();
   });
 
   it.each([true, false])("sends pending approval only to its verified transport identity (matching: %s)", async (matches) => {
@@ -4291,8 +4291,7 @@ describe("connected conversation", () => {
     expect((await screen.findByRole("alert")).textContent).toContain("send outcome is uncertain");
     expect(composer.value).toBe("Keep this exact reply");
     expect(composerUi.enqueue).toHaveBeenCalledTimes(1);
-    expect(api.coreApiSendMessage).not.toHaveBeenCalled();
-    expect(api.serviceCommand).not.toHaveBeenCalledWith("send_message", expect.anything());
+    expectNoLegacyDirectWrites();
   });
 
   it("shows a sent message after a stale mobile snapshot already in flight", async () => {
@@ -4334,8 +4333,7 @@ describe("connected conversation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
     expect(await within(screen.getByLabelText("Conversation with Taylor")).findByText(outbound.text, { selector: ".message-content__text" })).toBeTruthy();
     expect(composerUi.enqueue).toHaveBeenCalledWith(expect.stringMatching(/^[0-9a-f]{64}$/));
-    expect(api.coreApiSendMessage).not.toHaveBeenCalled();
-    expect(api.coreApiDraftSet).not.toHaveBeenCalled();
+    expectNoLegacyDirectWrites();
   });
 
   it("shows accepted mobile text before snapshot refresh finishes without another draft clear", async () => {
@@ -4348,7 +4346,7 @@ describe("connected conversation", () => {
     await waitFor(() => expect(composer.value).toBe(""));
     expect(screen.getByDisplayValue("Visible as soon as saved")).toHaveProperty("readOnly", true);
     expect(composerUi.update).toHaveBeenCalledTimes(1);
-    expect(api.coreApiDraftSet).not.toHaveBeenCalled();
+    expectNoLegacyDirectWrites();
     await act(async () => refresh.resolve(current));
   });
 
@@ -4461,8 +4459,7 @@ describe("connected conversation", () => {
     expect(screen.getByDisplayValue("Send this only once")).toHaveProperty("readOnly", true);
     expect(composerUi.fixture.messageCount).toBe(1);
     expect(composerUi.update).toHaveBeenCalledTimes(1);
-    expect(api.coreApiDraftSet).not.toHaveBeenCalled();
-    expect(api.serviceCommand).not.toHaveBeenCalledWith("save_draft", expect.anything());
+    expectNoLegacyDirectWrites();
   });
 });
 

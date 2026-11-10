@@ -15,7 +15,8 @@ vi.mock("@tauri-apps/plugin-deep-link", () => ({
 }));
 vi.mock("@tauri-apps/api/app", () => ({ onBackButtonPress: vi.fn() }));
 
-import { beginCallAudio, coreApiBootstrapPreview, coreApiCreateProfile, coreApiRequest, coreApiSendMessage, initializeService, lockService, onInvitation, pickInvitationFile, requestMediaPermission, serviceCommand, type ServiceEvent } from "./api";
+import { beginCallAudio, coreApiBootstrapPreview, coreApiCreateProfile, coreApiRequest, initializeService, lockService, onInvitation, pickInvitationFile, requestMediaPermission, serviceCommand, type ServiceEvent } from "./api";
+import { composerRequests } from "./core-composer";
 import { loadPairingResume, savePairingResume } from "./pairing-resume";
 
 it("forgets encrypted pairing secrets when locking the service", async () => {
@@ -42,14 +43,18 @@ it("loads the initial display snapshot from Core after native initialization", a
   ]);
 });
 
-it.each(["request", "send"] as const)("preserves typed %s errors and retry metadata without a legacy resend", async (kind) => {
+it.each(["request", "composer enqueue"] as const)("preserves typed %s errors and retry metadata without a legacy resend", async (kind) => {
   tauri.invoke.mockRejectedValue(JSON.stringify({ code: "rate_limited", retry_after_ms: 250 }));
-  const request = kind === "send"
-    ? coreApiSendMessage("destination", "text", "operation")
+  const revision = "a".repeat(64);
+  const request = kind === "composer enqueue"
+    ? composerRequests({ profile: "profile-handle", peer: "peer-handle" }).enqueue(revision)
     : coreApiRequest("workspace.timeline_mutation", {}, "operation");
   await expect(request).rejects.toMatchObject({ name: "ServiceCommandError", code: "rate_limited", retry_after_ms: 250 });
-  expect(tauri.invoke).toHaveBeenCalledTimes(1);
-  expect(tauri.invoke).not.toHaveBeenCalledWith("service_command", expect.anything());
+  expect(tauri.invoke.mock.calls).toEqual([["core_api_request", kind === "composer enqueue" ? {
+    operation: "message.enqueue_draft",
+    params: { profile: "profile-handle", recipient: "peer-handle", draft_revision: revision },
+    idempotencyKey: revision,
+  } : { operation: "workspace.timeline_mutation", params: {}, idempotencyKey: "operation" }]]);
 });
 
 it("preserves unavailable as a Core outcome without treating it as a missing host", async () => {
