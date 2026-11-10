@@ -2,18 +2,18 @@
 
 Status: the original proposal below is partly implemented. Public pairing
 intents, normal app-owned hosts and independent distribution inputs exist.
-Checkpoint `606f68d` independently verifies installed Windows bootstrap, public
-pairing and two authenticated receipts. Its full run `42776359931` failed a
-separate Android manual-carrier replacement case, so it is not aggregate or
-Windows-Android qualification. The private Windows/Android topology controller
-remains a separate transport test.
+Checkpoint `65b0872` independently verifies installed Windows bootstrap, public
+pairing and two authenticated receipts. Full run `42784376932` failed native
+interoperability at explicit contact approval, so it is not aggregate or
+Windows–Android qualification. The private topology controller remains a
+separate transport test.
 
-The next Windows slice checks two SDK sessions in one Node application, session
-close/reattach, concurrent-owner refusal with positive child exit, and original
-pending-message/key preservation across trusted owner stop/reopen. It requires
-new exact-source installed evidence before being recorded as complete. It does
-not prove separate consumer-process exit, caller/cross-user/multi-app isolation,
-isolated-helper retirement or delivery of that pending message after restart.
+The installed Windows lifetime slice now passes: two SDK sessions in one Node
+application, session close/reattach, concurrent-owner refusal with positive child
+exit, and original pending-message/key preservation across trusted owner
+stop/reopen. It does not prove separate consumer-process exit,
+caller/cross-user/multi-app isolation, isolated-helper retirement or delivery of
+that pending message after restart.
 Successful Android credential UI, independent cross-platform receipts, native
 helper cleanup, media coexistence and the supported release matrix remain open.
 

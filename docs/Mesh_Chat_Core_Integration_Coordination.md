@@ -11,7 +11,57 @@ reports. Exact evidence and limits are in the ledger. Wave 2 is activated below.
 Existing human authorization covers continued implementation, integration and
 worker follow-ups without another permission request.
 
-The next implementation checkpoint combines Android fixture repair `adc6f41`
+The current qualification checkpoint is `65b08727264f463f7337b9be06e36799f5a3a364`
+(tree `77cedce295df08a7be13cec774bea289ac302ee5`). Full manual run
+[42784376932](https://github.com/ahouchens/mesh-chat/actions/runs/42784376932)
+completed **failed in native interoperability**. All six families and native
+`full` were selected. Every other family passed; duplicate PR run `42784377833`
+was confirmed canceled. There is no aggregate pass or experimental-default promotion.
+
+Exact-source SDK staging, strict types, **4,263 policy cases**, **913 Python plus
+12 rendered UI cases**, and **nine Windows boundary cases** passed locally with
+zero skips. CI independently verifies the same policy inventory and UI results.
+The policy inventory adds 134 cases to `606f68d`, removing none. The preliminary
+`46e34af` policy run was intentionally interrupted for a review correction; it is
+neither a product failure nor qualification evidence.
+
+Installed Windows evidence now verifies the shared-host lifetime slice: two SDK
+sessions in one Node application, session close with a surviving client,
+reattachment, refused concurrent ownership with positive rejected-process exit,
+and original pending-message identity and idempotency key across trusted owner
+stop/reopen. All 25 exact predicates passed in 46.14 seconds, including three
+clean normal-host exits and native shutdown acknowledgments, one refused-owner
+exit, and two EFS-protected profile directories and vaults. Existing public
+pairing and two authenticated receipts remain required and passed. The report,
+SDK, executable, bootstrap report and source bindings were independently checked.
+The tested sidecar is 54,599,551 bytes, SHA-256
+`4abb51d142a5d747f21832120fe2b86d8393c6735fa75faaa9e8be03a3ecf28f`.
+
+Android independently verifies **52 required emulator cases**, including the
+previously failing manual-carrier replacement case, **62 JVM cases**, and all
+17 retained binary/distribution hashes, with zero skips. Both Linux and Windows
+direct suites verify **25 fabric, 10 recovery and 12 setup cases**, with zero
+skips. Layout reports 72 cases without overflow; archive entries were hashed,
+but PNGs were not retained or visually reviewed. Direct binary and WebView2
+probe hashes retain their runner-claim limitations.
+
+Both native peer reports fail at `explicit_contact_approval` with `ValueError`.
+This reaches beyond the earlier negotiation failure, but the retained reports
+do not distinguish approval, observation freshness, resource identity or other
+validation failures within that phase. No complete native pairing, adoption,
+selected-path receipt matrix or underlying root cause is inferred. D is tracing
+the reachable checks and a minimal content-free diagnostic follow-up.
+
+The Windows lifetime result remains narrower than full SC26: it does not prove
+independent consumer-process exit, caller/cross-user/multi-application isolation,
+isolated bootstrap-helper retirement or delivery of the pending message after
+restart. Android credential UI, independent public Windows–Android receipts,
+media coexistence and physical qualification remain open. C's read-only audit
+found missing retained helper completion across both bootstrap producers; A is
+reviewing constructor races, lock order and existing capacity semantics. No
+helper-retirement implementation or stronger Android exit claim is included.
+
+The implementation checkpoint combines Android fixture repair `adc6f41`
 and Windows consumer lifetime slice `911ed8c` at `2d99222`. The lead reviewed
 the immutable changes; worker focused reports pass **99 Android retirement and
 related component cases** and **492 Windows consumer/evidence cases after review
@@ -46,11 +96,10 @@ unexecuted claims. Independent review found that a conflicting replay could add
 an extra message while still returning the expected error. Follow-up `846da34`
 compares copied outbound message-ID sets before and after replay; a new fault
 inserts that extra record and then throws the expected conflict. The old producer
-fails this control, and the corrected 492-case focused suite passes. Combined
-SDK/types/policy/UI/Windows gates and actual full CI remain required before
-accepting this checkpoint. No acceptance row or experimental selector is promoted.
+fails this control, and the corrected 492-case focused suite passes. Combined exact-source gates and actual CI results are recorded above.
+SC26 remains partial and no experimental selector is promoted.
 
-The latest qualification checkpoint is
+The preceding qualification checkpoint is
 `606f68df05cd0538dbff0b76e6c6745eeda4c24b` (tree
 `7c3cdde2a07108df9c9f8ec58852b98f286bc10c`). Full manual qualification
 [42776359931](https://github.com/ahouchens/mesh-chat/actions/runs/42776359931)
@@ -90,10 +139,10 @@ The fixture waits for absence from the live-routing set before reusing the
 logical session. Production deliberately removes routing before confirming
 physical disposal and releasing the reservation. This identifies a plausible
 fixture observation gap, not proof of the precise native callback ordering or
-the registry's duplicate-versus-capacity branch in this run. C is tracing a
-bounded regression and exact completion predicate; no early resource reuse,
-capacity relaxation or arbitrary retry is authorized. D separately implements
-the frozen Windows shared-host SDK-session lifetime test, whose scope excludes
+the registry's duplicate-versus-capacity branch in this run. The subsequent fixture repair and
+Windows shared-host lifetime implementation are recorded above. No early
+resource reuse, capacity relaxation or arbitrary retry was introduced. The
+Windows scenario excludes
 independent consumer-process exit and isolated-bootstrap-helper retirement.
 
 The reserved-creation follow-up is integrated: controller `a872e7f` and
