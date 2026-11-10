@@ -18,6 +18,48 @@ import native_interop_peers as peers
 from native_interop_diagnostics import PREFLIGHT_FAILURE_SITES, PreflightDiagnostics
 
 
+@pytest.mark.parametrize("role", ["windows", "android"])
+def test_private_path_framing_threads_exact_invocation_challenge(role, monkeypatch):
+    request = "c" * 32
+    result = {"sample_request": request}
+    if role == "windows":
+        peer, streams, _ = windows_fixture(monkeypatch)
+        peer._responses = queue.Queue()
+        peer._responses.put({"id": "qualification:1", "ok": True, "result": result})
+        assert peer.path("logical", "physical", request) == result
+        frame = peers.receive(BytesIO(streams[0].getvalue()).read)
+        assert frame == {"v": 1, "id": "qualification:1", "command": "qualification.path_evidence",
+            "payload": {"logical_session": "logical", "expected_physical": "physical", "sample_request": request}}
+    else:
+        peer = peers.AndroidPeer(b"k" * 32)
+        frames = []
+        class Socket:
+            def settimeout(self, value): assert 0 < value <= 60
+            def sendall(self, value): frames.append(peers.receive(BytesIO(value).read))
+            def recv(self, count): return response.read(count)
+        response = BytesIO(peers.encode({"id": "qualification:1", "ok": True, "result": result}))
+        peer.socket = Socket()
+        assert peer.path("logical", "physical", request) == result
+        assert frames == [{"id": "qualification:1", "action": "inspect", "payload": {
+            "command": "qualification.path_evidence", "payload": {
+                "logical_session": "logical", "expected_physical": "physical", "sample_request": request}}}]
+
+
+class SampleRequest(str): pass
+
+
+@pytest.mark.parametrize("role", ["windows", "android"])
+@pytest.mark.parametrize("sample_request", [None, [], {}, True, b"c" * 32, "c" * 31, "c" * 33,
+    "C" * 32, "g" * 32, SampleRequest("c" * 32)])
+def test_bad_sample_request_is_refused_before_any_private_exchange(role, sample_request):
+    peer = object.__new__(peers.WindowsPeer if role == "windows" else peers.AndroidPeer)
+    calls = []
+    peer.private = peer._request = lambda *args, **kwargs: calls.append(args)
+    with pytest.raises(peers.PeerFailure) as failure: peer.path("logical", "physical", sample_request)
+    assert failure.value.code == "invalid_sample_request" and calls == []
+    with pytest.raises(TypeError): peer.path("logical", "physical")
+
+
 ANDROID_START_SITES = (
     "android_devices", "android_avd_create", "android_root", "android_wait_for_device",
     "android_root_identity", "android_host_apk_install", "android_test_apk_install", "android_notification_grant",

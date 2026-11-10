@@ -25,17 +25,19 @@ def path_observer(monkeypatch, sample):
     """Actual observe/wait/Samples; only private peer calls and time are scripted."""
     value, inventory = sample
     state = SimpleNamespace(now=10.0, events=[], sleeps=[], on_sleep=None, error=None, value=value,
-        inventory=inventory, sequence=0)
+        inventory=inventory, sequence=0, challenges=[], echo_request=True)
     state.inventory["resources"][0]["owner_state"] = "authorized"
     def discover():
         state.events.append("inventory")
         return copy.deepcopy(state.inventory)
-    def path(logical, physical):
+    def path(logical, physical, sample_request):
         state.events.append(("path", logical, physical))
+        state.challenges.append(sample_request)
         if state.error is not None: raise state.error
         state.sequence += 1
         result = copy.deepcopy(state.value)
         result.update(sample_sequence=state.sequence, sampled_at_ms=int((100 + state.now - 10) * 1000))
+        if state.echo_request: result["sample_request"] = sample_request
         return result
     def sleep(seconds):
         state.sleeps.append(seconds)
@@ -43,7 +45,7 @@ def path_observer(monkeypatch, sample):
         if state.on_sleep is not None: state.on_sleep()
     monkeypatch.setattr(controller, "time", SimpleNamespace(monotonic=lambda: state.now, sleep=sleep))
     instance = controller.Controller("android", SimpleNamespace(inventory=discover, path=path), None, None, {})
-    instance.samples = evidence.Samples(clock=lambda: 100 + state.now - 10, monotonic=lambda: state.now)
+    instance.samples = evidence.Samples(monotonic=lambda: state.now)
     state.controller = instance
     return state
 
@@ -174,6 +176,225 @@ def test_empty_inventory_still_returns_no_sample(path_observer):
     state.inventory["resources"] = []
     assert state.controller.observe() is None
     assert state.events == ["inventory"] and state.controller.samples.previous == {}
+
+
+def test_controller_draws_exactly_one_fresh_sixteen_byte_request_per_path_rpc(path_observer, monkeypatch):
+    state, draws = path_observer, []
+    def random_bytes(size):
+        draws.append(size)
+        return bytes([len(draws)]) * size
+    monkeypatch.setattr(controller.os, "urandom", random_bytes)
+    state.controller.observe("logical")
+    state.controller.observe("logical")
+    assert draws == [16, 16] and state.challenges == ["01" * 16, "02" * 16]
+    assert state.events == ["inventory", ("path", "logical", "physical")] * 2
+    assert state.controller.samples.previous == {("service", "physical", "a" * 32): 2}
+    state.inventory["resources"][0]["owner_state"] = "pending_adoption"
+    assert state.controller.observe("logical") is None and draws == [16, 16]
+    state.inventory["resources"] = []
+    assert state.controller.observe() is None and draws == [16, 16]
+
+
+@pytest.mark.parametrize("unready", [None, "adopted", "status"])
+def test_old_or_missing_invocation_echo_fails_even_before_readiness_filter(path_observer, unready):
+    state = path_observer
+    state.echo_request = False
+    state.value.pop("sample_request")
+    if unready is not None: state.value[unready] = "not_selected" if unready == "status" else False
+    with pytest.raises(ValueError) as failure: state.controller.observe("logical")
+    assert state.controller.failure_observation(failure.value) == {
+        "failure_substage": "path_validation", "sample_rejection_reason": "sample_request"}
+    assert state.controller.samples.previous == {} and len(state.challenges) == 1
+
+
+def run_approval_report(tmp_path, monkeypatch, capsys, path_observer, role, fault):
+    """Actual main/pair/path_case/observe/Samples; all product/host boundaries doubled."""
+    import connection_ci
+    state = path_observer
+    state.decided = state.cancelled = False
+    state.approval_error = ValueError("PRIVATE_PAYLOAD_ERROR")
+    peer = state.controller.peer
+    inventory, path = peer.inventory, peer.path
+    # Direct native DTO double for post-pair selected-path assertions.
+    for endpoint in ("local", "remote"): state.value["pair"][endpoint]["type"] = "host"
+    state.value["pair"]["relay_protocol"] = "not_applicable"
+    contact = {"id": "PRIVATE_CONTACT", "core_handle": "PRIVATE_PEER", "trust": "approved"}
+    def core(operation, params, key=None):
+        if operation == "application.snapshot":
+            state.events.append("snapshot")
+            if (not state.decided and fault == "pending_contact_wait") or (state.decided and fault == "approved_contact_wait"):
+                raise state.approval_error
+            if state.decided: return {"contacts": [contact]}
+            if role == "windows": return {"contacts": [{**contact, "trust": "pending_request"}]}
+            return {"contact_invitations": [{"id": "PRIVATE_INVITATION", "state": "pending"}],
+                "contacts": [contact] if fault == "implicit_contact_guard" else []}
+        if operation in {"peer.approve", "contact.invitation"}:
+            state.events.append("decision")
+            if fault == "contact_decision": raise state.approval_error
+            state.decided = True
+            return {}
+        assert operation == "native.command" and params["command"] == "reconnect_consent_set"
+        state.events.append("consent")
+        if fault == "reconnect_consent": raise state.approval_error
+        return {}
+    def discover():
+        value = inventory()
+        if fault == "path_inventory": raise state.approval_error
+        pending = fault == "approval_ready_observation" or (fault == "adopted_observation" and state.challenges) or (
+            fault == "post_cancel_observation" and state.cancelled)
+        if pending: value["resources"][0]["owner_state"] = "pending_adoption"
+        return value
+    def sample(logical, physical, sample_request):
+        if fault == "path_read":
+            state.events.append(("path", logical, physical))
+            state.challenges.append(sample_request)
+            raise state.approval_error
+        value = path(logical, physical, sample_request)
+        if fault == "sample_request": value["sample_request"] = "PRIVATE_CACHED_REQUEST"
+        elif fault == "sample_timestamp": value["sampled_at_ms"] = -1
+        elif fault == "selected_transport": value["dtls_state"] = "closed"
+        elif fault == "cleanup_substitution": value["dtls_state"] = "closed"
+        elif fault == "application_counters": value["application"]["received_bytes"] = True
+        elif fault == "selected_pair_identity": value["pair"]["token"] = "PRIVATE_PAIR"
+        return value
+    def pairing_status(operation):
+        state.events.append("status")
+        return {"operation_id": operation, "state": "retired" if fault == "transferred_status_wait" else "transferred",
+            "retirement": retirement_example()}
+    def cancel(operation):
+        state.events.append("cancel")
+        state.cancelled = True
+        if fault == "transferred_cancel": raise state.approval_error
+        if fault == "carrier_identity_check":
+            state.inventory["resources"][0]["physical_resource"] = "PRIVATE_REPLACEMENT"
+            state.value["resource"] = "PRIVATE_REPLACEMENT"
+        return {"operation_id": "PRIVATE_FOREIGN" if fault == "transferred_cancel_check" else operation, "state": "transferred"}
+    peer.core, peer.inventory, peer.path = core, discover, sample
+    peer.pairing_status, peer.pairing_cancel, peer.process = pairing_status, cancel, None
+    def publish(*args):
+        state.events.append("publish")
+        if fault == "publish_failure": raise state.approval_error
+    def receive(*args, **kwargs):
+        state.events.append("receive")
+        if fault == "receive_failure": raise state.approval_error
+        return {"approved": fault != "approval_acknowledgment"}
+    def execute(instance):
+        instance.profile, instance.pairing = "PRIVATE_PROFILE", "PRIVATE_PAIRING"
+        instance.samples = state.controller.samples
+        state.controller = instance
+        if fault == "cleanup_substitution":
+            consume = instance.samples.consume
+            def replacing_cleanup(*args, **kwargs):
+                try: return consume(*args, **kwargs)
+                finally: raise controller.PeerFailure("invalid_request")
+            instance.samples.consume = replacing_cleanup
+        if fault in {"forged", "unknown_stage", "unknown_reason"}:
+            error = state.approval_error
+            error.failure_substage = "path_validation"
+            error.sample_rejection_reason = "sample_request"
+            if fault == "unknown_stage": instance._substage_failure = error, "PRIVATE_STAGE"
+            if fault == "unknown_reason":
+                instance._substage_failure = error, "path_validation"
+                instance.samples._rejection = error, "PRIVATE_REASON"
+            raise error
+        if fault in {"stale_then_foreign", "stale_then_success", "stale_then_same"}:
+            state.echo_request = False
+            with pytest.raises(ValueError) as caught: instance.observe("logical")
+            state.echo_request = True
+            if fault != "stale_then_foreign": instance.observe("logical")
+            if fault == "stale_then_success": return {}
+            raise caught.value if fault == "stale_then_same" else state.approval_error
+        if fault in {"transferred_status_wait", "adopted_observation", "transferred_cancel", "transferred_cancel_check", "post_cancel_observation", "carrier_identity_check"}:
+            instance.negotiate = lambda *_: ("logical", None)
+            return instance.path_case("direct", "windows")
+        instance.pair("logical", "windows")
+        return {}  # Incomplete synthetic execution, never native evidence.
+    monkeypatch.setattr(controller.Controller, "run", execute)
+    monkeypatch.setattr(controller, "source_identity", lambda _: ("a" * 40, "b" * 40))
+    monkeypatch.setattr(connection_ci, "current_plan", lambda: {"native_workload": "full"})
+    monkeypatch.setattr(controller, "context_from_environment", lambda: {"source_commit": "a" * 40})
+    monkeypatch.setattr(controller, "binding", lambda *_: (None, {}))
+    monkeypatch.setattr(controller, "outbound_services", lambda: {})
+    monkeypatch.setattr(controller, "android_environment", lambda **_: {})
+    monkeypatch.setattr(controller, "AndroidEmulator", lambda: SimpleNamespace(start=lambda *_, **__: None, close=lambda: None))
+    monkeypatch.setattr(controller, "WindowsPeer", lambda *_: peer)
+    monkeypatch.setattr(controller, "AndroidPeer", lambda *_: peer)
+    monkeypatch.setattr(controller, "GithubArtifacts", lambda *_: SimpleNamespace(publish=publish, wait=receive, close=lambda: None))
+    monkeypatch.setattr(controller, "Rendezvous", lambda *_: SimpleNamespace(seal=lambda _, value: value, open=lambda _, value: value, close=lambda: None))
+    output = tmp_path / "approval.json"
+    monkeypatch.setattr(sys, "argv", ["controller", "--role", role, "--workload", "full", "--expected-source", "a" * 40, "--output", str(output)])
+    code = controller.main()
+    captured = capsys.readouterr()
+    return SimpleNamespace(record=json.loads(output.read_text()), code=code, state=state,
+        output=output.read_text() + captured.out + captured.err)
+
+
+APPROVAL_CASES = [
+    ("windows", "pending_contact_wait", "pending_contact_wait", None),
+    ("android", "implicit_contact_guard", "implicit_contact_guard", None),
+    ("windows", "contact_decision", "contact_decision", None),
+    ("android", "approved_contact_wait", "approved_contact_wait", None),
+    ("windows", "reconnect_consent", "reconnect_consent", None),
+    ("android", "approval_ready_observation", "approval_ready_observation", None),
+    ("windows", "approval_acknowledgment", "approval_acknowledgment", None),
+    ("android", "publish_failure", "approval_acknowledgment", "rendezvous_publish"),
+    ("windows", "receive_failure", "approval_acknowledgment", "rendezvous_receive"),
+    ("windows", "transferred_status_wait", "transferred_status_wait", "pairing_status"),
+    ("android", "adopted_observation", "adopted_observation", None),
+    ("windows", "transferred_cancel", "transferred_cancel", None),
+    ("android", "transferred_cancel_check", "transferred_cancel_check", None),
+    ("windows", "post_cancel_observation", "post_cancel_observation", None),
+    ("android", "carrier_identity_check", "carrier_identity_check", None),
+    ("windows", "path_inventory", "path_inventory", None),
+    ("android", "path_read", "path_read", None),
+]
+
+
+@pytest.mark.parametrize("role,fault,stage,site", APPROVAL_CASES)
+def test_actual_approval_report_retains_precise_substage_and_nested_site(tmp_path, monkeypatch, capsys, path_observer, role, fault, stage, site):
+    run = run_approval_report(tmp_path, monkeypatch, capsys, path_observer, role, fault)
+    assert run.code == 1 and run.record["phase"] == "explicit_contact_approval"
+    assert run.record["failure_substage"] == stage
+    assert run.record.get("failure_site") == site and "sample_rejection_reason" not in run.record
+    if fault == "transferred_status_wait":
+        assert run.record["error_code"] == "supervisor_pairing_retired" and run.record["pairing_retirement"] == retirement_example()
+    elif fault in {"approval_ready_observation", "adopted_observation", "post_cancel_observation"}:
+        assert run.record["failure_type"] == "PeerFailure" and run.record["error_code"] == "scenario_deadline"
+        assert run.state.sleeps == [0.25] * 480
+    else: assert run.record["failure_type"] == "ValueError" and "error_code" not in run.record
+    assert "PRIVATE_" not in run.output and "sample_request" not in run.record
+    assert controller.FAILURE_SUBSTAGES == frozenset({case[2] for case in APPROVAL_CASES} | {"path_validation"})
+
+
+@pytest.mark.parametrize("reason", ["sample_request", "sample_timestamp", "selected_transport", "application_counters", "selected_pair_identity"])
+def test_actual_sample_rejection_report_contains_only_same_exception_reason(tmp_path, monkeypatch, capsys, path_observer, reason):
+    run = run_approval_report(tmp_path, monkeypatch, capsys, path_observer, "android", reason)
+    assert run.code == 1 and run.record["failure_type"] == "ValueError"
+    assert run.record["failure_substage"] == "path_validation" and run.record["sample_rejection_reason"] == reason
+    assert run.record["phase"] == "explicit_contact_approval" and "failure_site" not in run.record
+    assert len(run.state.challenges) == 1 and "PRIVATE_" not in run.output
+    assert run.state.challenges[0] not in run.output
+
+
+@pytest.mark.parametrize("fault", ["forged", "unknown_stage", "unknown_reason", "stale_then_foreign", "stale_then_same", "stale_then_success", "success"])
+def test_failure_metadata_never_attaches_to_foreign_stale_unknown_or_success(tmp_path, monkeypatch, capsys, path_observer, fault):
+    run = run_approval_report(tmp_path, monkeypatch, capsys, path_observer, "android", fault)
+    assert "sample_rejection_reason" not in run.record
+    if fault == "unknown_reason": assert run.record["failure_substage"] == "path_validation"
+    else: assert "failure_substage" not in run.record
+    if fault in {"success", "stale_then_success"}:
+        assert run.code == 0 and run.record["passed"] is True
+        assert not {"failure_site", "pairing_state", "pairing_retirement", "failure_substage", "sample_rejection_reason"} & set(run.record)
+        with pytest.raises(ValueError): evidence.verify_report(run.record, "a" * 40, "b" * 40, "android")
+    else: assert run.code == 1
+    assert "PRIVATE_" not in run.output
+
+
+def test_cleanup_replacement_cannot_inherit_prior_sample_rejection_reason(tmp_path, monkeypatch, capsys, path_observer):
+    run = run_approval_report(tmp_path, monkeypatch, capsys, path_observer, "android", "cleanup_substitution")
+    assert run.code == 1 and run.record["failure_type"] == "PeerFailure" and run.record["error_code"] == "invalid_request"
+    assert run.record["failure_substage"] == "path_validation" and "sample_rejection_reason" not in run.record
+    assert len(run.state.challenges) == 1 and "PRIVATE_" not in run.output
 
 
 MISSING_PAIRING_STATE = object()
