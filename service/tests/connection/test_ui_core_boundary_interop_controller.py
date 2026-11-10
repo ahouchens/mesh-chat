@@ -559,15 +559,19 @@ def test_negotiate_created_status_still_requires_original_open_channel_stats(neg
     assert state.sleeps == [0.25]
 
 
-def run_android_preflight_report(tmp_path, monkeypatch, capsys, *, site=None, fault=None):
+def run_android_preflight_report(tmp_path, monkeypatch, capsys, *, site=None, fault=None,
+                                 failure_status=1, failure_stderr=b"PRIVATE_STDERR"):
     """Actual main/start/environment; all subprocess and external services scripted."""
     import android_qualification
     import connection_ci
-    script = scripted_android(monkeypatch, tmp_path, fault=site)
+    script = scripted_android(monkeypatch, tmp_path, fault=site,
+        failure_status=failure_status, failure_stderr=failure_stderr)
     context = {"source_commit": "a" * 40}
     events = []
     foreign = controller.PeerFailure("invalid_request")
     foreign.preflight_failure_site = "android_root"
+    foreign.preflight_exit_status = 1
+    foreign.preflight_root_reason = "connect_failure"
     monkeypatch.setattr(controller, "source_identity", lambda _: ("a" * 40, "b" * 40))
     monkeypatch.setattr(connection_ci, "current_plan", lambda: {"native_workload": "full"})
     monkeypatch.setattr(controller, "context_from_environment", lambda: context)
@@ -608,7 +612,8 @@ def run_android_preflight_report(tmp_path, monkeypatch, capsys, *, site=None, fa
                 raise foreign
         monkeypatch.setattr(script.emulator, "close", substituting_close)
     output = tmp_path / "preflight-report.json"
-    output.write_text(json.dumps({"passed": True, "preflight_failure_site": "PRIVATE_STALE_SITE", "pairing_state": "retired"}))
+    output.write_text(json.dumps({"passed": True, "preflight_failure_site": "PRIVATE_STALE_SITE",
+        "preflight_exit_status": 255, "preflight_root_reason": "PRIVATE_STALE_REASON", "pairing_state": "retired"}))
     monkeypatch.setattr(sys, "argv", ["native_interop_controller", "--role", "android", "--expected-source", "a" * 40,
         "--workload", "full", "--output", str(output)])
     exit_code = controller.main()
@@ -618,6 +623,59 @@ def run_android_preflight_report(tmp_path, monkeypatch, capsys, *, site=None, fa
         output=output.read_text() + captured.out + captured.err)
 
 
+def test_root_failure_reports_only_checked_status_and_literal_reason(tmp_path, monkeypatch, capsys):
+    run = run_android_preflight_report(tmp_path, monkeypatch, capsys, site="android_root",
+        failure_stderr=b"adb: error while reading for root: PRIVATE_SUFFIX\n")
+    assert run.exit_code == 1 and run.record["passed"] is False
+    assert run.record["phase"] == "platform_outbound_preflight"
+    assert run.record["failure_type"] == "CalledProcessError"
+    assert run.record["preflight_failure_site"] == "android_root"
+    assert run.record.get("preflight_exit_status") == 1
+    assert run.record.get("preflight_root_reason") == "read_failure"
+    assert run.script.calls == ["android_devices", "android_avd_create", "boot", "android_root", "kill"]
+    assert run.events == [] and "PRIVATE_" not in run.output
+    assert_android_cleaned(run.script)
+
+
+@pytest.mark.parametrize("stderr,reason", [
+    pytest.param(b"adb: unable to connect for root: PRIVATE_SUFFIX\n", "connect_failure", id="connect"),
+    pytest.param("adb: error while reading for root: PRIVATE_SUFFIX\r\n", "read_failure", id="read-text"),
+    pytest.param(b"adb: unexpected output length for root\n", "unexpected_output_length", id="length"),
+    pytest.param(b"timeout expired while waiting for device\n", "wait_for_device_timeout", id="timeout"),
+    pytest.param(b"PRIVATE_UNKNOWN", "unclassified", id="unknown"),
+    pytest.param(b"adb: unable to connect for root: " + b"X" * 4096, "unclassified", id="oversized"),
+    pytest.param(b"adb: unable to connect for root: PRIVATE\nadb: error while reading for root: PRIVATE\n",
+                 "unclassified", id="conflict"),
+])
+def test_actual_root_report_serializes_only_fixed_stderr_family(tmp_path, monkeypatch, capsys, stderr, reason):
+    run = run_android_preflight_report(tmp_path, monkeypatch, capsys, site="android_root",
+        failure_status=255, failure_stderr=stderr)
+    assert run.exit_code == 1 and run.record["passed"] is False
+    assert run.record["failure_type"] == "CalledProcessError"
+    assert run.record["preflight_exit_status"] == 255 and run.record["preflight_root_reason"] == reason
+    assert set(run.record) == {"v", "passed", "evidence_level", "role", "scope", "workload", "phase",
+        "failure_type", "preflight_failure_site", "preflight_exit_status", "preflight_root_reason"}
+    assert "PRIVATE_" not in run.output and "adb:" not in run.output
+    assert run.script.calls.count("android_root") == 1 and run.events == []
+    assert_android_cleaned(run.script)
+
+
+@pytest.mark.parametrize("status", [-64, -1, 1, 255, 0, -65, 256, True, 1.0, "1", None])
+def test_actual_root_report_preserves_fatality_for_every_status(tmp_path, monkeypatch, capsys, status):
+    run = run_android_preflight_report(tmp_path, monkeypatch, capsys, site="android_root",
+        failure_status=status, failure_stderr=b"PRIVATE_STDERR")
+    assert run.exit_code == 1 and run.record["passed"] is False
+    assert run.record["failure_type"] == "CalledProcessError"
+    assert run.record["preflight_failure_site"] == "android_root"
+    assert run.record["preflight_root_reason"] == "unclassified"
+    if type(status) is int and -64 <= status <= 255 and status != 0:
+        assert run.record["preflight_exit_status"] == status
+    else:
+        assert "preflight_exit_status" not in run.record
+    assert "PRIVATE_" not in run.output and run.script.calls.count("android_root") == 1
+    assert_android_cleaned(run.script)
+
+
 @pytest.mark.parametrize("site", (*ANDROID_START_SITES, *ANDROID_ENVIRONMENT_SITES))
 def test_actual_precontroller_report_identifies_each_checked_command_only(tmp_path, monkeypatch, capsys, site):
     run = run_android_preflight_report(tmp_path, monkeypatch, capsys, site=site)
@@ -625,7 +683,13 @@ def test_actual_precontroller_report_identifies_each_checked_command_only(tmp_pa
     record = run.record
     assert record["passed"] is False and record["phase"] == "platform_outbound_preflight"
     assert record["failure_type"] == "CalledProcessError" and record["preflight_failure_site"] == site
-    assert set(record) == {"v", "passed", "evidence_level", "role", "scope", "workload", "phase", "failure_type", "preflight_failure_site"}
+    fields = {"v", "passed", "evidence_level", "role", "scope", "workload", "phase", "failure_type",
+              "preflight_failure_site", "preflight_exit_status"}
+    assert record["preflight_exit_status"] == 1
+    if site == "android_root":
+        fields.add("preflight_root_reason")
+        assert record["preflight_root_reason"] == "unclassified"
+    assert set(record) == fields
     sites = (*ANDROID_START_SITES, *ANDROID_ENVIRONMENT_SITES)
     expected = list(sites[:sites.index(site) + 1])
     if run.script.starts: expected.insert(2, "boot")
@@ -636,9 +700,11 @@ def test_actual_precontroller_report_identifies_each_checked_command_only(tmp_pa
 
 
 @pytest.mark.parametrize("fault", ["foreign", "caught_then_same", "unscoped_same", "cleanup_substitution", "after_success"])
-def test_precontroller_report_omits_foreign_or_cleared_command_attribution(tmp_path, monkeypatch, capsys, fault):
+@pytest.mark.parametrize("site", ["android_root", "android_root_identity"])
+def test_precontroller_report_omits_foreign_or_cleared_command_attribution(tmp_path, monkeypatch, capsys, fault, site):
     run = run_android_preflight_report(tmp_path, monkeypatch, capsys,
-        site=None if fault == "after_success" else "android_root_identity", fault=fault)
+        site=None if fault == "after_success" else site, fault=fault,
+        failure_stderr=b"adb: unable to connect for root: PRIVATE_SUFFIX\n")
     assert run.exit_code == 1 and run.record["phase"] == "platform_outbound_preflight"
     expected_type = "CalledProcessError" if fault in {"caught_then_same", "unscoped_same"} else "PeerFailure"
     assert run.record["failure_type"] == expected_type
@@ -652,9 +718,11 @@ def test_precontroller_report_omits_foreign_or_cleared_command_attribution(tmp_p
 
 
 @pytest.mark.parametrize("caught", [False, True])
-def test_success_report_omits_all_preflight_failure_metadata(tmp_path, monkeypatch, capsys, caught):
+@pytest.mark.parametrize("site", ["android_root", "android_root_identity"])
+def test_success_report_omits_all_preflight_failure_metadata(tmp_path, monkeypatch, capsys, caught, site):
     run = run_android_preflight_report(tmp_path, monkeypatch, capsys,
-        site="android_root_identity" if caught else None, fault="caught_then_success" if caught else None)
+        site=site if caught else None, fault="caught_then_success" if caught else None,
+        failure_stderr=b"adb: unable to connect for root: PRIVATE_SUFFIX\n")
     assert run.exit_code == 0 and run.record["passed"] is True
     assert set(run.record) == {"v", "passed", "evidence_level", "role", "scope", "workload", "context",
         "source_commit", "source_tree", "platform", "preflight", "artifacts", "execution"}

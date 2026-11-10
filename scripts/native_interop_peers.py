@@ -437,7 +437,8 @@ class AndroidEmulator:
 
     def _adb(self, *arguments, timeout=30):
         return subprocess.check_output([str(self.sdk / "platform-tools/adb"), "-s", self.serial, *arguments],
-            stderr=subprocess.DEVNULL, timeout=timeout).decode().strip()
+            stderr=subprocess.PIPE if arguments == ("root",) else subprocess.DEVNULL,
+            timeout=timeout).decode().strip()
 
     def start(self, apks, *, diagnostics=None):
         diagnostics = diagnostics if diagnostics is not None else PreflightDiagnostics()

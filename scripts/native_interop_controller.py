@@ -546,7 +546,9 @@ def main():
         elif isinstance(getattr(error, "code", None), str): result["error_code"] = PeerFailure(error.code).code
         if controller is None and phase == "platform_outbound_preflight":
             site = preflight_diagnostics.failure_site(error)
-            if site is not None: result["preflight_failure_site"] = site
+            if site is not None:
+                result["preflight_failure_site"] = site
+                result.update(preflight_diagnostics.failure_observation(error))
         if controller is not None:
             site = controller.failure_site(error)
             if site is not None: result["failure_site"] = site
