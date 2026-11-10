@@ -10,7 +10,42 @@ composer state, independent SDK distributions and upgrades, supervisor-owned
 native lifecycle/pairing, and the remaining packaged transport/fault matrix.
 The ledger records exact scope; this is not full M2–M5 completion.
 
-The current qualification checkpoint is `65b08727264f463f7337b9be06e36799f5a3a364`
+The native sample freshness follow-up combines producer `14e10f4`, consumer
+`a542589` and independent composition regression `ae585ec` at `377ab38`.
+Source inspection proves the former controller compared native monotonic ticks
+with wall-clock time. The retained `65b0872` failures do not prove either job
+reached that comparison, so the exact CI cause remains unassigned.
+
+Each existing private path RPC now carries a fresh `sample_request` challenge
+through the actual native sampling operation. The producer and service require
+its exact echo; a cached first response cannot acquire the current request.
+Observation v1 retains a bounded opaque timestamp. Producers validate original
+capture, request window and timestamp binding at full resolution in their own
+clock domains; Android encodes the capture relative to its adapter origin.
+Its actual callback uses one invocation owner for capture, result publication,
+completion and exact-slot release. Late or duplicate callbacks cannot take a
+new request's slot. The consumer keeps its finite, nonnegative local two-second
+round-trip bound and existing service elapsed, identity, sequence, readiness,
+selected-path and counter checks. No clock synchronization, additional RPC,
+retry, deadline extension, public SDK operation or authority grant is added.
+
+Failure-only fixed enums identify the approval/adoption substage and sample
+rejection reason for the same escaping exception. Original phase, error code
+and nested pairing/rendezvous attribution remain intact; private sample values
+and arbitrary exception text are not exported. Independent consumer review
+found no actionable issues.
+
+The lead ran **706 combined focused cases**, all passing with zero skips in
+9.96 seconds, including **19 real Python producer/service/controller composition
+cases with modeled native effects** and all 45 Windows host conformance cases.
+The old clock comparison fails the retained behavioral regression. Nine new
+Android JVM vectors invoke the production callback helper but remain unexecuted
+locally. Exact-source SDK/types/policy/UI/Windows gates and actual full CI are
+still required. No native platform, receipt matrix or helper-retirement
+acceptance is promoted; the separate bootstrap-retirement implementation stays
+deferred while this qualification repair is verified.
+
+The preceding qualification checkpoint is `65b08727264f463f7337b9be06e36799f5a3a364`
 (tree `77cedce295df08a7be13cec774bea289ac302ee5`). Full manual run
 [42784376932](https://github.com/ahouchens/mesh-chat/actions/runs/42784376932)
 completed **failed in native interoperability**. All six families and native
@@ -48,8 +83,8 @@ Both native peer reports fail at `explicit_contact_approval` with `ValueError`.
 This reaches beyond the earlier negotiation failure, but the retained reports
 do not distinguish approval, observation freshness, resource identity or other
 validation failures within that phase. No complete native pairing, adoption,
-selected-path receipt matrix or underlying root cause is inferred. D is tracing
-the reachable checks and a minimal content-free diagnostic follow-up.
+selected-path receipt matrix or underlying root cause is inferred. The clock-contract repair and precise
+content-free diagnostic follow-up are integrated above.
 
 The Windows lifetime result remains narrower than full SC26: it does not prove
 independent consumer-process exit, caller/cross-user/multi-application isolation,

@@ -12,7 +12,7 @@ vault, copied marker, wrong key or tampered marker fails before runtime startup.
 Do not retain this key or marker in qualification artifacts.
 
 Private commands are `qualification.inventory` with `{}` and
-`qualification.path_evidence` with `{logical_session,expected_physical}`. Replies
+`qualification.path_evidence` with `{logical_session,expected_physical,sample_request}`. Replies
 use the existing IPC `{type:"response",id,ok,result|error}` envelope. The latter
 calls the production inspector with exact current resource fencing. These names
 are absent from public Core, native commands and ordinary sidecar dispatch.
@@ -29,7 +29,25 @@ trusted host path before reopening. Control is fenced to the exact initialized
 mobile instance. Ordinary host replacement cannot inherit qualification access.
 
 Inspectors enforce their production 2-second sample deadline and 16KiB bound.
-Evidence is valid for 2000ms only. Recheck service/profile/adapter/resource epoch
+The controller generates a fresh 16-byte random `sample_request`, encoded as
+exactly 32 lowercase hexadecimal characters, for each existing sampling call.
+The private service forwards it to the native sampler and requires its exact
+echo before accepting the observation or advancing the sequence. The native
+coroutine or callback binds the challenge to that sampling invocation; neither
+the service nor a wrapper may attach a new challenge or timestamp to cached data.
+Missing or mismatched challenges and old private shapes fail closed.
+
+The producer checks the original capture's age in its own monotonic clock
+domain. Android encodes the original capture relative to its adapter's clock
+origin. The controller treats `sampled_at_ms` as bounded opaque metadata, never
+as a wall-clock timestamp or a tick count comparable to another device. It
+requires the matching challenge, its own monotonic request-to-consumption span
+of at most two seconds, the existing service elapsed bound and a 2000ms validity
+window. Integer rounding must not extend the producer's deadline. These checks
+bind freshness to the current invocation without synchronizing clocks or adding
+another sampling call; they do not reinterpret internal WebRTC metric clocks.
+
+Recheck service/profile/adapter/resource epoch
 and sample sequence; discard after resource or epoch changes. Selected ICE alone
 does not prove readiness or delivery. Restrict raw endpoint tuples to transient
 controller memory/fault correlation; export only categories, availability,
