@@ -11,8 +11,153 @@ import socket
 import threading
 import time
 import uuid
+import math
+from itertools import islice
 
 import pytest
+
+
+_WORKSPACE_DIAGNOSTIC_TABLES = (
+    "workspace", "workspace_channel", "workspace_channel_control", "workspace_manifest",
+    "workspace_delivery", "workspace_pending_control",
+)
+_WORKSPACE_DIAGNOSTIC_ROWS = 64
+_WORKSPACE_DIAGNOSTIC_ATTEMPTS = 32
+_WORKSPACE_DIAGNOSTIC_KINDS = (
+    "workspace_manifest_root", "workspace_manifest_delegated", "workspace_channel_record",
+    "workspace_channel_manifest", "workspace_channel_summary", "workspace_channel_fetch",
+    "workspace_channel_transfer", "workspace_channel_recovery", "unknown",
+)
+_WORKSPACE_DIAGNOSTIC_STATES = (
+    "queued", "waiting_for_keys", "sending", "stored_for_delivery", "received_by_endpoint",
+    "delivered", "failed", "expired", "cancelled", "unknown",
+)
+
+
+def _workspace_diagnostic_enum(value, allowed):
+    return value if type(value) is str and value in allowed else "unknown"
+
+
+def _workspace_diagnostic_token(value):
+    return value if type(value) is str and 0 < len(value) <= 256 else None
+
+
+def _workspace_diagnostic_time(value):
+    try:
+        return type(value) in (int, float) and value >= 0 and math.isfinite(value)
+    except OverflowError:
+        return False
+
+
+def _workspace_diagnostic_rows(source, table):
+    limit = 8 if table == "workspace" else _WORKSPACE_DIAGNOSTIC_ROWS
+    metadata = {"truncated": False, "malformed_rows": 0, "unavailable": False}
+    if not isinstance(source, (list, tuple)) and not hasattr(source, "__next__"):
+        metadata["unavailable"] = True
+        return [], metadata
+    try:
+        sampled = list(islice(source, limit + 1))
+    except Exception:
+        metadata["unavailable"] = True
+        return [], metadata
+    metadata["truncated"] = len(sampled) > limit
+    rows = []
+    required = {
+        "workspace": ("id",), "workspace_channel": ("workspace_id", "id"),
+        "workspace_channel_control": ("workspace_id", "channel_id", "digest"),
+        "workspace_manifest": ("workspace_id", "digest"),
+        "workspace_delivery": ("workspace_id",), "workspace_pending_control": ("workspace_id",),
+    }[table]
+    for row in sampled[:limit]:
+        if (type(row) is not dict or any(_workspace_diagnostic_token(row.get(key)) is None for key in required)
+                or (table == "workspace_manifest" and (type(row.get("epoch")) is not int or row["epoch"] < 1))):
+            metadata["malformed_rows"] += 1
+        else:
+            rows.append(row)
+    return rows, metadata
+
+
+def _project_workspace_bootstrap_diagnostic(records, *, now):
+    """Pure bounded state projection: no identifiers, payloads or raw times."""
+    records = records if type(records) is dict else {}
+    tables, metadata = {}, {}
+    for table in _WORKSPACE_DIAGNOSTIC_TABLES:
+        tables[table], metadata[table] = _workspace_diagnostic_rows(records.get(table), table)
+
+    def presence(found, table):
+        if found:
+            return "present"
+        partial = metadata[table]
+        return "unknown" if any(partial.values()) else "absent"
+
+    workspaces = []
+    for workspace in tables["workspace"]:
+        identifier = workspace["id"]
+        reference = _workspace_diagnostic_token(workspace.get("general_channel_id"))
+        channels = [row for row in tables["workspace_channel"] if row["workspace_id"] == identifier
+                    and (row["id"] == reference or _workspace_diagnostic_token(row.get("name")) == "general")]
+        general_ids = {row["id"] for row in channels}
+        if reference is not None:
+            general_ids.add(reference)
+        controls = [row for row in tables["workspace_channel_control"]
+                    if row["workspace_id"] == identifier and row["channel_id"] in general_ids]
+        manifests = [row for row in tables["workspace_manifest"] if row["workspace_id"] == identifier]
+        current = _workspace_diagnostic_token(workspace.get("manifest_hash"))
+        workspaces.append({
+            "state": _workspace_diagnostic_enum(workspace.get("state"), (
+                "joining", "active", "closed", "forked", "removed", "left", "device_removed", "incomplete_sync")),
+            "channel_discovery": _workspace_diagnostic_enum(workspace.get("channel_discovery"), ("converged", "incomplete")),
+            "general_reference_present": reference is not None,
+            "general_channel": presence(bool(channels), "workspace_channel"),
+            "general_control": presence(bool(controls), "workspace_channel_control") if general_ids else "unknown",
+            "epoch1_manifest": presence(any(type(row.get("epoch")) is int and row["epoch"] == 1 for row in manifests), "workspace_manifest"),
+            "current_manifest": presence(any(row["digest"] == current for row in manifests), "workspace_manifest") if current else "unknown",
+        })
+    by_kind = dict.fromkeys(_WORKSPACE_DIAGNOSTIC_KINDS, 0)
+    by_state = dict.fromkeys(_WORKSPACE_DIAGNOSTIC_STATES, 0)
+    deliveries = []
+    valid_now = _workspace_diagnostic_time(now)
+    for row in tables["workspace_delivery"]:
+        kind = _workspace_diagnostic_enum(row.get("kind"), _WORKSPACE_DIAGNOSTIC_KINDS)
+        state = _workspace_diagnostic_enum(row.get("state"), _WORKSPACE_DIAGNOSTIC_STATES)
+        attempts, due = row.get("attempt_count"), row.get("next_attempt_at")
+        valid_attempts = type(attempts) is int and attempts >= 0
+        valid_due = _workspace_diagnostic_time(due)
+        schedule = "unknown"
+        if state in ("received_by_endpoint", "delivered", "failed", "expired", "cancelled"):
+            schedule = "terminal"
+        elif state != "unknown" and valid_now and valid_due:
+            schedule = "due" if due <= now else "future"
+        deliveries.append({"kind": kind, "state": state,
+            "attempts": min(attempts, _WORKSPACE_DIAGNOSTIC_ATTEMPTS) if valid_attempts else None,
+            "attempts_capped": valid_attempts and attempts > _WORKSPACE_DIAGNOSTIC_ATTEMPTS,
+            "schedule": schedule,
+            "native_message_id_present": type(row.get("native_message_id")) is str and bool(row["native_message_id"]),
+            "failure": "none" if row.get("failure_code") is None else _workspace_diagnostic_enum(
+                row.get("failure_code"), ("identity_binding_invalid", "transport_unavailable", "transport_error"))})
+        by_kind[kind] += 1
+        by_state[state] += 1
+    pending_kinds = dict.fromkeys(_WORKSPACE_DIAGNOSTIC_KINDS, 0)
+    pending_reasons = dict.fromkeys(("missing_manifest", "missing_channel_predecessor", "unknown"), 0)
+    for row in tables["workspace_pending_control"]:
+        pending_kinds[_workspace_diagnostic_enum(row.get("kind"), pending_kinds)] += 1
+        pending_reasons[_workspace_diagnostic_enum(row.get("reason"), pending_reasons)] += 1
+    return {"workspaces": workspaces, "deliveries": deliveries,
+            "delivery_counts": {"kind": by_kind, "state": by_state},
+            "pending_controls": {"kind": pending_kinds, "reason": pending_reasons},
+            "tables": metadata, "limits": {"workspaces": 8, "rows_per_kind": _WORKSPACE_DIAGNOSTIC_ROWS,
+                                          "attempts": _WORKSPACE_DIAGNOSTIC_ATTEMPTS}}
+
+
+def _workspace_bootstrap_diagnostic(store, *, now):
+    records = {}
+    for table in _WORKSPACE_DIAGNOSTIC_TABLES:
+        limit = 9 if table == "workspace" else _WORKSPACE_DIAGNOSTIC_ROWS + 1
+        try:
+            records[table] = [row for _, row in store.items(table, limit=limit)]
+        except Exception:
+            records[table] = None  # Unknown, never a false empty/success or error text.
+    return _project_workspace_bootstrap_diagnostic(records, now=now)
 
 
 class PipeNative:
@@ -157,6 +302,7 @@ def _service_worker(root, incoming, outgoing, commands, replies, native_binary=N
                             "test_remote_ports":[[c["port"] for c in value.get("candidates",[])] for value in store.list("direct_relationship")],
                             "failures":[{key:value.get(key) for key in ("failure_stage","failure_type","attempts","state")}
                                         for value in store.list("direct_recovery")]}
+                        result["workspace_bootstrap"] = _workspace_bootstrap_diagnostic(store, now=time.time())
                     elif operation == "force_recovery":
                         if payload.get("retire"):
                             service._direct_recovery.retire()
