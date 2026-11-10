@@ -267,13 +267,14 @@ def test_failure_probe_preserves_original_failure_and_retirement_with_bounded_re
     assert details["diagnostics"]["deadline_exhausted"] is False
     assert details["diagnostics"]["stage_timing"]["offsets_ms"]["failure_observed"] == 0
     if mode == "uninitialized":
-        assert probes == [] and stops == [{"event": "stop", "role": "offerer"}]
+        assert probes == [] and stops == [{"event": "stop", "role": "offerer", "incarnation": 1, "remaining": 30000}]
         assert details["application_phase"] == "fresh_profiles" and details["error_code"] == "forbidden"
         assert details["diagnostics"]["subphase"] == "offerer_create"
         assert details["diagnostics"]["failure_probe"] == {}
     else:
         assert probes == [{"event": "probe", "role": role, "timeout": 2000} for role in ("offerer", "answerer")]
-        assert stops == [{"event": "stop", "role": role} for role in ("offerer", "answerer")]
+        assert stops == [{"event": "stop", "role": role, "incarnation": 1,
+                          "remaining": 0 if mode == "advance_clock" else 30000} for role in ("offerer", "answerer")]
         assert events.index(stops[0]) > events.index(probes[1])
         if mode == "retirement_failure":
             assert details["application_phase"] == "retirement" and details["error_code"] == "unavailable"
@@ -516,8 +517,138 @@ def test_application_owned_runtime_framing_and_retirement_use_real_subprocesses(
                              str(staging.ROOT / "tests/core-ui-boundary/app_owned_runtime.test.mjs")],
                             cwd=staging.ROOT, capture_output=True, text=True, timeout=45)
     assert result.returncode == 0, result.stdout[-4000:] + result.stderr[-1000:]
-    assert "# tests 11" in result.stdout
-    assert "# pass 11" in result.stdout and "# fail 0" in result.stdout and "# skipped 0" in result.stdout
+    assert "# tests 26" in result.stdout
+    assert "# pass 26" in result.stdout and "# fail 0" in result.stdout and "# skipped 0" in result.stdout
+
+
+def lifetime_fixture(tmp_path, fault=""):
+    """Actual installed-app JS control flow; inert SDK/runtime only, not native proof."""
+    node, _ = staging.tools()
+    log = tmp_path / "lifetime.jsonl"
+    completed = subprocess.run([node, "--import", (staging.ROOT /
+        "tests/core-ui-boundary/pairing_diagnostic_fixture.mjs").as_uri(),
+        str(staging.APPLICATION / "pairing-check.mjs"), "--runtime", "unused", "--data-directory", "unused"],
+        cwd=staging.ROOT, env={**os.environ, "PAIRING_DIAGNOSTIC_FAULT": fault, "PAIRING_DIAGNOSTIC_LOG": str(log)},
+        capture_output=True, text=True, timeout=15)
+    assert "private" not in (completed.stdout + completed.stderr).lower()
+    assert len(completed.stdout.encode()) <= 4096
+    return completed, json.loads(completed.stdout), [json.loads(line) for line in log.read_text().splitlines()]
+
+
+def test_actual_js_shared_session_lifetime_preserves_order_and_original_pending_key(tmp_path):
+    completed, observed, events = lifetime_fixture(tmp_path)
+    assert completed.returncode == 0, completed.stderr
+    assert observed == {key: value for key, value in pairing.CHECKS.items() if not key.startswith("efs_")}
+    assert [(item["role"], item["incarnation"]) for item in events if item["event"] == "start"] == [
+        ("offerer", 1), ("answerer", 1), ("offerer", 2)]
+    exits = [(index, item) for index, item in enumerate(events) if item["event"] == "exited"]
+    assert [(item["role"], item["incarnation"], item["code"]) for _, item in exits] == [
+        ("contender", 1, 2), ("answerer", 1, 0), ("offerer", 1, 0), ("offerer", 2, 0)]
+    pending = [(index, item) for index, item in enumerate(events) if item["event"] == "enqueue" and item["pending"]]
+    assert len(pending) == 4 and len({item["key"] for _, item in pending}) == 1
+    assert [item["incarnation"] for _, item in pending] == [1, 1, 2, 2]
+    assert [item["changed"] for _, item in pending] == [False, False, False, True]
+    assert exits[1][0] < pending[0][0] < pending[1][0] < exits[2][0] < pending[2][0] < pending[3][0] < exits[3][0]
+    detached = next(index for index, item in enumerate(events) if item["event"] == "close" and item["role"] == "offerer" and item["session"] == 1)
+    reattached = next(index for index in range(detached + 1, len(events)) if events[index]["event"] == "open")
+    survivor = [item["operation"] for item in events[detached:reattached] if item["event"] == "request"]
+    assert survivor == ["runtime.capabilities", "profile.query", "application.snapshot", "message.query"]
+    assert not any(item["event"] in {"start", "stop"} for item in events[detached:reattached])
+    assert len([item for item in events if item["event"] == "request" and item["operation"] == "profile.create"]) == 2
+    assert not any(item["event"] == "request" and item["operation"] in {"runtime.stop", "native.command"} for item in events)
+    assert all(0 <= item["remaining"] <= 30000 for item in events if item["event"] == "stop")
+
+
+@pytest.mark.parametrize("fault,subphase", [
+    ("detach_stops_owner", "client_detach_survivor"), ("survivor_identity", "second_client_attach"),
+    ("snapshot_profile", "second_client_attach"), ("survivor_contact", "second_client_attach"),
+    ("survivor_message", "second_client_attach"), ("extra_authority", "second_client_attach"),
+    ("changed_operations", "second_client_attach"), ("reattach_wrong_owner", "client_reattach"),
+    ("slot_never_releases", "client_reattach"),
+    ("second_client_failure", "second_client_attach"), ("refused_alive", "retirement"),
+    ("receiver_not_exited", "pending_enqueue"), ("pending_terminal", "pending_enqueue"),
+    ("pending_absent", "pending_enqueue"), ("replay_duplicate", "pending_enqueue"),
+    ("replay_new_handle", "pending_enqueue"), ("reopened_identity", "pending_owner_reopen"),
+    ("reopened_contact", "pending_owner_reopen"), ("reopened_handle", "pending_owner_reopen"),
+    ("original_key_lost", "original_key_replay"), ("changed_payload_succeeds", "original_key_replay"),
+    ("final_exit_missing", "retirement"),
+])
+def test_actual_js_lifetime_faults_cannot_manufacture_qualification(tmp_path, fault, subphase):
+    completed, observed, events = lifetime_fixture(tmp_path, fault)
+    assert completed.returncode == 1
+    details = pairing.failure_details(observed)
+    assert details["application_phase"] == ("retirement" if subphase == "retirement" else "shared_host_lifetime")
+    assert details["diagnostics"]["subphase"] == subphase
+    assert "checks" not in observed and observed["passed"] is False
+    # Every acquired successful runtime is still asked to stop on failed assertions/negotiation.
+    starts = {(item["role"], item["incarnation"]) for item in events if item["event"] == "start"}
+    stops = {(item["role"], item["incarnation"]) for item in events if item["event"] == "stop"}
+    assert starts <= stops
+    receiver_exit = next((index for index, item in enumerate(events) if item["event"] == "exited" and item["role"] == "answerer"), None)
+    for index, item in enumerate(events):
+        if item["event"] == "enqueue" and item["pending"]: assert receiver_exit is not None and receiver_exit < index
+    exited_roles = set()
+    for item in events:
+        if item["event"] == "exited": exited_roles.add(item["role"])
+        if item["event"] == "probe": assert item["role"] not in exited_roles
+
+
+@pytest.mark.parametrize("fault,phase", [("startup_observation_failure", "retirement"),
+    ("initial_negotiation_failure", "fresh_profiles")])
+def test_owner_custody_precedes_startup_observation_and_sdk_negotiation(tmp_path, fault, phase):
+    completed, observed, events = lifetime_fixture(tmp_path, fault)
+    assert completed.returncode == 1
+    assert pairing.failure_details(observed)["application_phase"] == phase
+    assert [item["role"] for item in events if item["event"] == "start"] == ["offerer"]
+    assert [item["role"] for item in events if item["event"] == "stop"] == ["offerer"]
+    assert not any(item["event"] == "request" for item in events)
+
+
+def test_replacement_session_retries_only_bounded_released_slot_without_another_owner(tmp_path):
+    completed, observed, events = lifetime_fixture(tmp_path, "slot_releases")
+    assert completed.returncode == 0 and observed["shared_host_sdk_sessions"] == 2
+    assert len([item for item in events if item["event"] == "open" and item["role"] == "offerer"]) == 6
+    assert len([item for item in events if item["event"] == "start"]) == 3
+    assert observed["clean_host_exits"] == 3
+
+
+def test_lifetime_cleanup_uses_actual_remaining_budget_and_still_requests_all_owned_stops(tmp_path):
+    completed, observed, events = lifetime_fixture(tmp_path, "pending_budget_exhausted")
+    assert completed.returncode == 1 and observed["passed"] is False
+    assert observed["diagnostics"]["deadline_exhausted"] is True
+    assert any(item["event"] == "stop" and item["role"] == "offerer" and item["remaining"] == 0 for item in events)
+    assert all(item["operation"] == "peer.pairing_query" or item.get("timeout", 30000) <= 30000
+               for item in events if item["event"] == "request")
+
+
+LIFETIME_CHECKS = {key: value for key, value in pairing.CHECKS.items() if key in {
+    "clean_host_exits", "concurrent_owner_refusals", "rejected_owner_exits", "pending_message_before_owner_stop",
+    "reopened_original_message_and_key", "reopened_same_public_identity", "runtime_lock_reacquired",
+    "owner_native_host_shutdown_acknowledgments", "shared_host_sdk_sessions", "closed_sdk_session_survivor_usable",
+    "reattached_sdk_session_same_authorized_state"}}
+
+
+@pytest.mark.parametrize("key", LIFETIME_CHECKS)
+@pytest.mark.parametrize("fault", ["missing", "wrong", "string", "float", "boolean_integer"])
+def test_lifetime_report_requires_every_exact_observation_and_type(key, fault):
+    record = pairing_record()
+    expected = LIFETIME_CHECKS[key]
+    if fault == "missing": record["checks"].pop(key)
+    elif fault == "wrong": record["checks"][key] = False if type(expected) is bool else expected - 1
+    elif fault == "string": record["checks"][key] = str(expected)
+    elif fault == "float": record["checks"][key] = float(expected)
+    else: record["checks"][key] = int(expected) if type(expected) is bool else True
+    with pytest.raises(ValueError): pairing.verify_report(record, "a" * 40, "b" * 40)
+
+
+@pytest.mark.parametrize("fault", ["old_level", "old_scope", "extra", "helper", "consumer_process", "android", "SC26"])
+def test_lifetime_report_rejects_prior_scope_and_unexecuted_claims(fault):
+    record = pairing_record()
+    if fault == "old_level": record["evidence_level"] = "windows_installed_public_sdk_supervisor_pairing_and_receipts"
+    elif fault == "old_scope": record["scope"] = bootstrap.SCOPE
+    elif fault == "extra": record["checks"]["isolated_helper_exits"] = 1
+    else: record["scope"] += " " + fault + " qualification"
+    with pytest.raises(ValueError): pairing.verify_report(record, "a" * 40, "b" * 40)
 
 
 @pytest.mark.parametrize("fault", ["source", "tree", "failed", "scope", "inside_checkout", "integer_check",

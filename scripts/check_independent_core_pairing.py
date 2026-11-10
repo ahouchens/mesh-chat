@@ -14,17 +14,22 @@ import check_independent_core_consumers as bootstrap
 from stage_independent_core_consumers import ROOT, cleanup, digest, install_typescript, outside_directory
 from stage_core_sdk import tools
 
-LEVEL = "windows_installed_public_sdk_supervisor_pairing_and_receipts"
-SCOPE = "Two normally installed Windows application hosts, relay-only public pairing requests and authenticated receipts with actual DPAPI/EFS; no Android, selected-path, impairment, media, physical or SC21 qualification"
+LEVEL = "windows_installed_public_sdk_pairing_receipts_and_shared_host_sdk_session_lifetime"
+SCOPE = "Installed Windows public-SDK pairing and two authenticated receipts, two SDK sessions in one Node application under the same authorized caller sharing one normal app-owned host, client.close detach/reattach and pending-message/key preservation across trusted owner reopen with actual DPAPI/EFS; positive host service-process exits, native-host shutdown acknowledgment and runtime lock reacquisition; no separate consumer-process exit, caller/cross-user/multi-app isolation, isolated-helper retirement, Android, cross-platform, credential-UI, selected-path, impairment, media, physical or SC21 qualification"
 CHECKS = {"fresh_profiles": 2, "alternate_paths_disabled": True, "direct_disclosure_consented": False,
           "relay_only_requested": True, "broker_consent": True,
           "explicit_contact_decisions": 2, "supervisor_transfers": 2, "public_messaging_ready": 2,
           "transferred_cancel_preserves_delivery": True,
           "authenticated_receipts": 2, "original_message_key_replay": True,
-          "single_inbound_and_outbound_records": True, "clean_host_exits": 2,
+          "single_inbound_and_outbound_records": True, "clean_host_exits": 3,
+          "concurrent_owner_refusals": 1, "rejected_owner_exits": 1,
+          "pending_message_before_owner_stop": True, "reopened_original_message_and_key": True,
+          "reopened_same_public_identity": True, "runtime_lock_reacquired": True,
+          "owner_native_host_shutdown_acknowledgments": 3, "shared_host_sdk_sessions": 2,
+          "closed_sdk_session_survivor_usable": True, "reattached_sdk_session_same_authorized_state": True,
           "efs_profile_directories": 2, "efs_vault_files": 2}
 PHASES = {"arguments", "fresh_profiles", "public_pairing", "explicit_approval", "transferred_cancellation",
-          "authenticated_receipts", "retirement"}
+          "authenticated_receipts", "shared_host_lifetime", "retirement"}
 SUBPHASES = {
     "arguments": {"arguments"},
     "fresh_profiles": {"offerer_create", "answerer_create", "identity_distinct"},
@@ -33,6 +38,9 @@ SUBPHASES = {
         "request_approve", "offerer_relationship_wait", "answerer_relationship_wait", "offerer_ready_wait", "answerer_ready_wait"},
     "transferred_cancellation": {"transfer_wait", "transferred_cancel"},
     "authenticated_receipts": {"offerer_receipt", "answerer_receipt", "offerer_ready_recheck", "answerer_ready_recheck"},
+    "shared_host_lifetime": {"second_client_attach", "client_detach_survivor", "client_reattach",
+        "competing_owner_refusal", "offline_receiver_stop", "pending_enqueue", "pending_owner_stop",
+        "pending_owner_reopen", "original_key_replay"},
     "retirement": {"retirement"},
 }
 PAIRING_STATES = {"reserved", "offer_ready", "awaiting_approval", "transferred", "retiring", "retired", "unknown"}
