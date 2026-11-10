@@ -10,6 +10,26 @@ composer state, independent SDK distributions and upgrades, supervisor-owned
 native lifecycle/pairing, and the remaining packaged transport/fault matrix.
 The ledger records exact scope; this is not full M2–M5 completion.
 
+The pending-adoption repair is integrated: producer `b268842` and consumer
+`f0da5d6` are combined at `32f6061`. The lead reviewed both complete diffs and
+independently ran **465 focused cases**, all passing with zero skips in 10.29
+seconds. The producer contributes 51 offline cases; the controller inventory is
+now 241 cases. Pure observations require an exact committed pairing handoff,
+current running DISCOVER work, matching deadlines and unfenced authority.
+Inventory metadata grants no path permission. A unique `pending_adoption` row
+defers one readiness poll through the existing wait; malformed, ambiguous,
+missing and nonpending metadata retain the existing sampling and exceptions.
+Actual path pre/post authority checks and all readiness/traffic evidence remain.
+
+The producer's preliminary full suite had two Git Bash fixture permission
+failures; both passed outside the sandbox without source/assertion changes.
+That preliminary run is not final-source qualification. Integrated SDK staging,
+strict types, complete policy/UI/Windows inventories and full native CI are
+required before accepting the repair. The offline reproduced scheduling gap is
+consistent with the retained native failure, whose exact substage was not
+recorded; it is not proof of the sole device failure cause. No-handoff recovery
+and automatic pending windows remain outside this narrowly proven contract.
+
 The current shared checkpoint is `994e4b488ba88935569970ac0adfb15c237f621d`
 (tree `70c7ce3b052b0338737010bab628fb6b0b153e94`). Full manual qualification
 [42763177698](https://github.com/ahouchens/mesh-chat/actions/runs/42763177698)
@@ -50,11 +70,11 @@ phase includes explicit decisions, approval polling, a reconnect-consent update,
 and private path-readiness inspection. Its label alone does not prove the decision
 RPC failed. Ordinary Core/domain error mapping differs from the private path
 route, narrowing source review toward native carrier authority during inspection.
-C is assigned a guarded offline review of the actual fresh-profile consent,
-handoff and adoption sequence. No consent, authority or deadline relaxation is
-authorized by this failure; a concrete repair requires a reproduced path.
+C completed a guarded offline review of the actual fresh-profile consent,
+handoff and adoption sequence. The integrated repair above preserves consent,
+authority and deadlines and is based on the reproduced claim/adoption window.
 
-The next bounded repair adds private inventory `owner_state` metadata while
+The integrated bounded repair adds private inventory `owner_state` metadata while
 preserving the existing mapping-based `adopted` flag and every resource row.
 `pending_adoption` must be proven from an existing committed pairing handoff
 lease and the exact current, authorized, unfenced target DISCOVER operation,
@@ -69,7 +89,7 @@ same physical resource. Consent-retirement controls establish valid denial but
 do not explain the initial-direct sequence. The actual CI substage is not retained.
 No-handoff manual/recovered/automatic pending windows lack this exact proof and
 remain unavailable under this narrow repair. C owns the read-only producer and
-D the consumer; implementation and integrated qualification remain pending.
+D the consumer; implementation is integrated and full qualification remains pending.
 
 The previous shared checkpoint is `55e6b1924a31b978403555aa6be83487ce86553d`
 (tree `81d4ab8f07cc488d3cab09037226e9a7e6eab5ae`). Full manual qualification
