@@ -282,7 +282,7 @@ def test_invitation_observation_validator_rejects_unsafe_or_unbounded_fields(fau
     elif fault == "invalid_reason": sample["answerer"]["actor"]["actor"]["reason"] = "PRIVATE_ERROR"
     elif fault == "too_many_samples": observed["samples"] *= 6
     elif fault == "bad_offset": sample["offset_ms"] = -1
-    elif fault == "boolean_offset": observed["sample_offsets_ms"][1] = True
+    elif fault == "boolean_offset": observed["sample_offsets_ms"][0] = False
     elif fault == "bad_budget": observed["sample_budget"] = 6
     elif fault == "bad_request_budget": observed["request_budget_ms"] = 30000
     elif fault == "wrong_role": sample["contender"] = sample.pop("answerer")
