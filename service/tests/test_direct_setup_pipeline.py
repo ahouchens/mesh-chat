@@ -12,6 +12,7 @@ import threading
 import time
 import uuid
 import math
+from collections import deque
 from itertools import islice
 
 import pytest
@@ -27,6 +28,7 @@ _WORKSPACE_DIAGNOSTIC_KINDS = (
     "workspace_manifest_root", "workspace_manifest_delegated", "workspace_channel_record",
     "workspace_channel_manifest", "workspace_channel_summary", "workspace_channel_fetch",
     "workspace_channel_transfer", "workspace_channel_recovery", "unknown",
+    "workspace_event",
 )
 _WORKSPACE_DIAGNOSTIC_STATES = (
     "queued", "waiting_for_keys", "sending", "stored_for_delivery", "received_by_endpoint",
@@ -115,6 +117,7 @@ def _project_workspace_bootstrap_diagnostic(records, *, now):
         })
     by_kind = dict.fromkeys(_WORKSPACE_DIAGNOSTIC_KINDS, 0)
     by_state = dict.fromkeys(_WORKSPACE_DIAGNOSTIC_STATES, 0)
+    event_states = dict.fromkeys(_WORKSPACE_DIAGNOSTIC_STATES, 0)
     deliveries = []
     valid_now = _workspace_diagnostic_time(now)
     for row in tables["workspace_delivery"]:
@@ -137,6 +140,7 @@ def _project_workspace_bootstrap_diagnostic(records, *, now):
                 row.get("failure_code"), ("identity_binding_invalid", "transport_unavailable", "transport_error"))})
         by_kind[kind] += 1
         by_state[state] += 1
+        if kind == "workspace_event": event_states[state] += 1
     pending_kinds = dict.fromkeys(_WORKSPACE_DIAGNOSTIC_KINDS, 0)
     pending_reasons = dict.fromkeys(("missing_manifest", "missing_channel_predecessor", "unknown"), 0)
     for row in tables["workspace_pending_control"]:
@@ -144,6 +148,7 @@ def _project_workspace_bootstrap_diagnostic(records, *, now):
         pending_reasons[_workspace_diagnostic_enum(row.get("reason"), pending_reasons)] += 1
     return {"workspaces": workspaces, "deliveries": deliveries,
             "delivery_counts": {"kind": by_kind, "state": by_state},
+            "workspace_event_states": event_states,
             "pending_controls": {"kind": pending_kinds, "reason": pending_reasons},
             "tables": metadata, "limits": {"workspaces": 8, "rows_per_kind": _WORKSPACE_DIAGNOSTIC_ROWS,
                                           "attempts": _WORKSPACE_DIAGNOSTIC_ATTEMPTS}}
@@ -158,6 +163,21 @@ def _workspace_bootstrap_diagnostic(store, *, now):
         except Exception:
             records[table] = None  # Unknown, never a false empty/success or error text.
     return _project_workspace_bootstrap_diagnostic(records, now=now)
+
+
+def _call_traced_workspace_send(original_send, values, entry, mesh_error_type):
+    """Observe one test-harness send without changing its result or exception."""
+    try:
+        result = original_send(**values)
+    except mesh_error_type as error:
+        entry["outcome"] = error.code if error.code in (
+            "recipient_keys_unavailable", "network_unavailable") else "other_mesh_error"
+        raise
+    except Exception:
+        entry["outcome"] = "other_error"
+        raise
+    entry["outcome"] = "accepted"
+    return result
 
 
 class PipeNative:
@@ -254,6 +274,8 @@ def _service_worker(root, incoming, outgoing, commands, replies, native_binary=N
     # Test-only, bounded evidence for the channel bootstrap handoff. Never
     # retain destination hashes, payloads, native IDs, or exception strings.
     channel_trace = []
+    workspace_event_trace = deque(maxlen=16)
+    workspace_event_trace_truncated = False
     def channel_entry(destination, fields, content):
         bootstrap = getattr(service.network, "_direct_bootstrap", None)
         return {"bootstrap_ready": bool(bootstrap is not None and bootstrap.ready and bootstrap.peer == destination),
@@ -261,40 +283,88 @@ def _service_worker(root, incoming, outgoing, commands, replies, native_binary=N
                 "main_identity": RNS.Identity.recall(destination) is not None,
                 "main_ratchet": RNS.Identity.get_ratchet(destination) is not None,
                 "main_path": bool(RNS.Transport.has_path(destination))}
-    def channel_record(fields, content):
+    def traced_kind(fields, content):
         from mesh_chat.workspace_wire import parse_workspace_payload
         from types import SimpleNamespace
         try:
             wire = parse_workspace_payload(SimpleNamespace(get_fields=lambda: fields, content=content))
-        except MeshChatError:
-            return False
-        return wire.kind == "workspace_channel_record"
-    def traced_payload_ready(destination, fields, content=""):
-        if not channel_record(fields, content):
-            return original_payload_ready(destination, fields, content)
-        entry = {"stage": "preflight", **channel_entry(destination, fields, content)}
-        result = original_payload_ready(destination, fields, content)
-        entry["outcome"] = "ready" if result else "waiting"
-        if len(channel_trace) < 16:
-            channel_trace.append(entry)
-        return result
-    def traced_workspace_send(**values):
-        destination = values["recipient_destination"]
-        fields, content = values["fields"], values["text"]
-        if not channel_record(fields, content):
-            return original_workspace_send(**values)
-        entry = {"stage": "send", **channel_entry(destination, fields, content), "outcome": "unknown"}
-        if len(channel_trace) < 16:
-            channel_trace.append(entry)
+        except Exception:
+            return None
+        return wire.kind if wire.kind in {"workspace_channel_record", "workspace_event"} else None
+    def trace_entry(destination, fields, content):
+        try: return channel_entry(destination, fields, content)
+        except Exception: return {key: None for key in (
+            "bootstrap_ready", "bootstrap_handles", "main_identity", "main_ratchet", "main_path")}
+    def retain_trace(kind, entry):
+        nonlocal workspace_event_trace_truncated
         try:
-            result = original_workspace_send(**values)
+            if kind == "workspace_event":
+                was_full = len(workspace_event_trace) == workspace_event_trace.maxlen
+                workspace_event_trace.append(entry)
+                if was_full: workspace_event_trace_truncated = True
+            elif kind == "workspace_channel_record" and len(channel_trace) < 16: channel_trace.append(entry)
+        except Exception:
+            pass  # A test-only trace cannot replace the original send outcome.
+    def traced_payload_ready(destination, fields, content=""):
+        kind = traced_kind(fields, content)
+        if kind is None:
+            return original_payload_ready(destination, fields, content)
+        entry = {"stage": "preflight", **trace_entry(destination, fields, content)}
+        try:
+            result = original_payload_ready(destination, fields, content)
         except MeshChatError as error:
-            entry["outcome"] = error.code if error.code in ("recipient_keys_unavailable", "network_unavailable") else "other_mesh_error"
+            entry["outcome"] = error.code if error.code in (
+                "recipient_keys_unavailable", "network_unavailable") else "other_mesh_error"
             raise
         except Exception:
             entry["outcome"] = "other_error"
             raise
-        entry["outcome"] = "accepted"
+        else:
+            entry["outcome"] = "ready" if result else "waiting"
+            return result
+        finally:
+            retain_trace(kind, entry)
+    def traced_workspace_send(**values):
+        destination = values["recipient_destination"]
+        fields, content = values["fields"], values["text"]
+        kind = traced_kind(fields, content)
+        if kind is None:
+            return original_workspace_send(**values)
+        entry = {"stage": "send", **trace_entry(destination, fields, content), "outcome": "unknown"}
+        retain_trace(kind, entry)
+        return _call_traced_workspace_send(original_workspace_send, values, entry, MeshChatError)
+    def traced_workspace_status(logical_id, state, native_id):
+        try:
+            row = store.get("workspace_delivery", logical_id)
+            is_event = type(row) is dict and row.get("kind") == "workspace_event"
+        except Exception:
+            is_event = False
+        result = original_workspace_status(logical_id, state, native_id)
+        if is_event:
+            try: state_value = getattr(state, "value", None)
+            except Exception: state_value = None
+            outcome = "returned_true" if result is True else "returned_false" if result is False else "unknown"
+            retain_trace("workspace_event", {"stage": "status", "outcome": outcome,
+                "state": _workspace_diagnostic_enum(state_value, _WORKSPACE_DIAGNOSTIC_STATES)})
+        return result
+    def traced_workspace_ingress(native, wire):
+        try: is_event = getattr(wire, "kind", None) == "workspace_event"
+        except Exception: is_event = False
+        if is_event: retain_trace("workspace_event", {"stage": "ingress", "outcome": "observed"})
+        return original_workspace_ingress(native, wire)
+    def traced_workspace_accept(wire, *args, **kwargs):
+        try: is_event = getattr(wire, "kind", None) == "workspace_event"
+        except Exception: is_event = False
+        if not is_event:
+            return original_workspace_accept(wire, *args, **kwargs)
+        entry = {"stage": "acceptance", "outcome": "unknown"}
+        retain_trace("workspace_event", entry)
+        try:
+            result = original_workspace_accept(wire, *args, **kwargs)
+        except Exception:
+            entry["outcome"] = "error"
+            raise
+        entry["outcome"] = "returned_true" if result is True else "returned_false" if result is False else "unknown"
         return result
     controls={"sent":0,"send_failed":0,"received":0,"rejected":0}
     original_send=service._direct_recovery._send
@@ -319,6 +389,12 @@ def _service_worker(root, incoming, outgoing, commands, replies, native_binary=N
         service.network.recipient_ready_for_fields = traced_payload_ready
         original_workspace_send = service.network.send_with_fields
         service.network.send_with_fields = traced_workspace_send
+        original_workspace_status = service._on_workspace_native_status
+        service._on_workspace_native_status = traced_workspace_status
+        original_workspace_ingress = service._receive_workspace_payload
+        service._receive_workspace_payload = traced_workspace_ingress
+        original_workspace_accept = service._accept_workspace_event
+        service._accept_workspace_event = traced_workspace_accept
         replies.put({"ok":True})
         while True:
             operation, payload = commands.get()
@@ -355,6 +431,8 @@ def _service_worker(root, incoming, outgoing, commands, replies, native_binary=N
                                         for value in store.list("direct_recovery")]}
                         result["workspace_bootstrap"] = _workspace_bootstrap_diagnostic(store, now=time.time())
                         result["channel_send_trace"] = list(channel_trace)
+                        result["workspace_event_trace"] = list(workspace_event_trace)
+                        result["workspace_event_trace_truncated"] = workspace_event_trace_truncated
                     elif operation == "force_recovery":
                         if payload.get("retire"):
                             service._direct_recovery.retire()
@@ -466,6 +544,18 @@ def test_production_setup_bootstrap_admission_and_fresh_workspace_path(tmp_path,
             wait(sender,"list_workspace_messages",lambda page:any(item["id"] == sent["id"] and
                 item.get("delivery_summary",{}).get("devices_reached") == 1 for item in page["messages"]),
                 workspace_id=workspace["id"],channel_id=workspace["general_channel_id"],limit=50)
+        if carrier_mode == "source":
+            for index in range(2):
+                diagnostic = call(index, "recovery_diagnostic")
+                stages = {item["stage"] for item in diagnostic["workspace_event_trace"]}
+                assert {"preflight", "send", "status", "ingress", "acceptance"} <= stages
+                assert 0 < len(diagnostic["workspace_event_trace"]) <= 16
+                assert type(diagnostic["workspace_event_trace_truncated"]) is bool
+                assert all(item["outcome"] in {"returned_true", "returned_false", "unknown"}
+                    for item in diagnostic["workspace_event_trace"] if item["stage"] == "status")
+                assert all(item["outcome"] in {"returned_true", "returned_false", "unknown", "error"}
+                    for item in diagnostic["workspace_event_trace"] if item["stage"] == "acceptance")
+                assert diagnostic["workspace_bootstrap"]["delivery_counts"]["kind"]["workspace_event"] >= 1
         for index in range(2):
             evidence = call(index, "relationship_evidence")
             assert len(evidence) == 1

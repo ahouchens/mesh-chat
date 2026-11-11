@@ -13,6 +13,130 @@ import pytest
 from test_direct_setup_pipeline import _service_worker
 
 
+_RECOVERY_STATES = frozenset({"connected", "connection_update_needed", "reconnecting", "paused", "failed"})
+_EVENT_STATES = ("queued", "waiting_for_keys", "sending", "stored_for_delivery",
+    "received_by_endpoint", "delivered", "failed", "expired", "cancelled", "unknown")
+_EVENT_TRACE_OUTCOMES = {
+    "preflight": frozenset({"ready", "waiting", "recipient_keys_unavailable", "network_unavailable",
+                            "other_mesh_error", "other_error"}),
+    "send": frozenset({"accepted", "recipient_keys_unavailable", "network_unavailable",
+                       "other_mesh_error", "other_error", "unknown"}),
+    "status": frozenset({"returned_true", "returned_false", "unknown"}),
+    "ingress": frozenset({"observed"}),
+    "acceptance": frozenset({"returned_true", "returned_false", "error", "unknown"}),
+}
+_EVENT_READINESS = ("bootstrap_ready", "bootstrap_handles", "main_identity", "main_ratchet", "main_path")
+_EVENT_SCHEDULES = frozenset({"due", "future", "terminal", "unknown"})
+_EVENT_FAILURES = frozenset({"none", "identity_binding_invalid", "transport_unavailable", "transport_error", "unknown"})
+
+
+def _fixed_count(value, limit):
+    return min(value, limit) if type(value) is int and value >= 0 else None
+
+
+def _event_trace_snapshot(value, *, source_truncated=False):
+    if type(value) not in (list, tuple):
+        return {"entries": [], "malformed": True, "truncated": source_truncated is True}
+    entries, malformed = [], type(source_truncated) is not bool
+    truncated = source_truncated is True or len(value) > 16
+    for row in value[-16:]:
+        if type(row) is not dict or type(row.get("stage")) is not str or row["stage"] not in _EVENT_TRACE_OUTCOMES:
+            malformed = True
+            continue
+        stage = row["stage"]
+        if type(row.get("outcome")) is not str or row["outcome"] not in _EVENT_TRACE_OUTCOMES[stage]:
+            malformed = True
+            continue
+        entry = {"stage": stage, "outcome": row["outcome"]}
+        if stage in {"preflight", "send"}:
+            entry.update({name: row.get(name) if type(row.get(name)) is bool else None for name in _EVENT_READINESS})
+        if stage == "status":
+            state = row.get("state")
+            entry["state"] = state if type(state) is str and state in _EVENT_STATES else "unknown"
+        entries.append(entry)
+    return {"entries": entries, "malformed": malformed, "truncated": truncated}
+
+
+def _event_delivery_snapshot(value):
+    """Select at most eight event rows from the already-bounded delivery projection."""
+    if type(value) not in (list, tuple): return {"entries": [], "truncated": False, "malformed": True}
+    entries, malformed = [], False
+    truncated = len(value) > 64
+    for row in value[:64]:
+        if type(row) is not dict:
+            malformed = True
+            continue
+        kind = row.get("kind")
+        if kind != "workspace_event":
+            if type(kind) is not str: malformed = True
+            continue
+        if len(entries) == 8:
+            truncated = True
+            continue
+        state, schedule, failure = row.get("state"), row.get("schedule"), row.get("failure")
+        attempts = row.get("attempts")
+        capped = row.get("attempts_capped")
+        native_present = row.get("native_message_id_present")
+        if (type(state) is not str or state not in _EVENT_STATES
+                or type(schedule) is not str or schedule not in _EVENT_SCHEDULES
+                or type(failure) is not str or failure not in _EVENT_FAILURES
+                or (attempts is not None and (type(attempts) is not int or attempts < 0))
+                or type(capped) is not bool or type(native_present) is not bool):
+            malformed = True
+        entries.append({
+            "state": state if type(state) is str and state in _EVENT_STATES else "unknown",
+            "attempts": _fixed_count(attempts, 32),
+            "attempts_capped": capped if type(capped) is bool else None,
+            "schedule": schedule if type(schedule) is str and schedule in _EVENT_SCHEDULES else "unknown",
+            "native_message_id_present": native_present if type(native_present) is bool else None,
+            "failure": failure if type(failure) is str and failure in _EVENT_FAILURES else "unknown",
+        })
+    return {"entries": entries, "truncated": truncated, "malformed": malformed}
+
+
+def _recovery_failure_snapshot(value):
+    """Bounded test-only failure context; never copy source identifiers or text."""
+    if type(value) is not dict: return {"available": False}
+    rows = value.get("peers")
+    if type(rows) not in (list, tuple): rows = []
+    peer_states = []
+    for row in rows[:2]:
+        row = row if type(row) is dict else {}
+        state = row.get("state")
+        peer_states.append({"state": state if type(state) is str and state in _RECOVERY_STATES else "unknown",
+            "authenticated_peer_live": row.get("authenticated_peer_live") if type(row.get("authenticated_peer_live")) is bool else None,
+            "rns_ready": row.get("rns_ready") if type(row.get("rns_ready")) is bool else None})
+    workspace = value.get("workspace_bootstrap")
+    workspace = workspace if type(workspace) is dict else {}
+    states = workspace.get("workspace_event_states")
+    states = states if type(states) is dict else {}
+    tables = workspace.get("tables")
+    tables = tables if type(tables) is dict else {}
+    delivery_table = tables.get("workspace_delivery")
+    delivery_table = delivery_table if type(delivery_table) is dict else {}
+    if delivery_table.get("unavailable") is True:
+        scan = "unavailable"
+    elif delivery_table.get("truncated") is True or _fixed_count(delivery_table.get("malformed_rows"), 64):
+        scan = "partial"
+    elif (delivery_table.get("unavailable") is False and delivery_table.get("truncated") is False
+            and type(delivery_table.get("malformed_rows")) is int and delivery_table["malformed_rows"] == 0):
+        scan = "complete"
+    else:
+        scan = "unknown"
+    workspaces = workspace.get("workspaces")
+    first = workspaces[0] if type(workspaces) is list and workspaces and type(workspaces[0]) is dict else {}
+    discovery = first.get("channel_discovery")
+    return {"available": True, "peer_states": peer_states, "peer_states_truncated": len(rows) > 2,
+        "pending": _fixed_count(value.get("pending"), 32),
+        "pending_capped": type(value.get("pending")) is int and value["pending"] > 32,
+        "channel_discovery": discovery if type(discovery) is str and discovery in {"converged", "incomplete"} else "unknown",
+        "workspace_event_scan": scan,
+        "workspace_event_states": {name: _fixed_count(states.get(name), 64) for name in _EVENT_STATES},
+        "workspace_event_deliveries": _event_delivery_snapshot(workspace.get("deliveries")),
+        "workspace_event_trace": _event_trace_snapshot(value.get("workspace_event_trace"),
+            source_truncated=value.get("workspace_event_trace_truncated", False))}
+
+
 class Peers:
     def __init__(self, root, binary, unhosted=False):
         self.root, self.binary = root, binary
@@ -33,9 +157,9 @@ class Peers:
         self.processes[index] = process
         assert self.replies[index].get(timeout=20)["ok"]
 
-    def call(self, index, operation, **payload):
-        self.commands[index].put((operation,payload),timeout=2)
-        response = self.replies[index].get(timeout=20)
+    def call(self, index, operation, *, _diagnostic_timeout=None, **payload):
+        self.commands[index].put((operation,payload),timeout=2 if _diagnostic_timeout is None else _diagnostic_timeout)
+        response = self.replies[index].get(timeout=20 if _diagnostic_timeout is None else _diagnostic_timeout)
         assert response["ok"], response
         return response.get("result")
 
@@ -50,7 +174,14 @@ class Peers:
             result=predicate(last)
             if result: return result
             time.sleep(.2)
-        raise AssertionError((index,name,last,self.call(index,"recovery_diagnostic")))
+        # The original timeout remains authoritative. Optional test-only
+        # snapshots use at most one second per queue operation on each peer.
+        diagnostics=[]
+        for peer in range(2):
+            try: diagnostics.append(_recovery_failure_snapshot(
+                self.call(peer,"recovery_diagnostic",_diagnostic_timeout=1)))
+            except Exception: diagnostics.append({"available":False})
+        raise AssertionError((index,name,last,{"peers":diagnostics}))
 
     def connected(self, index, previous_certificate=None):
         # One total bound includes the configured native attempt and retry window.

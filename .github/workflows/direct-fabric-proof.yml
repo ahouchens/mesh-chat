@@ -25,9 +25,18 @@ jobs:
         run: python -m pip install ./service pytest
       - uses: dtolnay/rust-toolchain@1.90.0
       - name: Test and build shipping native dispatcher harness
+        id: dispatcher_build
         run: |
           cargo test --locked --manifest-path experiments/direct-app-host/Cargo.toml
           cargo build --locked --manifest-path experiments/direct-app-host/Cargo.toml
+      - name: Retain Windows dispatcher for scoped native diagnosis
+        if: runner.os == 'Windows' && steps.dispatcher_build.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: direct-dispatcher-Windows-${{ github.sha }}
+          path: experiments/direct-app-host/target/debug/mesh-direct-app-host-proof.exe
+          if-no-files-found: error
+          retention-days: 1
       - name: Install Linux syscall observer
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y strace
