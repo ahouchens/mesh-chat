@@ -26,16 +26,29 @@ PATH_FAILURE_REASONS = {
     "receipt_record_validation": frozenset(),
 }
 PATH_FAILURE_SCENARIOS = frozenset({"direct", "turn_udp", "turn_tcp", "turn_tls", "impaired"})
+TCP_SOCKET_STATES = frozenset(f"{state:02X}" for state in range(1, 13))
+TCP_AMBIGUITY_SUMMARIES = frozenset({"one_established_plus_other", "multiple_established",
+                                     "no_established", "unclassifiable"})
 
 
 def path_failure_observation(value):
     if (type(value) is not dict or not {"scenario", "stage"} <= set(value)
-            or set(value) - {"scenario", "stage", "reason"}
+            or set(value) - {"scenario", "stage", "reason", "tcp_state_summary", "owned_inode_relation"}
             or type(value["scenario"]) is not str or value["scenario"] not in PATH_FAILURE_SCENARIOS
             or type(value["stage"]) is not str or value["stage"] not in PATH_FAILURE_REASONS):
         return {}
     if "reason" in value and (type(value["reason"]) is not str
             or value["reason"] not in PATH_FAILURE_REASONS[value["stage"]]):
+        return {}
+    has_summary = "tcp_state_summary" in value or "owned_inode_relation" in value
+    if has_summary and (set(value) != {"scenario", "stage", "reason", "tcp_state_summary", "owned_inode_relation"}
+            or value["scenario"] not in {"turn_tcp", "turn_tls"}
+            or value["stage"] != "kernel_socket_correlation"
+            or value["reason"] != "ambiguous_owned_matches"
+            or type(value["tcp_state_summary"]) is not str
+            or value["tcp_state_summary"] not in TCP_AMBIGUITY_SUMMARIES
+            or type(value["owned_inode_relation"]) is not str
+            or value["owned_inode_relation"] not in {"same", "distinct"}):
         return {}
     return dict(value)
 
@@ -46,11 +59,13 @@ class NativePathDiagnostics:
         self.scenario = scenario if scenario in PATH_FAILURE_SCENARIOS else None
         self._failure = None
 
-    def observe(self, error, stage, reason=None):
+    def observe(self, error, stage, reason=None, *, tcp_state_summary=None, owned_inode_relation=None):
         if self._failure is not None and self._failure[0] is error:
             return  # A nested, more exact source check already selected this error.
         selected = path_failure_observation({"scenario": self.scenario, "stage": stage,
-            **({"reason": reason} if reason is not None else {})})
+            **({"reason": reason} if reason is not None else {}),
+            **({"tcp_state_summary": tcp_state_summary, "owned_inode_relation": owned_inode_relation}
+               if tcp_state_summary is not None or owned_inode_relation is not None else {})})
         self._failure = (error, selected) if selected else None
 
     @contextmanager
@@ -87,8 +102,20 @@ def ipv4_proc(value):
     return str(parsed), int(port, 16)
 
 
+def tcp_ambiguity_summary(states, inodes):
+    if any(type(state) is not str or state.upper() not in TCP_SOCKET_STATES for state in states):
+        state_summary = "unclassifiable"
+    else:
+        established = sum(state.upper() == "01" for state in states)
+        state_summary = ("multiple_established" if established > 1 else
+                         "one_established_plus_other" if established == 1 else "no_established")
+    return {"tcp_state_summary": state_summary,
+            "owned_inode_relation": "same" if len(set(inodes)) == 1 else "distinct"}
+
+
 def owned_socket(table, inodes, allowed_addresses, port, conntrack="", *, path_diagnostics=None):
     matches = []
+    match_states = []
     for line in table.splitlines()[1:]:
         parts = line.split()
         if len(parts) < 10 or parts[9] not in inodes:
@@ -98,6 +125,7 @@ def owned_socket(table, inodes, allowed_addresses, port, conntrack="", *, path_d
             remote, remote_port = ipv4_proc(parts[2])
         if remote in allowed_addresses and remote_port == port and local_port:
             matches.append({"local": local, "local_port": local_port, "remote": remote, "remote_port": remote_port, "inode": parts[9]})
+            match_states.append(parts[3])
         elif remote_port == 0 and local_port:
             for flow in conntrack.splitlines():
                 match = re.search(r"\bsrc=([0-9.]+) dst=([0-9.]+) sport=([0-9]+) dport=([0-9]+)\b", flow)
@@ -105,11 +133,15 @@ def owned_socket(table, inodes, allowed_addresses, port, conntrack="", *, path_d
                     source = str(ipaddress.IPv4Address(match[1]))
                     if local not in {"0.0.0.0", source}: continue
                     matches.append({"local": source, "local_port": local_port, "remote": match[2], "remote_port": port, "inode": parts[9]})
+                    match_states.append(parts[3])
     if len(matches) != 1:
         error = ValueError("Selected TURN path lacks one unambiguous own-process kernel socket")
         if type(path_diagnostics) is NativePathDiagnostics:
-            try: path_diagnostics.observe(error, "kernel_socket_correlation",
-                "no_owned_match" if not matches else "ambiguous_owned_matches")
+            try:
+                summary = (tcp_ambiguity_summary(match_states, (match["inode"] for match in matches))
+                           if len(matches) > 1 and path_diagnostics.scenario in {"turn_tcp", "turn_tls"} else {})
+                path_diagnostics.observe(error, "kernel_socket_correlation",
+                    "no_owned_match" if not matches else "ambiguous_owned_matches", **summary)
             except Exception: pass
         raise error
     return matches[0]
