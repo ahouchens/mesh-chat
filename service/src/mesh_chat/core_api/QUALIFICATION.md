@@ -8,6 +8,16 @@ same-phase deadline. Exact inner cause remains undiagnosed. No full native,
 helper-retirement, separate-caller/process or media acceptance follows. See the
 qualification ledger for exact counts and retained historical failures.
 
+Reviewed diagnostic commit `6af9e81` adds fixed, exception-bound labels to
+the existing kernel-path constructor and receipt checks. Socket correlation
+distinguishes no owned match from ambiguous owned matches without exposing
+endpoints, PIDs or inodes. Observer construction is optional, cleanup replacement
+cannot inherit the original error's label, and all acceptance criteria and
+deadlines remain unchanged. Independent source/artifact review verifies **805
+focused passes**, retaining 776 prior cases and adding 29; the new module is
+included in the fast boundary gate. This is diagnostic instrumentation, not a
+repair of the still-unidentified CI cause. Fresh combined gates and CI are pending.
+
 Windows: launch the retained sidecar with sole flag
 `--qualification-native-webrtc`. Use its existing private length-prefixed IPCv1
 initialize envelope, with exact payload `profile_dir`, `vault_key` (base64),

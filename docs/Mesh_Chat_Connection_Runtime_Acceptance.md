@@ -47,6 +47,16 @@ Progress markers show initialization and earlier direct/TURN-UDP work advanced,
 but do not establish final scenario, cleanup or full native acceptance. The
 prior DNS failure did not stop this run; no underlying DNS repair is inferred.
 
+Reviewed diagnostic commit `6af9e81` adds fixed, exception-bound labels to
+the existing kernel-path constructor and receipt checks. Socket correlation
+distinguishes no owned match from ambiguous owned matches without exposing
+endpoints, PIDs or inodes. Observer construction is optional, cleanup replacement
+cannot inherit the original error's label, and all acceptance criteria and
+deadlines remain unchanged. Independent source/artifact review verifies **805
+focused passes**, retaining 776 prior cases and adding 29; the new module is
+included in the fast boundary gate. This is diagnostic instrumentation, not a
+repair of the still-unidentified CI cause. Fresh combined gates and CI are pending.
+
 The next bounded task is native failure attribution and correction, preserving
 socket uniqueness, native receipt requirements and all deadlines. Bootstrap
 helper retirement and later roadmap implementation remain deferred until full
