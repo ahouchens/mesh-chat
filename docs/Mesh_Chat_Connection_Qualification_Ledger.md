@@ -4,7 +4,48 @@
 
 ### Cold-restart containment: full CI completed; native pairing remains unqualified
 
-The latest completed checkpoint is `379e38ae385a398bfc5a6ec878ac12bc7969560a`
+The latest completed qualification source is
+`fed31cc1a3104b0333bdfc8ed5251691002827e3` (tree
+`3ec75b3aad730b470a1ed6a38b24c418fb830ba1`). Fresh local SDK staging and
+strict policy types pass, as do **5,522 required policy cases**, **1,770 Python
+UI + 12 rendered cases**, and **nine Windows boundary cases**, without required
+skips. The full local service run passes **6,752 cases with 49 unchanged
+optional/platform skips**, zero failures/errors, including all 28 composition
+controls. All prior cases remain alongside exactly 116 new controls.
+
+Full manual run
+[42926669465](https://github.com/ahouchens/mesh-chat/actions/runs/42926669465)
+completed **failed** on November 11 at 00:13:07 UTC. CI policy has exact
+local/remote inventory parity; UI, packaged Windows and its installed public
+SDK pairing/receipt/same-application lifetime slice independently validate.
+Linux direct **25 transport + 10 recovery + 12 setup cases** pass. All 72 layout
+report cases have zero overflow; screenshots were not visually reviewed.
+
+Android runs **83 JVM cases** and **54 successful emulator case reports**,
+including all four new optimized local Binder/Chaquopy diagnostic controls.
+Those reports and their seven available binary hashes independently validate.
+The separately packaged runtime host then fails Kotlin compilation because
+its explicit source selection omits `CoreFailureObservationState.kt`, now
+referenced by `CoreDispatch` and `MeshCoreApiService`. The two independent
+consumer cases, complete 17-artifact distribution and final platform/cleanup
+acceptance are unavailable. Cross-platform native interoperability is skipped;
+the original `379e38a` ICE initialization cause remains unknown.
+
+Windows direct recovery has **nine passes and one failure**: `address_loss`
+does not observe the queued workspace message within its existing 45-second
+delivery wait after the recovered-connection checks pass. Fabric and setup
+do not run after that failure. The relevant test and direct-recovery/workspace
+source blobs match the earlier passing `379e38a` run, but this does not explain
+the failure or establish an environmental cause. No product repair is inferred.
+
+D's narrow packaging correction `e552dd9` adds only the missing private state
+source. Its isolated compiler reproduces the unresolved-reference failure and
+passes after the change; 32 existing boundary cases pass. Independent review
+and integration are pending. Fresh full qualification remains required, with
+the Windows recovery failure retained separately. Bootstrap retirement remains
+deferred until full native qualification passes.
+
+The preceding completed checkpoint is `379e38ae385a398bfc5a6ec878ac12bc7969560a`
 (tree `2cea47a5971980ac34e63949e5f221a2ced09184`). Fresh SDK staging and
 strict policy types pass. Exact-source local gates pass **5,406 required policy
 cases**, **1,752 Python UI + 12 rendered cases** and **nine Windows boundary
@@ -56,9 +97,9 @@ instrumentation methods compile and are required by the optimized emulator
 inventory, increasing it from 52 to **56**; they have not yet run on a device.
 This is component evidence, not combined qualification or native acceptance.
 
-Fresh SDK staging, exact-source full local gates and a new full CI run are
-pending. No unchanged-source retry was dispatched. Full native acceptance
-remains open; bootstrap retirement remains deferred until it passes.
+The exact-source combined local and failed full CI outcome at `fed31cc`
+is recorded above. No unchanged-source retry was dispatched. Full native
+acceptance remains open; bootstrap retirement remains deferred until it passes.
 
 Native android archive SHA-256: `9e24455b43718c675488c0230cfc37c5fd2a8a4d5af9a9bb77a86824af921482`;
 report SHA-256: `cc8e7020ebeec59191002baefb46c44e78095d45846d740a2545e48a8ded8df6`.

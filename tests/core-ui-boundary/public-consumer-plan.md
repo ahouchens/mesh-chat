@@ -79,8 +79,15 @@ public SDK support follows. Private same-exchange diagnostics are integrated
 from producer `c6a31bb`/`6246303` and consumer `364eb313`, with inventory
 registration `a996252`. Focused evidence passes 285 producer and 903 consumer
 Python cases, 24 JVM cases and 239 inventory cases. Four compiled Android
-local Binder/Chaquopy controls raise the required optimized inventory to 56;
-device execution and exact-source combined qualification remain pending.
+local Binder/Chaquopy controls raise the required optimized inventory to 56.
+At `fed31cc`, all four pass within 54 verified Android case reports and 83 JVM
+passes, but full run `42926669465` fails: the separately packaged runtime host
+omits the private observation-state source and cannot compile. Independent
+consumer execution and cross-platform native interoperability do not run.
+Windows direct recovery separately fails its address-loss delivery wait
+(nine other recovery cases pass); its cause is unestablished. The narrow
+packaging correction `e552dd9` has isolated compiler RED/GREEN and 32 existing
+boundary passes, with integration and fresh full qualification pending.
 Only fixed operation/stage/category/cause enums may accompany the same
 correlated internal failure, under the original local caller and initialized
 publication. Public Core responses, SDK surface, grants, call counts and
