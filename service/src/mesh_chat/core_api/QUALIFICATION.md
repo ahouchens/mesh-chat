@@ -1,6 +1,45 @@
 # Private packaged qualification control
 
-Current evidence: `67a5210` passes all fresh local gates (6,811 service passes,
+The latest completed qualification is `bc26ec45b9e6fc99c4b1c41052bf48e0bb2b6128`
+(tree `5f69bf4b02298e9c26ea358ebb46d4ea94852fd7`), full manual run
+[43040952044](https://github.com/ahouchens/mesh-chat/actions/runs/43040952044).
+Fresh scoped local checks pass: SDK staging/upgrade, strict policy types,
+**5,596 policy cases**, **1,828 Python UI + 12 rendered cases**, **nine Windows
+boundary cases**, and **six source-carrier setup cases**, all with zero skips.
+All 28 lifecycle composition controls remain. Policy and Python UI inventories
+match CI exactly. The broader 6,811-pass/49-skip service result remains historical
+evidence at `67a5210`; it was not rerun or relabeled for this diagnostic-only delta.
+An initial local rendered-UI startup was blocked by sandbox filesystem access;
+its report is retained separately and the same-source boundary rerun passes.
+
+Seven CI jobs pass. Independently retained evidence includes Windows direct
+**25 transport + 10 recovery + 12 setup** cases, Android **56 emulator + 83 JVM
+cases and 17 distribution/binary hashes**, the policy/UI slices above, and nine
+Windows boundary cases plus normal installed public-SDK bootstrap with DPAPI/EFS.
+The recurring Windows `address_loss` case passes in CI and in one separate local
+native reproduction using the exact CI-built dispatcher. That single local pass
+and this CI pass do not establish a repair of the intermittent failure.
+
+Four jobs fail and one is skipped. Linux direct and browser layout fail Ubuntu
+package downloads with DNS resolution errors for `azure.archive.ubuntu.com`,
+before their required transport/layout tests run. APT already attempted multiple
+Ubuntu endpoints; no repository mirror override, signature failure or product
+cause is established. Windows desktop fails public pairing at `invitation_wait`
+after the original 240-second work deadline. Its final probe sees both pairing
+sessions retired with unexpired leases; cached earlier snapshots and current
+stopped/ineligible actor state cannot recover the preceding failure reason.
+The Reticulum interface warning describes a separate path and is not evidence
+of the cause of native mailbox/WebRTC pairing failure. Later receipts, shared
+host lifetime and clean exits are not qualified by this run.
+
+The native cross-platform job is skipped because the Windows desktop prerequisite
+failed; neither initial-key nor TURN/TCP diagnostics execute. The aggregate gate
+fails. The next bounded change records earlier public pairing/connection states
+without delaying invitation polling or changing the work deadline, acceptance,
+network policy or SDK contract. Helper retirement and later roadmap promotion
+remain deferred until independently verified full native qualification.
+
+Previous evidence: `67a5210` passes all fresh local gates (6,811 service passes,
 49 unchanged optional/platform skips; 5,577 policy; 1,824 Python UI + 12 rendered;
 nine Windows boundary). [Full run 42973285262](https://github.com/ahouchens/mesh-chat/actions/runs/42973285262)
 fails Windows `address_loss` queued delivery after connection recovery and native
