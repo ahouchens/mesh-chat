@@ -2623,6 +2623,36 @@ def test_guest_route_selector_uses_unknown_when_proxy_implementation_is_not_prov
     assert json.loads(namespace["connect_target"](binding)) == {"connect_target": "unknown"}
 
 
+@pytest.mark.parametrize("custom,selected_proxy", [
+    ("build_opener", False), ("build_opener", True),
+    ("ProxyHandler", False), ("ProxyHandler", True),
+    ("proxy_open", False), ("proxy_open", True),
+])
+def test_actual_embedded_guest_route_selector_uses_unknown_for_custom_route_builder(
+        monkeypatch, custom, selected_proxy):
+    for name in list(os.environ):
+        if name.lower().endswith("_proxy"): monkeypatch.delenv(name)
+    if selected_proxy: monkeypatch.setenv("https_proxy", "http://proxy.example:8080")
+    monkeypatch.setattr(urllib.request, "getproxies", urllib.request.getproxies_environment)
+    monkeypatch.setattr(urllib.request, "proxy_bypass", urllib.request.proxy_bypass_environment)
+    binding = install_guest_route_modules(monkeypatch, "https://broker.example/credentials")
+    if custom == "build_opener":
+        monkeypatch.setattr(urllib.request, "build_opener", lambda *handlers: None)
+    elif custom == "ProxyHandler":
+        class CustomProxyHandler(urllib.request.ProxyHandler): pass
+        monkeypatch.setattr(urllib.request, "ProxyHandler", CustomProxyHandler)
+    else:
+        monkeypatch.setattr(urllib.request.ProxyHandler, "proxy_open", lambda self, req, proxy, type: None)
+    source = (Path(__file__).resolve().parents[3] / "plugins/tauri-plugin-mesh-runtime/android/src/androidTest"
+        "/java/com/meshchat/runtime/PackagedNativeInteropBoundaryTest.kt").read_text(encoding="utf-8")
+    match = re.search(r'private val NETWORK_DIAGNOSTIC = """(.*?)"""\.trimIndent\(\)', source, re.DOTALL)
+    assert match is not None
+    namespace = {}
+    exec(textwrap.dedent(match.group(1)), namespace)
+    assert namespace["standard_route_builder"]() is False
+    assert json.loads(namespace["connect_target"](binding)) == {"connect_target": "unknown"}
+
+
 def test_guest_route_selector_rejects_rebound_publication(monkeypatch):
     binding = install_guest_route_modules(monkeypatch, "https://broker.example/credentials")
     monkeypatch.setattr(urllib.request, "getproxies", urllib.request.getproxies_environment)

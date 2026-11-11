@@ -224,6 +224,7 @@ class PackagedNativeInteropBoundaryTest {
     companion object {
         private val NETWORK_DIAGNOSTIC = """
             import json
+            from types import FunctionType
             import urllib.request
             from mesh_chat import mobile_bridge
             from mesh_chat.core_api import qualification_host
@@ -233,6 +234,24 @@ class PackagedNativeInteropBoundaryTest {
                     publication = qualification_host._android_publication
                     return (type(binding) is str and publication is not None and
                             publication.binding == binding and publication.current())
+                except Exception:
+                    return False
+
+            def standard_route_builder():
+                try:
+                    module = urllib.request
+                    opener = module.urlopen
+                    builder = module.build_opener
+                    proxy = module.ProxyHandler
+                    source = opener.__code__.co_filename
+                    return (type(opener) is FunctionType and opener.__module__ == module.__name__ and
+                            opener.__qualname__ == 'urlopen' and
+                            type(builder) is FunctionType and builder.__module__ == module.__name__ and
+                            builder.__qualname__ == 'build_opener' and builder.__code__.co_filename == source and
+                            type(proxy) is type and proxy.__module__ == module.__name__ and
+                            proxy.__qualname__ == 'ProxyHandler' and
+                            proxy.__init__.__code__.co_filename == source and
+                            proxy.proxy_open.__code__.co_filename == source)
                 except Exception:
                     return False
 
@@ -247,7 +266,8 @@ class PackagedNativeInteropBoundaryTest {
                     request = urllib.request.Request(broker)
                     if request.type != 'https' or not request.host:
                         return json.dumps({'connect_target': 'unknown'})
-                    if (urllib.request.getproxies is not urllib.request.getproxies_environment or
+                    if (not standard_route_builder() or
+                            urllib.request.getproxies is not urllib.request.getproxies_environment or
                             urllib.request.proxy_bypass is not urllib.request.proxy_bypass_environment):
                         return json.dumps({'connect_target': 'unknown'})
                     # urlopen(context=...) builds a fresh opener with ProxyHandler(getproxies()).
