@@ -20,7 +20,47 @@ and scenario rows below to complete; their named remaining obligations still
 apply, including packaged cross-platform transport and unavailable physical
 qualification.
 
-The next candidate integrates reviewed component `f8e4e9f`: at most five
+The latest completed qualification is `11213ee5dde971ad7cacfdee153793fab6ff519b`
+(tree `72bc64f7ac50841c334d64672c80cc453508962e`), full manual run
+[43050419628](https://github.com/ahouchens/mesh-chat/actions/runs/43050419628).
+All fresh scoped local checks pass: SDK staging/upgrade, strict policy types,
+**5,612 policy cases**, **1,828 Python UI + 12 rendered cases**, **nine Windows
+boundary cases**, and **six source-carrier setup cases**, with zero skips.
+Policy and Python UI inventories match CI exactly; all 28 lifecycle composition
+controls remain. The broader service result remains historical at `67a5210`.
+
+Eight CI jobs pass. Retained artifacts independently verify Windows direct
+**25 transport + 10 recovery + 12 setup** cases, Android **56 emulator + 83 JVM
+cases and 17 artifact hashes**, and the policy/UI checks above. Windows installed
+public-SDK pairing now passes, including two authenticated receipts, shared SDK
+session lifetime, pending-message/key preservation across owner reopen and clean
+host exits. This pass does not establish a cause or repair of the prior timeout.
+
+Five jobs fail. Linux direct and browser layout again fail Ubuntu package DNS
+before their required tests. Canonical's [official status feed](https://status.canonical.com/rss)
+reports a DNS major outage from 14:26 UTC on November 11, before these failures;
+the [runner incident](https://github.com/actions/runner-images/issues/15296)
+corroborates matching failures elsewhere. This is consistent with an upstream
+outage, without proving the runners' exact failing DNS hop. Optional APT
+fail-fast hardening `b1dc7ee` is reviewed separately and held out of integration;
+it cannot restore DNS or replace required package and font installation.
+
+Android native initialization fails at `initialize_key_wait`: the signed GitHub
+artifact blob download returns **HTTP 503**. The 48-second native step is below
+the original 900-second key-wait ceiling. The new diagnostic projection exposes
+`blob_request/http_rejected/503`; the current read path aborts immediately.
+Windows subsequently retires at `wait_answer/tick/phase_timeout`. Neither role
+reaches TURN/TCP, and the aggregate gate fails. A separate lead artifact download
+also returned 503, then succeeded on one later read; its precise cause is not
+assumed to match Android's failure.
+
+The next bounded correction retries only selected transient read failures within
+the existing deadline, with unchanged uploads and immutable artifact validation.
+It requires independent review and fresh qualification. Full native acceptance,
+bootstrap helper retirement and later roadmap promotion remain pending. A new
+full run must also wait for recovery of the upstream package infrastructure.
+
+The preceding candidate integrated reviewed component `f8e4e9f`: at most five
 public pairing/diagnostics observations during invitation wait, scheduled at
 0, 1, 5, 20 and 90 seconds. A single-flight observer leaves the original snapshot
 predicate, 100-millisecond polling and 240-second work deadline intact. Each
@@ -37,7 +77,7 @@ pending. The Linux package DNS failures warrant fresh runners without a mirror
 override. This component adds evidence; it does not establish a pairing repair.
 Bootstrap helper retirement remains on hold until the full native gate passes.
 
-The latest completed qualification is `bc26ec45b9e6fc99c4b1c41052bf48e0bb2b6128`
+The preceding completed qualification is `bc26ec45b9e6fc99c4b1c41052bf48e0bb2b6128`
 (tree `5f69bf4b02298e9c26ea358ebb46d4ea94852fd7`), full manual run
 [43040952044](https://github.com/ahouchens/mesh-chat/actions/runs/43040952044).
 Fresh scoped local checks pass: SDK staging/upgrade, strict policy types,
