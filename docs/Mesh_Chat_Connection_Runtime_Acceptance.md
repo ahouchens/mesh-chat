@@ -20,7 +20,40 @@ and scenario rows below to complete; their named remaining obligations still
 apply, including packaged cross-platform transport and unavailable physical
 qualification.
 
-The latest completed qualification source is
+The latest completed qualification is `6b3fb8e2f5b92858ca62935066f8b607e3edecd9`
+(tree `ecc484ffa393e45de96ae14d8390d3bae8fcedae`), full manual run
+[42932168650](https://github.com/ahouchens/mesh-chat/actions/runs/42932168650).
+The runtime-host source-selection correction is confirmed: all **56 Android
+emulator cases**, **83 JVM cases** and **17 distribution/binary hashes**
+independently validate. CI also passes **5,522 policy cases**, **1,770 Python UI
++ 12 rendered cases**, packaged Windows and its installed public-SDK lifetime
+slice, Linux direct **25 transport + 10 recovery + 12 setup**, and 72 zero-overflow
+layout cases. Policy inventory equals the retained `fed31cc` baseline; the prior
+full local Python results remain labeled `fed31cc`. Current-source targeted
+evidence is the affected Kotlin compile plus 410 existing boundary tests.
+
+The run nevertheless fails. Android native initialization reports the actual
+`ice_servers` operation at `broker_open`, category `network_unavailable`, cause
+`name_resolution`. Runner outbound preflight completed earlier; the report does
+not identify broker-versus-proxy hostname or prove a DNS configuration defect.
+Android exits before key publication; Windows later fails `initialize_key_wait`.
+No full native scenario, paired receipt, cold-restart or zero-accounting acceptance
+follows. Windows direct transport and all ten recovery cases pass, including the
+previous address-loss failure. Two of twelve setup cases fail at the same
+25-second general-channel discovery wait: the joining workspace is active but
+has no channel; the owner's channel-record delivery remains sending after three
+attempts, with a future retry and no endpoint receipt. Its stored
+`transport_unavailable` may persist after a later accepted send and does not
+identify the current attempt's cause. The revocation/cancellation branches have
+not yet run. These two failures remain separate from Android DNS.
+
+C investigates a reproducible workspace delivery correction with B's independent
+review. D investigates the Android app networking path with A's independent
+review. Existing deadlines, authority and acceptance gates remain unchanged.
+Bootstrap helper retirement and later roadmap work remain deferred until full
+native qualification passes.
+
+The preceding completed qualification source is
 `fed31cc1a3104b0333bdfc8ed5251691002827e3` (tree
 `3ec75b3aad730b470a1ed6a38b24c418fb830ba1`). Fresh local SDK staging and
 strict policy types pass, as do **5,522 required policy cases**, **1,770 Python

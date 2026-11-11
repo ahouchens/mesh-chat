@@ -89,8 +89,15 @@ Windows direct recovery separately fails its address-loss delivery wait
 (nine other recovery cases pass); its cause is unestablished. The narrow
 packaging correction `e552dd9` has isolated compiler RED/GREEN and 32 existing
 boundary passes, independent review approval and integration at `10d08c3`.
-Fresh full qualification, including actual Gradle and published-host checks,
-remains pending. The prior full local results retain their `fed31cc` source.
+Full run `42932168650` at `6b3fb8e` confirms the correction with 56 Android
+cases, 83 JVM cases and 17 distribution hashes. Native Android then fails the
+actual ICE broker open with a name-resolution observation; Windows waits for
+its unpublished partner key. Separately, Windows direct recovery passes all ten
+cases but two setup cases time out awaiting the joining workspace's general
+channel. Neither underlying DNS configuration nor channel-delivery defect is
+yet established. No full native acceptance follows. Prior full local results
+retain their `fed31cc` source; targeted current-source compile and 410 boundary
+cases pass.
 Only fixed operation/stage/category/cause enums may accompany the same
 correlated internal failure, under the original local caller and initialized
 publication. Public Core responses, SDK surface, grants, call counts and
