@@ -50,6 +50,25 @@ These preserve existing retries, deadlines and acceptance checks. Bootstrap
 helper retirement and later roadmap implementation remain deferred pending full
 native qualification. The aggregate gate is failed; historical runs remain below.
 
+The reviewed diagnostic components are now integrated: `8a4c4ae` projects
+the existing bounded artifact-transport failure details at `initialize_key_wait`,
+and `94b5d05` adds failure-only snapshots of both recovery peers. The snapshots
+include at most eight workspace-event delivery rows with capped attempts and
+due/future/terminal scheduling, plus a 16-entry trace with explicit truncation.
+Status and acceptance outcomes describe literal handler returns; they do not
+claim new message materialization. The original 45-second delivery wait, native
+deadlines, retries and acceptance criteria are unchanged. The already-built
+Windows dispatcher is retained for one day in a separate source-named CI artifact.
+
+Component evidence verifies **734 controller cases**, including root reproduction
+of three missing-projection failures before the correction and four passes after
+it; D's **45 focused diagnostic cases and all six source-carrier setup cases**
+also pass. There are exactly 19 new cases relative to `67a5210`. Fresh combined
+SDK/type, full required policy/UI, Windows boundary and six source-carrier checks
+are pending. The broader 6,811-pass/49-skip service result remains prior-source
+evidence at `67a5210`; it is not rerun or relabeled for this six-file diagnostic
+delta. Full native CI qualification remains required before helper retirement.
+
 The preceding completed qualification is `ce96840ee8f138190e1a1048e5deeb5997edee88`
 (tree `c8a272e1b3fec9f24741ca3542093284410c018e`), full manual run
 [42961670166](https://github.com/ahouchens/mesh-chat/actions/runs/42961670166).

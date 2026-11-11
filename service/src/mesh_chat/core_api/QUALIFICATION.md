@@ -10,6 +10,25 @@ case runs. Receiver-only recovery evidence and omitted initial-key transport
 details prevent root-cause attribution. The next bounded diagnostic corrections
 do not establish native, helper-retirement or public cross-platform acceptance.
 
+The reviewed diagnostic components are now integrated: `8a4c4ae` projects
+the existing bounded artifact-transport failure details at `initialize_key_wait`,
+and `94b5d05` adds failure-only snapshots of both recovery peers. The snapshots
+include at most eight workspace-event delivery rows with capped attempts and
+due/future/terminal scheduling, plus a 16-entry trace with explicit truncation.
+Status and acceptance outcomes describe literal handler returns; they do not
+claim new message materialization. The original 45-second delivery wait, native
+deadlines, retries and acceptance criteria are unchanged. The already-built
+Windows dispatcher is retained for one day in a separate source-named CI artifact.
+
+Component evidence verifies **734 controller cases**, including root reproduction
+of three missing-projection failures before the correction and four passes after
+it; D's **45 focused diagnostic cases and all six source-carrier setup cases**
+also pass. There are exactly 19 new cases relative to `67a5210`. Fresh combined
+SDK/type, full required policy/UI, Windows boundary and six source-carrier checks
+are pending. The broader 6,811-pass/49-skip service result remains prior-source
+evidence at `67a5210`; it is not rerun or relabeled for this six-file diagnostic
+delta. Full native CI qualification remains required before helper retirement.
+
 Prior evidence: `ce96840` passes fresh local gates and all non-native CI jobs
 in [run 42961670166](https://github.com/ahouchens/mesh-chat/actions/runs/42961670166),
 including both previously failing Windows setup cases. Android native fails
