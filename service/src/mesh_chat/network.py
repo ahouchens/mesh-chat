@@ -537,6 +537,9 @@ class ReticulumNetwork:
         bootstrap = getattr(self, "_direct_bootstrap", None)
         if bootstrap is not None and bootstrap.peer == destination_hash and bootstrap.ready:
             return True
+        return self._main_recipient_ready(destination_hash)
+
+    def _main_recipient_ready(self, destination_hash: bytes) -> bool:
         return (
             RNS.Identity.recall(destination_hash) is not None
             and RNS.Identity.get_ratchet(destination_hash) is not None
@@ -549,10 +552,7 @@ class ReticulumNetwork:
         bootstrap = getattr(self, "_direct_bootstrap", None)
         if bootstrap is not None and bootstrap.ready and bootstrap.handles(destination_hash, fields, text):
             return True
-        return (
-            RNS.Identity.recall(destination_hash) is not None
-            and RNS.Identity.get_ratchet(destination_hash) is not None
-        )
+        return self._main_recipient_ready(destination_hash)
 
     def path_known(self, destination_hash: bytes) -> bool:
         return bool(RNS.Transport.has_path(destination_hash))
@@ -981,7 +981,9 @@ class ReticulumNetwork:
             return bootstrap.send(logical_id=logical_id, recipient_public_key=recipient_public_key,
                 recipient_destination=recipient_destination, text=text, fields=fields, propagated=propagated)
         with self._send_lock:
-            if not self.recipient_ready_for_fields(recipient_destination, fields, text):
+            # Delegation was not selected. A newly ready bootstrap carrier
+            # cannot provide the main interpreter's LXMF ratchet.
+            if not self._main_recipient_ready(recipient_destination):
                 self.request_path(recipient_destination)
                 raise RecipientKeysUnavailable("Recipient ratchet is not available")
             recipient_identity = RNS.Identity.recall(recipient_destination)
