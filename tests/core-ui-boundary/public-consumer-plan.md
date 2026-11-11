@@ -93,10 +93,17 @@ cases, 83 JVM cases and 17 distribution hashes. Native Android then fails the
 actual ICE broker open with a name-resolution observation; Windows waits for
 its unpublished partner key. Separately, Windows direct recovery passes all ten
 cases but two setup cases time out awaiting the joining workspace's general
-channel. Neither underlying DNS configuration nor channel-delivery defect is
-yet established. No full native acceptance follows. Prior full local results
-retain their `fed31cc` source; targeted current-source compile and 410 boundary
-cases pass.
+channel. No full native acceptance follows. Prior full local results retain
+their `fed31cc` source; targeted `6b3fb8e` compile and 410 boundary cases pass.
+
+The subsequent reviewed corrective batch `4523f43` repairs payload-blind workspace
+readiness and retains ordinary-transport ratchet enforcement across a bootstrap
+transition. Semantic regressions and 94 focused cases pass; the exact prior
+native failure still needs fresh CI. `5988882` adds a bounded private Android
+postfailure network snapshot with 928 focused Python cases and a focused source
+compile. It provides diagnostic context only; the underlying guest DNS cause
+remains unresolved. Fresh combined local and full native qualification are
+pending. Public SDK behavior and authority are unchanged.
 Only fixed operation/stage/category/cause enums may accompany the same
 correlated internal failure, under the original local caller and initialized
 publication. Public Core responses, SDK surface, grants, call counts and

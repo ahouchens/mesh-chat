@@ -47,10 +47,34 @@ attempts, with a future retry and no endpoint receipt. Its stored
 identify the current attempt's cause. The revocation/cancellation branches have
 not yet run. These two failures remain separate from Android DNS.
 
-C investigates a reproducible workspace delivery correction with B's independent
-review. D investigates the Android app networking path with A's independent
-review. Existing deadlines, authority and acceptance gates remain unchanged.
-Bootstrap helper retirement and later roadmap work remain deferred until full
+The reviewed corrective batch contains C's `4523f43` payload-aware workspace
+readiness repair and D's `5988882` private Android postfailure network snapshot.
+Actual source-transport traces show a channel record admitted by bootstrap
+readiness even though that payload uses the ordinary transport and its ratchet
+is absent. Workspace preflight now checks the exact payload before spending a
+send attempt; it retains the existing five-second key wait. Once bootstrap
+delegation is skipped, the ordinary send branch requires its own identity and
+ratchet even if bootstrap becomes ready concurrently. Both old behaviors have
+semantic failing regressions; the corrected focused network/workspace suite
+passes 94 cases. Six source setup cases passed on `7de1a54`; a representative
+source setup case passes on the final correction. The two prior native Windows
+failures remain unqualified until fresh CI.
+
+The Android snapshot adds one nonce-authenticated, same-publication inspect only
+after the correlated ICE broker-open name-resolution failure. Within at most
+two seconds of the existing controller deadline, it returns fixed app network
+capability/DNS-presence booleans and current broker/proxy/unknown route selection.
+It preserves the original failure and emits no raw network values. Custom opener
+or proxy-handler behavior yields unknown. This is postfailure diagnostic context,
+not a DNS repair or proof of the historical failing hostname. All 928 focused
+Python cases pass, retaining all prior 903; the focused Android source compile
+exits zero with its declared close-time android.jar warning. Actual packaging
+and native acceptance still require CI.
+
+Combined fresh SDK, strict policy types, full service/policy/UI/Windows gates and
+full six-family CI are pending on the new integration candidate. No deadline,
+bootstrap allowlist, public API or acceptance requirement is relaxed. Bootstrap
+helper retirement and later roadmap implementation remain deferred until full
 native qualification passes.
 
 The preceding completed qualification source is
