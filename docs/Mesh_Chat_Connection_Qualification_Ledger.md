@@ -41,9 +41,13 @@ the failure or establish an environmental cause. No product repair is inferred.
 D's narrow packaging correction `e552dd9` adds only the missing private state
 source. Its isolated compiler reproduces the unresolved-reference failure and
 passes after the change; 32 existing boundary cases pass. Independent review
-and integration are pending. Fresh full qualification remains required, with
-the Windows recovery failure retained separately. Bootstrap retirement remains
-deferred until full native qualification passes.
+approved the one-file source selection fix, integrated at `10d08c3`. The app
+facade, bridge and host client remain excluded from this distribution. The
+full local results above remain evidence for `fed31cc`; they are not relabeled
+as a new-source run. The correction receives targeted validation and fresh full
+six-family CI, including actual Gradle compilation and published-host checks.
+The Windows recovery failure remains separate and unexplained. Bootstrap
+retirement remains deferred until full native qualification passes.
 
 The preceding completed checkpoint is `379e38ae385a398bfc5a6ec878ac12bc7969560a`
 (tree `2cea47a5971980ac34e63949e5f221a2ced09184`). Fresh SDK staging and

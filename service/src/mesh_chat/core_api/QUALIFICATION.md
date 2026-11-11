@@ -88,7 +88,9 @@ consumer execution and cross-platform native interoperability do not run.
 Windows direct recovery separately fails its address-loss delivery wait
 (nine other recovery cases pass); its cause is unestablished. The narrow
 packaging correction `e552dd9` has isolated compiler RED/GREEN and 32 existing
-boundary passes, with integration and fresh full qualification pending.
+boundary passes, independent review approval and integration at `10d08c3`.
+Fresh full qualification, including actual Gradle and published-host checks,
+remains pending. The prior full local results retain their `fed31cc` source.
 Only fixed operation/stage/category/cause enums may accompany the same
 correlated internal failure, under the original local caller and initialized
 publication. Public Core responses, SDK surface, grants, call counts and
