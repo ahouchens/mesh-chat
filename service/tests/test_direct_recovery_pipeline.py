@@ -26,6 +26,8 @@ _EVENT_TRACE_OUTCOMES = {
     "acceptance": frozenset({"accepted", "deferred_or_rejected", "error", "unknown"}),
 }
 _EVENT_READINESS = ("bootstrap_ready", "bootstrap_handles", "main_identity", "main_ratchet", "main_path")
+_EVENT_SCHEDULES = frozenset({"due", "future", "terminal", "unknown"})
+_EVENT_FAILURES = frozenset({"none", "identity_binding_invalid", "transport_unavailable", "transport_error", "unknown"})
 
 
 def _fixed_count(value, limit):
@@ -51,6 +53,43 @@ def _event_trace_snapshot(value):
             entry["state"] = state if type(state) is str and state in _EVENT_STATES else "unknown"
         entries.append(entry)
     return {"entries": entries, "malformed": malformed}
+
+
+def _event_delivery_snapshot(value):
+    """Select at most eight event rows from the already-bounded delivery projection."""
+    if type(value) not in (list, tuple): return {"entries": [], "truncated": False, "malformed": True}
+    entries, malformed = [], False
+    truncated = len(value) > 64
+    for row in value[:64]:
+        if type(row) is not dict:
+            malformed = True
+            continue
+        kind = row.get("kind")
+        if kind != "workspace_event":
+            if type(kind) is not str: malformed = True
+            continue
+        if len(entries) == 8:
+            truncated = True
+            continue
+        state, schedule, failure = row.get("state"), row.get("schedule"), row.get("failure")
+        attempts = row.get("attempts")
+        capped = row.get("attempts_capped")
+        native_present = row.get("native_message_id_present")
+        if (type(state) is not str or state not in _EVENT_STATES
+                or type(schedule) is not str or schedule not in _EVENT_SCHEDULES
+                or type(failure) is not str or failure not in _EVENT_FAILURES
+                or (attempts is not None and (type(attempts) is not int or attempts < 0))
+                or type(capped) is not bool or type(native_present) is not bool):
+            malformed = True
+        entries.append({
+            "state": state if type(state) is str and state in _EVENT_STATES else "unknown",
+            "attempts": _fixed_count(attempts, 32),
+            "attempts_capped": capped if type(capped) is bool else None,
+            "schedule": schedule if type(schedule) is str and schedule in _EVENT_SCHEDULES else "unknown",
+            "native_message_id_present": native_present if type(native_present) is bool else None,
+            "failure": failure if type(failure) is str and failure in _EVENT_FAILURES else "unknown",
+        })
+    return {"entries": entries, "truncated": truncated, "malformed": malformed}
 
 
 def _recovery_failure_snapshot(value):
@@ -91,6 +130,7 @@ def _recovery_failure_snapshot(value):
         "channel_discovery": discovery if type(discovery) is str and discovery in {"converged", "incomplete"} else "unknown",
         "workspace_event_scan": scan,
         "workspace_event_states": {name: _fixed_count(states.get(name), 64) for name in _EVENT_STATES},
+        "workspace_event_deliveries": _event_delivery_snapshot(workspace.get("deliveries")),
         "workspace_event_trace": _event_trace_snapshot(value.get("workspace_event_trace"))}
 
 

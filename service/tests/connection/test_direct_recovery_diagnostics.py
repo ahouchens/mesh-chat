@@ -46,7 +46,11 @@ def test_both_peer_projection_keeps_only_fixed_readiness_and_event_branches():
                   {"state": "connected", "rns_ready": False}],
         "workspace_bootstrap": {"workspaces": [{"channel_discovery": "incomplete",
             "id": "PRIVATE_WORKSPACE"}], "workspace_event_states": {"waiting_for_keys": 10**9,
-            "sending": 1, "private_state": 999}, "deliveries": [{"text": "PRIVATE_TEXT"}]},
+            "sending": 1, "private_state": 999}, "deliveries": [{"text": "PRIVATE_TEXT"},
+                {"kind": "workspace_event", "state": "queued", "attempts": 2,
+                 "attempts_capped": False, "schedule": "future",
+                 "native_message_id_present": False, "failure": "none",
+                 "id": "PRIVATE_DELIVERY", "payload": "PRIVATE_TEXT"}]},
         "workspace_event_trace": [
             {"stage": "preflight", "outcome": "waiting", "bootstrap_ready": True,
              "bootstrap_handles": False, "main_identity": True, "main_ratchet": False,
@@ -66,11 +70,57 @@ def test_both_peer_projection_keeps_only_fixed_readiness_and_event_branches():
     assert selected["channel_discovery"] == "incomplete"
     assert selected["workspace_event_scan"] == "unknown"
     assert selected["workspace_event_states"]["waiting_for_keys"] == 64
+    assert selected["workspace_event_deliveries"] == {"entries": [{"state": "queued", "attempts": 2,
+        "attempts_capped": False, "schedule": "future", "native_message_id_present": False,
+        "failure": "none"}], "truncated": False, "malformed": True}
     assert [row["stage"] for row in selected["workspace_event_trace"]["entries"]] == [
         "preflight", "send", "status", "ingress", "acceptance"]
     assert selected["workspace_event_trace"]["entries"][0]["main_ratchet"] is False
     assert selected["workspace_event_trace"]["entries"][2]["state"] == "received_by_endpoint"
     assert "PRIVATE" not in json.dumps(selected)
+
+
+def test_event_delivery_snapshot_distinguishes_retry_schedule_and_endpoint_receipt():
+    rows = [{"kind": "workspace_channel_record", "state": "queued", "attempts": 7,
+             "schedule": "future", "id": "PRIVATE_CONTROL"}]
+    rows += [{"kind": "workspace_event", "state": state, "attempts": attempts,
+              "attempts_capped": capped, "schedule": schedule,
+              "native_message_id_present": native, "failure": failure,
+              "id": "PRIVATE_ID", "document": "PRIVATE_PAYLOAD"}
+             for state, attempts, capped, schedule, native, failure in (
+                 ("queued", 0, False, "due", False, "none"),
+                 ("waiting_for_keys", 3, False, "future", False, "transport_unavailable"),
+                 ("received_by_endpoint", 32, True, "terminal", True, "transport_error"))]
+    selected = recovery._event_delivery_snapshot(rows)
+    assert selected == {"entries": [
+        {"state": "queued", "attempts": 0, "attempts_capped": False,
+         "schedule": "due", "native_message_id_present": False, "failure": "none"},
+        {"state": "waiting_for_keys", "attempts": 3, "attempts_capped": False,
+         "schedule": "future", "native_message_id_present": False,
+         "failure": "transport_unavailable"},
+        {"state": "received_by_endpoint", "attempts": 32, "attempts_capped": True,
+         "schedule": "terminal", "native_message_id_present": True,
+         "failure": "transport_error"}], "truncated": False, "malformed": False}
+    assert "PRIVATE" not in json.dumps(selected)
+
+
+def test_event_delivery_snapshot_sanitizes_malformed_values_and_bounds_rows():
+    selected = recovery._event_delivery_snapshot([None, {"kind": "workspace_event",
+        "state": "PRIVATE_STATE", "attempts": 10**100, "attempts_capped": "PRIVATE_BOOL",
+        "schedule": "PRIVATE_SCHEDULE", "native_message_id_present": "PRIVATE_ID",
+        "failure": "PRIVATE_EXCEPTION", "document": "PRIVATE_PAYLOAD"}])
+    assert selected == {"entries": [{"state": "unknown", "attempts": 32,
+        "attempts_capped": None, "schedule": "unknown", "native_message_id_present": None,
+        "failure": "unknown"}], "truncated": False, "malformed": True}
+    assert "PRIVATE" not in json.dumps(selected)
+    assert recovery._event_delivery_snapshot("PRIVATE_ROWS") == {
+        "entries": [], "truncated": False, "malformed": True}
+    row = {"kind": "workspace_event", "state": "queued", "attempts": 1,
+        "attempts_capped": False, "schedule": "due", "native_message_id_present": False,
+        "failure": "none", "id": "PRIVATE_ID"}
+    many = recovery._event_delivery_snapshot([row] * 65)
+    assert len(many["entries"]) == 8 and many["truncated"] and not many["malformed"]
+    assert "PRIVATE" not in json.dumps(many)
 
 
 @pytest.mark.parametrize("table,expected", [
