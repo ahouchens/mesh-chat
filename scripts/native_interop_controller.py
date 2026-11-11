@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT / "service/src"))
 from mesh_chat.connection.diagnostics import validated_pairing_retirement
 from native_interop_artifacts import GithubArtifacts, RendezvousUnavailable, context_from_environment
 from native_interop_evidence import SCENARIOS, SAMPLE_REJECTION_REASONS, Samples, accounting, digest, selection, traffic
+from native_interop_faults import NativePathDiagnostics, path_failure_observation, path_stage
 from native_interop_diagnostics import (NegativeControlDiagnostics, PreflightDiagnostics, negative_control_error,
     negative_control_observation, negative_control_stage, rendezvous_observation, reset_negative_control)
 from native_interop_peers import AndroidEmulator, AndroidPeer, PeerFailure, WindowsPeer
@@ -141,6 +142,7 @@ class Controller:
         self._pairing_failure: tuple[Exception, str, dict[str, str] | None] | None = None
         self._substage_failure: tuple[Exception, str] | None = None
         self._retirement_context = self._retirement_failure = None
+        self._path_diagnostics = None
         try: self._negative_diagnostics = NegativeControlDiagnostics()
         except Exception: self._negative_diagnostics = None
         self.workload = required_workload(workload)
@@ -241,6 +243,22 @@ class Controller:
             selected = negative_control_observation(observer.failure_observation(error))
             if selected != negative_control_observation(record[1]): return {}
             return {"negative_control": selected} if selected else {}
+        except Exception:
+            return {}
+
+    def failure_native_path(self, error):
+        try:
+            observer = self._path_diagnostics
+            if type(observer) is not NativePathDiagnostics:
+                return {}
+            record = observer._failure
+            if type(record) is not tuple or len(record) != 2 or record[0] is not error:
+                return {}
+            selected = path_failure_observation(observer.failure_observation(error))
+            if (not selected or selected != path_failure_observation(record[1])
+                    or self.phase != selected["scenario"] + "_authenticated_receipts"):
+                return {}
+            return {"native_path_failure": selected}
         except Exception:
             return {}
 
@@ -484,18 +502,23 @@ class Controller:
         return [item for item in self.snapshot().get("messages", []) if item.get("kind") == "chat"
                 and item.get("text") == text and item.get("direction") == direction]
 
-    def exchange(self, scenario, index=0, *, padded=False):
-        own, other = self.text(scenario, index, padded=padded), self.text(scenario, index, sender=self.partner, padded=padded)
-        started = time.monotonic()
-        handle = self.enqueue(own)
-        self.wait(lambda: self.delivered(handle), timeout=90)
-        inbound = self.wait(lambda: self.records(other, "inbound"), timeout=90)
-        outbound = self.records(own, "outbound")
-        if len(inbound) != 1 or len(outbound) != 1 or not outbound[0].get("native_message_id"):
-            raise ValueError("Native receipt exchange duplicated or lacks native delivery identity")
-        return {"outbound": digest(outbound[0]["id"]), "inbound": digest(inbound[0]["id"]),
-                "authenticated_receipt": True, "inbound_records": 1, "outbound_records": 1,
-                "receipt_roundtrip_ms": (time.monotonic() - started) * 1000}, handle
+    def exchange(self, scenario, index=0, *, padded=False, path_diagnostics=None):
+        with path_stage(path_diagnostics, "receipt_enqueue"):
+            own, other = self.text(scenario, index, padded=padded), self.text(scenario, index, sender=self.partner, padded=padded)
+            started = time.monotonic()
+            handle = self.enqueue(own)
+        with path_stage(path_diagnostics, "receipt_delivery_wait"):
+            self.wait(lambda: self.delivered(handle), timeout=90)
+        with path_stage(path_diagnostics, "receipt_inbound_wait"):
+            inbound = self.wait(lambda: self.records(other, "inbound"), timeout=90)
+        with path_stage(path_diagnostics, "receipt_outbound_records"):
+            outbound = self.records(own, "outbound")
+        with path_stage(path_diagnostics, "receipt_record_validation"):
+            if len(inbound) != 1 or len(outbound) != 1 or not outbound[0].get("native_message_id"):
+                raise ValueError("Native receipt exchange duplicated or lacks native delivery identity")
+            return {"outbound": digest(outbound[0]["id"]), "inbound": digest(inbound[0]["id"]),
+                    "authenticated_receipt": True, "inbound_records": 1, "outbound_records": 1,
+                    "receipt_roundtrip_ms": (time.monotonic() - started) * 1000}, handle
 
     def negative(self, fault, scenario):
         self.phase = scenario + "_kernel_block_negative_control"
@@ -568,18 +591,22 @@ class Controller:
                    ("resource", "logical_session", "adapter_epoch", "service_incarnation")):
                 raise ValueError("Transferred pairing cancellation replaced its adopted carrier")
         self.phase = scenario + "_authenticated_receipts"
+        try: self._path_diagnostics = NativePathDiagnostics(scenario)
+        except Exception: self._path_diagnostics = None
         fault, impairment = None, None
         try:
             if scenario in {"turn_tcp", "turn_tls", "impaired"} and self.role == "android":
                 from native_interop_faults import AndroidKernelPath
-                fault = AndroidKernelPath(self.peer, before, url, diagnostics=self._negative_diagnostics)
+                fault = AndroidKernelPath(self.peer, before, url, diagnostics=self._negative_diagnostics,
+                                          path_diagnostics=self._path_diagnostics)
             if scenario == "impaired":
                 if self.role == "android":
                     fault.install()
                     self.publish("impaired_ready", {"approved": True})
                 elif self.receive("impaired_ready") != {"approved": True}:
                     raise ValueError("Actual kernel impairment admission is missing")
-            messages = [self.exchange(scenario + ":" + initiator, index, padded=scenario == "impaired")[0]
+            messages = [self.exchange(scenario + ":" + initiator, index, padded=scenario == "impaired",
+                                      path_diagnostics=self._path_diagnostics)[0]
                         for index in range(20 if scenario == "impaired" else 1)]
             negative = self.negative(fault, scenario) if scenario in {"turn_tcp", "turn_tls", "impaired"} else None
             with negative_control_stage(self._negative_diagnostics, "final_observation"):
@@ -601,6 +628,7 @@ class Controller:
         finally:
             if fault is not None:
                 with negative_control_stage(self._negative_diagnostics, "fault_cleanup"): fault.close()
+        self._path_diagnostics = None
         self._negative_diagnostics = reset_negative_control(self._negative_diagnostics)
         self.phase = scenario + "_native_lease_retirement"
         self._retirement_context = {"scenario": scenario, "initiator": initiator, "stage": "prepare",
@@ -781,6 +809,7 @@ def main():
             result.update(controller.failure_rendezvous(error))
             result.update(controller.failure_retirement(error))
             result.update(controller.failure_negative_control(error))
+            result.update(controller.failure_native_path(error))
             try:
                 core = controller.failure_core(error)
                 result.update(core)
