@@ -4,7 +4,42 @@
 
 ### Cold-restart containment: full CI completed; native pairing remains unqualified
 
-The next candidate integrates reviewed artifact-read correction `503b18e`.
+The latest completed qualification is `f0c06c82dbf4003a732d8301f9d1d3facc955fb2`
+(tree `7b5fec7599cfda3fd44884ffbc9ee88b1d063a31`), full manual run
+[43115277007](https://github.com/ahouchens/mesh-chat/actions/runs/43115277007).
+The reviewed bounded HTTP 503 read retry is integrated. Fresh local checks pass:
+SDK staging/upgrade, strict policy types, **5,622 policy cases**, **1,838 Python
+UI + 12 rendered cases**, **nine Windows boundary cases**, and **six source-carrier
+setup cases**, with zero skips. Policy and Python UI inventories match CI exactly;
+all 28 lifecycle composition controls remain. Broader general service evidence
+remains historical at `67a5210`.
+
+The upstream DNS hold cleared when Canonical reported operational at 17:19:50 UTC
+on November 11. The candidate was pushed normally to the shared feature branch.
+**Ten CI jobs pass, three fail, none skip.** Independently verified artifacts cover
+the policy/UI cases above, Windows packaged/public-SDK pairing and lifecycle,
+Android **56 emulator + 83 JVM cases and 17 artifact hashes**, browser layout
+**72 cases**, and both Linux and Windows direct **25 transport + 10 recovery +
+12 setup** cases. The optional APT hardening remains unmerged.
+
+Native initialization advances beyond the earlier artifact-download failure;
+this does not prove a retry occurred. Android reaches `turn_tcp_authenticated_receipts`
+and rejects `kernel_socket_correlation/ambiguous_owned_matches`. Its kernel helper
+finds more than one app-owned socket row matching the TURN endpoint. The current
+predicate does not inspect TCP state or bind an individual socket to the selected
+ICE transport. Retained reports contain no socket rows, so concurrent established
+connections, lingering states and duplicate rows remain unresolved possibilities.
+Windows subsequently fails at `receipt_inbound_wait` with `scenario_deadline`.
+Both native jobs and the aggregate gate fail; earlier scenario markers do not
+replace full authenticated native acceptance.
+
+The next bounded candidate adds privacy-safe, fixed-enum TCP match-state
+diagnostics while preserving socket selection, ambiguity rejection, deadlines,
+faults and all acceptance requirements. No unconditional discriminator is yet
+justified. Bootstrap helper retirement and later roadmap promotion remain gated
+on independently validated full native qualification.
+
+The preceding candidate integrated reviewed artifact-read correction `503b18e`.
 An exact HTTP 503 at inventory, archive API or signed-blob open may retry at most
 twice, using the existing three-second cadence within the original wait deadline.
 Each open retains a ten-second maximum clipped to remaining time, including the
@@ -17,13 +52,13 @@ token is never forwarded to the signed blob request.
 
 The focused artifact module passes **130 cases**, retaining all 120 prior cases
 and adding ten retry/deadline controls. The original code fails the deterministic
-single-503-then-success regression. Fresh combined local qualification is pending;
+single-503-then-success regression. At that checkpoint combined qualification was pending;
 the full native gate remains unmet. This correction tolerates a transient read
 failure; it cannot repair a persistent provider limit or upstream DNS outage.
-The optional APT hardening remains outside this candidate. Another full CI run
-will wait for recovery of the upstream package infrastructure.
+The optional APT hardening remained outside that candidate. Its full CI run
+waited for recovery of the upstream package infrastructure.
 
-The latest completed qualification is `11213ee5dde971ad7cacfdee153793fab6ff519b`
+The preceding completed qualification is `11213ee5dde971ad7cacfdee153793fab6ff519b`
 (tree `72bc64f7ac50841c334d64672c80cc453508962e`), full manual run
 [43050419628](https://github.com/ahouchens/mesh-chat/actions/runs/43050419628).
 All fresh scoped local checks pass: SDK staging/upgrade, strict policy types,
@@ -57,11 +92,11 @@ reaches TURN/TCP, and the aggregate gate fails. A separate lead artifact downloa
 also returned 503, then succeeded on one later read; its precise cause is not
 assumed to match Android's failure.
 
-The next bounded correction retries only selected transient read failures within
+The correction proposed at that checkpoint retried selected transient read failures within
 the existing deadline, with unchanged uploads and immutable artifact validation.
-It requires independent review and fresh qualification. Full native acceptance,
-bootstrap helper retirement and later roadmap promotion remain pending. A new
-full run must also wait for recovery of the upstream package infrastructure.
+It required independent review and fresh qualification. Full native acceptance,
+bootstrap helper retirement and later roadmap promotion remained pending. A new
+full run also had to wait for recovery of the upstream package infrastructure.
 
 The preceding candidate integrated reviewed component `f8e4e9f`: at most five
 public pairing/diagnostics observations during invitation wait, scheduled at
