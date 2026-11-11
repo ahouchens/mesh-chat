@@ -4,7 +4,46 @@
 
 ### Cold-restart containment: full CI completed; native pairing remains unqualified
 
-The latest completed qualification is `ce96840ee8f138190e1a1048e5deeb5997edee88`
+The latest completed qualification is `67a521053772ccdac437cf6ae4e771a79eafea4e`
+(tree `ac0447e24597d15102f862aa008c63ae055aa6f1`), full manual run
+[42973285262](https://github.com/ahouchens/mesh-chat/actions/runs/42973285262).
+All fresh local gates pass: SDK staging/upgrade, strict policy types, **6,811
+service cases with the same 49 optional/platform skips**, **5,577 policy cases**,
+**1,824 Python UI + 12 rendered cases**, and **nine Windows boundary cases**.
+Required suites have zero skips. All 28 composition controls remain, and all
+baseline cases are retained with exactly 59 additions since `fed31cc` (29 since
+`ce96840`). CI policy and Python UI inventories exactly match local execution.
+
+Nine CI jobs pass. Independently verified components include the policy/UI and
+packaged Windows public-SDK slices above, **56 Android emulator cases, 83 JVM
+cases, 17 distribution/binary hashes**, Linux direct **25 transport + 10 recovery
++ 12 setup**, and 72 zero-overflow layout report cases. Screenshots were not
+visually reviewed. Windows direct recovery has **nine passes and one failure**:
+`address_loss` recovers the connection but the queued workspace message remains
+absent at the receiver through the existing 45-second delivery wait. The same
+case failed at `fed31cc` and passed at `6b3fb8e` and `ce96840`; affected recovery,
+network and workspace source blobs match the last passing candidate. The report
+contains receiver state, not sender outbox/send evidence, so no cause or repair
+is inferred. Windows fabric/setup do not run after this failure.
+
+Native Windows fails at `initialize_key_wait` with `RendezvousUnavailable`.
+Its entire controller step lasts 68 seconds, below the configured 900-second
+initial key wait; normal key-wait deadline exhaustion is ruled out. Artifact
+metadata records Windows key publication at 06:58:40 UTC and Android publication
+at 06:59:37 UTC. No key contents were downloaded. The existing reporter omits
+transport failure details at this initialization site. Android subsequently
+reports `partner_wait/deadline_exhausted` while awaiting Windows's first direct
+offer. Neither peer reaches TURN/TCP, so the earlier `ce96840` failure remains
+unclassified and the new path diagnostic is not native-qualified.
+
+The next bounded changes cover initial-key diagnostic projection and both-peer
+workspace-event failure evidence. A separate one-day retained Windows dispatcher
+artifact will enable scoped native reproduction without rebuilding Rust locally.
+These preserve existing retries, deadlines and acceptance checks. Bootstrap
+helper retirement and later roadmap implementation remain deferred pending full
+native qualification. The aggregate gate is failed; historical runs remain below.
+
+The preceding completed qualification is `ce96840ee8f138190e1a1048e5deeb5997edee88`
 (tree `c8a272e1b3fec9f24741ca3542093284410c018e`), full manual run
 [42961670166](https://github.com/ahouchens/mesh-chat/actions/runs/42961670166).
 Fresh local SDK staging/upgrade and strict policy types pass. The full local
@@ -39,7 +78,8 @@ cannot inherit the original error's label, and all acceptance criteria and
 deadlines remain unchanged. Independent source/artifact review verifies **805
 focused passes**, retaining 776 prior cases and adding 29; the new module is
 included in the fast boundary gate. This is diagnostic instrumentation, not a
-repair of the still-unidentified CI cause. Fresh combined gates and CI are pending.
+repair of the still-unidentified CI cause. Fresh local gates later pass at
+`67a5210`; full CI fails earlier in initialization as recorded above.
 
 The next bounded task is native failure attribution and correction, preserving
 socket uniqueness, native receipt requirements and all deadlines. Bootstrap

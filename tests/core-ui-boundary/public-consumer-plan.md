@@ -1,6 +1,16 @@
 # Independent public consumer qualification proposal
 
-Current evidence: `ce96840` passes fresh local gates and all non-native CI jobs
+Current evidence: `67a5210` passes all fresh local gates (6,811 service passes,
+49 unchanged optional/platform skips; 5,577 policy; 1,824 Python UI + 12 rendered;
+nine Windows boundary). [Full run 42973285262](https://github.com/ahouchens/mesh-chat/actions/runs/42973285262)
+fails Windows `address_loss` queued delivery after connection recovery and native
+startup. Windows stops retrieving the Android key before the configured wait
+expires; Android later exhausts its wait for the first Windows offer. No TURN/TCP
+case runs. Receiver-only recovery evidence and omitted initial-key transport
+details prevent root-cause attribution. The next bounded diagnostic corrections
+do not establish native, helper-retirement or public cross-platform acceptance.
+
+Prior evidence: `ce96840` passes fresh local gates and all non-native CI jobs
 in [run 42961670166](https://github.com/ahouchens/mesh-chat/actions/runs/42961670166),
 including both previously failing Windows setup cases. Android native fails
 with `ValueError` before the TURN/TCP negative control; Windows reaches the
@@ -16,7 +26,8 @@ cannot inherit the original error's label, and all acceptance criteria and
 deadlines remain unchanged. Independent source/artifact review verifies **805
 focused passes**, retaining 776 prior cases and adding 29; the new module is
 included in the fast boundary gate. This is diagnostic instrumentation, not a
-repair of the still-unidentified CI cause. Fresh combined gates and CI are pending.
+repair of the still-unidentified CI cause. Fresh local gates later pass at
+`67a5210`; full CI fails earlier in initialization as recorded above.
 
 Status: the original proposal below is partly implemented. Public pairing
 intents, normal app-owned hosts and independent distribution inputs exist.
