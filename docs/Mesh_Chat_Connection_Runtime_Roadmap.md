@@ -10,6 +10,23 @@ composer state, independent SDK distributions and upgrades, supervisor-owned
 native lifecycle/pairing, and the remaining packaged transport/fault matrix.
 The ledger records exact scope; this is not full M2–M5 completion.
 
+The next candidate integrates reviewed component `f8e4e9f`: at most five
+public pairing/diagnostics observations during invitation wait, scheduled at
+0, 1, 5, 20 and 90 seconds. A single-flight observer leaves the original snapshot
+predicate, 100-millisecond polling and 240-second work deadline intact. Each
+sample has a two-second request budget and preserves a work-deadline reserve;
+stopping the wait discards late results and prevents further diagnostic reads.
+Selected fields exclude handles, codes, addresses and raw errors. Actor state
+is current and unassociated; it is not a pairing-specific first-cause history.
+
+The focused module has **419 passing cases**, with no failures or skips.
+Regression controls cover stalled observations, late completion, earlier state
+surviving later retirement, strict fixed offsets and real bytes output from the
+installed checker. Fresh combined local qualification and full native CI remain
+pending. The Linux package DNS failures warrant fresh runners without a mirror
+override. This component adds evidence; it does not establish a pairing repair.
+Bootstrap helper retirement remains on hold until the full native gate passes.
+
 The latest completed qualification is `bc26ec45b9e6fc99c4b1c41052bf48e0bb2b6128`
 (tree `5f69bf4b02298e9c26ea358ebb46d4ea94852fd7`), full manual run
 [43040952044](https://github.com/ahouchens/mesh-chat/actions/runs/43040952044).
