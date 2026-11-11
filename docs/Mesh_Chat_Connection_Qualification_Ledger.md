@@ -4,7 +4,39 @@
 
 ### Cold-restart containment: full CI completed; native pairing remains unqualified
 
-The latest completed qualification is `6b3fb8e2f5b92858ca62935066f8b607e3edecd9`
+The latest completed qualification is `ce96840ee8f138190e1a1048e5deeb5997edee88`
+(tree `c8a272e1b3fec9f24741ca3542093284410c018e`), full manual run
+[42961670166](https://github.com/ahouchens/mesh-chat/actions/runs/42961670166).
+Fresh local SDK staging/upgrade and strict policy types pass. The full local
+service suite has **6,782 passes, 49 unchanged optional/platform skips**, and
+zero failures/errors; all 28 composition controls and all 6,801 baseline cases
+remain with exactly 30 new cases. Required local gates pass **5,548 policy**,
+**1,795 Python UI + 12 rendered**, and **nine Windows boundary** cases, with
+zero required skips. CI policy and Python UI inventories exactly match local.
+
+All ten non-native CI jobs pass. Independently validated evidence includes
+**56 Android emulator cases, 83 JVM cases and 17 distribution/binary hashes**,
+packaged Windows and its installed public-SDK lifetime slice, and both Linux
+and Windows direct **25 transport + 10 recovery + 12 setup** cases. The two
+previous Windows setup failures now pass. All 72 layout report cases have zero
+overflow; screenshots were not visually reviewed.
+
+Both native roles and the required aggregate fail. Android reports `ValueError`
+at `turn_tcp_authenticated_receipts`; Windows reports `scenario_deadline` at the
+same phase. The source places the Android failure before the named kernel block
+negative control, but the retained report and job log do not distinguish kernel
+path construction from authenticated receipt validation. The earlier `ccd3b51`
+negative-control failure is a different phase; a common cause is unproven.
+Progress markers show initialization and earlier direct/TURN-UDP work advanced,
+but do not establish final scenario, cleanup or full native acceptance. The
+prior DNS failure did not stop this run; no underlying DNS repair is inferred.
+
+The next bounded task is native failure attribution and correction, preserving
+socket uniqueness, native receipt requirements and all deadlines. Bootstrap
+helper retirement and later roadmap implementation remain deferred until full
+native qualification passes. Historical failures below remain retained.
+
+The preceding completed qualification is `6b3fb8e2f5b92858ca62935066f8b607e3edecd9`
 (tree `ecc484ffa393e45de96ae14d8390d3bae8fcedae`), full manual run
 [42932168650](https://github.com/ahouchens/mesh-chat/actions/runs/42932168650).
 The runtime-host source-selection correction is confirmed: all **56 Android
@@ -42,7 +74,7 @@ ratchet even if bootstrap becomes ready concurrently. Both old behaviors have
 semantic failing regressions; the corrected focused network/workspace suite
 passes 94 cases. Six source setup cases passed on `7de1a54`; a representative
 source setup case passes on the final correction. The two prior native Windows
-failures remain unqualified until fresh CI.
+setup failures subsequently pass in the `ce96840` CI run recorded above.
 
 The Android snapshot adds one nonce-authenticated, same-publication inspect only
 after the correlated ICE broker-open name-resolution failure. Within at most
@@ -63,11 +95,11 @@ cases passed. Both failures were benchmark `RecordingNetwork` doubles missing
 the new payload-readiness method. The reviewed `6c89920` correction adds only
 that method to their shared `NoRouteNetwork` base, delegating to the subclass's
 existing readiness behavior. The affected three-test benchmark selection now
-passes; limits and assertions are unchanged. The failed run is retained, and
-fresh full local gates and full CI remain pending for the corrected candidate.
+passes; limits and assertions are unchanged. The failed run is retained. The corrected candidate subsequently passes
+fresh full local gates; its full CI result is recorded above.
 
-Combined fresh SDK, strict policy types, full service/policy/UI/Windows gates and
-full six-family CI are pending on the new integration candidate. No deadline,
+Combined fresh SDK, strict policy types and full service/policy/UI/Windows
+gates subsequently pass at `ce96840`; full six-family CI fails at the native gate. No deadline,
 bootstrap allowlist, public API or acceptance requirement is relaxed. Bootstrap
 helper retirement and later roadmap implementation remain deferred until full
 native qualification passes.

@@ -1,5 +1,13 @@
 # Private packaged qualification control
 
+Current evidence: `ce96840` passes fresh local gates and all non-native CI jobs
+in [run 42961670166](https://github.com/ahouchens/mesh-chat/actions/runs/42961670166),
+including both previously failing Windows setup cases. Android native fails
+with `ValueError` before the TURN/TCP negative control; Windows reaches the
+same-phase deadline. Exact inner cause remains undiagnosed. No full native,
+helper-retirement, separate-caller/process or media acceptance follows. See the
+qualification ledger for exact counts and retained historical failures.
+
 Windows: launch the retained sidecar with sole flag
 `--qualification-native-webrtc`. Use its existing private length-prefixed IPCv1
 initialize envelope, with exact payload `profile_dir`, `vault_key` (base64),
