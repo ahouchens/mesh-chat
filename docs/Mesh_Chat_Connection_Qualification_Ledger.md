@@ -4,6 +4,23 @@
 
 ### Cold-restart containment: full CI completed; native pairing remains unqualified
 
+The next candidate integrates reviewed diagnostic-only component `d6abde0`.
+Ambiguous TURN/TCP or TURN/TLS own-process socket matches now carry two private,
+fixed-enum labels: `tcp_state_summary` distinguishes one established plus other
+states, multiple established, no established, or unclassifiable states;
+`owned_inode_relation` distinguishes same versus distinct inode identities without
+exposing those identities. The labels are accepted only together on the exact
+ambiguous kernel-correlation failure. Endpoints, ports, socket rows, process IDs,
+UIDs, inode values, raw exceptions and counts are never emitted.
+
+Socket selection and ambiguity rejection are unchanged. The observation cannot
+select a socket, alter a deadline, drive a retry or change fault injection. The
+focused two-module run passes **89 cases**, retaining all **75 prior cases** and
+adding **14 diagnostic controls**. Five focused pre-change regressions fail on
+the absent labels while preserving the expected socket rejection. Independent
+review approves diagnostic integration only. Fresh combined local qualification
+and full native evidence remain pending; no socket-selection repair is claimed.
+
 The latest completed qualification is `f0c06c82dbf4003a732d8301f9d1d3facc955fb2`
 (tree `7b5fec7599cfda3fd44884ffbc9ee88b1d063a31`), full manual run
 [43115277007](https://github.com/ahouchens/mesh-chat/actions/runs/43115277007).
