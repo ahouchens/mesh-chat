@@ -277,7 +277,8 @@ class Controller:
                 "resources_capped": len(resources) > 16, "counts": {name: counts[name] for name in RETIREMENT_COUNTS}}
 
     def failure_rendezvous(self, error):
-        if type(error) is not RendezvousUnavailable or self.failure_site(error) != "rendezvous_receive":
+        if (type(error) is not RendezvousUnavailable
+                or self.failure_site(error) not in {"rendezvous_receive", "initialize_key_wait"}):
             return {}
         try:
             return rendezvous_observation(self.transport.failure_observation(error))
