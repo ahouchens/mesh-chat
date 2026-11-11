@@ -22,7 +22,8 @@ abstract class PrepareRuntimeSources : Sync() {
 val runtimeSources = tasks.register<PrepareRuntimeSources>("prepareRuntimeSources") {
     from(fileTree("../src/main/java") {
         include("com/meshchat/runtime/Native*.kt", "com/meshchat/runtime/Bootstrap*.kt",
-            "com/meshchat/runtime/CoreDispatch.kt", "com/meshchat/runtime/MeshCoreApiService.kt",
+            "com/meshchat/runtime/CoreDispatch.kt", "com/meshchat/runtime/CoreFailureObservationState.kt",
+            "com/meshchat/runtime/MeshCoreApiService.kt",
             "com/meshchat/runtime/MeshCoreRuntime.kt")
     })
     outputDirectory.set(layout.buildDirectory.dir("generated/runtimeSources"))
