@@ -18178,7 +18178,14 @@ class WorkspaceServiceMixin:
                 prefer_signed_route(destination, hints, timeout=0.0)
             except Exception:
                 pass
-        if not network.recipient_ready(destination):
+        fields = build_workspace_fields(
+            kind=delivery["kind"],
+            logical_id=delivery["id"],
+            workspace_id=delivery["workspace_id"],
+            expires_at=int(delivery["expires_at"]),
+            document=delivery["document"],
+        )
+        if not network.recipient_ready_for_fields(destination, fields, ""):
             delivery["state"] = DeliveryState.WAITING_FOR_KEYS.value
             delivery["next_attempt_at"] = now + WORKSPACE_RETRY_BASE_SECONDS
             self._workspace_store.put_many(
@@ -18203,13 +18210,6 @@ class WorkspaceServiceMixin:
                 ("workspace_delivery", delivery_id, delivery),
                 *self._due_records(add=[delivery]),
             ]
-        )
-        fields = build_workspace_fields(
-            kind=delivery["kind"],
-            logical_id=delivery["id"],
-            workspace_id=delivery["workspace_id"],
-            expires_at=int(delivery["expires_at"]),
-            document=delivery["document"],
         )
         try:
             native_id = network.send_with_fields(
