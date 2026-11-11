@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { setTimeout as pause } from "node:timers/promises";
 import { launchRuntime, launchRefusedRuntime } from "./runtime.mjs";
 import { freshRelaySettings } from "./relay-settings.mjs";
-import { ERROR_CODES, pairingDiagnostics, probePairingFailure } from "./pairing-diagnostics.mjs";
+import { ERROR_CODES, invitationWaitObserver, pairingDiagnostics, probePairingFailure } from "./pairing-diagnostics.mjs";
 import { connectionMessagingReady } from "./connection-readiness.mjs";
 
 let phase = "arguments";
@@ -327,8 +327,19 @@ async function check(executable, directory) {
     answerer.pairing = answered.pairing;
     phase = "explicit_approval";
     diagnostics.enter("invitation_wait");
-    const invitation = await wait(async () => one((await snapshot(answerer)).contact_invitations,
-      item => item.state === "pending"));
+    const observeInvitation = invitationWaitObserver([offerer, answerer], diagnostics);
+    let invitation;
+    try {
+      invitation = await wait(async () => {
+        const invitations = (await snapshot(answerer)).contact_invitations;
+        const pending = one(invitations, item => item.state === "pending");
+        if (!pending) {
+          try { observeInvitation.poll(invitations, deadline); }
+          catch { /* Optional public observation never replaces pairing work. */ }
+        }
+        return pending;
+      });
+    } finally { observeInvitation.stop(); }
     diagnostics.enter("invitation_guard");
     if ((await snapshot(answerer)).contacts.length) throw new Error("approval_was_implicit");
     diagnostics.enter("invitation_accept");
