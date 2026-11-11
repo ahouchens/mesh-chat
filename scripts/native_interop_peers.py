@@ -335,6 +335,7 @@ class AndroidPeer:
         self.forward = None
         self._sequence = 0
         self._core_failure = None
+        self._qualification_binding = None
         self.processes_started, self.clean_exits, self.forced_exits = 0, 0, 0
 
     def _adb(self, *args):
@@ -343,6 +344,7 @@ class AndroidPeer:
     def start(self):
         if self.process is not None:
             raise PeerFailure("peer_already_started")
+        self._qualification_binding = None
         nonce = os.urandom(32).hex()
         self.process = subprocess.Popen([self.adb, "shell", "am", "instrument", "-w", "-r",
             "-e", "class", self.TEST, "-e", "mesh_interop_nonce", nonce, self.RUNNER],
@@ -370,19 +372,23 @@ class AndroidPeer:
             self.socket = socket.create_connection(("127.0.0.1", int(self.forward)), timeout=60)
             self._request("authenticate", {"nonce": nonce})
             self._request("initialize", {"directory_id": self.directory_id, "vault_key": base64.b64encode(self.key).decode()})
-            return self.inventory()
+            inventory = self.inventory()
+            self._qualification_binding = self._initial_binding(inventory)
+            return inventory
         except Exception:
             self.stop(crash=True)
             raise PeerFailure("android_host_start_failed") from None
 
-    def _request(self, action, payload=None):
+    def _request(self, action, payload=None, *, timeout=60):
         self._core_failure = None
         if self.socket is None:
             raise PeerFailure("peer_not_started")
+        if type(timeout) not in {int, float} or not 0 < timeout <= 60:
+            raise PeerFailure("peer_deadline")
         self._sequence += 1
         identifier = f"qualification:{self._sequence}"
-        deadline = time.monotonic() + 60
-        self.socket.settimeout(60)
+        deadline = time.monotonic() + timeout
+        self.socket.settimeout(timeout)
         def read(count):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -412,6 +418,28 @@ class AndroidPeer:
             return core_failure_observation(observed[1])
         return None
 
+    def network_diagnostic(self, *, timeout):
+        binding = self._qualification_binding
+        if binding is None: return None
+        return self._request("inspect", {"command": "qualification.network_diagnostic", "payload": {
+            "qualification_binding": binding}},
+            timeout=timeout)
+
+    @staticmethod
+    def _initial_binding(value):
+        if type(value) is not dict or value.get("resources") != []:
+            return None
+        counts = value.get("host_accounting")
+        if type(counts) is not dict or counts.get("complete") is not True or any(
+                type(counts.get(name)) is not int or counts[name] != 0 for name in
+                ("reserved_count", "creating_count", "allocated_count", "active_count", "retiring_count")):
+            return None
+        service, profile = value.get("service_incarnation"), value.get("profile_incarnation")
+        if any(type(item) is not str or re.fullmatch(r"[a-f0-9]{32}", item) is None
+               for item in (service, profile)):
+            return None
+        return service + profile
+
     def inventory(self, *, operation_id=None, request_id=None):
         return self._request("inspect", {"command": "qualification.inventory",
             "payload": retirement_correlation(operation_id, request_id)})
@@ -438,6 +466,7 @@ class AndroidPeer:
 
     def stop(self, *, crash=False, delete_profile=False):
         self._core_failure = None
+        self._qualification_binding = None
         process = self.process
         if process is None:
             return

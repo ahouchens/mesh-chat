@@ -20,6 +20,28 @@ from native_interop_diagnostics import PreflightDiagnostics
 from test_packaged_lifecycle import source_identity
 
 
+ANDROID_NETWORK_FIELDS = frozenset({"scope", "internet_permission", "active_network", "internet_capability",
+    "validated_network", "dns_servers_present", "process_bound_network", "connect_target"})
+
+
+def android_network_diagnostic(value):
+    """Select only fixed guest facts from one failed CI control exchange."""
+    try:
+        if (type(value) is not dict or set(value) != ANDROID_NETWORK_FIELDS | {"v"}
+                or type(value["v"]) is not int or value["v"] != 1
+                or value["scope"] != "post_failure_app_process"
+                or any(type(value[name]) is not bool for name in ANDROID_NETWORK_FIELDS - {"scope", "connect_target"})
+                or type(value["connect_target"]) is not str
+                or value["connect_target"] not in {"broker", "proxy", "unknown"}
+                or (not value["active_network"] and any(value[name] for name in
+                    ("internet_capability", "validated_network", "dns_servers_present")))
+                or len(json.dumps(value, separators=(",", ":")).encode("utf-8")) > 256):
+            return None
+        return dict(value)
+    except Exception:
+        return None
+
+
 def outbound_services():
     if not DEFAULT_TURN_BROKER_URL or not DEFAULT_SIGNAL_MAILBOX_URL:
         raise RuntimeError("Existing production broker and encrypted mailbox defaults are required")
