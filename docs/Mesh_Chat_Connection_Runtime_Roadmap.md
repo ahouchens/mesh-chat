@@ -61,6 +61,17 @@ Python cases pass, retaining all prior 903; the focused Android source compile
 exits zero with its declared close-time android.jar warning. Actual packaging
 and native acceptance still require CI.
 
+The first combined local candidate `9708104` staged fresh SDK/upgrade artifacts
+and passed strict model/reducer typing. Its full service run executed 6,831 cases:
+6,780 passed, two failed, and the same 49 optional/platform cases skipped. All
+6,801 baseline cases and exactly 30 new cases were present; all 28 composition
+cases passed. Both failures were benchmark `RecordingNetwork` doubles missing
+the new payload-readiness method. The reviewed `6c89920` correction adds only
+that method to their shared `NoRouteNetwork` base, delegating to the subclass's
+existing readiness behavior. The affected three-test benchmark selection now
+passes; limits and assertions are unchanged. The failed run is retained, and
+fresh full local gates and full CI remain pending for the corrected candidate.
+
 Combined fresh SDK, strict policy types, full service/policy/UI/Windows gates and
 full six-family CI are pending on the new integration candidate. No deadline,
 bootstrap allowlist, public API or acceptance requirement is relaxed. Bootstrap
@@ -1590,7 +1601,7 @@ identity. Monotonic deadlines never enter persistent storage.
 | M3 qualification gates | Deterministic inventory/evidence gate; conservative workflow selector with isolated documentation, connection-test and TypeScript-SDK narrowing; final execution gate; release aggregator refuses to publish without the qualification manifest | Tagged release execution/publication (branch-build release qualification is executed); production-source narrowing after per-component isolation |
 | M4 headless messaging | Android native transport, native Windows DataChannel implementation, and historical packaged WebView2 crash/pairing/receipt scenarios | Supervisor-owned native Windows promotion, Windows/Android interoperability, complete packaged impairment and receipt/cold-start matrix |
 | M5 supported consumers | Public authenticated facade with packaged TypeScript and
-Python component smokes, durable idempotency/event cursors, Python/TypeScript/Kotlin clients, console client, version and package binding, Windows and Android host components | Packaged Windows and Android consumers, published SDK/package artifacts and a supported compatibility matrix |
+Python component smokes, durable idempotency/event cursors, Python/TypeScript/Kotlin clients, console client, version and package binding, installed Windows wheel and independent Android AAR/APK consumer components | Combined public-SDK Windows-Android pairing, transport receipts/restart/partition qualification, published SDK/package artifacts and a supported compatibility matrix |
 
 The user has specified emulation and GitHub CI only. Physical devices and an
 isolated physical test network are unavailable. Physical acceptance items in the
@@ -2738,9 +2749,10 @@ M4 - headless messaging
       TURN/forced-relay connectivity remains unqualified.
 - [ ] Full native messaging promotion: supervisor-owned policy, Windows-Android
       and Windows-WebView interoperability, TURN and forced relay.
-      Shared-native invitation acceptance currently leaves the requester at
-      `waiting_for_keys`; `reconnect_start` rejects it as unapproved, so a native
-      bootstrap is still required before supervisor promotion can be qualified.
+      The isolated native bootstrap and payload-aware workspace handoff are
+      implemented with source/component evidence. Full Windows-Android native
+      setup, lifecycle and transport qualification remain required before
+      supervisor promotion; component success does not close this item.
 - [x] 100 packaged native transport offer/answer/open/control/close cycles with
       three cold starts and bounded cleanup (CI max open 716 ms, max control 1,230 ms).
 - [x] 100-message alternating authenticated-receipt soak over the native
@@ -2779,7 +2791,8 @@ M5 - supported reusable core
       delivery receipts, partition recovery and the remaining SC21–SC26
       qualification.
 - [x] Contact-wide connection start/stop intent with convergent semantics
-      (component only; no per-device selection or workspace pairing).
+      (component only; no per-device selection or workspace-scoped connection
+      intent; the facade workspace-pairing flow is recorded separately above).
 - [x] Explicit convergent peer approval and revocation (component only).
 - [x] Convergent inbound signed-invitation acceptance (component only).
 - [x] Profile-level outbound invitation material (query, component only).
@@ -2895,8 +2908,11 @@ M5 - supported reusable core
 - [x] Calls, groups, settings, drafts, reactions and workspace administration
       typed as first-class facade operations. The compatibility adapter remains
       only as an unavailable-Core fallback.
-- [ ] Independent Windows and Android consumers built only from distribution
-      artifacts and documentation.
+- [x] Distribution-only Windows wheel and independent Android AAR/APK consumer
+      components, including installed boundary and host restart evidence.
+- [ ] Combined public-SDK Windows-Android pairing, transport delivery, authenticated
+      receipts, restart and partition qualification under SC21. The separate
+      distribution-only components do not establish that combined scenario.
 
 Release and physical
 

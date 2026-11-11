@@ -71,6 +71,17 @@ Python cases pass, retaining all prior 903; the focused Android source compile
 exits zero with its declared close-time android.jar warning. Actual packaging
 and native acceptance still require CI.
 
+The first combined local candidate `9708104` staged fresh SDK/upgrade artifacts
+and passed strict model/reducer typing. Its full service run executed 6,831 cases:
+6,780 passed, two failed, and the same 49 optional/platform cases skipped. All
+6,801 baseline cases and exactly 30 new cases were present; all 28 composition
+cases passed. Both failures were benchmark `RecordingNetwork` doubles missing
+the new payload-readiness method. The reviewed `6c89920` correction adds only
+that method to their shared `NoRouteNetwork` base, delegating to the subclass's
+existing readiness behavior. The affected three-test benchmark selection now
+passes; limits and assertions are unchanged. The failed run is retained, and
+fresh full local gates and full CI remain pending for the corrected candidate.
+
 Combined fresh SDK, strict policy types, full service/policy/UI/Windows gates and
 full six-family CI are pending on the new integration candidate. No deadline,
 bootstrap allowlist, public API or acceptance requirement is relaxed. Bootstrap

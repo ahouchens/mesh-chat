@@ -104,6 +104,11 @@ postfailure network snapshot with 928 focused Python cases and a focused source
 compile. It provides diagnostic context only; the underlying guest DNS cause
 remains unresolved. Fresh combined local and full native qualification are
 pending. Public SDK behavior and authority are unchanged.
+
+Candidate `9708104` then ran the full service suite: 6,780 pass, two benchmark
+double interface failures, and the same 49 platform/optional skips. The reviewed
+three-line `6c89920` benchmark adapter correction passes the affected three-case
+selection. The failed run is preserved; fresh combined gates remain pending.
 Only fixed operation/stage/category/cause enums may accompany the same
 correlated internal failure, under the original local caller and initialized
 publication. Public Core responses, SDK surface, grants, call counts and
