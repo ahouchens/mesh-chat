@@ -54,10 +54,12 @@ class GithubArtifacts:
         self._published = set()
         self._receiving = False
         self._receive_failure = None
+        self._retryable_read_503 = None
 
     @contextmanager
     def _receive_scope(self):
         self._receive_failure = None
+        self._retryable_read_503 = None
         self._receiving = True
         try:
             yield
@@ -69,6 +71,7 @@ class GithubArtifacts:
             self._receive_failure = None
         finally:
             self._receiving = False
+            self._retryable_read_503 = None
 
     def _unavailable(self, stage, reason, message, http_error=None):
         error = RendezvousUnavailable(message)
@@ -79,6 +82,9 @@ class GithubArtifacts:
                 except Exception: status = None
                 if type(status) is int and 100 <= status <= 599:
                     selected["rendezvous_http_status"] = status
+                    if (status == 503 and reason == "http_rejected" and stage in
+                            {"inventory_request", "archive_request", "blob_request"}):
+                        self._retryable_read_503 = error
             self._receive_failure = error, selected
         return error
 
@@ -90,8 +96,9 @@ class GithubArtifacts:
         if self._token is None:
             raise self._unavailable("transport_state", "closed", "Bootstrap artifact transport is closed")
 
-    def _request(self, path, *, binary=False):
+    def _request(self, path, *, binary=False, deadline=None):
         self._receive_failure = None
+        self._retryable_read_503 = None
         self._live()
         url = API + path
         request = urllib.request.Request(url, headers={"Authorization": "Bearer " + self._token,
@@ -100,9 +107,17 @@ class GithubArtifacts:
         opener = urllib.request.build_opener(NoRedirect())
         stage = "archive_request" if binary else "inventory_request"
         reason = "transport_failed"
+        def open_timeout():
+            if deadline is None:
+                return 10
+            remaining = deadline - self.clock()
+            if remaining <= 0:
+                raise self._unavailable("partner_wait", "deadline_exhausted",
+                                        "Required partner bootstrap artifact did not arrive before deadline")
+            return min(10, remaining)
         try:
             try:
-                response = opener.open(request, timeout=10)
+                response = opener.open(request, timeout=open_timeout())
             except urllib.error.HTTPError as redirect:
                 if not binary or redirect.code != 302:
                     raise self._unavailable(stage, "http_rejected", "GitHub artifact request rejected", redirect) from None
@@ -114,13 +129,16 @@ class GithubArtifacts:
                 # The repository token is NEVER forwarded to signed blob storage.
                 stage, reason = "blob_request", "transport_failed"
                 try:
-                    response = opener.open(urllib.request.Request(location), timeout=10)
+                    response = opener.open(urllib.request.Request(location), timeout=open_timeout())
                 except urllib.error.HTTPError as error:
                     raise self._unavailable(stage, "http_rejected", "GitHub artifact transport is unavailable", error) from None
             limit = MAX_ARCHIVE if binary else MAX_API_RESPONSE
             reason = "read_failed"
             with response:
                 data = response.read(limit + 1)
+            if deadline is not None and self.clock() >= deadline:
+                raise self._unavailable("partner_wait", "deadline_exhausted",
+                                        "Required partner bootstrap artifact did not arrive before deadline")
             if not data or len(data) > limit:
                 raise self._unavailable(stage, "response_empty" if not data else "response_oversized",
                                         "GitHub response exceeds its qualification budget")
@@ -178,22 +196,36 @@ class GithubArtifacts:
         name = artifact_name(self.context, role, phase)
         endpoint = f"/repos/{self.context['repository']}/actions/runs/{self.context['run_id']}"
         deadline = self.clock() + timeout
+        transient_503s = 0
         while self.clock() < deadline:
-            inventory = self._request(endpoint + "/artifacts?per_page=100")
-            entries = inventory.get("artifacts") if isinstance(inventory, dict) else None
-            if (not isinstance(entries, list) or len(entries) > 100 or not all(isinstance(item, dict) for item in entries)
-                    or type(inventory.get("total_count")) is not int or inventory["total_count"] > 100):
-                raise self._unavailable("inventory_check", "inventory_invalid", "Artifact inventory exceeds its bounded run budget")
-            matching = [value for value in entries if value.get("name") == name]
-            if len(matching) > 1:
-                raise self._unavailable("inventory_check", "duplicate_identity", "Duplicate bootstrap artifact identity")
-            if matching:
-                metadata = matching[0]
-                identifier = metadata.get("id")
-                if type(identifier) is not int or identifier <= 0:
-                    raise self._unavailable("inventory_check", "missing_identity", "Missing bootstrap artifact identity")
-                archive = self._request(f"/repos/{self.context['repository']}/actions/artifacts/{identifier}/zip", binary=True)
-                return verify_artifact(metadata, archive, self.context, role, phase)
+            try:
+                inventory = self._request(endpoint + "/artifacts?per_page=100", deadline=deadline)
+                entries = inventory.get("artifacts") if isinstance(inventory, dict) else None
+                if (not isinstance(entries, list) or len(entries) > 100 or not all(isinstance(item, dict) for item in entries)
+                        or type(inventory.get("total_count")) is not int or inventory["total_count"] > 100):
+                    raise self._unavailable("inventory_check", "inventory_invalid", "Artifact inventory exceeds its bounded run budget")
+                matching = [value for value in entries if value.get("name") == name]
+                if len(matching) > 1:
+                    raise self._unavailable("inventory_check", "duplicate_identity", "Duplicate bootstrap artifact identity")
+                if matching:
+                    metadata = matching[0]
+                    identifier = metadata.get("id")
+                    if type(identifier) is not int or identifier <= 0:
+                        raise self._unavailable("inventory_check", "missing_identity", "Missing bootstrap artifact identity")
+                    archive = self._request(f"/repos/{self.context['repository']}/actions/artifacts/{identifier}/zip",
+                                            binary=True, deadline=deadline)
+                    verified = verify_artifact(metadata, archive, self.context, role, phase)
+                    if self.clock() >= deadline:
+                        raise self._unavailable("partner_wait", "deadline_exhausted",
+                                                "Required partner bootstrap artifact did not arrive before deadline")
+                    return verified
+            except RendezvousUnavailable as error:
+                if (transient_503s >= 2 or self._retryable_read_503 is not error
+                        or deadline - self.clock() <= 3):
+                    raise
+                transient_503s += 1
+                self.sleep(3)
+                continue
             self.sleep(min(3, max(0, deadline - self.clock())))
         raise self._unavailable("partner_wait", "deadline_exhausted", "Required partner bootstrap artifact did not arrive before deadline")
 

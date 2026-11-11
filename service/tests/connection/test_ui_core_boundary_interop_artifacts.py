@@ -53,7 +53,7 @@ def test_download_accepts_only_rehashed_same_run_bundle(tmp_path, monkeypatch):
     try:
         metadata, blob = archive(peer.public_manifest())
         calls = []
-        def request(path, *, binary=False):
+        def request(path, *, binary=False, deadline=None):
             calls.append((path, binary))
             return blob if binary else {"total_count": 1, "artifacts": [metadata]}
         monkeypatch.setattr(transport, "_request", request)
@@ -77,7 +77,7 @@ def test_wrong_or_ambiguous_partner_artifact_never_becomes_setup(tmp_path, monke
         inventory = {"total_count": 1, "artifacts": [metadata]}
         if fault == "duplicates": inventory = {"total_count": 2, "artifacts": [metadata, metadata]}
         elif fault == "unbounded_inventory": inventory["total_count"] = 101
-        monkeypatch.setattr(transport, "_request", lambda path, binary=False: blob if binary else inventory)
+        monkeypatch.setattr(transport, "_request", lambda path, binary=False, deadline=None: blob if binary else inventory)
         with pytest.raises((ValueError, backend.RendezvousUnavailable)):
             transport.wait("windows", "key")
     finally:
@@ -186,7 +186,8 @@ def test_closing_artifact_transport_fences_later_publish_and_wait(tmp_path):
 
 def scripted_receive(tmp_path, monkeypatch, fault="inventory_http", *, status=403, role="windows", phase="key"):
     """Actual request/wait with inert stdlib opener boundaries, no network."""
-    state = SimpleNamespace(fault=fault, status=status, calls=[], sleeps=[], now=0.0, original_http=None)
+    state = SimpleNamespace(fault=fault, status=status, calls=[], sleeps=[], now=0.0,
+                            original_http=None, transient_done=False)
     state.bundle = {"producer_job": backend.PRODUCER_JOBS[role], "PRIVATE_BODY": "PRIVATE_PAYLOAD"}
     state.metadata, state.blob = archive(state.bundle)
     state.metadata["name"] = artifact_name(CONTEXT, role, phase)
@@ -208,6 +209,8 @@ def scripted_receive(tmp_path, monkeypatch, fault="inventory_http", *, status=40
         def read(self, limit):
             if state.fault == "read_timeout": raise TimeoutError("PRIVATE_TIMEOUT")
             if state.fault == "read_http": raise urllib.error.HTTPError("PRIVATE_URL", 409, "PRIVATE_READ_ERROR", {}, None)
+            if state.fault == "blob_deadline_during_read" and state.calls[-1]["stage"] == "blob_request":
+                state.now = 30
             return super().read(limit)
     class ForgedFailure(OSError):
         @property
@@ -217,7 +220,11 @@ def scripted_receive(tmp_path, monkeypatch, fault="inventory_http", *, status=40
             stage = ("inventory_request" if request.full_url.endswith("/artifacts?per_page=100")
                      else "blob_request" if request.full_url.startswith("https://synthetic.invalid/") else "archive_request")
             state.calls.append({"stage": stage, "timeout": timeout, "bearer": request.get_header("Authorization") is not None})
-            if state.fault == "inventory_http" and stage == "inventory_request" or state.fault == "archive_http" and stage == "archive_request":
+            if (state.fault == "inventory_http" and stage == "inventory_request"
+                    or state.fault == "archive_http" and stage == "archive_request"
+                    or state.fault == "inventory_http_once" and stage == "inventory_request" and not state.transient_done
+                    or state.fault == "archive_http_once" and stage == "archive_request" and not state.transient_done):
+                state.transient_done = True
                 state.original_http = urllib.error.HTTPError(request.full_url, state.status, "PRIVATE_HTTP_MESSAGE", {}, None)
                 raise state.original_http
             if state.fault == "open_timeout": raise TimeoutError("PRIVATE_TIMEOUT deadline_exhausted")
@@ -240,11 +247,16 @@ def scripted_receive(tmp_path, monkeypatch, fault="inventory_http", *, status=40
                     depth = max(10000, sys.getrecursionlimit() + 100)
                     data = b"[" * depth + b"0" + b"]" * depth
                 return Response(data)
-            if stage == "archive_request" and state.fault in {"blob_http", "blob_timeout", "blob_empty", "blob_oversized", "redirect_invalid", "redirect_parse"}:
+            if stage == "archive_request" and state.fault in {"inventory_http_once", "archive_http_once", "blob_http", "blob_http_once", "blob_503_near_deadline", "blob_timeout", "blob_empty", "blob_oversized", "blob_deadline_clip", "blob_deadline_exhausted", "blob_deadline_during_read", "redirect_invalid", "redirect_parse"}:
+                if state.fault == "blob_deadline_clip": state.now = 25
+                if state.fault == "blob_deadline_exhausted": state.now = 30
+                if state.fault == "blob_503_near_deadline": state.now = 27
                 location = ("http://synthetic.invalid/PRIVATE_SIGNED" if state.fault == "redirect_invalid" else
                             "https://[PRIVATE_INVALID" if state.fault == "redirect_parse" else "https://synthetic.invalid/PRIVATE_SIGNED")
                 raise urllib.error.HTTPError(request.full_url, 302, "PRIVATE_REDIRECT", {"Location": location}, None)
-            if stage == "blob_request" and state.fault == "blob_http":
+            if stage == "blob_request" and (state.fault in {"blob_http", "blob_503_near_deadline"} or
+                                             state.fault == "blob_http_once" and not state.transient_done):
+                state.transient_done = True
                 state.original_http = urllib.error.HTTPError(request.full_url, state.status, "PRIVATE_BLOB_ERROR", {}, None)
                 raise state.original_http
             if stage == "blob_request" and state.fault == "blob_timeout": raise TimeoutError("PRIVATE_BLOB_TIMEOUT")
@@ -252,6 +264,90 @@ def scripted_receive(tmp_path, monkeypatch, fault="inventory_http", *, status=40
                             b"X" * (backend.MAX_ARCHIVE + 1) if state.fault == "blob_oversized" else state.blob)
     monkeypatch.setattr(backend.urllib.request, "build_opener", lambda *_: Opener())
     return state
+
+
+@pytest.mark.parametrize("fault,first", [
+    ("inventory_http_once", ["inventory_request"]),
+    ("archive_http_once", ["inventory_request", "archive_request"]),
+    ("blob_http_once", ["inventory_request", "archive_request", "blob_request"]),
+])
+def test_transient_http_503_retries_same_run_artifact_read(tmp_path, monkeypatch, fault, first):
+    state = scripted_receive(tmp_path, monkeypatch, fault, status=503)
+    assert state.transport.wait(state.role, state.phase, timeout=30) == state.bundle
+    assert [call["stage"] for call in state.calls] == first + [
+        "inventory_request", "archive_request", "blob_request"]
+    assert state.sleeps == [3]
+    assert all(call["bearer"] is (call["stage"] != "blob_request") for call in state.calls)
+
+
+def test_persistent_signed_blob_503_stops_after_three_reads_with_original_observation(tmp_path, monkeypatch):
+    state = scripted_receive(tmp_path, monkeypatch, "blob_http", status=503)
+    with pytest.raises(backend.RendezvousUnavailable) as caught:
+        state.transport.wait(state.role, state.phase, timeout=900)
+    assert state.transport.failure_observation(caught.value) == {
+        "rendezvous_stage": "blob_request", "rendezvous_reason": "http_rejected", "rendezvous_http_status": 503}
+    assert [call["stage"] for call in state.calls] == [
+        "inventory_request", "archive_request", "blob_request"] * 3
+    assert state.sleeps == [3, 3] and state.now == 6
+    assert all(call["bearer"] is (call["stage"] != "blob_request") for call in state.calls)
+    assert "PRIVATE" not in str(caught.value)
+
+
+def test_signed_blob_503_at_wait_boundary_keeps_original_failure_without_retry(tmp_path, monkeypatch):
+    state = scripted_receive(tmp_path, monkeypatch, "blob_503_near_deadline", status=503)
+    with pytest.raises(backend.RendezvousUnavailable) as caught:
+        state.transport.wait(state.role, state.phase, timeout=30)
+    assert state.transport.failure_observation(caught.value) == {
+        "rendezvous_stage": "blob_request", "rendezvous_reason": "http_rejected", "rendezvous_http_status": 503}
+    assert [call["timeout"] for call in state.calls] == [10, 10, 3]
+    assert state.sleeps == [] and state.now == 27
+
+
+def test_retry_eligibility_does_not_depend_on_optional_failure_observer(tmp_path, monkeypatch):
+    state = scripted_receive(tmp_path, monkeypatch, "blob_http_once", status=503)
+    monkeypatch.setattr(state.transport, "failure_observation", lambda _: (_ for _ in ()).throw(AssertionError("observer called")))
+    assert state.transport.wait(state.role, state.phase, timeout=30) == state.bundle
+    assert state.sleeps == [3]
+
+
+@pytest.mark.parametrize("fault,expected", [("blob_deadline_clip", [10, 10, 5]),
+                                            ("blob_deadline_exhausted", [10, 10])])
+def test_redirected_blob_open_uses_remaining_wait_budget(tmp_path, monkeypatch, fault, expected):
+    state = scripted_receive(tmp_path, monkeypatch, fault)
+    if fault == "blob_deadline_clip":
+        assert state.transport.wait(state.role, state.phase, timeout=30) == state.bundle
+    else:
+        with pytest.raises(backend.RendezvousUnavailable) as caught:
+            state.transport.wait(state.role, state.phase, timeout=30)
+        assert state.transport.failure_observation(caught.value) == {
+            "rendezvous_stage": "partner_wait", "rendezvous_reason": "deadline_exhausted"}
+    assert [call["timeout"] for call in state.calls] == expected
+    assert state.sleeps == []
+
+
+def test_blob_read_completing_at_deadline_cannot_admit_artifact(tmp_path, monkeypatch):
+    state = scripted_receive(tmp_path, monkeypatch, "blob_deadline_during_read")
+    with pytest.raises(backend.RendezvousUnavailable) as caught:
+        state.transport.wait(state.role, state.phase, timeout=30)
+    assert state.transport.failure_observation(caught.value) == {
+        "rendezvous_stage": "partner_wait", "rendezvous_reason": "deadline_exhausted"}
+    assert [call["stage"] for call in state.calls] == ["inventory_request", "archive_request", "blob_request"]
+    assert state.sleeps == [] and state.now == 30
+
+
+def test_artifact_verification_completing_at_deadline_cannot_admit_artifact(tmp_path, monkeypatch):
+    state = scripted_receive(tmp_path, monkeypatch, "blob_deadline_clip")
+    original = backend.verify_artifact
+    def verify(*args):
+        value = original(*args)
+        state.now = 30
+        return value
+    monkeypatch.setattr(backend, "verify_artifact", verify)
+    with pytest.raises(backend.RendezvousUnavailable) as caught:
+        state.transport.wait(state.role, state.phase, timeout=30)
+    assert state.transport.failure_observation(caught.value) == {
+        "rendezvous_stage": "partner_wait", "rendezvous_reason": "deadline_exhausted"}
+    assert [call["timeout"] for call in state.calls] == [10, 10, 5]
 
 
 RECEIVE_ORIGINS = [
@@ -305,7 +401,9 @@ def test_exact_receive_origin_preserves_failure_identity_budget_and_redaction(tm
     assert state.transport.failure_observation(backend.RendezvousUnavailable("PRIVATE_FOREIGN")) == {}
     selected["rendezvous_stage"] = "PRIVATE_MUTATION"
     assert state.transport.failure_observation(caught.value) == expected
-    assert len(state.calls) == count and all(call["timeout"] == 10 for call in state.calls)
+    assert len(state.calls) == count and all(0 < call["timeout"] <= 10 for call in state.calls)
+    if fault == "deadline": assert state.calls[-1]["timeout"] == 3
+    else: assert all(call["timeout"] == 10 for call in state.calls)
     assert all(call["bearer"] is (call["stage"] != "blob_request") for call in state.calls)
     assert state.sleeps == ([3] * 60 if fault == "deadline" else [])
     assert "PRIVATE" not in json.dumps(expected) + str(caught.value)
