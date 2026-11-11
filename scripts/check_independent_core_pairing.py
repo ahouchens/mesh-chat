@@ -141,6 +141,8 @@ def invitation_observation_details(value):
     if (not isinstance(value, dict) or set(value) != {"sample_budget", "sample_offsets_ms",
             "request_budget_ms", "work_reserve_ms", "actor_limit", "samples", "capped"}
             or type(value["sample_budget"]) is not int or value["sample_budget"] != len(INVITATION_SAMPLE_OFFSETS_MS)
+            or not isinstance(value["sample_offsets_ms"], list)
+            or any(type(offset) is not int for offset in value["sample_offsets_ms"])
             or value["sample_offsets_ms"] != INVITATION_SAMPLE_OFFSETS_MS
             or type(value["request_budget_ms"]) is not int or value["request_budget_ms"] != 2000
             or type(value["work_reserve_ms"]) is not int or value["work_reserve_ms"] != 100
@@ -346,7 +348,7 @@ def main():
         completed = subprocess.run([node, "pairing-check.mjs", "--runtime", str(runtime),
             "--data-directory", str(data)], cwd=directory, env=bootstrap.application_environment(os.environ),
             capture_output=True, timeout=330)
-        if len(completed.stdout.encode()) > MAX_FAILURE_STDOUT_BYTES:
+        if len(completed.stdout) > MAX_FAILURE_STDOUT_BYTES:
             raise ValueError("Independent pairing result exceeds its budget")
         observed = json.loads(completed.stdout)
         if completed.returncode != 0:

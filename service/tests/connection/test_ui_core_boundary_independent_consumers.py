@@ -262,7 +262,8 @@ console.log(JSON.stringify({calls,maximum,same,nearDeadlineCalls:calls.length-be
 
 
 @pytest.mark.parametrize("fault", ["raw_handle", "raw_endpoint", "invalid_reason", "too_many_samples",
-    "bad_offset", "bad_budget", "bad_request_budget", "wrong_role", "ambiguous_actor", "object_outcome"])
+    "bad_offset", "boolean_offset", "bad_budget", "bad_request_budget", "wrong_role",
+    "ambiguous_actor", "object_outcome"])
 def test_invitation_observation_validator_rejects_unsafe_or_unbounded_fields(fault):
     actor = {"query_outcome": "ok", "available": True, "runtime_failure": None,
              "total_connections": 1, "truncated": False,
@@ -281,6 +282,7 @@ def test_invitation_observation_validator_rejects_unsafe_or_unbounded_fields(fau
     elif fault == "invalid_reason": sample["answerer"]["actor"]["actor"]["reason"] = "PRIVATE_ERROR"
     elif fault == "too_many_samples": observed["samples"] *= 6
     elif fault == "bad_offset": sample["offset_ms"] = -1
+    elif fault == "boolean_offset": observed["sample_offsets_ms"][1] = True
     elif fault == "bad_budget": observed["sample_budget"] = 6
     elif fault == "bad_request_budget": observed["request_budget_ms"] = 30000
     elif fault == "wrong_role": sample["contender"] = sample.pop("answerer")
@@ -1377,6 +1379,49 @@ def bootstrap_record(source="a" * 40, tree="b" * 40):
 def pairing_record(source="a" * 40, tree="b" * 40):
     return {**bootstrap_record(source, tree), "evidence_level": pairing.LEVEL, "scope": pairing.SCOPE,
             "checks": dict(pairing.CHECKS), "run_id": "7" * 32, "bootstrap_report_sha256": "b" * 64}
+
+
+def test_pairing_runner_preserves_bounded_bytes_failure_report(monkeypatch, tmp_path):
+    source, tree = "a" * 40, "b" * 40
+    bootstrap_path, output = tmp_path / "bootstrap.json", tmp_path / "pairing.json"
+    bootstrap_path.write_text("{}")
+    binary = tmp_path / "host.exe"
+    binary.write_bytes(b"source-bound fixture binary")
+    prior = bootstrap_record(source, tree)
+    prior["sidecar_sha256"] = staging.digest(binary)
+    sdk = tmp_path / prior["sdk_artifact"]
+    sdk.parent.mkdir(parents=True)
+    sdk.write_bytes(b"source-bound fixture sdk")
+    prior["sdk_sha256"] = staging.digest(sdk)
+    binding = {key: prior[key] for key in ("sidecar_sha256", "build_input_sha256", "build_manifest_sha256")}
+    binding.update(source_commit=source, source_tree=tree)
+    installed = tmp_path / "installed"
+    installed.mkdir()
+    failure = {"passed": False, "phase": "explicit_approval", "error_code": "unavailable",
+               "diagnostics": {"subphase": "invitation_wait", "deadline_exhausted": True,
+                   "failure_origin": "wait_deadline", "cleanup": [], "peers": {},
+                   "stage_timing": {"offsets_ms": {"failure_observed": 240000}, "clipped": False},
+                   "invitation_observation": {"sample_budget": 5,
+                       "sample_offsets_ms": pairing.INVITATION_SAMPLE_OFFSETS_MS.copy(),
+                       "request_budget_ms": 2000, "work_reserve_ms": 100,
+                       "actor_limit": 1, "samples": [], "capped": False}}}
+    monkeypatch.setitem(sys.modules, "native_windows_evidence", SimpleNamespace(
+        artifact_binding=lambda _: (binary, binding), require_unchanged=lambda *_: None))
+    monkeypatch.setattr(bootstrap, "verify_report", lambda *_: prior)
+    monkeypatch.setattr(bootstrap, "application_environment", lambda _: {})
+    monkeypatch.setattr(pairing, "tools", lambda: ("node", "npm"))
+    monkeypatch.setattr(pairing, "outside_directory", lambda _: installed)
+    monkeypatch.setattr(pairing, "install_typescript", lambda *_: {"application_files": {}})
+    monkeypatch.setattr(pairing, "cleanup", lambda *_: None)
+    monkeypatch.setattr(pairing.subprocess, "run", lambda *_args, **_kwargs: SimpleNamespace(
+        stdout=json.dumps(failure).encode(), returncode=1))
+    monkeypatch.setattr(sys, "argv", ["check_independent_core_pairing.py", "--expected-source", source,
+                                    "--bootstrap-report", str(bootstrap_path), "--output", str(output)])
+    assert pairing.main() == 1
+    result = json.loads(output.read_text())
+    assert result["phase"] == "public_pairing_and_receipts" and result["failure_type"] == "ValueError"
+    assert result["application_phase"] == "explicit_approval" and result["error_code"] == "unavailable"
+    assert result["diagnostics"] == failure["diagnostics"]
 
 
 @pytest.mark.parametrize("mode", ["healthy", "unavailable", "null", "missing_network", "string", "array",
