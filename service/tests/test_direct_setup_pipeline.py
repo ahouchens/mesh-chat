@@ -275,6 +275,7 @@ def _service_worker(root, incoming, outgoing, commands, replies, native_binary=N
     # retain destination hashes, payloads, native IDs, or exception strings.
     channel_trace = []
     workspace_event_trace = deque(maxlen=16)
+    workspace_event_trace_truncated = False
     def channel_entry(destination, fields, content):
         bootstrap = getattr(service.network, "_direct_bootstrap", None)
         return {"bootstrap_ready": bool(bootstrap is not None and bootstrap.ready and bootstrap.peer == destination),
@@ -295,8 +296,12 @@ def _service_worker(root, incoming, outgoing, commands, replies, native_binary=N
         except Exception: return {key: None for key in (
             "bootstrap_ready", "bootstrap_handles", "main_identity", "main_ratchet", "main_path")}
     def retain_trace(kind, entry):
+        nonlocal workspace_event_trace_truncated
         try:
-            if kind == "workspace_event": workspace_event_trace.append(entry)
+            if kind == "workspace_event":
+                was_full = len(workspace_event_trace) == workspace_event_trace.maxlen
+                workspace_event_trace.append(entry)
+                if was_full: workspace_event_trace_truncated = True
             elif kind == "workspace_channel_record" and len(channel_trace) < 16: channel_trace.append(entry)
         except Exception:
             pass  # A test-only trace cannot replace the original send outcome.
@@ -338,7 +343,8 @@ def _service_worker(root, incoming, outgoing, commands, replies, native_binary=N
         if is_event:
             try: state_value = getattr(state, "value", None)
             except Exception: state_value = None
-            retain_trace("workspace_event", {"stage": "status", "outcome": "handled" if result is True else "unhandled",
+            outcome = "returned_true" if result is True else "returned_false" if result is False else "unknown"
+            retain_trace("workspace_event", {"stage": "status", "outcome": outcome,
                 "state": _workspace_diagnostic_enum(state_value, _WORKSPACE_DIAGNOSTIC_STATES)})
         return result
     def traced_workspace_ingress(native, wire):
@@ -358,7 +364,7 @@ def _service_worker(root, incoming, outgoing, commands, replies, native_binary=N
         except Exception:
             entry["outcome"] = "error"
             raise
-        entry["outcome"] = "accepted" if result is True else "deferred_or_rejected"
+        entry["outcome"] = "returned_true" if result is True else "returned_false" if result is False else "unknown"
         return result
     controls={"sent":0,"send_failed":0,"received":0,"rejected":0}
     original_send=service._direct_recovery._send
@@ -426,6 +432,7 @@ def _service_worker(root, incoming, outgoing, commands, replies, native_binary=N
                         result["workspace_bootstrap"] = _workspace_bootstrap_diagnostic(store, now=time.time())
                         result["channel_send_trace"] = list(channel_trace)
                         result["workspace_event_trace"] = list(workspace_event_trace)
+                        result["workspace_event_trace_truncated"] = workspace_event_trace_truncated
                     elif operation == "force_recovery":
                         if payload.get("retire"):
                             service._direct_recovery.retire()
@@ -542,6 +549,12 @@ def test_production_setup_bootstrap_admission_and_fresh_workspace_path(tmp_path,
                 diagnostic = call(index, "recovery_diagnostic")
                 stages = {item["stage"] for item in diagnostic["workspace_event_trace"]}
                 assert {"preflight", "send", "status", "ingress", "acceptance"} <= stages
+                assert 0 < len(diagnostic["workspace_event_trace"]) <= 16
+                assert type(diagnostic["workspace_event_trace_truncated"]) is bool
+                assert all(item["outcome"] in {"returned_true", "returned_false", "unknown"}
+                    for item in diagnostic["workspace_event_trace"] if item["stage"] == "status")
+                assert all(item["outcome"] in {"returned_true", "returned_false", "unknown", "error"}
+                    for item in diagnostic["workspace_event_trace"] if item["stage"] == "acceptance")
                 assert diagnostic["workspace_bootstrap"]["delivery_counts"]["kind"]["workspace_event"] >= 1
         for index in range(2):
             evidence = call(index, "relationship_evidence")

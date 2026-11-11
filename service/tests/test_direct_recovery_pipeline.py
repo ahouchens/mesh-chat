@@ -21,9 +21,9 @@ _EVENT_TRACE_OUTCOMES = {
                             "other_mesh_error", "other_error"}),
     "send": frozenset({"accepted", "recipient_keys_unavailable", "network_unavailable",
                        "other_mesh_error", "other_error", "unknown"}),
-    "status": frozenset({"handled", "unhandled"}),
+    "status": frozenset({"returned_true", "returned_false", "unknown"}),
     "ingress": frozenset({"observed"}),
-    "acceptance": frozenset({"accepted", "deferred_or_rejected", "error", "unknown"}),
+    "acceptance": frozenset({"returned_true", "returned_false", "error", "unknown"}),
 }
 _EVENT_READINESS = ("bootstrap_ready", "bootstrap_handles", "main_identity", "main_ratchet", "main_path")
 _EVENT_SCHEDULES = frozenset({"due", "future", "terminal", "unknown"})
@@ -34,9 +34,11 @@ def _fixed_count(value, limit):
     return min(value, limit) if type(value) is int and value >= 0 else None
 
 
-def _event_trace_snapshot(value):
-    if type(value) not in (list, tuple): return {"entries": [], "malformed": True}
-    entries, malformed = [], len(value) > 16
+def _event_trace_snapshot(value, *, source_truncated=False):
+    if type(value) not in (list, tuple):
+        return {"entries": [], "malformed": True, "truncated": source_truncated is True}
+    entries, malformed = [], type(source_truncated) is not bool
+    truncated = source_truncated is True or len(value) > 16
     for row in value[-16:]:
         if type(row) is not dict or type(row.get("stage")) is not str or row["stage"] not in _EVENT_TRACE_OUTCOMES:
             malformed = True
@@ -52,7 +54,7 @@ def _event_trace_snapshot(value):
             state = row.get("state")
             entry["state"] = state if type(state) is str and state in _EVENT_STATES else "unknown"
         entries.append(entry)
-    return {"entries": entries, "malformed": malformed}
+    return {"entries": entries, "malformed": malformed, "truncated": truncated}
 
 
 def _event_delivery_snapshot(value):
@@ -131,7 +133,8 @@ def _recovery_failure_snapshot(value):
         "workspace_event_scan": scan,
         "workspace_event_states": {name: _fixed_count(states.get(name), 64) for name in _EVENT_STATES},
         "workspace_event_deliveries": _event_delivery_snapshot(workspace.get("deliveries")),
-        "workspace_event_trace": _event_trace_snapshot(value.get("workspace_event_trace"))}
+        "workspace_event_trace": _event_trace_snapshot(value.get("workspace_event_trace"),
+            source_truncated=value.get("workspace_event_trace_truncated", False))}
 
 
 class Peers:

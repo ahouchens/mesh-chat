@@ -51,16 +51,16 @@ def test_both_peer_projection_keeps_only_fixed_readiness_and_event_branches():
                  "attempts_capped": False, "schedule": "future",
                  "native_message_id_present": False, "failure": "none",
                  "id": "PRIVATE_DELIVERY", "payload": "PRIVATE_TEXT"}]},
-        "workspace_event_trace": [
+        "workspace_event_trace_truncated": True, "workspace_event_trace": [
             {"stage": "preflight", "outcome": "waiting", "bootstrap_ready": True,
              "bootstrap_handles": False, "main_identity": True, "main_ratchet": False,
              "main_path": False, "destination": "PRIVATE_ADDRESS", "key": "PRIVATE_KEY"},
             {"stage": "send", "outcome": "recipient_keys_unavailable", "main_ratchet": False,
              "error": "PRIVATE_EXCEPTION"},
-            {"stage": "status", "outcome": "handled", "state": "received_by_endpoint",
+            {"stage": "status", "outcome": "returned_true", "state": "received_by_endpoint",
              "native_id": "PRIVATE_NATIVE_ID"},
             {"stage": "ingress", "outcome": "observed", "payload": "PRIVATE_DOCUMENT"},
-            {"stage": "acceptance", "outcome": "deferred_or_rejected", "wire": "PRIVATE_WIRE"}]}
+            {"stage": "acceptance", "outcome": "returned_false", "wire": "PRIVATE_WIRE"}]}
     selected = recovery._recovery_failure_snapshot(raw)
     assert selected["available"] and selected["pending"] == 32 and selected["pending_capped"]
     assert selected["peer_states_truncated"]
@@ -77,6 +77,9 @@ def test_both_peer_projection_keeps_only_fixed_readiness_and_event_branches():
         "preflight", "send", "status", "ingress", "acceptance"]
     assert selected["workspace_event_trace"]["entries"][0]["main_ratchet"] is False
     assert selected["workspace_event_trace"]["entries"][2]["state"] == "received_by_endpoint"
+    assert selected["workspace_event_trace"]["entries"][2]["outcome"] == "returned_true"
+    assert selected["workspace_event_trace"]["entries"][4]["outcome"] == "returned_false"
+    assert selected["workspace_event_trace"]["truncated"] is True
     assert "PRIVATE" not in json.dumps(selected)
 
 
@@ -141,9 +144,27 @@ def test_malformed_trace_is_unknown_and_bounded_without_raw_error_or_identifiers
     trace = [{"stage": "send", "outcome": "accepted", "secret": "PRIVATE_KEY"}] * 17
     trace += [{"stage": "PRIVATE_STAGE", "outcome": "PRIVATE_EXCEPTION"}]
     selected = recovery._event_trace_snapshot(trace)
-    assert len(selected["entries"]) == 15 and selected["malformed"]
+    assert len(selected["entries"]) == 15 and selected["malformed"] and selected["truncated"]
     assert "PRIVATE" not in json.dumps(selected)
-    assert recovery._event_trace_snapshot(None) == {"entries": [], "malformed": True}
+    assert recovery._event_trace_snapshot(None) == {"entries": [], "malformed": True, "truncated": False}
+
+
+def test_trace_return_labels_and_ring_truncation_are_literal_and_bounded():
+    statuses = [{"stage": "status", "outcome": "returned_true", "state": "received_by_endpoint"},
+                {"stage": "status", "outcome": "returned_false", "state": "failed"},
+                {"stage": "acceptance", "outcome": "returned_true"},
+                {"stage": "acceptance", "outcome": "returned_false"}]
+    selected = recovery._event_trace_snapshot(statuses, source_truncated=True)
+    assert selected == {"entries": statuses, "malformed": False, "truncated": True}
+    legacy = recovery._event_trace_snapshot([
+        {"stage": "status", "outcome": "handled", "state": "received_by_endpoint"},
+        {"stage": "acceptance", "outcome": "accepted"}])
+    assert legacy == {"entries": [], "malformed": True, "truncated": False}
+    overflow = recovery._event_trace_snapshot(statuses * 5)
+    assert len(overflow["entries"]) == 16 and overflow["truncated"] and not overflow["malformed"]
+    malformed_flag = recovery._event_trace_snapshot(statuses, source_truncated="PRIVATE_FLAG")
+    assert malformed_flag["malformed"] and not malformed_flag["truncated"]
+    assert "PRIVATE" not in json.dumps(malformed_flag)
 
 
 @pytest.mark.parametrize("case,outcome", [("success", "accepted"), ("keys", "recipient_keys_unavailable"),
