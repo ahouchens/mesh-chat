@@ -25,6 +25,56 @@ from test_ui_core_boundary_interop_evidence import sample
 from test_ui_core_boundary_interop_artifacts import RECEIVE_ORIGINS
 
 
+@pytest.mark.parametrize("fault,stage,reason", [
+    ("inventory_http", "inventory_request", "http_rejected"),
+    ("archive_http", "archive_request", "http_rejected"),
+    ("open_timeout", "inventory_request", "transport_failed"),
+])
+def test_initial_key_wait_projects_only_its_bounded_transport_failure(
+        tmp_path, monkeypatch, fault, stage, reason):
+    from test_ui_core_boundary_interop_artifacts import scripted_receive
+    state = scripted_receive(tmp_path, monkeypatch, fault, role="android", phase="key")
+    instance = controller.Controller("windows", SimpleNamespace(), state.transport,
+        SimpleNamespace(public_manifest=lambda: {}), {}, workload="full")
+    instance.initialize = lambda: None
+    state.transport.publish = lambda *_: None
+    original_wait = state.transport.wait
+    wait_timeouts = []
+    def wait(*args, **kwargs):
+        wait_timeouts.append(kwargs["timeout"])
+        return original_wait(*args, **kwargs)
+    state.transport.wait = wait
+    with pytest.raises(controller.RendezvousUnavailable) as caught:
+        instance.run()
+    assert instance.phase == "initialize" and instance.failure_site(caught.value) == "initialize_key_wait"
+    expected = {"rendezvous_stage": stage, "rendezvous_reason": reason}
+    if fault.endswith("http"): expected["rendezvous_http_status"] = 403
+    assert instance.failure_rendezvous(caught.value) == expected
+    assert instance.failure_rendezvous(controller.RendezvousUnavailable("PRIVATE_FOREIGN")) == {}
+    instance._operation_failure = caught.value, "initialize_key_publish"
+    assert instance.failure_rendezvous(caught.value) == {}
+    assert wait_timeouts == [900] and "PRIVATE" not in repr(expected)
+
+
+def test_initial_key_wait_observer_fault_cannot_replace_original_failure(tmp_path, monkeypatch):
+    from test_ui_core_boundary_interop_artifacts import scripted_receive
+    state = scripted_receive(tmp_path, monkeypatch, "inventory_http", role="android", phase="key")
+    instance = controller.Controller("windows", SimpleNamespace(), state.transport,
+        SimpleNamespace(public_manifest=lambda: {}), {}, workload="full")
+    instance.initialize = lambda: None
+    state.transport.publish = lambda *_: None
+    with pytest.raises(controller.RendezvousUnavailable) as caught:
+        instance.run()
+    monkeypatch.setattr(state.transport, "failure_observation", lambda _: (_ for _ in ()).throw(
+        RuntimeError("PRIVATE_OBSERVER_ERROR")))
+    assert instance.failure_rendezvous(caught.value) == {}
+    assert instance.failure_site(caught.value) == "initialize_key_wait"
+    monkeypatch.setattr(state.transport, "failure_observation", lambda _: {
+        "rendezvous_stage": "inventory_request", "rendezvous_reason": "http_rejected",
+        "url": "PRIVATE_URL"})
+    assert instance.failure_rendezvous(caught.value) == {}
+
+
 def cold_setup_controller(monkeypatch, *, role="windows", consent=None, imported=None, received=None):
     association = {"id": "PRIVATE_RECONNECT_PROFILE", "contact_id": "PRIVATE_CONTACT",
         "destination_hash": "a" * 32, "local_device_id": "PRIVATE_LOCAL_DEVICE", "remote_device_id": "PRIVATE_REMOTE_DEVICE"}
