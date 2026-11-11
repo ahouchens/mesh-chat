@@ -64,6 +64,9 @@ ACTOR_ENUMS["reason"] = ACTOR_ENUMS["negotiation"] | {
     "invalid_adoption", "wrong_resource", "missing_observation", "invalid_pending", "unverified_resource",
     "missing_carrier", "context_changed", "observed", "poll_wait",
 }
+INVITATION_SAMPLE_OFFSETS_MS = [0, 1000, 5000, 20000, 90000]
+# Five selected public checkpoints fit beside the existing bounded failure envelope.
+MAX_FAILURE_STDOUT_BYTES = 8192
 ERROR_CODES = {"invalid_request", "incompatible_version", "negotiation_required", "unsupported_operation",
     "unauthenticated", "forbidden", "not_found", "locked", "conflict", "idempotency_conflict",
     "idempotency_expired", "resync_required", "resource_exhausted", "rate_limited", "unavailable", "internal"}
@@ -134,6 +137,83 @@ def public_diagnostic_details(probe):
             raise ValueError("Public diagnostic outcome is invalid")
 
 
+def invitation_observation_details(value):
+    if (not isinstance(value, dict) or set(value) != {"sample_budget", "sample_offsets_ms",
+            "request_budget_ms", "work_reserve_ms", "actor_limit", "samples", "capped"}
+            or type(value["sample_budget"]) is not int or value["sample_budget"] != len(INVITATION_SAMPLE_OFFSETS_MS)
+            or not isinstance(value["sample_offsets_ms"], list)
+            or any(type(offset) is not int for offset in value["sample_offsets_ms"])
+            or value["sample_offsets_ms"] != INVITATION_SAMPLE_OFFSETS_MS
+            or type(value["request_budget_ms"]) is not int or value["request_budget_ms"] != 2000
+            or type(value["work_reserve_ms"]) is not int or value["work_reserve_ms"] != 100
+            or type(value["actor_limit"]) is not int or value["actor_limit"] != 1
+            or type(value["capped"]) is not bool or not isinstance(value["samples"], list)
+            or len(value["samples"]) > value["sample_budget"]
+            or (value["capped"] and len(value["samples"]) != value["sample_budget"])):
+        raise ValueError("Invitation observation budget is invalid")
+    previous = -1
+    for index, sample in enumerate(value["samples"]):
+        if (not isinstance(sample, dict) or type(sample.get("outcome")) is not str
+                or sample["outcome"] not in {"complete", "incomplete"}
+                or set(sample) != ({"offset_ms", "pending_invitations", "counts_capped", "outcome"}
+                    | ({"offerer", "answerer"} if sample["outcome"] == "complete" else set()))
+                or type(sample["offset_ms"]) is not int
+                or not INVITATION_SAMPLE_OFFSETS_MS[index] <= sample["offset_ms"] <= 600000
+                or sample["offset_ms"] < previous
+                or type(sample["pending_invitations"]) is not int
+                or not 0 <= sample["pending_invitations"] <= 256
+                or type(sample["counts_capped"]) is not bool):
+            raise ValueError("Invitation observation sample is invalid")
+        previous = sample["offset_ms"]
+        if sample["outcome"] == "incomplete":
+            continue
+        for role in ("offerer", "answerer"):
+            peer = sample[role]
+            if not isinstance(peer, dict) or set(peer) != {"pairing", "actor"}:
+                raise ValueError("Invitation observation peer is invalid")
+            pairing = peer["pairing"]
+            if (not isinstance(pairing, dict) or type(pairing.get("query_outcome")) is not str
+                    or pairing["query_outcome"] not in {
+                    "ok", "failed", "invalid_result", "not_attempted"}):
+                raise ValueError("Invitation pairing observation is invalid")
+            if pairing["query_outcome"] == "ok":
+                if (set(pairing) != {"query_outcome", "state", "expired"}
+                        or type(pairing["state"]) is not str
+                        or pairing["state"] not in PAIRING_STATES - {"unknown"}
+                        or type(pairing["expired"]) is not bool):
+                    raise ValueError("Invitation pairing state is invalid")
+            elif set(pairing) != {"query_outcome"}:
+                raise ValueError("Invitation pairing failure contains extra fields")
+            actor = peer["actor"]
+            if (not isinstance(actor, dict) or type(actor.get("query_outcome")) is not str
+                    or actor["query_outcome"] not in {
+                    "ok", "failed", "invalid_result", "not_attempted"}):
+                raise ValueError("Invitation actor observation is invalid")
+            if actor["query_outcome"] == "ok":
+                if (set(actor) != {"query_outcome", "available", "runtime_failure", "total_connections",
+                        "truncated", "actor"}
+                        or type(actor["available"]) is not bool
+                        or type(actor["total_connections"]) is not int
+                        or not 0 <= actor["total_connections"] <= 256
+                        or type(actor["truncated"]) is not bool
+                        or actor["truncated"] != (actor["total_connections"] > 1)
+                        or type(actor["runtime_failure"]) not in {type(None), str}
+                        or actor["runtime_failure"] not in {None, "adapter_quarantined", "cleanup_failed", "unknown"}
+                        or (not actor["available"] and (actor["total_connections"] != 0
+                            or actor["runtime_failure"] is not None))):
+                    raise ValueError("Invitation actor projection is invalid")
+                selected = actor["actor"]
+                if actor["total_connections"] == 1:
+                    if (not isinstance(selected, dict) or set(selected) != set(ACTOR_ENUMS)
+                            or any(type(selected[key]) is not str or selected[key] not in choices | {"unknown"}
+                                   for key, choices in ACTOR_ENUMS.items())):
+                        raise ValueError("Invitation actor state is invalid")
+                elif selected is not None:
+                    raise ValueError("Ambiguous invitation actor is selected")
+            elif set(actor) != {"query_outcome"}:
+                raise ValueError("Invitation actor failure contains extra fields")
+
+
 def failure_details(value):
     if (not isinstance(value, dict) or set(value) != {"passed", "phase", "error_code", "diagnostics"}
             or value["passed"] is not False or value["phase"] not in PHASES
@@ -142,7 +222,7 @@ def failure_details(value):
     diagnostics = value["diagnostics"]
     if (not isinstance(diagnostics, dict) or set(diagnostics) - {
                 "subphase", "deadline_exhausted", "peers", "failure_probe", "stage_timing", "post_accept_reads",
-                "failure_origin", "cleanup", "public_diagnostics"}
+                "failure_origin", "cleanup", "public_diagnostics", "invitation_observation"}
             or not {"subphase", "deadline_exhausted", "peers", "failure_origin", "cleanup"} <= set(diagnostics)
             or diagnostics["subphase"] not in SUBPHASES[value["phase"]]
             or type(diagnostics["deadline_exhausted"]) is not bool
@@ -154,6 +234,10 @@ def failure_details(value):
     cleanup_details(diagnostics["cleanup"])
     if "public_diagnostics" in diagnostics:
         public_diagnostic_details(diagnostics["public_diagnostics"])
+    if "invitation_observation" in diagnostics:
+        if value["phase"] in {"arguments", "fresh_profiles", "public_pairing"}:
+            raise ValueError("Invitation observation precedes invitation wait")
+        invitation_observation_details(diagnostics["invitation_observation"])
     if ("stage_timing" in diagnostics) != (value["phase"] != "arguments"):
         raise ValueError("Pairing failure has no stage timing provenance")
     offsets = {}
@@ -264,7 +348,7 @@ def main():
         completed = subprocess.run([node, "pairing-check.mjs", "--runtime", str(runtime),
             "--data-directory", str(data)], cwd=directory, env=bootstrap.application_environment(os.environ),
             capture_output=True, timeout=330)
-        if len(completed.stdout) > 4096:
+        if len(completed.stdout) > MAX_FAILURE_STDOUT_BYTES:
             raise ValueError("Independent pairing result exceeds its budget")
         observed = json.loads(completed.stdout)
         if completed.returncode != 0:

@@ -189,6 +189,169 @@ console.log(JSON.stringify(values));
         {"network_present": False, "service_error": None}] + [{"network_present": False, "service_error": "unknown"}] * 4
 
 
+@pytest.mark.parametrize("unavailable", [False, True])
+def test_invitation_observer_retains_early_public_state_with_fixed_budget(unavailable):
+    node, _ = staging.tools()
+    script = """
+import {pairingDiagnostics,invitationWaitObserver} from './examples/typescript-independent-consumer/pairing-diagnostics.mjs';
+let tick=0, active=0, maximum=0;
+const calls=[];
+const unavailable=UNAVAILABLE;
+const peer=role=>({role,profile:'PRIVATE_PROFILE',pairing:'PRIVATE_PAIRING',client:{
+  async request(operation,params,options){
+    calls.push({role,operation,limit:params.limit??null,timeout:options.timeoutMs});
+    maximum=Math.max(maximum,++active);
+    try {
+      await Promise.resolve();
+      if(unavailable)throw new Error('PRIVATE_OBSERVER_ERROR');
+      if(operation==='peer.pairing_query')return {state:tick>=5000?'retired':
+        tick>=1000&&role==='answerer'?'awaiting_approval':role==='offerer'?'offer_ready':'reserved',
+        expires_at:1240,pairing_code:'PRIVATE_CODE',sdp:'PRIVATE_SDP'};
+      return {available:true,runtime_failure:null,total_connections:tick===20000?2:1,
+        truncated:tick===20000,
+        connections:[{connection:'PRIVATE_CONNECTION',observation:{desired:tick>=5000?'stopped':'enabled',
+          execution:'available',negotiation:tick>=5000?'idle':'checking',
+          reason:tick>=5000?'ineligible':tick>=1000?'phase_timeout':'wait_offer',
+          endpoint:'PRIVATE_ENDPOINT'}}]};
+    } finally {active--;}
+  }
+}});
+const diagnostics=pairingDiagnostics(()=>tick);
+const observe=invitationWaitObserver([peer('offerer'),peer('answerer')],diagnostics,()=>1000000+tick,()=>tick);
+for(const at of [0,500,1000,5000,20000,90000,100000]){
+  tick=at;observe.poll([],1240000);await new Promise(resolve=>setImmediate(resolve));
+}
+const primary=new Error('PRIVATE_WORK_ERROR');
+let same=false;
+try {observe.poll([],1240000);throw primary;}catch(error){same=error===primary;}
+observe.stop();
+tick=239000;
+const lateDiagnostics=pairingDiagnostics(()=>tick);
+const lateObserve=invitationWaitObserver([peer('offerer'),peer('answerer')],lateDiagnostics,
+  ()=>1000000+tick,()=>tick);
+const before=calls.length;
+lateObserve.poll([],1240000);
+console.log(JSON.stringify({calls,maximum,same,nearDeadlineCalls:calls.length-before,
+  nearDeadlineSamples:lateDiagnostics.failure().invitation_observation.samples.length,
+  observation:diagnostics.failure().invitation_observation}));
+""".replace("UNAVAILABLE", json.dumps(unavailable))
+    completed = subprocess.run([node, "--input-type=module", "-e", script], cwd=staging.ROOT,
+                               capture_output=True, text=True, check=True, timeout=15)
+    assert "PRIVATE" not in completed.stdout + completed.stderr
+    result = json.loads(completed.stdout)
+    observation = result["observation"]
+    pairing.invitation_observation_details(observation)
+    assert observation["sample_offsets_ms"] == pairing.INVITATION_SAMPLE_OFFSETS_MS
+    assert observation["sample_budget"] == 5 and observation["capped"] is True
+    assert (observation["request_budget_ms"], observation["work_reserve_ms"], observation["actor_limit"]) == (2000, 100, 1)
+    assert [sample["offset_ms"] for sample in observation["samples"]] == pairing.INVITATION_SAMPLE_OFFSETS_MS
+    assert len(result["calls"]) == 20 and result["maximum"] <= 2 and result["same"] is True
+    assert result["nearDeadlineCalls"] == 0 and result["nearDeadlineSamples"] == 0
+    assert all(0 < call["timeout"] <= 2000 for call in result["calls"])
+    assert all(call["limit"] == 1 for call in result["calls"] if call["operation"] == "diagnostics.query")
+    early = observation["samples"][1]["answerer"]
+    late = observation["samples"][2]["answerer"]
+    if unavailable:
+        assert early == {"pairing": {"query_outcome": "failed"}, "actor": {"query_outcome": "failed"}}
+    else:
+        assert early["pairing"] == {"query_outcome": "ok", "state": "awaiting_approval", "expired": False}
+        assert early["actor"]["actor"]["reason"] == "phase_timeout"
+        assert late["pairing"]["state"] == "retired" and late["actor"]["actor"]["reason"] == "ineligible"
+        assert observation["samples"][3]["answerer"]["actor"]["actor"] is None
+        assert observation["samples"][3]["answerer"]["actor"]["truncated"] is True
+
+
+@pytest.mark.parametrize("fault", ["raw_handle", "raw_endpoint", "invalid_reason", "too_many_samples",
+    "bad_offset", "boolean_offset", "bad_budget", "bad_request_budget", "wrong_role",
+    "ambiguous_actor", "object_outcome"])
+def test_invitation_observation_validator_rejects_unsafe_or_unbounded_fields(fault):
+    actor = {"query_outcome": "ok", "available": True, "runtime_failure": None,
+             "total_connections": 1, "truncated": False,
+             "actor": {"desired": "enabled", "execution": "available", "negotiation": "checking",
+                       "reason": "phase_timeout"}}
+    peer = {"pairing": {"query_outcome": "ok", "state": "awaiting_approval", "expired": False},
+            "actor": actor}
+    sample = {"offset_ms": 0, "pending_invitations": 0, "counts_capped": False, "outcome": "complete",
+              "offerer": copy.deepcopy(peer), "answerer": copy.deepcopy(peer)}
+    observed = {"sample_budget": 5, "sample_offsets_ms": pairing.INVITATION_SAMPLE_OFFSETS_MS.copy(),
+                "request_budget_ms": 2000, "work_reserve_ms": 100, "actor_limit": 1,
+                "samples": [sample], "capped": False}
+    pairing.invitation_observation_details(observed)
+    if fault == "raw_handle": sample["answerer"]["pairing"]["pairing"] = "PRIVATE_PAIRING"
+    elif fault == "raw_endpoint": sample["answerer"]["actor"]["actor"]["endpoint"] = "PRIVATE_ENDPOINT"
+    elif fault == "invalid_reason": sample["answerer"]["actor"]["actor"]["reason"] = "PRIVATE_ERROR"
+    elif fault == "too_many_samples": observed["samples"] *= 6
+    elif fault == "bad_offset": sample["offset_ms"] = -1
+    elif fault == "boolean_offset": observed["sample_offsets_ms"][0] = False
+    elif fault == "bad_budget": observed["sample_budget"] = 6
+    elif fault == "bad_request_budget": observed["request_budget_ms"] = 30000
+    elif fault == "wrong_role": sample["contender"] = sample.pop("answerer")
+    elif fault == "ambiguous_actor": sample["answerer"]["actor"]["total_connections"] = 2
+    else: sample["answerer"]["actor"]["query_outcome"] = {"error": "PRIVATE_ERROR"}
+    with pytest.raises(ValueError): pairing.invitation_observation_details(observed)
+
+
+@pytest.mark.parametrize("stall", ["pairing", "diagnostics"])
+def test_stalled_public_observer_does_not_delay_invitation_or_mutate_after_stop(tmp_path, stall):
+    node, _ = staging.tools()
+    preloader = tmp_path / "stall-observer.mjs"
+    preloader.write_text("""
+const fixture=globalThis.__diagnosticFixture;
+const originalOpen=fixture.CoreClient.open;
+fixture.CoreClient.open=async (...args)=>{
+  const client=await originalOpen(...args);
+  if(args[0].owner.role!=='answerer')return client;
+  let answered=false, skipped=false, stalled=false, release;
+  const originalBegin=client.pairingBegin.bind(client);
+  const originalRequest=client.request.bind(client);
+  client.pairingBegin=async (...values)=>{
+    const result=await originalBegin(...values);
+    if(values[1]==='answer')answered=true;
+    return result;
+  };
+  client.request=async (operation,params,options)=>{
+    if(answered && operation==='application.snapshot' && !skipped){
+      skipped=true;
+      return {...await originalRequest(operation,params,options),contact_invitations:[]};
+    }
+    if(answered && !stalled && (STAGE==='pairing' && operation==='peer.pairing_query'
+        || STAGE==='diagnostics' && operation==='diagnostics.query' && params.limit===1)){
+      stalled=true;
+      return new Promise(resolve=>{release=resolve;});
+    }
+    if(operation==='contact.invitation' && release){
+      release(STAGE==='pairing' ? {state:'retired',expires_at:Date.now()/1000+30,
+        pairing_code:'PRIVATE_CODE'} : {available:false,runtime_failure:null,
+        total_connections:0,truncated:false,connections:[]});
+      release=undefined;
+    }
+    return originalRequest(operation,params,options);
+  };
+  return client;
+};
+""".replace("STAGE", json.dumps(stall)), encoding="utf-8")
+    log = tmp_path / "events.jsonl"
+    completed = subprocess.run([node, "--import", (staging.ROOT /
+        "tests/core-ui-boundary/pairing_diagnostic_fixture.mjs").as_uri(),
+        "--import", preloader.as_uri(), str(staging.APPLICATION / "pairing-check.mjs"),
+        "--runtime", "unused", "--data-directory", "unused"], cwd=staging.ROOT,
+        env={**os.environ, "PAIRING_DIAGNOSTIC_FAULT": "invitation_accept",
+             "PAIRING_DIAGNOSTIC_LOG": str(log)}, capture_output=True, text=True, timeout=10)
+    assert completed.returncode == 1 and len(completed.stdout.encode()) <= 4096
+    assert "PRIVATE" not in completed.stdout + completed.stderr
+    details = pairing.failure_details(json.loads(completed.stdout))
+    assert details["application_phase"] == "explicit_approval" and details["error_code"] == "forbidden"
+    assert details["diagnostics"]["subphase"] == "invitation_accept"
+    observation = details["diagnostics"]["invitation_observation"]
+    assert observation["samples"] == [{"offset_ms": 0, "pending_invitations": 0,
+        "counts_capped": False, "outcome": "incomplete"}]
+    events = [json.loads(line) for line in log.read_text().splitlines()]
+    assert len([item for item in events if item.get("event") == "request"
+                and item.get("role") == "answerer" and item.get("operation") == "application.snapshot"]) == 5
+    assert len([item for item in events if item.get("event") == "public_probe"
+                and item.get("role") == "answerer" and item.get("limit") == 1]) == 0
+
+
 @pytest.mark.parametrize("fault", ["integer_presence", "object_presence", "error_string", "error_object", "error_array",
     "missing_presence", "missing_error", "raw_network", "raw_address"])
 def test_strict_failure_parser_rejects_unselected_network_or_error_values(fault):
@@ -1216,6 +1379,49 @@ def bootstrap_record(source="a" * 40, tree="b" * 40):
 def pairing_record(source="a" * 40, tree="b" * 40):
     return {**bootstrap_record(source, tree), "evidence_level": pairing.LEVEL, "scope": pairing.SCOPE,
             "checks": dict(pairing.CHECKS), "run_id": "7" * 32, "bootstrap_report_sha256": "b" * 64}
+
+
+def test_pairing_runner_preserves_bounded_bytes_failure_report(monkeypatch, tmp_path):
+    source, tree = "a" * 40, "b" * 40
+    bootstrap_path, output = tmp_path / "bootstrap.json", tmp_path / "pairing.json"
+    bootstrap_path.write_text("{}")
+    binary = tmp_path / "host.exe"
+    binary.write_bytes(b"source-bound fixture binary")
+    prior = bootstrap_record(source, tree)
+    prior["sidecar_sha256"] = staging.digest(binary)
+    sdk = tmp_path / prior["sdk_artifact"]
+    sdk.parent.mkdir(parents=True)
+    sdk.write_bytes(b"source-bound fixture sdk")
+    prior["sdk_sha256"] = staging.digest(sdk)
+    binding = {key: prior[key] for key in ("sidecar_sha256", "build_input_sha256", "build_manifest_sha256")}
+    binding.update(source_commit=source, source_tree=tree)
+    installed = tmp_path / "installed"
+    installed.mkdir()
+    failure = {"passed": False, "phase": "explicit_approval", "error_code": "unavailable",
+               "diagnostics": {"subphase": "invitation_wait", "deadline_exhausted": True,
+                   "failure_origin": "wait_deadline", "cleanup": [], "peers": {},
+                   "stage_timing": {"offsets_ms": {"failure_observed": 240000}, "clipped": False},
+                   "invitation_observation": {"sample_budget": 5,
+                       "sample_offsets_ms": pairing.INVITATION_SAMPLE_OFFSETS_MS.copy(),
+                       "request_budget_ms": 2000, "work_reserve_ms": 100,
+                       "actor_limit": 1, "samples": [], "capped": False}}}
+    monkeypatch.setitem(sys.modules, "native_windows_evidence", SimpleNamespace(
+        artifact_binding=lambda _: (binary, binding), require_unchanged=lambda *_: None))
+    monkeypatch.setattr(bootstrap, "verify_report", lambda *_: prior)
+    monkeypatch.setattr(bootstrap, "application_environment", lambda _: {})
+    monkeypatch.setattr(pairing, "tools", lambda: ("node", "npm"))
+    monkeypatch.setattr(pairing, "outside_directory", lambda _: installed)
+    monkeypatch.setattr(pairing, "install_typescript", lambda *_: {"application_files": {}})
+    monkeypatch.setattr(pairing, "cleanup", lambda *_: None)
+    monkeypatch.setattr(pairing.subprocess, "run", lambda *_args, **_kwargs: SimpleNamespace(
+        stdout=json.dumps(failure).encode(), returncode=1))
+    monkeypatch.setattr(sys, "argv", ["check_independent_core_pairing.py", "--expected-source", source,
+                                    "--bootstrap-report", str(bootstrap_path), "--output", str(output)])
+    assert pairing.main() == 1
+    result = json.loads(output.read_text())
+    assert result["phase"] == "public_pairing_and_receipts" and result["failure_type"] == "ValueError"
+    assert result["application_phase"] == "explicit_approval" and result["error_code"] == "unavailable"
+    assert result["diagnostics"] == failure["diagnostics"]
 
 
 @pytest.mark.parametrize("mode", ["healthy", "unavailable", "null", "missing_network", "string", "array",

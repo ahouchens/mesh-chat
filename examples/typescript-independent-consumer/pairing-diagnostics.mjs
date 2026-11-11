@@ -16,6 +16,9 @@ export const ERROR_CODES = new Set(["invalid_request", "incompatible_version", "
 const ROLES = new Set(["offerer", "answerer"]);
 const SERVICE_ERRORS = new Set(["network_start_failed", "network_interface_unavailable"]);
 const bound = value => Math.min(value, 256);
+export const INVITATION_SAMPLE_OFFSETS_MS = Object.freeze([0, 1000, 5000, 20000, 90000]);
+const INVITATION_SAMPLE_BUDGET_MS = 2000;
+const INVITATION_WORK_RESERVE_MS = 100;
 export const FAILURE_ORIGINS = new Set(["budget_deadline", "wait_deadline", "core_error", "cleanup_failure", "unknown"]);
 export const ACTOR_ENUMS = {
   desired: new Set(["enabled", "stopped"]),
@@ -30,11 +33,12 @@ ACTOR_ENUMS.reason = new Set([...ACTOR_ENUMS.negotiation, "unknown", "ineligible
   "unverified_resource", "missing_carrier", "context_changed", "observed", "poll_wait"]);
 const record = value => value !== null && typeof value === "object" && !Array.isArray(value);
 
-export function publicDiagnosticObservation(value) {
+export function publicDiagnosticObservation(value, limit = 4) {
   // Current, unassociated actors: neither pairing identity nor first-cause history.
   if (!record(value) || typeof value.available !== "boolean" || !Array.isArray(value.connections)
-      || value.connections.length > 4 || !Number.isSafeInteger(value.total_connections) || value.total_connections < 0
-      || value.connections.length !== Math.min(value.total_connections, 4) || typeof value.truncated !== "boolean"
+      || ![1, 4].includes(limit) || value.connections.length > limit
+      || !Number.isSafeInteger(value.total_connections) || value.total_connections < 0
+      || value.connections.length !== Math.min(value.total_connections, limit) || typeof value.truncated !== "boolean"
       || value.truncated !== (value.total_connections > value.connections.length)
       || (value.runtime_failure !== null && typeof value.runtime_failure !== "string")
       || (!value.available && (value.total_connections !== 0 || value.runtime_failure !== null))) {
@@ -57,6 +61,90 @@ export function publicDiagnosticObservation(value) {
     total_connections: bound(value.total_connections), truncated: value.truncated, connections };
 }
 
+function pairingObservation(value, wallNow) {
+  return STATES.has(value?.state) && Number.isFinite(value?.expires_at)
+    ? {query_outcome: "ok", state: value.state, expired: value.expires_at <= wallNow() / 1000}
+    : {query_outcome: "invalid_result"};
+}
+
+function compactActorObservation(value) {
+  if (value.query_outcome !== "ok") return value;
+  return {query_outcome: "ok", available: value.available, runtime_failure: value.runtime_failure,
+    total_connections: value.total_connections, truncated: value.truncated,
+    actor: value.total_connections === 1 ? value.connections[0] : null};
+}
+
+// At most two peers are queried concurrently; each peer's two public reads are sequential.
+export function invitationWaitObserver(peers, diagnostics, wallNow = Date.now,
+                                       monotonicNow = () => performance.now()) {
+  if (peers.length !== 2 || new Set(peers.map(peer => peer.role)).size !== 2
+      || peers.some(peer => !ROLES.has(peer.role))) throw new Error("invalid_observation_peers");
+  const started = monotonicNow();
+  let next = 0;
+  let active = true;
+  let inFlight;
+  diagnostics.beginInvitationObservation();
+  const failed = {pairing: {query_outcome: "failed"}, actor: {query_outcome: "failed"}};
+  return {
+    poll(invitations, workDeadline) {
+      if (!active || inFlight) return;
+      if (next >= INVITATION_SAMPLE_OFFSETS_MS.length) {
+        diagnostics.invitationSamplesCapped();
+        return;
+      }
+      const elapsed = Math.floor(monotonicNow() - started);
+      if (elapsed < INVITATION_SAMPLE_OFFSETS_MS[next]
+          || workDeadline - wallNow() <= INVITATION_SAMPLE_BUDGET_MS + INVITATION_WORK_RESERVE_MS) return;
+      const marker = {offset_ms: Math.max(0, Math.min(elapsed, 600000)),
+        pending_invitations: bound(invitations.filter(item => item.state === "pending").length),
+        counts_capped: invitations.length > 256};
+      next++;
+      inFlight = marker;
+      const sampleDeadline = monotonicNow() + INVITATION_SAMPLE_BUDGET_MS;
+      const timeout = () => Math.floor(Math.min(sampleDeadline - monotonicNow(),
+        workDeadline - wallNow() - INVITATION_WORK_RESERVE_MS));
+      const observe = async peer => {
+        let pairing = {query_outcome: "not_attempted"};
+        let actor = {query_outcome: "not_attempted"};
+        let remaining = timeout();
+        if (active && remaining > 0) {
+          try {
+            pairing = pairingObservation(await peer.client.request("peer.pairing_query",
+              {profile: peer.profile, pairing: peer.pairing}, {timeoutMs: remaining}), wallNow);
+          } catch { pairing = {query_outcome: "failed"}; }
+        }
+        remaining = timeout();
+        if (active && remaining > 0) {
+          try {
+            actor = compactActorObservation(publicDiagnosticObservation(await peer.client.request(
+              "diagnostics.query", {profile: peer.profile, limit: 1}, {timeoutMs: remaining}), 1));
+          } catch { actor = {query_outcome: "failed"}; }
+        }
+        return {pairing, actor};
+      };
+      void Promise.allSettled(peers.map(observe)).then(results => {
+        if (!active || inFlight !== marker) return;
+        const sample = {...marker, outcome: "complete"};
+        peers.forEach((peer, index) => { sample[peer.role] = results[index].status === "fulfilled"
+          ? results[index].value : failed; });
+        diagnostics.invitationSample(sample);
+        inFlight = undefined;
+      }).catch(() => {
+        if (!active || inFlight !== marker) return;
+        try { diagnostics.invitationSample({...marker, outcome: "incomplete"}); } catch { /* Observation only. */ }
+        inFlight = undefined;
+      });
+    },
+    stop() {
+      active = false;
+      if (inFlight) {
+        try { diagnostics.invitationSample({...inFlight, outcome: "incomplete"}); } catch { /* Observation only. */ }
+        inFlight = undefined;
+      }
+    },
+  };
+}
+
 export function pairingDiagnostics(monotonicNow = () => performance.now()) {
   let subphase = "arguments";
   let failureProbe;
@@ -66,6 +154,7 @@ export function pairingDiagnostics(monotonicNow = () => performance.now()) {
   let failureFrozen = false;
   const stageTiming = { offsets_ms: {}, clipped: false };
   let postAcceptReads;
+  let invitationObservation;
   const peers = {};
   const cleanup = [];
   function mark(name) {
@@ -100,6 +189,17 @@ export function pairingDiagnostics(monotonicNow = () => performance.now()) {
     },
     pendingAttempt() { count("attempts"); },
     pendingComplete() { count("completed"); },
+    beginInvitationObservation() {
+      if (!failureFrozen && !invitationObservation) invitationObservation = {
+        sample_budget: INVITATION_SAMPLE_OFFSETS_MS.length,
+        sample_offsets_ms: [...INVITATION_SAMPLE_OFFSETS_MS], request_budget_ms: INVITATION_SAMPLE_BUDGET_MS,
+        work_reserve_ms: INVITATION_WORK_RESERVE_MS, actor_limit: 1, samples: [], capped: false};
+    },
+    invitationSample(value) {
+      if (!failureFrozen && invitationObservation && invitationObservation.samples.length < INVITATION_SAMPLE_OFFSETS_MS.length)
+        invitationObservation.samples.push(structuredClone(value));
+    },
+    invitationSamplesCapped() { if (!failureFrozen && invitationObservation) invitationObservation.capped = true; },
     freezeFailure(origin = "unknown") {
       if (failureFrozen) return;
       if (!FAILURE_ORIGINS.has(origin)) throw new Error("invalid_failure_origin");
@@ -158,6 +258,7 @@ export function pairingDiagnostics(monotonicNow = () => performance.now()) {
         peers: structuredClone(peers), cleanup: structuredClone(cleanup),
         ...(startedAt !== undefined ? { stage_timing: structuredClone(stageTiming) } : {}),
         ...(postAcceptReads ? { post_accept_reads: structuredClone(postAcceptReads) } : {}),
+        ...(invitationObservation ? { invitation_observation: structuredClone(invitationObservation) } : {}),
         ...(failureProbe !== undefined ? { failure_probe: structuredClone(failureProbe) } : {}),
         ...(publicDiagnostics !== undefined ? { public_diagnostics: structuredClone(publicDiagnostics) } : {}) };
     },
