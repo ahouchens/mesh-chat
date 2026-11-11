@@ -3,9 +3,13 @@
 from pathlib import Path
 import copy
 import json
+import os
+import re
 import subprocess
 import sys
-from types import SimpleNamespace
+import textwrap
+from types import ModuleType, SimpleNamespace
+import urllib.request
 
 import pytest
 import yaml
@@ -2267,7 +2271,8 @@ INITIALIZE_SITES = dict(zip(INITIALIZE_CALLS, ["initialize_peer_start", "initial
 
 
 def run_initialize_report(tmp_path, monkeypatch, capsys, *, role="android", point=None, kind="peer", guard=None,
-                          foreign=False, later_error=False, cleanup_error=False, core_observation=None):
+                          foreign=False, later_error=False, cleanup_error=False, core_observation=None,
+                          network_diagnostic=None):
     """Actual initialize/run/main and failure scope; external hosts/setup and later workload are inert."""
     import connection_ci
     state = SimpleNamespace(events=[], point=point, guard=guard, errors=[], now=100.0,
@@ -2283,6 +2288,11 @@ def run_initialize_report(tmp_path, monkeypatch, capsys, *, role="android", poin
         processes_started, forced_exits, clean_exits = 0, 0, 0
         def core_failure_observation(self, error):
             return core_observation if error is state.error else None
+        def network_diagnostic(self, *, timeout):
+            state.events.append(("network_diagnostic", timeout))
+            assert 0 < timeout <= 2
+            if isinstance(network_diagnostic, Exception): raise network_diagnostic
+            return network_diagnostic
         def start(self):
             step("peer.start")
             self.processes_started += 1
@@ -2517,6 +2527,129 @@ def test_actual_controller_rejects_invalid_core_observation(tmp_path, monkeypatc
         core_observation=observation)
     assert run.code == 1 and "core_failure_observation" not in run.record
     assert "PRIVATE" not in run.output
+
+
+BROKER_NAME_RESOLUTION = {"v": 1, "operation": "ice_servers", "stage": "broker_open",
+    "category": "network_unavailable", "cause": "name_resolution"}
+ANDROID_NETWORK_DIAGNOSTIC = {"v": 1, "scope": "post_failure_app_process", "internet_permission": True, "active_network": True,
+    "internet_capability": True, "validated_network": False, "dns_servers_present": True,
+    "process_bound_network": False, "connect_target": "broker"}
+
+
+def test_actual_android_dns_failure_adds_one_bounded_guest_snapshot_after_original_error(
+        tmp_path, monkeypatch, capsys):
+    run = run_initialize_report(tmp_path, monkeypatch, capsys, point="call.ice_servers",
+        core_observation=BROKER_NAME_RESOLUTION, network_diagnostic=ANDROID_NETWORK_DIAGNOSTIC)
+    assert run.code == 1 and run.record["error_code"] == "internal"
+    assert run.record["failure_site"] == "initialize_ice_servers"
+    assert run.record["core_failure_observation"] == BROKER_NAME_RESOLUTION
+    assert run.record["android_network_diagnostic"] == ANDROID_NETWORK_DIAGNOSTIC
+    assert run.state.original_error is run.state.error and run.state.errors == [run.state.error]
+    assert [event for event in run.state.events if isinstance(event, tuple) and event[0] == "network_diagnostic"] == [
+        ("network_diagnostic", 2.0)]
+    assert ("host.stop", {"crash": True}) in run.state.events and "PRIVATE" not in run.output
+
+
+@pytest.mark.parametrize("role,point,kind,foreign,observation", [
+    ("windows", "call.ice_servers", "peer", False, BROKER_NAME_RESOLUTION),
+    ("android", "runtime.capabilities", "peer", False, BROKER_NAME_RESOLUTION),
+    ("android", "call.ice_servers", "value", False, BROKER_NAME_RESOLUTION),
+    ("android", "call.ice_servers", "peer", True, BROKER_NAME_RESOLUTION),
+    ("android", "call.ice_servers", "peer", False, CORE_FAILURE_OBSERVATION),
+])
+def test_guest_snapshot_is_only_for_same_android_broker_dns_failure(
+        tmp_path, monkeypatch, capsys, role, point, kind, foreign, observation):
+    run = run_initialize_report(tmp_path, monkeypatch, capsys, role=role, point=point, kind=kind,
+        foreign=foreign, core_observation=observation, network_diagnostic=ANDROID_NETWORK_DIAGNOSTIC)
+    assert run.code == 1 and "android_network_diagnostic" not in run.record
+    assert not any(isinstance(event, tuple) and event[0] == "network_diagnostic" for event in run.state.events)
+    assert "PRIVATE" not in run.output
+
+
+@pytest.mark.parametrize("diagnostic", [
+    {**ANDROID_NETWORK_DIAGNOSTIC, "proxy_url": "PRIVATE_CREDENTIAL"},
+    {**ANDROID_NETWORK_DIAGNOSTIC, "connect_target": "PRIVATE_HOST"},
+    {**ANDROID_NETWORK_DIAGNOSTIC, "dns_servers_present": "true"},
+    {**ANDROID_NETWORK_DIAGNOSTIC, "active_network": False},
+    ValueError("PRIVATE_HOST_CREDENTIAL"),
+])
+def test_guest_snapshot_failure_never_replaces_core_failure_or_leaks_values(
+        tmp_path, monkeypatch, capsys, diagnostic):
+    run = run_initialize_report(tmp_path, monkeypatch, capsys, point="call.ice_servers",
+        core_observation=BROKER_NAME_RESOLUTION, network_diagnostic=diagnostic)
+    assert run.code == 1 and run.record["error_code"] == "internal"
+    assert run.record["core_failure_observation"] == BROKER_NAME_RESOLUTION
+    assert "android_network_diagnostic" not in run.record
+    assert run.state.original_error is run.state.error and run.state.errors == [run.state.error]
+    assert len([event for event in run.state.events if isinstance(event, tuple) and event[0] == "network_diagnostic"]) == 1
+    assert ("host.stop", {"crash": True}) in run.state.events and "PRIVATE" not in run.output
+
+
+@pytest.mark.parametrize("proxy,bypass,broker,expected", [
+    (None, None, "https://broker.example/credentials", "broker"),
+    ("http://proxy.example:8080", None, "https://broker.example/credentials", "proxy"),
+    ("http://proxy.example:8080", "broker.example", "https://broker.example/credentials", "broker"),
+    (None, None, "PRIVATE_INVALID_URL", "unknown"),
+])
+def test_actual_embedded_guest_route_selector_obeys_https_proxy_and_bypass(
+        monkeypatch, proxy, bypass, broker, expected):
+    for name in list(os.environ):
+        if name.lower().endswith("_proxy"): monkeypatch.delenv(name)
+    if proxy is not None: monkeypatch.setenv("https_proxy", proxy)
+    if bypass is not None: monkeypatch.setenv("no_proxy", bypass)
+    monkeypatch.setattr(urllib.request, "getproxies", urllib.request.getproxies_environment)
+    monkeypatch.setattr(urllib.request, "proxy_bypass", urllib.request.proxy_bypass_environment)
+    binding = install_guest_route_modules(monkeypatch, broker)
+    source = (Path(__file__).resolve().parents[3] / "plugins/tauri-plugin-mesh-runtime/android/src/androidTest"
+        "/java/com/meshchat/runtime/PackagedNativeInteropBoundaryTest.kt").read_text(encoding="utf-8")
+    match = re.search(r'private val NETWORK_DIAGNOSTIC = """(.*?)"""\.trimIndent\(\)', source, re.DOTALL)
+    assert match is not None
+    namespace = {}
+    exec(textwrap.dedent(match.group(1)), namespace)
+    assert namespace["current"](binding)
+    selected = json.loads(namespace["connect_target"](binding))
+    assert selected == {"connect_target": expected}
+    assert "PRIVATE" not in json.dumps(selected)
+
+
+def test_guest_route_selector_uses_unknown_when_proxy_implementation_is_not_proven(monkeypatch):
+    binding = install_guest_route_modules(monkeypatch, "https://broker.example/credentials")
+    monkeypatch.setattr(urllib.request, "getproxies", lambda: {"https": "PRIVATE_PROXY"})
+    source = (Path(__file__).resolve().parents[3] / "plugins/tauri-plugin-mesh-runtime/android/src/androidTest"
+        "/java/com/meshchat/runtime/PackagedNativeInteropBoundaryTest.kt").read_text(encoding="utf-8")
+    match = re.search(r'private val NETWORK_DIAGNOSTIC = """(.*?)"""\.trimIndent\(\)', source, re.DOTALL)
+    namespace = {}
+    exec(textwrap.dedent(match.group(1)), namespace)
+    assert json.loads(namespace["connect_target"](binding)) == {"connect_target": "unknown"}
+
+
+def test_guest_route_selector_rejects_rebound_publication(monkeypatch):
+    binding = install_guest_route_modules(monkeypatch, "https://broker.example/credentials")
+    monkeypatch.setattr(urllib.request, "getproxies", urllib.request.getproxies_environment)
+    monkeypatch.setattr(urllib.request, "proxy_bypass", urllib.request.proxy_bypass_environment)
+    source = (Path(__file__).resolve().parents[3] / "plugins/tauri-plugin-mesh-runtime/android/src/androidTest"
+        "/java/com/meshchat/runtime/PackagedNativeInteropBoundaryTest.kt").read_text(encoding="utf-8")
+    match = re.search(r'private val NETWORK_DIAGNOSTIC = """(.*?)"""\.trimIndent\(\)', source, re.DOTALL)
+    namespace = {}
+    exec(textwrap.dedent(match.group(1)), namespace)
+    assert namespace["current"](binding)
+    sys.modules["mesh_chat.core_api"].qualification_host._android_publication.binding = "b" * 64
+    assert not namespace["current"](binding)
+    assert json.loads(namespace["connect_target"](binding)) == {"connect_target": "unknown"}
+
+
+def install_guest_route_modules(monkeypatch, broker):
+    binding = "a" * 64
+    mesh = ModuleType("mesh_chat")
+    mesh.__path__ = []
+    mesh.mobile_bridge = SimpleNamespace(_service=SimpleNamespace(call_settings=lambda: {"turn_broker_url": broker}))
+    core = ModuleType("mesh_chat.core_api")
+    core.__path__ = []
+    core.qualification_host = SimpleNamespace(_android_publication=SimpleNamespace(binding=binding, current=lambda: True))
+    mesh.core_api = core
+    monkeypatch.setitem(sys.modules, "mesh_chat", mesh)
+    monkeypatch.setitem(sys.modules, "mesh_chat.core_api", core)
+    return binding
 
 
 FAILURE_REPORT_CASES = [

@@ -20,7 +20,7 @@ from native_interop_diagnostics import (NegativeControlDiagnostics, PreflightDia
     negative_control_observation, negative_control_stage, rendezvous_observation, reset_negative_control)
 from native_interop_peers import AndroidEmulator, AndroidPeer, PeerFailure, WindowsPeer
 from native_interop_core_observation import core_failure_observation
-from native_interop_preflight import android_environment, outbound_services
+from native_interop_preflight import android_environment, android_network_diagnostic, outbound_services
 from native_interop_rendezvous import Rendezvous, checked_payload
 from native_interop_workload import workload as required_workload
 from test_packaged_lifecycle import source_identity
@@ -202,6 +202,22 @@ class Controller:
             provider = getattr(self.peer, "core_failure_observation", None)
             selected = core_failure_observation(provider(error)) if callable(provider) else None
             return {"core_failure_observation": selected} if selected is not None else {}
+        except Exception:
+            return {}
+
+    def failure_network(self, error, observation, site):
+        """Optional CI environment facts after the primary Core failure has escaped."""
+        try:
+            if (self.role != "android" or type(error) is not PeerFailure or error.code != "internal"
+                    or site != "initialize_ice_servers"
+                    or observation != {"v": 1, "operation": "ice_servers", "stage": "broker_open",
+                        "category": "network_unavailable", "cause": "name_resolution"}):
+                return {}
+            provider = getattr(self.peer, "network_diagnostic", None)
+            remaining = self.deadline - time.monotonic()
+            if not callable(provider) or remaining < 0.1: return {}
+            selected = android_network_diagnostic(provider(timeout=min(2.0, remaining)))
+            return {"android_network_diagnostic": selected} if selected is not None else {}
         except Exception:
             return {}
 
@@ -765,7 +781,10 @@ def main():
             result.update(controller.failure_rendezvous(error))
             result.update(controller.failure_retirement(error))
             result.update(controller.failure_negative_control(error))
-            try: result.update(controller.failure_core(error))
+            try:
+                core = controller.failure_core(error)
+                result.update(core)
+                result.update(controller.failure_network(error, core.get("core_failure_observation"), site))
             except Exception: pass  # Optional private diagnostics cannot replace the primary report.
     finally:
         if peer is not None and peer.process is not None:

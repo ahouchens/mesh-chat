@@ -793,3 +793,32 @@ def test_nonmapping_android_reply_preserves_protocol_error():
     error = observed_android_reply(peer, ["PRIVATE_CREDENTIAL"])
     assert error.code == "invalid_peer_frame"
     assert peer.core_failure_observation(error) is None
+
+
+def test_android_failure_only_network_inspect_uses_one_existing_frame_and_short_deadline():
+    peer = peers.AndroidPeer(b"k" * 32)
+    expected = {"v": 1, "scope": "post_failure_app_process", "internet_permission": True, "active_network": True,
+        "internet_capability": True, "validated_network": False, "dns_servers_present": True,
+        "process_bound_network": False, "connect_target": "broker"}
+    response = BytesIO(peers.encode({"id": "qualification:1", "ok": True, "result": expected}))
+    frames, timeouts = [], []
+    class Socket:
+        def settimeout(self, value): timeouts.append(value)
+        def sendall(self, value): frames.append(peers.receive(BytesIO(value).read))
+        def recv(self, count): return response.read(count)
+    peer.socket = Socket()
+    peer._qualification_binding = "a" * 64
+    assert peer.network_diagnostic(timeout=2.0) == expected
+    assert frames == [{"id": "qualification:1", "action": "inspect", "payload": {
+        "command": "qualification.network_diagnostic", "payload": {"qualification_binding": "a" * 64}}}]
+    assert timeouts and all(0 < value <= 2.0 for value in timeouts)
+
+
+def test_android_network_inspect_cannot_increase_existing_exchange_deadline():
+    peer = peers.AndroidPeer(b"k" * 32)
+    class Socket:
+        def settimeout(self, value): pytest.fail("Invalid budget must be rejected before socket use")
+    peer.socket = Socket()
+    peer._qualification_binding = "a" * 64
+    with pytest.raises(peers.PeerFailure, match="peer_deadline"):
+        peer.network_diagnostic(timeout=61)
