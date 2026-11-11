@@ -636,6 +636,28 @@ def test_prepared_case_publishes_completion_before_committing_same_request(monke
     assert len(state.requests) == 1 and state.controller.cases[-1]["owner_retirement_acknowledged"] is True
 
 
+def test_optional_path_diagnostic_constructor_failure_preserves_successful_direct_case(monkeypatch, sample):
+    state = retirement_case(monkeypatch, sample)
+    def unavailable(_scenario): raise RuntimeError("PRIVATE_DIAGNOSTIC_ERROR")
+    monkeypatch.setattr(controller, "NativePathDiagnostics", unavailable)
+    state.controller.path_case("direct", "windows")
+    assert state.controller._path_diagnostics is None
+    assert state.actions == ["prepare", "commit"] and len(state.controller.cases) == 1
+    assert state.controller.cases[0]["scenario"] == "direct"
+
+
+def test_optional_path_diagnostic_constructor_failure_preserves_original_receipt_error(monkeypatch, sample):
+    state = retirement_case(monkeypatch, sample)
+    original = ValueError("PRIVATE_RECEIPT_ERROR")
+    def unavailable(_scenario): raise RuntimeError("PRIVATE_DIAGNOSTIC_ERROR")
+    def exchange(*_args, **_kwargs): raise original
+    monkeypatch.setattr(controller, "NativePathDiagnostics", unavailable)
+    state.controller.exchange = exchange
+    with pytest.raises(ValueError) as caught: state.controller.path_case("direct", "windows")
+    assert caught.value is original and state.controller.phase == "direct_authenticated_receipts"
+    assert state.controller._path_diagnostics is None and state.actions == []
+
+
 @pytest.mark.parametrize("reply", [{}, [], {"request_id": "ECHO", "state": "pending"},
     {"request_id": "ECHO", "state": "acknowledged"}, {"request_id": "ECHO", "state": True},
     {"request_id": "0" * 32, "state": "prepared"}, {"request_id": "ECHO", "state": "prepared", "extra": True}])
@@ -3004,7 +3026,9 @@ class CompletionWorld:
 
 class CompletionFault:
     protocol, socket = "tcp", {"modeled_socket": True}
-    def __init__(self, peer, _sample, _url, *, diagnostics=None): self.world = peer.world
+    def __init__(self, peer, _sample, _url, *, diagnostics=None, path_diagnostics=None):
+        assert type(path_diagnostics) is completion_faults.NativePathDiagnostics
+        self.world = peer.world
     def block(self):
         with self.world.lock: self.world.blocked = True
     def unblock(self):

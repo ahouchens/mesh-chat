@@ -5,12 +5,72 @@ sleep-based loss model, TURN advertisement inference, or unrelated-host rule.
 """
 
 import ipaddress
+from contextlib import contextmanager, nullcontext
 import re
 import socket
 from urllib.parse import urlsplit
 from uuid import uuid4
 
 from native_interop_diagnostics import negative_control_error, negative_control_stage
+
+
+PATH_FAILURE_REASONS = {
+    "kernel_relay_evidence": frozenset(), "kernel_emulator_identity": frozenset(),
+    "kernel_turn_url": frozenset(), "kernel_turn_resolution": frozenset(),
+    "kernel_process_identity": frozenset(), "kernel_socket_inventory": frozenset(),
+    "kernel_socket_parse": frozenset(),
+    "kernel_socket_correlation": frozenset({"no_owned_match", "ambiguous_owned_matches"}),
+    "kernel_process_uid": frozenset(), "kernel_socket_route": frozenset(),
+    "receipt_enqueue": frozenset(), "receipt_delivery_wait": frozenset(),
+    "receipt_inbound_wait": frozenset(), "receipt_outbound_records": frozenset(),
+    "receipt_record_validation": frozenset(),
+}
+PATH_FAILURE_SCENARIOS = frozenset({"direct", "turn_udp", "turn_tcp", "turn_tls", "impaired"})
+
+
+def path_failure_observation(value):
+    if (type(value) is not dict or not {"scenario", "stage"} <= set(value)
+            or set(value) - {"scenario", "stage", "reason"}
+            or type(value["scenario"]) is not str or value["scenario"] not in PATH_FAILURE_SCENARIOS
+            or type(value["stage"]) is not str or value["stage"] not in PATH_FAILURE_REASONS):
+        return {}
+    if "reason" in value and (type(value["reason"]) is not str
+            or value["reason"] not in PATH_FAILURE_REASONS[value["stage"]]):
+        return {}
+    return dict(value)
+
+
+class NativePathDiagnostics:
+    """One private escaping-error label; no kernel values or exception text."""
+    def __init__(self, scenario):
+        self.scenario = scenario if scenario in PATH_FAILURE_SCENARIOS else None
+        self._failure = None
+
+    def observe(self, error, stage, reason=None):
+        if self._failure is not None and self._failure[0] is error:
+            return  # A nested, more exact source check already selected this error.
+        selected = path_failure_observation({"scenario": self.scenario, "stage": stage,
+            **({"reason": reason} if reason is not None else {})})
+        self._failure = (error, selected) if selected else None
+
+    @contextmanager
+    def scope(self, stage):
+        if stage not in PATH_FAILURE_REASONS:
+            raise ValueError("Unknown native path diagnostic stage")
+        try:
+            yield
+        except Exception as error:
+            try: self.observe(error, stage)
+            except Exception: self._failure = None
+            raise
+
+    def failure_observation(self, error):
+        observed = self._failure
+        return path_failure_observation(observed[1]) if observed is not None and observed[0] is error else {}
+
+
+def path_stage(observer, stage):
+    return observer.scope(stage) if type(observer) is NativePathDiagnostics else nullcontext()
 
 
 def ipv4_proc(value):
@@ -27,14 +87,15 @@ def ipv4_proc(value):
     return str(parsed), int(port, 16)
 
 
-def owned_socket(table, inodes, allowed_addresses, port, conntrack=""):
+def owned_socket(table, inodes, allowed_addresses, port, conntrack="", *, path_diagnostics=None):
     matches = []
     for line in table.splitlines()[1:]:
         parts = line.split()
         if len(parts) < 10 or parts[9] not in inodes:
             continue
-        local, local_port = ipv4_proc(parts[1])
-        remote, remote_port = ipv4_proc(parts[2])
+        with path_stage(path_diagnostics, "kernel_socket_parse"):
+            local, local_port = ipv4_proc(parts[1])
+            remote, remote_port = ipv4_proc(parts[2])
         if remote in allowed_addresses and remote_port == port and local_port:
             matches.append({"local": local, "local_port": local_port, "remote": remote, "remote_port": remote_port, "inode": parts[9]})
         elif remote_port == 0 and local_port:
@@ -45,7 +106,12 @@ def owned_socket(table, inodes, allowed_addresses, port, conntrack=""):
                     if local not in {"0.0.0.0", source}: continue
                     matches.append({"local": source, "local_port": local_port, "remote": match[2], "remote_port": port, "inode": parts[9]})
     if len(matches) != 1:
-        raise ValueError("Selected TURN path lacks one unambiguous own-process kernel socket")
+        error = ValueError("Selected TURN path lacks one unambiguous own-process kernel socket")
+        if type(path_diagnostics) is NativePathDiagnostics:
+            try: path_diagnostics.observe(error, "kernel_socket_correlation",
+                "no_owned_match" if not matches else "ambiguous_owned_matches")
+            except Exception: pass
+        raise error
     return matches[0]
 
 
@@ -58,48 +124,59 @@ def netem_counter(text, handle):
 
 class AndroidKernelPath:
     """Only the explicitly booted rootable CI emulator may execute these rules."""
-    def __init__(self, peer, observation, turn_url, *, resolver=socket.getaddrinfo, diagnostics=None):
+    def __init__(self, peer, observation, turn_url, *, resolver=socket.getaddrinfo, diagnostics=None,
+                 path_diagnostics=None):
         self.peer, self._blocked = peer, False
         self._negative_diagnostics = diagnostics
         self._installed = []
         self.rule = "mesh-ci-" + uuid4().hex[:12]
         self.ifb = "mci" + uuid4().hex[:8]
-        relay_protocol = observation["pair"]["relay_protocol"]
-        if observation["pair"]["local"]["type"] != "relay" or relay_protocol not in {"udp", "tcp", "tls"}:
-            raise ValueError("Kernel faults require actual selected relay protocol evidence")
-        self.protocol = "udp" if relay_protocol == "udp" else "tcp"
-        self.ip_protocol = "17" if self.protocol == "udp" else "6"
-        if peer._adb("shell", "id", "-u") != "0" or peer._adb("shell", "getprop", "ro.kernel.qemu") != "1":
-            raise ValueError("Kernel fault injection requires the explicit rootable CI emulator")
-        parsed = urlsplit("//" + turn_url.split(":", 1)[-1])
-        if not turn_url.startswith(("turn:", "turns:")) or not parsed.hostname:
-            raise ValueError("Required selected TURN URL is unavailable")
-        port = parsed.port or (5349 if turn_url.startswith("turns:") else 3478)
-        addresses = {item[4][0] for item in resolver(parsed.hostname, port, socket.AF_INET,
-                     socket.SOCK_DGRAM if self.protocol == "udp" else socket.SOCK_STREAM)}
-        pid = peer._adb("shell", "pidof", peer.APP)
-        if re.fullmatch(r"[0-9]{1,8}", pid) is None:
-            raise ValueError("Native application process is ambiguous")
+        with path_stage(path_diagnostics, "kernel_relay_evidence"):
+            relay_protocol = observation["pair"]["relay_protocol"]
+            if observation["pair"]["local"]["type"] != "relay" or relay_protocol not in {"udp", "tcp", "tls"}:
+                raise ValueError("Kernel faults require actual selected relay protocol evidence")
+            self.protocol = "udp" if relay_protocol == "udp" else "tcp"
+            self.ip_protocol = "17" if self.protocol == "udp" else "6"
+        with path_stage(path_diagnostics, "kernel_emulator_identity"):
+            if peer._adb("shell", "id", "-u") != "0" or peer._adb("shell", "getprop", "ro.kernel.qemu") != "1":
+                raise ValueError("Kernel fault injection requires the explicit rootable CI emulator")
+        with path_stage(path_diagnostics, "kernel_turn_url"):
+            parsed = urlsplit("//" + turn_url.split(":", 1)[-1])
+            if not turn_url.startswith(("turn:", "turns:")) or not parsed.hostname:
+                raise ValueError("Required selected TURN URL is unavailable")
+            port = parsed.port or (5349 if turn_url.startswith("turns:") else 3478)
+        with path_stage(path_diagnostics, "kernel_turn_resolution"):
+            addresses = {item[4][0] for item in resolver(parsed.hostname, port, socket.AF_INET,
+                         socket.SOCK_DGRAM if self.protocol == "udp" else socket.SOCK_STREAM)}
+        with path_stage(path_diagnostics, "kernel_process_identity"):
+            pid = peer._adb("shell", "pidof", peer.APP)
+            if re.fullmatch(r"[0-9]{1,8}", pid) is None:
+                raise ValueError("Native application process is ambiguous")
         # Only descriptors actually owned by this native app PID may correlate
         # a selected protocol with the kernel path. Reject ambiguous sockets.
-        links = peer._adb("shell", "sh", "-c", f"'for f in /proc/{pid}/fd/*; do readlink \"$f\" 2>/dev/null || true; done'")
-        inodes = set(re.findall(r"socket:\[([0-9]+)\]", links))
-        tables = [peer._adb("shell", "cat", f"/proc/{pid}/net/{self.protocol}"),
-                  peer._adb("shell", "cat", f"/proc/{pid}/net/{self.protocol}6")]
-        self.pid, self.addresses, self.port = pid, addresses, port
-        try: conntrack = peer._adb("shell", "cat", "/proc/net/nf_conntrack") if self.protocol == "udp" else ""
-        except Exception: conntrack = ""
-        self.socket = owned_socket("\n".join(tables), inodes, addresses, port, conntrack)
-        status = peer._adb("shell", "cat", f"/proc/{pid}/status")
-        uid = re.search(r"^Uid:\s+([0-9]+)\s", status, re.M)
-        if uid is None:
-            raise ValueError("Native application UID is unavailable")
-        self.uid = uid[1]
-        route = peer._adb("shell", "ip", "route", "get", self.socket["remote"])
-        device = re.search(r"\bdev ([A-Za-z0-9_.-]{1,15})\b", route)
-        if device is None:
-            raise ValueError("Selected socket's kernel route is unavailable")
-        self.device = device[1]
+        with path_stage(path_diagnostics, "kernel_socket_inventory"):
+            links = peer._adb("shell", "sh", "-c", f"'for f in /proc/{pid}/fd/*; do readlink \"$f\" 2>/dev/null || true; done'")
+            inodes = set(re.findall(r"socket:\[([0-9]+)\]", links))
+            tables = [peer._adb("shell", "cat", f"/proc/{pid}/net/{self.protocol}"),
+                      peer._adb("shell", "cat", f"/proc/{pid}/net/{self.protocol}6")]
+            self.pid, self.addresses, self.port = pid, addresses, port
+            try: conntrack = peer._adb("shell", "cat", "/proc/net/nf_conntrack") if self.protocol == "udp" else ""
+            except Exception: conntrack = ""
+        with path_stage(path_diagnostics, "kernel_socket_correlation"):
+            self.socket = owned_socket("\n".join(tables), inodes, addresses, port, conntrack,
+                                       path_diagnostics=path_diagnostics)
+        with path_stage(path_diagnostics, "kernel_process_uid"):
+            status = peer._adb("shell", "cat", f"/proc/{pid}/status")
+            uid = re.search(r"^Uid:\s+([0-9]+)\s", status, re.M)
+            if uid is None:
+                raise ValueError("Native application UID is unavailable")
+            self.uid = uid[1]
+        with path_stage(path_diagnostics, "kernel_socket_route"):
+            route = peer._adb("shell", "ip", "route", "get", self.socket["remote"])
+            device = re.search(r"\bdev ([A-Za-z0-9_.-]{1,15})\b", route)
+            if device is None:
+                raise ValueError("Selected socket's kernel route is unavailable")
+            self.device = device[1]
 
     def command(self, *args):
         return self.peer._adb("shell", *map(str, args))
