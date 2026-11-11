@@ -20,6 +20,25 @@ and scenario rows below to complete; their named remaining obligations still
 apply, including packaged cross-platform transport and unavailable physical
 qualification.
 
+The next candidate integrates reviewed artifact-read correction `503b18e`.
+An exact HTTP 503 at inventory, archive API or signed-blob open may retry at most
+twice, using the existing three-second cadence within the original wait deadline.
+Each open retains a ten-second maximum clipped to remaining time, including the
+redirect. Reads and artifact verification completed at or after the deadline
+cannot admit setup. Retry eligibility is private and tied to the exact exception;
+optional diagnostic observers cannot drive behavior. Uploads, other HTTP errors,
+identity checks, cryptographic validation and native product behavior are unchanged.
+Every retry obtains a fresh same-run inventory/archive response, and the repository
+token is never forwarded to the signed blob request.
+
+The focused artifact module passes **130 cases**, retaining all 120 prior cases
+and adding ten retry/deadline controls. The original code fails the deterministic
+single-503-then-success regression. Fresh combined local qualification is pending;
+the full native gate remains unmet. This correction tolerates a transient read
+failure; it cannot repair a persistent provider limit or upstream DNS outage.
+The optional APT hardening remains outside this candidate. Another full CI run
+will wait for recovery of the upstream package infrastructure.
+
 The latest completed qualification is `11213ee5dde971ad7cacfdee153793fab6ff519b`
 (tree `72bc64f7ac50841c334d64672c80cc453508962e`), full manual run
 [43050419628](https://github.com/ahouchens/mesh-chat/actions/runs/43050419628).
