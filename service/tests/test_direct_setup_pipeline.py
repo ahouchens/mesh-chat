@@ -234,7 +234,9 @@ class PipeNative:
 
 
 def _service_worker(root, incoming, outgoing, commands, replies, native_binary=None, delay_admission=False, unhosted=False, vault_key=None):
+    import RNS
     from mesh_chat import connectivity as c
+    from mesh_chat.errors import MeshChatError
     from mesh_chat.reticulum_config import NetworkSettings
     from mesh_chat.service import MeshChatService
     from mesh_chat.vault import VaultStore
@@ -249,6 +251,51 @@ def _service_worker(root, incoming, outgoing, commands, replies, native_binary=N
     else:
         native = PipeNative(incoming,outgoing,delay_admission)
     service = MeshChatService(store,Path(root),lambda _:None,direct_native=native)
+    # Test-only, bounded evidence for the channel bootstrap handoff. Never
+    # retain destination hashes, payloads, native IDs, or exception strings.
+    channel_trace = []
+    def channel_entry(destination, fields, content):
+        bootstrap = getattr(service.network, "_direct_bootstrap", None)
+        return {"bootstrap_ready": bool(bootstrap is not None and bootstrap.ready and bootstrap.peer == destination),
+                "bootstrap_handles": bool(bootstrap is not None and bootstrap.ready and bootstrap.handles(destination, fields, content)),
+                "main_identity": RNS.Identity.recall(destination) is not None,
+                "main_ratchet": RNS.Identity.get_ratchet(destination) is not None,
+                "main_path": bool(RNS.Transport.has_path(destination))}
+    def channel_record(fields, content):
+        from mesh_chat.workspace_wire import parse_workspace_payload
+        from types import SimpleNamespace
+        try:
+            wire = parse_workspace_payload(SimpleNamespace(get_fields=lambda: fields, content=content))
+        except MeshChatError:
+            return False
+        return wire.kind == "workspace_channel_record"
+    def traced_payload_ready(destination, fields, content=""):
+        if not channel_record(fields, content):
+            return original_payload_ready(destination, fields, content)
+        entry = {"stage": "preflight", **channel_entry(destination, fields, content)}
+        result = original_payload_ready(destination, fields, content)
+        entry["outcome"] = "ready" if result else "waiting"
+        if len(channel_trace) < 16:
+            channel_trace.append(entry)
+        return result
+    def traced_workspace_send(**values):
+        destination = values["recipient_destination"]
+        fields, content = values["fields"], values["text"]
+        if not channel_record(fields, content):
+            return original_workspace_send(**values)
+        entry = {"stage": "send", **channel_entry(destination, fields, content), "outcome": "unknown"}
+        if len(channel_trace) < 16:
+            channel_trace.append(entry)
+        try:
+            result = original_workspace_send(**values)
+        except MeshChatError as error:
+            entry["outcome"] = error.code if error.code in ("recipient_keys_unavailable", "network_unavailable") else "other_mesh_error"
+            raise
+        except Exception:
+            entry["outcome"] = "other_error"
+            raise
+        entry["outcome"] = "accepted"
+        return result
     controls={"sent":0,"send_failed":0,"received":0,"rejected":0}
     original_send=service._direct_recovery._send
     original_receive=service._direct_recovery.receive
@@ -268,6 +315,10 @@ def _service_worker(root, incoming, outgoing, commands, replies, native_binary=N
     service._direct_recovery.receive=tracked_receive
     try:
         service.create_profile("Controlled peer")
+        original_payload_ready = service.network.recipient_ready_for_fields
+        service.network.recipient_ready_for_fields = traced_payload_ready
+        original_workspace_send = service.network.send_with_fields
+        service.network.send_with_fields = traced_workspace_send
         replies.put({"ok":True})
         while True:
             operation, payload = commands.get()
@@ -303,6 +354,7 @@ def _service_worker(root, incoming, outgoing, commands, replies, native_binary=N
                             "failures":[{key:value.get(key) for key in ("failure_stage","failure_type","attempts","state")}
                                         for value in store.list("direct_recovery")]}
                         result["workspace_bootstrap"] = _workspace_bootstrap_diagnostic(store, now=time.time())
+                        result["channel_send_trace"] = list(channel_trace)
                     elif operation == "force_recovery":
                         if payload.get("retire"):
                             service._direct_recovery.retire()
@@ -345,7 +397,7 @@ def _service_worker(root, incoming, outgoing, commands, replies, native_binary=N
 @pytest.mark.parametrize("retirement", ["cancel", "suspend", "revocation"])
 @pytest.mark.parametrize("carrier_mode", ["source", "native"])
 @pytest.mark.parametrize("unhosted_joiner", [False, True], ids=["both_hosted", "unhosted_joiner"])
-def test_production_setup_bootstrap_admission_and_fresh_workspace_path(tmp_path, retirement, carrier_mode, unhosted_joiner):
+def test_production_setup_bootstrap_admission_and_fresh_workspace_path(tmp_path, retirement, carrier_mode, unhosted_joiner, request):
     native_binary = os.environ.get("MESH_DIRECT_APP_HOST_BINARY") if carrier_mode == "native" else None
     if carrier_mode == "native" and not native_binary:
         pytest.skip("Requires the GitHub-built shipping native dispatcher harness")
@@ -396,12 +448,14 @@ def test_production_setup_bootstrap_admission_and_fresh_workspace_path(tmp_path,
         call(1,"accept_ready",document=ready["text"])
         for index, setup in enumerate((ready,answer)):
             assert call(index,"connect",setup_id=setup["setup_id"],document=ready["text"])["state"] == "connecting"
-        request = wait(0,"workspace_snapshot",lambda snap:next((item for item in snap["workspace_join_requests"]
+        join_request = wait(0,"workspace_snapshot",lambda snap:next((item for item in snap["workspace_join_requests"]
             if item["state"] == "pending"),None))
         wait(1,"workspace_snapshot",lambda snap:any(item.get("join_acknowledged") for item in snap["workspaces"]))
-        command(0,"approve_workspace_join",operation_id=op(),workspace_id=workspace["id"],request_id=request["id"])
+        command(0,"approve_workspace_join",operation_id=op(),workspace_id=workspace["id"],request_id=join_request["id"])
         wait(1,"workspace_snapshot",lambda snap:any(item["state"] == "active" for item in snap["workspaces"]))
         wait(1,"workspace_snapshot",lambda snap:any(item["id"] == workspace["general_channel_id"] for item in snap["workspace_channels"]))
+        if carrier_mode == "source":
+            request.node.user_properties.append(("channel_send_trace", call(0, "recovery_diagnostic")["channel_send_trace"]))
         for index, setup in enumerate((ready,answer)):
             assert call(index,"status",setup_id=setup["setup_id"])["state"] in {"admitted_path","relationship_active"}
         for sender, recipient in ((0,1),(1,0)):

@@ -134,3 +134,51 @@ def test_bootstrap_delegation_does_not_depend_on_the_parent_transport_path(sende
     assert network.send_with_fields(**values) == "bootstrap-native"
     assert delegated == [{**values, "propagated": False}]
     assert requests == callbacks == outbound == []
+
+
+@pytest.mark.parametrize("case", ["unhandled", "foreign", "retired"])
+def test_payload_readiness_does_not_use_bootstrap_keys_outside_its_scope(sender, monkeypatch, case):
+    network, values, requests, callbacks, outbound = sender
+    destination = values["recipient_destination"]
+    bootstrap_peer = destination if case != "foreign" else b"\x00" * len(destination)
+    monkeypatch.setattr(RNS.Identity, "get_ratchet", lambda _destination: None)
+    network._direct_bootstrap = SimpleNamespace(
+        peer=bootstrap_peer,
+        ready=case != "retired",
+        handles=lambda candidate, fields, _text: candidate == bootstrap_peer and fields.get("kind") == "workspace_join",
+    )
+
+    assert network.recipient_ready(destination) == (case != "foreign" and case != "retired")
+    assert network.recipient_ready_for_fields(destination, {"kind": "workspace_join"}) == (case == "unhandled")
+    assert not network.recipient_ready_for_fields(destination, {"kind": "workspace_channel_record"})
+    with pytest.raises(RecipientKeysUnavailable):
+        network.send_with_fields(**{**values, "fields": {"kind": "workspace_channel_record"}})
+    assert requests == [destination]
+    assert callbacks == outbound == []
+
+
+def test_ordinary_send_keeps_main_ratchet_requirement_if_bootstrap_becomes_ready_after_delegation(sender, monkeypatch):
+    network, values, requests, callbacks, outbound = sender
+    destination = values["recipient_destination"]
+    delegated = []
+    bootstrap = SimpleNamespace(
+        peer=destination, ready=False, handles=lambda *_args: True,
+        send=lambda **kwargs: delegated.append(kwargs) or "bootstrap-native",
+    )
+    network._direct_bootstrap = bootstrap
+    monkeypatch.setattr(RNS.Identity, "get_ratchet", lambda _destination: None)
+
+    class BootstrapTransitionLock:
+        def __enter__(self):
+            bootstrap.ready = True
+
+        def __exit__(self, *_args):
+            return False
+
+    network._send_lock = BootstrapTransitionLock()
+    with pytest.raises(RecipientKeysUnavailable):
+        network.send_with_fields(**values)
+
+    assert bootstrap.ready
+    assert requests == [destination]
+    assert callbacks == outbound == delegated == []
