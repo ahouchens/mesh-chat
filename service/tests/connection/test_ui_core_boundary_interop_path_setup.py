@@ -22,7 +22,7 @@ def test_native_path_diagnostic_cases_are_in_the_fast_boundary_gate():
     assert "service/tests/connection/test_ui_core_boundary_interop_path_setup.py" in PYTHON_SELECTION
 
 
-def kernel_boundary(*, point=None, ambiguous=False):
+def kernel_boundary(*, point=None, ambiguous=False, tcp_rows=None, fd_links=None):
     events = []
     class Peer:
         APP = "PRIVATE_APP"
@@ -35,9 +35,11 @@ def kernel_boundary(*, point=None, ambiguous=False):
             if args[-2:] == ("id", "-u"): return "0"
             if args[-2:] == ("getprop", "ro.kernel.qemu"): return "1"
             if args[-2:] == ("pidof", self.APP): return "123 456" if point == "kernel_process_identity" else "123"
-            if args[1:3] == ("sh", "-c"): return "socket:[1234]" + (" socket:[5678]" if ambiguous else "")
+            if args[1:3] == ("sh", "-c"):
+                return fd_links if fd_links is not None else "socket:[1234]" + (" socket:[5678]" if ambiguous else "")
             if args[-2:] == ("cat", "/proc/123/net/tcp"):
                 if point == "kernel_socket_correlation": return "header\n"
+                if tcp_rows is not None: return "header\n" + tcp_rows
                 row = ROW.replace("0F02000A:C350", "PRIVATE_INVALID_HEX:C350") if point == "kernel_socket_parse" else ROW
                 return "header\n" + row + (ROW.replace("1234", "5678") if ambiguous else "")
             if args[-2:] == ("cat", "/proc/123/net/tcp6"): return "header\n"
@@ -84,8 +86,88 @@ def test_exact_own_process_socket_remains_unique_and_reports_ambiguous_reason():
     with pytest.raises(ValueError) as caught:
         faults.AndroidKernelPath(peer, OBSERVATION, TURN, resolver=resolver, path_diagnostics=diagnostic)
     assert diagnostic.failure_observation(caught.value) == {"scenario": "turn_tcp",
-        "stage": "kernel_socket_correlation", "reason": "ambiguous_owned_matches"}
+        "stage": "kernel_socket_correlation", "reason": "ambiguous_owned_matches",
+        "tcp_state_summary": "multiple_established", "owned_inode_relation": "distinct"}
     assert "PRIVATE" not in repr(diagnostic.failure_observation(caught.value))
+
+
+@pytest.mark.parametrize("states,inodes,summary,relation", [
+    (("01", "08"), ("1234", "5678"), "one_established_plus_other", "distinct"),
+    (("01", "01"), ("1234", "5678"), "multiple_established", "distinct"),
+    (("08", "02"), ("1234", "5678"), "no_established", "distinct"),
+    (("01", "PRIVATE"), ("1234", "5678"), "unclassifiable", "distinct"),
+    (("01", "01"), ("1234", "1234"), "multiple_established", "same"),
+])
+def test_actual_tcp_ambiguity_reports_only_bounded_kernel_state_and_inode_relation(states, inodes, summary, relation):
+    rows = "".join(ROW.replace(" 01 ", f" {state} ").replace("1234", inode)
+                   for state, inode in zip(states, inodes))
+    peer, resolver, _ = kernel_boundary(tcp_rows=rows, fd_links=" ".join(f"socket:[{inode}]" for inode in inodes))
+    diagnostic = faults.NativePathDiagnostics("turn_tcp")
+    with pytest.raises(ValueError) as caught:
+        faults.AndroidKernelPath(peer, OBSERVATION, TURN, resolver=resolver, path_diagnostics=diagnostic)
+    assert str(caught.value) == "Selected TURN path lacks one unambiguous own-process kernel socket"
+    assert diagnostic.failure_observation(caught.value) == {
+        "scenario": "turn_tcp", "stage": "kernel_socket_correlation", "reason": "ambiguous_owned_matches",
+        "tcp_state_summary": summary, "owned_inode_relation": relation}
+    assert diagnostic.failure_observation(ValueError("PRIVATE_FOREIGN")) == {}
+    assert "PRIVATE" not in repr(diagnostic.failure_observation(caught.value))
+
+
+def test_actual_owned_socket_ambiguity_keeps_unrelated_scenario_report_unchanged():
+    rows = "header\n" + ROW + ROW.replace("1234", "5678")
+    diagnostic = faults.NativePathDiagnostics("turn_udp")
+    with pytest.raises(ValueError) as caught:
+        faults.owned_socket(rows, {"1234", "5678"}, {"198.51.100.2"}, 3478,
+                            path_diagnostics=diagnostic)
+    assert diagnostic.failure_observation(caught.value) == {
+        "scenario": "turn_udp", "stage": "kernel_socket_correlation", "reason": "ambiguous_owned_matches"}
+
+
+def test_actual_owned_socket_observer_fault_does_not_change_ambiguous_rejection(monkeypatch):
+    rows = "header\n" + ROW + ROW.replace("1234", "5678")
+    diagnostic = faults.NativePathDiagnostics("turn_tcp")
+    def broken_observer(*_args, **_kwargs): raise RuntimeError("PRIVATE_OBSERVER")
+    monkeypatch.setattr(diagnostic, "observe", broken_observer)
+    with pytest.raises(ValueError, match="Selected TURN path lacks one unambiguous own-process kernel socket"):
+        faults.owned_socket(rows, {"1234", "5678"}, {"198.51.100.2"}, 3478,
+                            path_diagnostics=diagnostic)
+
+
+def test_tls_ambiguity_projects_only_fixed_summary_for_same_escaping_error():
+    rows = ROW + ROW.replace(" 01 ", " 08 ").replace("1234", "5678")
+    peer, resolver, _ = kernel_boundary(tcp_rows=rows, fd_links="socket:[1234] socket:[5678]")
+    diagnostic = faults.NativePathDiagnostics("turn_tls")
+    instance = controller.Controller("android", SimpleNamespace(), None, None, {})
+    instance.phase = "turn_tls_authenticated_receipts"
+    instance._path_diagnostics = diagnostic
+    observation = {"pair": {"relay_protocol": "tls", "local": {"type": "relay"}}}
+    with pytest.raises(ValueError) as caught:
+        faults.AndroidKernelPath(peer, observation, "turns:turn.example:3478", resolver=resolver,
+                                path_diagnostics=diagnostic)
+    assert instance.failure_native_path(caught.value) == {"native_path_failure": {
+        "scenario": "turn_tls", "stage": "kernel_socket_correlation", "reason": "ambiguous_owned_matches",
+        "tcp_state_summary": "one_established_plus_other", "owned_inode_relation": "distinct"}}
+    assert instance.failure_native_path(ValueError("PRIVATE_FOREIGN")) == {}
+    instance.phase = "turn_tls_kernel_block_negative_control"
+    assert instance.failure_native_path(caught.value) == {}
+
+
+@pytest.mark.parametrize("value", [
+    {"scenario": "turn_tcp", "stage": "kernel_socket_correlation", "reason": "no_owned_match",
+     "tcp_state_summary": "multiple_established", "owned_inode_relation": "distinct"},
+    {"scenario": "turn_udp", "stage": "kernel_socket_correlation", "reason": "ambiguous_owned_matches",
+     "tcp_state_summary": "multiple_established", "owned_inode_relation": "distinct"},
+    {"scenario": "turn_tcp", "stage": "receipt_enqueue", "tcp_state_summary": "multiple_established",
+     "owned_inode_relation": "distinct"},
+    {"scenario": "turn_tcp", "stage": "kernel_socket_correlation", "reason": "ambiguous_owned_matches",
+     "tcp_state_summary": "PRIVATE_STATE", "owned_inode_relation": "distinct"},
+    {"scenario": "turn_tcp", "stage": "kernel_socket_correlation", "reason": "ambiguous_owned_matches",
+     "tcp_state_summary": "multiple_established"},
+    {"scenario": "turn_tcp", "stage": "kernel_socket_correlation", "reason": "ambiguous_owned_matches",
+     "tcp_state_summary": "multiple_established", "owned_inode_relation": "PRIVATE_INODE"},
+])
+def test_tcp_socket_ambiguity_summary_allowlist_rejects_unrelated_or_private_fields(value):
+    assert faults.path_failure_observation(value) == {}
 
 
 def test_exact_own_process_socket_success_retains_kernel_tuple_and_no_failure_label():
