@@ -23,7 +23,8 @@ def test_native_path_diagnostic_cases_are_in_the_fast_boundary_gate():
     assert "service/tests/connection/test_ui_core_boundary_interop_path_setup.py" in PYTHON_SELECTION
 
 
-def kernel_boundary(*, point=None, ambiguous=False, tcp_rows=None, fd_links=None, dns_addresses=None):
+def kernel_boundary(*, point=None, ambiguous=False, tcp_rows=None, fd_links=None, dns_addresses=None,
+                    helper_state=None):
     events = []
     class Peer:
         APP = "PRIVATE_APP"
@@ -37,6 +38,8 @@ def kernel_boundary(*, point=None, ambiguous=False, tcp_rows=None, fd_links=None
             if args[-2:] == ("getprop", "ro.kernel.qemu"): return "1"
             if args[-2:] == ("pidof", self.APP): return "123 456" if point == "kernel_process_identity" else "123"
             if args[1:3] == ("sh", "-c"):
+                if "/proc/456/fd/" in args[3]:
+                    return "socket:[8888]" if helper_state["kind"] == "external" else ""
                 return fd_links if fd_links is not None else "socket:[1234]" + (" socket:[5678]" if ambiguous else "")
             if args[-2:] == ("cat", "/proc/123/net/tcp"):
                 if point == "kernel_socket_correlation": return "header\n"
@@ -46,10 +49,21 @@ def kernel_boundary(*, point=None, ambiguous=False, tcp_rows=None, fd_links=None
             if args[-2:] == ("cat", "/proc/123/net/tcp6"): return "header\n"
             if args[-2:] == ("cat", "/proc/123/status"):
                 return "Name: app\n" if point == "kernel_process_uid" else "Uid:\t10053\t10053\t10053\t10053\n"
+            if args[-2:] == ("cat", "/proc/456/cmdline"):
+                if helper_state is None: return "PRIVATE_APP:other\0"
+                if helper_state["kind"] == "exit_on_read":
+                    helper_state["alive"] = False
+                    raise RuntimeError("Bootstrap helper exited")
+                return ("PRIVATE_APP:mesh_bootstrap" if helper_state["kind"] != "spoofed" else
+                        "PRIVATE_APP:other") + "\0"
+            if args[-2:] == ("cat", "/proc/456/net/tcp"):
+                return "header\n" + (ROW.replace("1234", "8888") if helper_state["kind"] == "external" else "")
+            if args[-2:] == ("cat", "/proc/456/net/tcp6"): return "header\n"
             if args[1:5] == ("pm", "list", "packages", "-U"):
                 return "package:OTHER uid:10053\n" if point == "kernel_scope_exclusivity" else "package:PRIVATE_APP uid:10053\n"
             if args[1:5] == ("ps", "-A", "-o", "UID,PID"):
-                return "UID PID\n10053 123\n" + ("10053 456\n" if point == "extra_uid_process" else "")
+                return "UID PID\n10053 123\n" + ("10053 456\n" if point == "extra_uid_process"
+                    or (helper_state is not None and helper_state["alive"]) else "")
             if args[1:4] == ("ip", "route", "get"):
                 return "PRIVATE_ROUTE_WITHOUT_DEVICE" if point == "kernel_socket_route" else "198.51.100.2 dev wlan0 src 10.0.2.15"
             raise AssertionError("Unexpected private command shape")
@@ -250,9 +264,51 @@ def test_tls_mailbox_overlap_and_extra_same_uid_process_reject_scope():
         faults.AndroidKernelPath(peer, observation, "turns:turn.example:443", resolver=resolver,
             resource_check=lambda: True, control_urls=("https://mail.example",))
     peer, resolver, _ = kernel_boundary(point="extra_uid_process")
-    with pytest.raises(ValueError, match="process-exclusive"):
+    with pytest.raises(ValueError, match="unrecognized helper"):
         faults.AndroidKernelPath(peer, OBSERVATION, TURN, resolver=resolver,
             resource_check=lambda: True)
+
+
+def test_exact_bootstrap_helper_overlap_is_admitted_only_without_external_tcp():
+    state = {"kind": "quiet", "alive": True}
+    peer, resolver, events = kernel_boundary(helper_state=state)
+    path = faults.AndroidKernelPath(peer, OBSERVATION, TURN, resolver=resolver,
+        resource_check=lambda: True)
+    assert path.pid == "123" and path.matches
+    assert ("shell", "cat", "/proc/456/cmdline") in events
+    assert ("shell", "cat", "/proc/456/net/tcp") in events
+    path.require_current()
+    state["kind"] = "external"
+    with pytest.raises(ValueError, match="external TCP"):
+        path.require_current()
+    state["alive"] = False
+    path.require_current()
+
+
+def test_bootstrap_helper_exit_during_inventory_needs_no_timeout():
+    state = {"kind": "exit_on_read", "alive": True}
+    peer, resolver, events = kernel_boundary(helper_state=state)
+    path = faults.AndroidKernelPath(peer, OBSERVATION, TURN, resolver=resolver,
+        resource_check=lambda: True)
+    assert path.pid == "123" and state["alive"] is False
+    assert [event for event in events if event[1:5] == ("ps", "-A", "-o", "UID,PID")]
+
+
+@pytest.mark.parametrize("kind,reason", [("external", "external TCP"),
+                                          ("spoofed", "unrecognized helper")])
+def test_bootstrap_helper_with_external_tcp_or_wrong_process_identity_rejects(kind, reason):
+    state = {"kind": kind, "alive": True}
+    peer, resolver, _ = kernel_boundary(helper_state=state)
+    with pytest.raises(ValueError, match=reason):
+        faults.AndroidKernelPath(peer, OBSERVATION, TURN, resolver=resolver,
+            resource_check=lambda: True)
+
+
+@pytest.mark.parametrize("address", ["::ffff:0.0.0.0", "::ffff:224.0.0.1",
+                                       "::ffff:169.254.1.1", "fe80::1%eth0"])
+def test_mapped_unsafe_or_scoped_address_rejects_after_normalization(address):
+    with pytest.raises(ValueError, match="cannot be scoped"):
+        faults.scoped_address(address)
 
 
 @pytest.mark.parametrize("value", [

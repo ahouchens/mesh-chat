@@ -35,11 +35,12 @@ MAX_TURN_ENDPOINTS = 16
 
 def scoped_address(value):
     address = ipaddress.ip_address(value)
-    if (address.is_unspecified or address.is_multicast or address.is_link_local
-            or getattr(address, "scope_id", None)):
+    if getattr(address, "scope_id", None):
         raise ValueError("Endpoint address cannot be scoped")
     if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
         address = address.ipv4_mapped
+    if address.is_unspecified or address.is_multicast or address.is_link_local:
+        raise ValueError("Endpoint address cannot be scoped")
     return str(address)
 
 
@@ -330,6 +331,24 @@ class AndroidKernelPath:
         owners = re.findall(r"^package:([^\s]+)\s+uid:([0-9]+)$", packages, re.M)
         if [name for name, uid in owners if uid == self.uid] != [self.peer.APP]:
             raise ValueError("Native endpoint block UID is not package-exclusive")
+        owned = self._same_uid_processes()
+        if owned == [self.pid]:
+            return
+        if len(owned) != 2 or self.pid not in owned:
+            raise ValueError("Native endpoint block UID is not process-exclusive")
+        helper = next(pid for pid in owned if pid != self.pid)
+        try:
+            cmdline = self.command("cat", f"/proc/{helper}/cmdline")
+            if cmdline.split("\0", 1)[0] != self.peer.APP + ":mesh_bootstrap":
+                raise ValueError("Native endpoint block UID has an unrecognized helper")
+            self._check_helper_tcp(helper)
+        except Exception:
+            # The bootstrap service may exit between ps and its proc reads.
+            if self._same_uid_processes() == [self.pid]:
+                return
+            raise
+
+    def _same_uid_processes(self):
         processes = self.command("ps", "-A", "-o", "UID,PID")
         process_lines = processes.splitlines()
         if (not process_lines or process_lines[0].split() != ["UID", "PID"]
@@ -338,8 +357,21 @@ class AndroidKernelPath:
             raise ValueError("Native process UID inventory is unavailable")
         owned = [pid for uid, pid in re.findall(r"^\s*([0-9]+)\s+([0-9]+)\s*$", processes, re.M)
                  if uid == self.uid]
-        if owned != [self.pid]:
-            raise ValueError("Native endpoint block UID is not process-exclusive")
+        return owned
+
+    def _check_helper_tcp(self, helper):
+        links = self.command("sh", "-c", f"'for f in /proc/{helper}/fd/*; do readlink \"$f\" 2>/dev/null || true; done'")
+        inodes = set(re.findall(r"socket:\[([0-9]+)\]", links))
+        tables = [self.command("cat", f"/proc/{helper}/net/tcp"),
+                  self.command("cat", f"/proc/{helper}/net/tcp6")]
+        for table in tables:
+            for line in table.splitlines()[1:]:
+                parts = line.split()
+                if len(parts) < 10 or parts[9] not in inodes:
+                    continue
+                remote, port = ipv4_proc(parts[2])
+                if port and not ipaddress.ip_address(remote).is_loopback:
+                    raise ValueError("Native bootstrap helper owns an external TCP socket")
 
     def _owned_tcp_matches(self, *, allow_empty=False):
         links = self.command("sh", "-c", f"'for f in /proc/{self.pid}/fd/*; do readlink \"$f\" 2>/dev/null || true; done'")
