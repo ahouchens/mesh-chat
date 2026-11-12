@@ -289,10 +289,28 @@ def verify_report(record, source, tree, role, *, workload="full"):
         else: _require(negative is None, "Unexpected negative-control claim")
         impairment = case["impairment"]
         if scenario == "impaired" and role == "android":
-            _require(isinstance(impairment, dict) and set(impairment) == {"kind", "delay_ms_each_way", "jitter_ms_each_way", "loss_percent_each_way", "added_nominal_rtt_ms", "link_scope", "loss_observed", "counters"}
+            _require(isinstance(impairment, dict) and set(impairment) == {"kind", "delay_ms_each_way", "jitter_ms_each_way", "loss_percent_each_way", "added_nominal_rtt_ms", "link_scope", "loss_observed", "counters", "link_coverage"}
                 and impairment["kind"] == "android_emulator_linux_kernel_tc_netem" and impairment["delay_ms_each_way"] == 75
                 and impairment["jitter_ms_each_way"] == 10 and impairment["loss_percent_each_way"] == 0.1 and impairment["added_nominal_rtt_ms"] == 150
                 and impairment["link_scope"] == "isolated_emulator_route", "Declared Linux-kernel impairment profile differs")
+            coverage = impairment["link_coverage"]
+            _require(type(coverage) is dict and set(coverage) == {"admitted_links", "impaired_links",
+                "excluded_sink_links", "disjoint_paths", "current", "guard_current",
+                "group_identity_guard", "allowed_output_packets", "allowed_input_packets",
+                "uncovered_udp_drops"}
+                and type(coverage["admitted_links"]) is int and 1 <= coverage["admitted_links"] <= 4
+                and type(coverage["impaired_links"]) is int
+                and coverage["impaired_links"] == coverage["admitted_links"]
+                and type(coverage["excluded_sink_links"]) is int
+                and 0 <= coverage["excluded_sink_links"] <= 3
+                and coverage["admitted_links"] + coverage["excluded_sink_links"] <= 4
+                and all(coverage[key] is True for key in ("disjoint_paths", "current",
+                    "guard_current", "group_identity_guard"))
+                and all(type(coverage[key]) is int and coverage[key] > 0
+                    for key in ("allowed_output_packets", "allowed_input_packets"))
+                and type(coverage["uncovered_udp_drops"]) is int
+                and coverage["uncovered_udp_drops"] == 0,
+                "Impaired link coverage lacks exact guarded identity and actual packets")
             counters = impairment["counters"]
             _require(isinstance(counters, dict) and set(counters) == {"egress", "ingress"}, "Kernel impairment lacks both directions")
             for values in counters.values():

@@ -1,6 +1,7 @@
 """Kernel command/counter component checks; never actual impairment evidence."""
 
 from pathlib import Path
+import json
 import sys
 from types import SimpleNamespace
 
@@ -63,90 +64,215 @@ def kernel_fixture(protocol="udp"):
     return value
 
 
-def udp_link_fixture(monkeypatch):
-    value = kernel_fixture()
-    value.uid_udp_mode, value.endpoint_mode = True, False
-    value.pid, value._qdisc_before = "123", "qdisc noqueue 0: root refcnt 2"
-    value.filter_prio = 12345
-    value.target_kind, value.target_material, value.rule_count = "uid_udp_all_destinations", ["10053", "udp"], 2
-    value._drop_rules = []
-    value._negative_diagnostics = None
-    state = SimpleNamespace(commands=[], ifb=False, alias=False, root="default", ingress=False, filter=False, rules={},
-        egress_packets=0, ingress_packets=0, failure=None, pid="123", uid="10053", resource=True,
-        route4="default via 10.0.2.2 dev wlan0 table main\n")
-    value.peer = SimpleNamespace(APP="PRIVATE_APP", _adb=lambda *_: state.pid)
-    def check_scope():
-        if not state.resource: raise ValueError("PRIVATE_STALE_RESOURCE")
-    monkeypatch.setattr(value, "_check_scope", check_scope)
+def udp_link_fixture(monkeypatch, *, second_link=False, sink=False, canonical=False,
+                     nft_available=True, policy_conflict=False, initial_group=0,
+                     replace_on_group=False, state_ref=None):
+    """Exercise the real AndroidKernelPath composition against a fake kernel."""
+    state = SimpleNamespace(commands=[], ifb=False, alias=False, root="default", ingress=False,
+        filter=False, rules={}, egress_packets=0, ingress_packets=0, failure=None,
+        pid="123", uid="10053", resource=True,
+        route4="default via 10.0.2.2 dev wlan0 table main\n", group=initial_group,
+        chains={}, hooks={}, guard_drops=0, ifb_name=None, second_link=second_link,
+        canonical=canonical, nft_available=nft_available, wlan_index=2,
+        extra_group=0, extra_root="default", extra_ingress=False, extra_filter=False,
+        extra_ifb=None, extra_alias=False, extra_egress_packets=0, extra_ingress_packets=0,
+        sink=sink, policy_conflict=policy_conflict, guard_drop_by_chain={},
+        ifb_index=4 if second_link else 3, replace_on_group=replace_on_group)
+    if state_ref is not None:
+        state_ref.append(state)
+    value = None
+
     def command(*args):
         state.commands.append(args)
-        if args == ("ip", "-o", "link", "show"):
-            return ("1: lo: <LOOPBACK,UP> mtu 65536\n2: wlan0: <BROADCAST,UP> mtu 1500\n"
-                    + (f"3: {value.ifb}: <BROADCAST,UP> mtu 1500\n" if state.ifb else ""))
-        if args == ("ip", "-d", "link", "show", "dev", value.ifb):
-            return f"3: {value.ifb}: <BROADCAST,UP>\n    ifb" + (f" alias {value.rule}" if state.alias else "") + "\n"
+        if args == ("id", "-u"): return "0"
+        if args == ("getprop", "ro.kernel.qemu"): return "1"
+        if args == ("pidof", "PRIVATE_APP"): return state.pid
+        if args == ("cat", "/proc/123/status"):
+            return f"Uid:\t{state.uid}\t{state.uid}\t{state.uid}\t{state.uid}\n"
+        if args == ("pm", "list", "packages", "-U"): return "package:PRIVATE_APP uid:10053\n"
+        if args == ("ps", "-A", "-o", "UID,PID"): return "UID PID\n10053 123\n"
+        if args == ("ip", "-j", "-d", "link", "show"):
+            links = [{"ifindex": 1, "ifname": "lo", "flags": ["LOOPBACK", "UP"],
+                      "link_type": "loopback", "group": 0},
+                     {"ifindex": state.wlan_index, "ifname": "wlan0", "flags": ["UP"],
+                      "link_type": "ether", "group": state.group}]
+            if state.second_link:
+                links.append({"ifindex": 3, "ifname": "wlan1", "flags": ["UP"],
+                    "link_type": "ether", "group": state.extra_group,
+                    **({"linkinfo": {"info_kind": "dummy"}} if state.sink else {})})
+            if state.ifb:
+                links.append({"ifindex": state.ifb_index, "ifname": state.ifb_name, "flags": ["UP"],
+                    "link_type": "ether", "linkinfo": {"info_kind": "ifb"}, "group": 0})
+            if state.extra_ifb:
+                links.append({"ifindex": 5, "ifname": state.extra_ifb, "flags": ["UP"],
+                    "link_type": "ether", "linkinfo": {"info_kind": "ifb"}, "group": 0})
+            return json.dumps(links)
+        if args[0:1] == ("cat",) and args[1].startswith("/sys/class/net/"):
+            name, field = args[1].split("/")[-2:]
+            index = {"lo": 1, "wlan0": state.wlan_index, "wlan1": 3,
+                     state.ifb_name: state.ifb_index, state.extra_ifb: 5}[name]
+            return str({"type": 772 if name == "lo" else 1, "ifindex": index,
+                "iflink": index, "netdev_group": state.group if name == "wlan0" else
+                    state.extra_group if name == "wlan1" else 0}[field])
+        if args[0:2] == ("sh", "-c"):
+            if "command -v nft" in args[2]: return "present" if state.nft_available else "absent"
+            if "/etc/iproute2/group" in args[2]: return "0 default"
+            if "/sys/class/net/" in args[2]: return "0"
+        if args == ("iptables-save",) or args == ("ip6tables-save",):
+            return "*filter\n-A OUTPUT -m devgroup --dst-group 7 -j ACCEPT\nCOMMIT\n" if state.policy_conflict else "*filter\nCOMMIT\n"
+        if args == ("nft", "list", "ruleset"): return ""
         if args == ("ip", "-4", "route", "show", "table", "all"):
-            return state.route4
+            return state.route4 + ("10.3.0.0/16 dev wlan1 table main\n" if state.second_link else "")
         if args == ("ip", "-6", "route", "show", "table", "all"): return ""
         if args in (("ip", "-4", "rule", "show"), ("ip", "-6", "rule", "show")):
             return "0: from all lookup local\n100: from all lookup main\n"
-        if args == ("cat", "/proc/123/status"):
-            return f"Uid:\t{state.uid}\t{state.uid}\t{state.uid}\t{state.uid}\n"
+        if args[:3] == ("ip", "link", "set") and "group" in args:
+            if args[args.index("dev") + 1] == "wlan1": state.extra_group = int(args[-1])
+            else:
+                state.group = int(args[-1])
+                if state.replace_on_group:
+                    state.wlan_index, state.group, state.replace_on_group = 9, 0, False
+            return ""
         if args[:2] == ("ip", "link"):
             if args[2] == "add":
-                state.ifb = True
+                if not state.ifb: state.ifb = True; state.ifb_name = args[3]
+                else: state.extra_ifb = args[3]
                 if state.failure == "ifb_collision": raise RuntimeError("PRIVATE_IFB_COLLISION")
-            elif args[2] == "del": state.ifb = False
+            elif args[2] == "del":
+                if args[3] == state.ifb_name: state.ifb = False
+                else: state.extra_ifb = None
             elif args[2] == "set" and "alias" in args:
                 if state.failure == "alias": raise RuntimeError("PRIVATE_ALIAS_FAILURE")
-                state.alias = True
+                if args[args.index("dev") + 1] == state.ifb_name: state.alias = True
+                else: state.extra_alias = True
             return ""
+        if args[:5] == ("ip", "-d", "link", "show", "dev"):
+            which = next(link for link in value.coverage.links if link["ifb"] == args[-1])
+            alias = state.alias if args[-1] == state.ifb_name else state.extra_alias
+            return f"3: {args[-1]}: <UP> ifb" + (f" alias {which['alias']}" if alias else "")
         if args[:3] == ("tc", "qdisc", "show"):
             device = args[-1]
-            if device == value.ifb:
-                return "qdisc netem 40: root delay 75ms 10ms loss 0.1%\n" if state.ifb else ""
-            return (("qdisc netem 30: root delay 75ms 10ms loss 0.1%" if state.root == "netem"
-                     else "qdisc netem 30: root delay 5ms loss 5%" if state.root == "bad_profile"
-                     else "qdisc netem 77: root" if state.root == "foreign" else value._qdisc_before)
-                    + ("\nqdisc ingress ffff: parent ffff:fff1" if state.ingress else "") + "\n")
+            if device in {state.ifb_name, state.extra_ifb}:
+                link = next(link for link in value.coverage.links if link["ifb"] == device)
+                return (f"qdisc netem {link['ingress']} root delay 75ms 10ms loss 0.1%\n"
+                        if device == state.ifb_name and state.ifb or device == state.extra_ifb and state.extra_ifb else "")
+            link = next((link for link in value.coverage.links if link["identity"]["name"] == device), None) if value is not None else None
+            handle = link["egress"] if link else "30:"
+            root = state.root if device == "wlan0" else state.extra_root
+            ingress = state.ingress if device == "wlan0" else state.extra_ingress
+            return ((f"qdisc netem {handle} root delay 75ms 10ms loss 0.1%" if root == "netem"
+                     else f"qdisc netem {handle} root delay 5ms loss 5%" if root == "bad_profile"
+                     else "qdisc netem 77: root" if root == "foreign"
+                     else "qdisc noqueue 0: root refcnt 2")
+                    + ("\nqdisc ingress ffff: parent ffff:fff1" if ingress else "") + "\n")
         if args[:4] == ("tc", "-s", "qdisc", "show"):
-            packets = state.egress_packets if args[-1] == value.device else state.ingress_packets
-            handle = "30:" if args[-1] == value.device else "40:"
+            device = args[-1]
+            link = next(link for link in value.coverage.links if device in
+                        {link["identity"]["name"], link["ifb"]})
+            packets = (state.egress_packets if device == "wlan0" else
+                       state.extra_egress_packets if device == "wlan1" else
+                       state.ingress_packets if device == state.ifb_name else state.extra_ingress_packets)
+            handle = link["egress"] if device in {"wlan0", "wlan1"} else link["ingress"]
             return f"qdisc netem {handle} root delay 75ms 10ms loss 0.1%\n Sent {packets * 100} bytes {packets} pkt (dropped 0, overlimits 0 requeues 0)\n"
         if args[:2] == ("tc", "qdisc"):
-            if args[2] == "replace" and args[args.index("dev") + 1] == value.device: state.root = "netem"
+            if args[2] == "replace" and args[args.index("dev") + 1] == "wlan0": state.root = "netem"
+            elif args[2] == "replace" and args[args.index("dev") + 1] == "wlan1": state.extra_root = "netem"
             elif args[2] == "add":
-                state.ingress = True
+                if args[args.index("dev") + 1] == "wlan0": state.ingress = True
+                else: state.extra_ingress = True
                 if state.failure == "ingress_collision": raise RuntimeError("PRIVATE_INGRESS_COLLISION")
-            elif args[2] == "del" and args[-1] == "root": state.root = "default"
-            elif args[2] == "del" and args[-1] == "ingress": state.ingress = state.filter = False
+            elif args[2] == "del" and args[-1] == "root":
+                if args[args.index("dev") + 1] == "wlan0": state.root = "default"
+                else: state.extra_root = "default"
+            elif args[2] == "del" and args[-1] == "ingress":
+                if args[args.index("dev") + 1] == "wlan0": state.ingress = state.filter = False
+                else: state.extra_ingress = state.extra_filter = False
             return ""
         if args[:2] == ("tc", "filter"):
             if args[2] == "show":
-                return (f"filter protocol all pref {value.filter_prio} matchall action mirred redirect dev {value.ifb}\n"
-                        if state.filter is True else "filter protocol all pref 1 u32 action drop\n"
-                        if state.filter == "foreign" else
-                        f"filter protocol all pref {value.filter_prio} matchall action mirred redirect dev {value.ifb}\n"
-                        "filter protocol all pref 7 u32 action drop\n" if state.filter == "mixed" else "")
-            if state.failure == "filter": raise RuntimeError("PRIVATE_FILTER_FAILURE")
-            assert "protocol" in args and args[args.index("protocol") + 1] == "all"
-            assert "matchall" in args and value.ifb in args
-            state.filter = True
+                device = args[args.index("dev") + 1]
+                link = next(link for link in value.coverage.links if link["identity"]["name"] == device)
+                current_filter = state.filter if device == "wlan0" else state.extra_filter
+                return (f"filter protocol all pref {link['prio']} matchall action mirred redirect dev {link['ifb']}\n"
+                        if current_filter is True else "filter protocol all pref 1 u32 action drop\n"
+                        if current_filter == "foreign" else
+                        f"filter protocol all pref {link['prio']} matchall action mirred redirect dev {link['ifb']}\n"
+                        "filter protocol all pref 7 u32 action drop\n" if current_filter == "mixed" else "")
+            if state.failure == "filter" or (state.failure == "second_filter" and args[args.index("dev") + 1] == "wlan1"):
+                raise RuntimeError("PRIVATE_FILTER_FAILURE")
+            if args[args.index("dev") + 1] == "wlan0": state.filter = True
+            else: state.extra_filter = True
             return ""
         if args[0] in {"iptables", "ip6tables"}:
+            family = args[0]
+            if args[1] == "-N":
+                state.chains[family, args[2]] = []
+                if state.failure == "guard_new": raise RuntimeError("PRIVATE_GUARD_NEW_REPLY")
+                return ""
+            if args[1] == "-X": state.chains.pop((family, args[2])); return ""
+            if args[1] == "-A":
+                if state.failure == "guard_omit": return ""
+                state.chains[family, args[2]].append("-A " + args[2] + " " + " ".join(args[3:]))
+                if state.failure == "guard_append": raise RuntimeError("PRIVATE_GUARD_APPEND_REPLY")
+                return ""
             if args[1] == "-I":
+                if args[2] in {"OUTPUT", "INPUT"} and args[-1] != "DROP" and "--comment" in args:
+                    state.hooks.setdefault((family, args[2]), []).insert(0,
+                        "-A " + args[2] + " " + " ".join(args[4:]))
+                    return ""
                 comment = args[args.index("--comment") + 1]
-                state.rules[comment] = [args[0], 0]
+                state.rules[comment] = [family, 0]
+                state.hooks.setdefault((family, args[2]), []).insert(0,
+                    "-A " + args[2] + " " + " ".join(args[4:]))
                 if state.failure == "insert_reply": raise RuntimeError("PRIVATE_INSERT_REPLY")
-            elif args[1] == "-C":
-                assert args[args.index("--comment") + 1] in state.rules
-            elif args[1] == "-D": state.rules.pop(args[args.index("--comment") + 1], None)
-            elif args[1] == "-nvx":
+                return ""
+            if args[1] == "-S":
+                key = (family, args[2])
+                lines = state.chains.get(key, state.hooks.get(key, []))
+                if state.canonical:
+                    lines = [line.replace("/0xffffffff", "").replace("--comment ", '--comment "').replace(" -j ", '" -j ')
+                             for line in lines]
+                return "\n".join(lines)
+            if args[1] == "-C": return ""
+            if args[1] == "-D":
+                if args[2] in {"INPUT", "OUTPUT"} and "--comment" in args and args[args.index("--comment") + 1].endswith("-jump"):
+                    state.hooks[family, args[2]].remove("-A " + args[2] + " " + " ".join(args[3:]))
+                elif (family, args[2]) in state.chains:
+                    state.chains[family, args[2]].remove("-A " + args[2] + " " + " ".join(args[3:]))
+                else:
+                    state.rules.pop(args[args.index("--comment") + 1], None)
+                    state.hooks[family, args[2]].remove("-A " + args[2] + " " + " ".join(args[3:]))
+                return ""
+            if args[1] == "-nvx":
+                if args[2] == "-L" and (family, args[3]) in state.chains:
+                    lines = []
+                    for rule in state.chains[family, args[3]]:
+                        comment = rule.split("--comment ", 1)[1].split()[0]
+                        count = (state.guard_drop_by_chain.get(args[3], state.guard_drops)
+                                 if comment.endswith("-drop") else
+                                 state.extra_egress_packets if "-out-wlan1" in comment else
+                                 state.extra_ingress_packets if "-in-wlan1" in comment else
+                                 state.egress_packets if "-out-" in comment else state.ingress_packets)
+                        lines.append(f"{count} {count * 100} RETURN udp -- * * /* {comment} */")
+                    return "\n".join(lines)
                 return "\n".join(f"1 {count} {count * 100} DROP udp -- * * 0.0.0.0/0 0.0.0.0/0 /* {comment} */"
-                    for comment, (family, count) in state.rules.items() if family == args[0])
+                    for comment, (used_family, count) in state.rules.items() if used_family == family)
             return ""
         raise AssertionError(args)
-    monkeypatch.setattr(value, "command", command)
+
+    class Peer:
+        APP = "PRIVATE_APP"
+        def _adb(self, *args):
+            assert args[0] == "shell"
+            return command(*args[1:])
+    observation = {"pair": {"relay_protocol": "udp", "local": {"type": "relay"}}}
+    value = faults.AndroidKernelPath(Peer(), observation,
+        "turn:turn.example:3478?transport=udp", resource_check=lambda: state.resource)
+    link = value.coverage.links[0]
+    value.device, value.ifb, value.egress_handle, value.ingress_handle = (
+        "wlan0", link["ifb"], link["egress"], link["ingress"])
+    value.filter_prio, value._qdisc_before = link["prio"], link["before_qdisc"]
+    value._installed = link["installed"]
     return value, state
 
 
@@ -167,7 +293,8 @@ def test_uid_udp_block_has_exact_ipv4_ipv6_owner_rules_and_counter_delta(monkeyp
     value, state = udp_link_fixture(monkeypatch)
     value.install()
     value.block()
-    inserts = [item for item in state.commands if item[0] in {"iptables", "ip6tables"} and item[1] == "-I"]
+    inserts = [item for item in state.commands if item[0] in {"iptables", "ip6tables"}
+               and item[1] == "-I" and item[-1] == "DROP"]
     assert len(inserts) == 2 and {item[0] for item in inserts} == {"iptables", "ip6tables"}
     assert all("udp" in item and "--uid-owner" in item and "10053" in item and "-d" not in item for item in inserts)
     for entry in state.rules.values(): entry[1] = 3
@@ -206,7 +333,8 @@ def test_uid_udp_block_rejects_stale_current_scope_before_drop_rule(monkeypatch,
     elif change == "resource": state.resource = False
     else: state.route4 += "default dev tun0 table 100\n"
     with pytest.raises(ValueError): value.block()
-    assert not any(item[0] in {"iptables", "ip6tables"} and item[1] == "-I" for item in state.commands)
+    assert not any(item[0] in {"iptables", "ip6tables"} and item[1] == "-I"
+                   and item[-1] == "DROP" for item in state.commands)
     value.close()
 
 
@@ -282,9 +410,212 @@ def test_mixed_own_and_foreign_ingress_filters_are_not_deleted(monkeypatch):
     value, state = udp_link_fixture(monkeypatch)
     value.install()
     state.filter = "mixed"
+    with pytest.raises(ValueError, match="profile_ingress_mismatch"):
+        value.report()
     with pytest.raises(RuntimeError, match="cleanup is incomplete"):
         value.close()
     assert state.ingress and "ingress" in value._installed
+
+
+def test_two_independent_links_use_distinct_kernel_profiles_and_complete_guard(monkeypatch):
+    value, state = udp_link_fixture(monkeypatch, second_link=True)
+    value.install()
+    assert len(value.coverage.links) == 2
+    assert state.ifb and state.extra_ifb and state.root == state.extra_root == "netem"
+    assert state.ingress and state.extra_ingress
+    commands = state.commands
+    guard_appends = [index for index, item in enumerate(commands)
+                     if item[0] in {"iptables", "ip6tables"} and item[1] == "-A"]
+    guard_hooks = [index for index, item in enumerate(commands)
+                   if item[0] in {"iptables", "ip6tables"} and item[1] == "-I" and item[-1] != "DROP"]
+    assert len(guard_hooks) == 4 and max(guard_appends) < min(guard_hooks)
+    returns = [item for item in commands if item[0] in {"iptables", "ip6tables"}
+               and item[1] == "-A" and item[-1] == "RETURN"]
+    assert len(returns) == 8
+    assert {item[item.index("-o") + 1] for item in returns if "-o" in item} == {"wlan0", "wlan1"}
+    assert {item[item.index("-i") + 1] for item in returns if "-i" in item} == {"wlan0", "wlan1"}
+    assert all("-m" in item and "devgroup" in item and "/0xffffffff" in " ".join(item) for item in returns)
+    state.egress_packets = state.ingress_packets = 4
+    state.extra_egress_packets = state.extra_ingress_packets = 3
+    report = value.report()
+    assert report["link_coverage"]["admitted_links"] == 2
+    assert report["link_coverage"]["impaired_links"] == 2
+    assert report["counters"]["egress"]["packets"] == 7
+    assert report["counters"]["ingress"]["packets"] == 7
+    value.close()
+    assert not state.ifb and not state.extra_ifb
+    assert state.root == state.extra_root == "default"
+    assert state.group == state.extra_group == 0
+
+
+def test_dummy_sink_is_denied_and_never_impairment_or_return_target(monkeypatch):
+    value, state = udp_link_fixture(monkeypatch, second_link=True, sink=True)
+    value.install()
+    state.egress_packets = state.ingress_packets = 2
+    report = value.report()
+    assert report["link_coverage"]["admitted_links"] == 1
+    assert report["link_coverage"]["excluded_sink_links"] == 1
+    assert not any("wlan1" in item for item in state.commands if item[0] in {"tc", "iptables", "ip6tables"})
+    value.close()
+
+
+def test_guard_accepts_only_equivalent_saved_rule_format(monkeypatch):
+    value, state = udp_link_fixture(monkeypatch, canonical=True)
+    value.install()
+    state.egress_packets = state.ingress_packets = 2
+    assert value.report()["link_coverage"]["guard_current"] is True
+    state.chains[next(iter(state.chains))][0] = state.chains[next(iter(state.chains))][0].replace(
+        "/0xffffffff", "/0xfffffffe")
+    with pytest.raises(ValueError, match="guard_current_mismatch"):
+        value.report()
+    with pytest.raises(RuntimeError, match="cleanup is incomplete"):
+        value.close()
+
+
+def test_foreign_hook_prefix_cannot_bypass_owned_udp_guard(monkeypatch):
+    value, state = udp_link_fixture(monkeypatch)
+    value.install()
+    state.hooks[("iptables", "OUTPUT")].insert(0, "-A OUTPUT -j ACCEPT")
+    with pytest.raises(ValueError, match="guard_current_mismatch"):
+        value.report()
+    value.close()
+    assert state.hooks[("iptables", "OUTPUT")] == ["-A OUTPUT -j ACCEPT"]
+
+
+def test_one_chain_drop_change_cannot_be_hidden_by_another_chain(monkeypatch):
+    value, state = udp_link_fixture(monkeypatch)
+    state.guard_drops = 1
+    value.install()
+    first, second = value.coverage.guard[:2]
+    state.guard_drop_by_chain[first["chain"]] = 0
+    state.guard_drop_by_chain[second["chain"]] = 2
+    state.egress_packets = state.ingress_packets = 2
+    with pytest.raises(ValueError, match="guard_.*_drop"):
+        value.report()
+    value.close()
+
+
+@pytest.mark.parametrize("missing", ["nft", "group_policy"])
+def test_group_preflight_rejects_incomplete_active_policy_inventory(monkeypatch, missing):
+    with pytest.raises(ValueError, match="group_inventory_unavailable|group_policy_conflict"):
+        udp_link_fixture(monkeypatch, nft_available=missing != "nft",
+                         policy_conflict=missing == "group_policy")
+
+
+def test_same_name_replacement_is_not_mutated_during_cleanup(monkeypatch):
+    value, state = udp_link_fixture(monkeypatch)
+    value.install()
+    state.wlan_index = 9
+    with pytest.raises(RuntimeError, match="cleanup is incomplete"):
+        value.close()
+    assert not any(item[:3] == ("tc", "qdisc", "del") for item in state.commands)
+
+
+def test_name_replacement_between_group_write_and_readback_is_not_restored(monkeypatch):
+    value, state = udp_link_fixture(monkeypatch, replace_on_group=True)
+    with pytest.raises(ValueError, match="recheck_link_set_changed") as result:
+        value.install()
+    assert isinstance(result.value.__cause__, RuntimeError)
+    assert state.wlan_index == 9 and state.group == 0
+    assert len([item for item in state.commands if item[:3] == ("ip", "link", "set")
+                and "group" in item]) == 1
+    assert not any(item[0] == "tc" and item[1] in {"replace", "add"} for item in state.commands)
+
+
+def test_same_name_ifb_replacement_is_not_deleted(monkeypatch):
+    value, state = udp_link_fixture(monkeypatch)
+    value.install()
+    state.ifb_index = 99
+    with pytest.raises(RuntimeError, match="cleanup is incomplete"):
+        value.close()
+    assert state.ifb
+    assert not any(item[:3] == ("ip", "link", "del") for item in state.commands)
+
+
+def test_original_nondefault_netdevice_group_is_restored_exactly(monkeypatch):
+    value, state = udp_link_fixture(monkeypatch, initial_group=7)
+    value.install()
+    assert state.group == value.coverage.group and state.group != 7
+    value.close()
+    assert state.group == 7
+
+
+def test_high_bit_random_source_still_installs_positive_31_bit_group(monkeypatch):
+    serial = iter(range(1, 100))
+    def high_bit_uuid():
+        number = next(serial)
+        return SimpleNamespace(hex=f"{0x80000000 | number:08x}{number:08x}" + "0" * 16)
+    monkeypatch.setattr(faults, "uuid4", high_bit_uuid)
+    value, state = udp_link_fixture(monkeypatch)
+    assert 0 < value.coverage.group <= 0x7fffffff
+    value.install()
+    assert state.group == value.coverage.group
+    assert all(0 <= int(item[-1]) <= 0x7fffffff for item in state.commands
+               if item[:3] == ("ip", "link", "set") and "group" in item)
+    state.egress_packets = state.ingress_packets = 2
+    assert value.report()["link_coverage"]["group_identity_guard"] is True
+    value.close()
+    assert state.group == 0
+
+
+@pytest.mark.parametrize("group", [0x80000000, -0x80000000])
+def test_preexisting_high_bit_group_fails_before_any_tag_mutation(monkeypatch, group):
+    states = []
+    with pytest.raises(ValueError, match="group_inventory_unavailable"):
+        udp_link_fixture(monkeypatch, initial_group=group, state_ref=states)
+    assert len(states) == 1
+    assert not any(item[:3] == ("ip", "link", "set") and "group" in item
+                   for item in states[0].commands)
+
+
+@pytest.mark.parametrize("late", ["root", "ingress"])
+def test_late_foreign_tc_state_is_not_replaced_or_removed(monkeypatch, late):
+    value, state = udp_link_fixture(monkeypatch)
+    if late == "root": state.root = "foreign"
+    else: state.ingress = True
+    with pytest.raises(ValueError, match="conflicting_qdisc|collision_ingress_filter"):
+        value.install()
+    assert state.root == ("foreign" if late == "root" else "default")
+    assert state.ingress is (late == "ingress")
+    if late == "root":
+        assert not any(item[:3] == ("tc", "qdisc", "replace") and "wlan0" in item
+                       for item in state.commands)
+    assert not any(item[:3] == ("tc", "qdisc", "del") and item[-1] == "ingress"
+                   for item in state.commands)
+
+
+def test_second_link_partial_filter_reply_rolls_back_only_owned_links(monkeypatch):
+    value, state = udp_link_fixture(monkeypatch, second_link=True)
+    state.failure = "second_filter"
+    with pytest.raises(RuntimeError, match="PRIVATE_FILTER_FAILURE"):
+        value.install()
+    assert not state.ifb and not state.extra_ifb
+    assert state.root == state.extra_root == "default"
+    assert not state.ingress and not state.extra_ingress
+    assert state.group == state.extra_group == 0
+
+
+@pytest.mark.parametrize("failure", ["guard_new", "guard_append"])
+def test_guard_ambiguous_mutation_keeps_exact_cleanup_obligation(monkeypatch, failure):
+    value, state = udp_link_fixture(monkeypatch)
+    state.failure = failure
+    with pytest.raises(RuntimeError, match="PRIVATE_GUARD") as result:
+        value.install()
+    if failure == "guard_new":
+        assert isinstance(result.value.__cause__, RuntimeError)
+        assert state.chains
+    else:
+        assert not state.chains
+
+
+def test_incomplete_child_chain_is_rejected_before_any_guard_hook(monkeypatch):
+    value, state = udp_link_fixture(monkeypatch)
+    state.failure = "guard_omit"
+    with pytest.raises(ValueError, match="guard_install_incomplete"):
+        value.install()
+    assert not any(item[0] in {"iptables", "ip6tables"} and item[1] == "-I"
+                   for item in state.commands)
+    assert not state.chains and not state.hooks
 
 
 def test_declared_netem_profile_matches_selected_tuple_both_directions_and_preserves_point_one_percent(monkeypatch):

@@ -320,7 +320,7 @@ def collect(directory: Path, source: str, tree: str, required, *, native_workloa
         summary["native_interop"] = {"workload": native_workload, "receipt_iterations_per_role": plan["iterations"],
                                      "periodic_cold_starts_per_role": (plan["iterations"] - 1) // plan["cold_start_every"] + 1,
                                      "path_initiators": [list(case) for case in plan["paths"]],
-                                     "impairment": "Linux kernel netem on an admitted emulator link plus counted app-UID UDP block controls" if native_workload == "full" else "not executed"}
+                                     "impairment": "Linux kernel netem on every admitted independent external emulator link (bounded set), with a continuous UDP coverage guard and counted app-UID UDP block controls" if native_workload == "full" else "not executed"}
     if "direct" in required:
         for platform in ("Linux", "Windows"):
             for record in direct_records[platform]:

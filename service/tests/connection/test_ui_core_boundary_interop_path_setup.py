@@ -3,10 +3,64 @@
 from pathlib import Path
 import ipaddress
 import json
+import shlex
 import sys
 from types import SimpleNamespace
 
 import pytest
+
+
+def test_bounded_link_set_accepts_two_independent_devices_and_denied_dummy():
+    from native_interop_link_scope import covered_links
+    links = json.dumps([
+        {"ifindex": 1, "ifname": "lo", "flags": ["LOOPBACK", "UP"], "link_type": "loopback", "group": 0},
+        {"ifindex": 2, "ifname": "eth0", "flags": ["UP"], "link_type": "ether", "group": 0},
+        {"ifindex": 3, "ifname": "wlan0", "flags": ["UP"], "link_type": "ether", "group": 0},
+        {"ifindex": 4, "ifname": "dummy0", "flags": ["UP"], "link_type": "ether",
+         "linkinfo": {"info_kind": "dummy"}, "group": 0},
+    ])
+    metadata = {name: (kind, index, index, False, 0) for name, kind, index in
+                (("lo", 772, 1), ("eth0", 1, 2), ("wlan0", 1, 3), ("dummy0", 1, 4))}
+    selected = covered_links(links, "default dev eth0 table main\n",
+        "fe80::/64 dev dummy0 table main\n2001:db8::/64 dev wlan0 table main\n",
+        "0: from all lookup local\n100: from all lookup main\n",
+        "0: from all lookup local\n100: from all lookup main\n", metadata)
+    assert tuple(link["name"] for link in selected["external"]) == ("eth0", "wlan0")
+    assert tuple(link["name"] for link in selected["sinks"]) == ("dummy0",)
+
+
+def test_down_tunnel_details_do_not_reject_live_independent_link():
+    from native_interop_link_scope import covered_links, LinkScopeError
+    links = json.dumps([
+        {"ifindex": 1, "ifname": "lo", "flags": ["LOOPBACK", "UP"], "link_type": "loopback", "group": 0},
+        {"ifindex": 2, "ifname": "eth0", "flags": ["UP"], "link_type": "ether", "group": 0},
+        {"ifindex": 3, "ifname": "tun0", "flags": [], "link_type": "none", "group": 0,
+         "linkinfo": {"info_kind": "tun", "info_data": {"mode": "tun"}}},
+    ])
+    metadata = {"lo": (772, 1, 1, False, 0), "eth0": (1, 2, 2, False, 0),
+                "tun0": (65534, 3, 3, False, 0)}
+    routes = "default dev eth0 table main\n"
+    rules = "0: from all lookup local\n100: from all lookup main\n"
+    assert len(covered_links(links, routes, "", rules, rules, metadata)["external"]) == 1
+    up = links.replace('"flags": []', '"flags": ["UP"]')
+    with pytest.raises(LinkScopeError, match="initial_kind_unproven"):
+        covered_links(up, routes, "", rules, rules, metadata)
+
+
+def test_sysfs_stack_probe_passes_one_quoted_remote_shell_program():
+    from native_interop_link_scope import link_metadata
+    links = json.dumps([{"ifindex": 2, "ifname": "eth0", "flags": ["UP"],
+                         "link_type": "ether", "group": 0}])
+    observed = []
+    def command(*args):
+        if args[:2] == ("sh", "-c"):
+            observed.append(args[2])
+            assert len(shlex.split(args[2])) == 1
+            assert args[2].startswith("'") and args[2].endswith("'")
+            return "0"
+        return {"type": "1", "ifindex": "2", "iflink": "2", "netdev_group": "0"}[args[1].split("/")[-1]]
+    assert link_metadata(command, links)["eth0"] == (1, 2, 2, False, 0)
+    assert len(observed) == 1
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 import native_interop_controller as controller
@@ -57,6 +111,9 @@ def kernel_boundary(*, point=None, ambiguous=False, tcp_rows=None, fd_links=None
             if args[-2:] == ("getprop", "ro.kernel.qemu"): return "1"
             if args[-2:] == ("pidof", self.APP): return "123 456" if point == "kernel_process_identity" else "123"
             if args[1:3] == ("sh", "-c"):
+                if "command -v nft" in args[3]: return "present"
+                if "/etc/iproute2/group" in args[3]: return "0 default"
+                if "/sys/class/net/" in args[3]: return "0"
                 if "/proc/456/fd/" in args[3]:
                     return "socket:[8888]" if helper_state["kind"] == "external" else ""
                 return fd_links if fd_links is not None else "socket:[1234]" + (" socket:[5678]" if ambiguous else "")
@@ -78,6 +135,23 @@ def kernel_boundary(*, point=None, ambiguous=False, tcp_rows=None, fd_links=None
             if args[-2:] == ("cat", "/proc/456/net/tcp"):
                 return "header\n" + (ROW.replace("1234", "8888") if helper_state["kind"] == "external" else "")
             if args[-2:] == ("cat", "/proc/456/net/tcp6"): return "header\n"
+            if args[1:3] == ("ip", "-j"):
+                if point == "link_capability": raise RuntimeError("PRIVATE_COMMAND_OUTPUT")
+                links = [
+                    {"ifindex": 1, "ifname": "lo", "flags": ["LOOPBACK", "UP"],
+                     "link_type": "loopback", "group": 0},
+                    {"ifindex": 2, "ifname": "eth0", "flags": ["UP"],
+                     "link_type": "ether", "group": 0},
+                ]
+                if point == "link_alternate":
+                    links.append({"ifindex": 3, "ifname": "tun0", "flags": ["UP"],
+                                  "link_type": "none", "linkinfo": {"info_kind": "tun"}, "group": 0})
+                return json.dumps(links)
+            if args[-2] == "cat" and args[-1].startswith("/sys/class/net/"):
+                name, field = args[-1].split("/")[-2:]
+                index = {"lo": 1, "eth0": 2, "tun0": 3}[name]
+                return str({"type": 772 if name == "lo" else 1,
+                            "ifindex": index, "iflink": index, "netdev_group": 0}[field])
             if args[1:5] == ("pm", "list", "packages", "-U"):
                 return "package:OTHER uid:10053\n" if point == "kernel_scope_exclusivity" else "package:PRIVATE_APP uid:10053\n"
             if args[1:5] == ("ps", "-A", "-o", "UID,PID"):
@@ -89,6 +163,10 @@ def kernel_boundary(*, point=None, ambiguous=False, tcp_rows=None, fd_links=None
                 if point == "link_capability": raise RuntimeError("PRIVATE_COMMAND_OUTPUT")
                 return ("1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536\n2: eth0: <BROADCAST,UP,LOWER_UP> mtu 1500\n"
                         + ("3: tun0: <POINTOPOINT,UP> mtu 1500\n" if point == "link_alternate" else ""))
+            if args[1:2] in (("iptables-save",), ("ip6tables-save",)):
+                return "*filter\nCOMMIT\n"
+            if args[1:4] == ("nft", "list", "ruleset"):
+                return ""
             if args[1:6] == ("ip", "-4", "route", "show", "table"):
                 return "default via 10.0.2.2 dev eth0 table main\n"
             if args[1:6] == ("ip", "-6", "route", "show", "table"):
@@ -149,14 +227,15 @@ def test_impaired_udp_admits_covered_link_without_socket_or_dns_ownership(monkey
     monkeypatch.setattr(faults, "owned_socket", no_socket)
     path = faults.AndroidKernelPath(peer, {"pair": {"relay_protocol": "udp", "local": {"type": "relay"}}},
         "turn:turn.example:3478?transport=udp", resolver=resolver, resource_check=lambda: True)
-    assert path.device == "eth0" and path.uid_udp_mode and path.target_kind == "uid_udp_all_destinations"
+    assert [link["identity"]["name"] for link in path.coverage.links] == ["eth0"]
+    assert path.uid_udp_mode and path.target_kind == "uid_udp_all_destinations"
     assert path.rule_count == 2
     assert not any(item[0] == "resolver" or "/fd/" in repr(item) or "/net/udp" in repr(item) for item in events)
 
 
-@pytest.mark.parametrize("point,reason", [("link_alternate", "alternate_link"),
+@pytest.mark.parametrize("point,reason", [("link_alternate", "initial_stack_unsupported"),
     ("link_policy", "unsupported_policy"), ("link_qdisc", "conflicting_qdisc"),
-    ("link_capability", "capability_unavailable")])
+    ("link_capability", "initial_inventory_unavailable")])
 def test_udp_link_admission_failures_publish_only_bounded_reason(point, reason):
     peer, resolver, _ = kernel_boundary(point=point)
     diagnostic = faults.NativePathDiagnostics("impaired")

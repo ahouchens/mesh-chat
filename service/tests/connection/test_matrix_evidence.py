@@ -285,6 +285,7 @@ def test_required_native_interop_revalidates_both_actual_platform_roles_and_test
     assert len(native) == 2 and all(item["checks"] == 109 and item["cleanup"] == "passed" for item in native)
     assert result["native_interop"]["receipt_iterations_per_role"] == 100
     assert result["native_interop"]["periodic_cold_starts_per_role"] == 10
+    assert "every admitted independent external emulator link (bounded set)" in result["native_interop"]["impairment"]
     assert set(result["report_sha256"]) >= {"native_interop_windows", "native_interop_android"}
 
 

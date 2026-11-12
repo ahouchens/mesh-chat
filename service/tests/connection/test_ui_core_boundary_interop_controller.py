@@ -1369,6 +1369,44 @@ def test_fault_cleanup_replacement_is_the_exact_reported_error_not_primary(tmp_p
     assert "PRIVATE" not in run.output
 
 
+def test_impaired_cleanup_preserves_primary_and_reports_fixed_cleanup_failure(
+        tmp_path, monkeypatch, capsys, sample):
+    run = run_negative_control_report(tmp_path, monkeypatch, capsys, sample,
+        scenario="impaired", point="receipt", cleanup_error=True)
+    assert run.code == 1 and run.state.escaping_error is run.state.primary_error
+    assert run.state.escaping_error is not run.state.cleanup_exception
+    assert run.record["failure_type"] == "ValueError"
+    assert run.record["negative_control"] == {"scenario": "impaired", "stage": "blocked_receipt",
+                                              "reason": "receipt_while_blocked"}
+    assert run.record["kernel_cleanup_failure"] == {"scenario": "impaired", "stage": "fault_cleanup",
+                                                    "reason": "cleanup_incomplete"}
+    assert run.record["cleanup_failed"] is True and "PRIVATE" not in run.output
+    assert run.state.controller.failure_kernel_cleanup(run.state.cleanup_exception) == {}
+
+
+def test_kernel_cleanup_projection_ignores_foreign_or_broken_private_record(monkeypatch, sample):
+    state = negative_control_case(monkeypatch, sample, scenario="impaired", point="receipt",
+                                  cleanup_error=True)
+    with pytest.raises(ValueError) as failure:
+        state.controller.path_case("impaired", "windows")
+    assert failure.value is not state.cleanup_exception
+    state.controller._fault_cleanup_failure = (RuntimeError("PRIVATE_FOREIGN"),
+        {"scenario": "impaired", "stage": "fault_cleanup", "reason": "cleanup_incomplete"})
+    assert state.controller.failure_kernel_cleanup(failure.value) == {}
+    state.controller._fault_cleanup_failure = (failure.value, {"socket": "PRIVATE_SOCKET"})
+    assert state.controller.failure_kernel_cleanup(failure.value) == {}
+
+
+def test_impaired_cleanup_only_failure_remains_the_primary_error(tmp_path, monkeypatch, capsys, sample):
+    sample[0]["pair"]["rtt_ms"] = 10
+    run = run_negative_control_report(tmp_path, monkeypatch, capsys, sample,
+        scenario="impaired", point="success", cleanup_error=True)
+    assert run.code == 1 and run.state.escaping_error is run.state.cleanup_exception
+    assert run.record["failure_type"] == "RuntimeError"
+    assert run.record["negative_control"] == {"scenario": "impaired", "stage": "fault_cleanup"}
+    assert "kernel_cleanup_failure" not in run.record and "PRIVATE" not in run.output
+
+
 @pytest.mark.parametrize("mode", ["observe", "observe_after", "reset", "projection", "malformed", "forged_projection"])
 def test_negative_observer_failure_or_forgery_omits_metadata_without_outcome_change(tmp_path, monkeypatch, capsys, sample, mode):
     run = run_negative_control_report(tmp_path, monkeypatch, capsys, sample, point="zero_drop", observer_mode=mode)
@@ -2534,7 +2572,11 @@ def interop_reports(source="a" * 40, tree="b" * 40, android_artifacts=None, *, w
                 impairment = {"kind": "android_emulator_linux_kernel_tc_netem", "delay_ms_each_way": 75,
                     "jitter_ms_each_way": 10, "loss_percent_each_way": 0.1, "added_nominal_rtt_ms": 150,
                     "link_scope": "isolated_emulator_route", "loss_observed": False,
-                    "counters": {direction: {"bytes": 1000, "packets": 10, "dropped": 0} for direction in ("egress", "ingress")}}
+                    "counters": {direction: {"bytes": 1000, "packets": 10, "dropped": 0} for direction in ("egress", "ingress")},
+                    "link_coverage": {"admitted_links": 1, "impaired_links": 1, "excluded_sink_links": 0,
+                        "disjoint_paths": True, "current": True, "guard_current": True,
+                        "group_identity_guard": True, "allowed_output_packets": 10,
+                        "allowed_input_packets": 10, "uncovered_udp_drops": 0}}
             cases.append({"scenario": name, "initiator": initiator, "supervisor_pairing": {
                 "operation": evidence.digest([role, case_id, "operation"]), "role": "offer" if role == initiator else "answer",
                 "state": "transferred", "transferred_cancel_preserves_carrier": True}, "before": before, "after": after,
@@ -2659,6 +2701,25 @@ def test_pair_cannot_mix_runs_peers_or_impairment_profiles(fault):
     elif fault == "fake_loss": android["execution"]["scenarios"][-1]["impairment"]["loss_observed"] = True
     else: android["execution"]["scenarios"][-1]["before"]["selected_pair_rtt_ms"] = None
     with pytest.raises(ValueError): evidence.verify_pair(windows, android, "a" * 40, "b" * 40)
+
+
+@pytest.mark.parametrize("change", ["missing", "extra", "overbound", "wrong_count", "non_disjoint",
+                                    "guard_false", "group_false", "zero_allowed", "drop"])
+def test_impaired_report_requires_exact_bounded_guarded_link_coverage(change):
+    windows, android = interop_reports()
+    coverage = android["execution"]["scenarios"][-1]["impairment"]["link_coverage"]
+    if change == "missing":
+        del android["execution"]["scenarios"][-1]["impairment"]["link_coverage"]
+    elif change == "extra": coverage["raw_device"] = "PRIVATE_NETDEV"
+    elif change == "overbound": coverage["admitted_links"] = 5
+    elif change == "wrong_count": coverage["impaired_links"] = 0
+    elif change == "non_disjoint": coverage["disjoint_paths"] = False
+    elif change == "guard_false": coverage["guard_current"] = False
+    elif change == "group_false": coverage["group_identity_guard"] = False
+    elif change == "zero_allowed": coverage["allowed_input_packets"] = 0
+    else: coverage["uncovered_udp_drops"] = 1
+    with pytest.raises(ValueError):
+        evidence.verify_pair(windows, android, "a" * 40, "b" * 40)
 
 
 def test_final_ci_context_cannot_reuse_a_passing_prior_attempt():

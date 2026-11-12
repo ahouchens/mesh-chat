@@ -5,14 +5,17 @@ sleep-based loss model, TURN advertisement inference, or unrelated-host rule.
 """
 
 import ipaddress
+import json
 from contextlib import contextmanager, nullcontext
 import re
+import shlex
 import socket
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
 from native_interop_diagnostics import negative_control_error, negative_control_stage
-from native_interop_link_scope import LinkScopeError, covered_link, link_names, snapshot as link_snapshot
+from native_interop_link_scope import (LinkScopeError, _numeric_group, covered_link, covered_links,
+    link_metadata, link_names, snapshot as link_snapshot)
 
 
 PATH_FAILURE_REASONS = {
@@ -223,6 +226,470 @@ def netem_counter(text, handle):
     return dict(zip(("bytes", "packets", "dropped"), map(int, match.groups())))
 
 
+class _BoundedUdpLinks:
+    """Exact owned multi-link tc and packet guard for the disposable emulator."""
+    def __init__(self, owner):
+        self.owner = owner
+        self.command = owner.command
+        self.plan = self._snapshot()
+        self.links = []
+        self.guard = []
+        self.tagged = False
+        for item in self.plan["external"]:
+            self.links.append({"identity": item, "ifb": "mci" + uuid4().hex[:12],
+                "alias": owner.rule + "-" + str(len(self.links)),
+                "egress": format(0x100 + int(uuid4().hex[:4], 16) % 0x7000, "x") + ":",
+                "ingress": format(0x8000 + int(uuid4().hex[:4], 16) % 0x7000, "x") + ":",
+                "prio": 10000 + int(uuid4().hex[:4], 16) % 50000,
+                "installed": [], "tag_possible": False, "before_qdisc": self._default_qdisc(item["name"])})
+        self._policy_preflight()
+        groups = {item["group"] for item in self.plan["all"].values()}
+        for _ in range(8):
+            candidate = int(uuid4().hex[:8], 16) & 0x7fffffff
+            if candidate and candidate not in groups and candidate not in self._mapped_groups:
+                self.group = candidate
+                break
+        else:
+            raise LinkScopeError("group_collision")
+
+    def _snapshot(self, *, owned_ifbs=()):
+        try:
+            output = link_snapshot(self.command)
+        except Exception as error:
+            raise LinkScopeError("initial_inventory_unavailable") from error
+        return covered_links(*output, link_metadata(self.command, output[0]), owned_ifbs=owned_ifbs)
+
+    def _default_qdisc(self, name):
+        value = self.command("tc", "qdisc", "show", "dev", name).strip()
+        if (len(value.splitlines()) != 1 or
+                re.match(r"^qdisc (?:noqueue|pfifo_fast|fq_codel) 0: root(?:\s|$)", value) is None):
+            raise LinkScopeError("conflicting_qdisc")
+        return value
+
+    def _policy_preflight(self):
+        try:
+            inventories = [self.command(family + "-save") for family in ("iptables", "ip6tables")]
+            nft = self.command("sh", "-c", shlex.quote("command -v nft >/dev/null 2>&1 && echo present || echo absent"))
+            if nft == "present":
+                inventories.append(self.command("nft", "list", "ruleset"))
+            else:
+                # A missing userspace binary says nothing about kernel rules.
+                raise ValueError("Active nft ruleset cannot be inventoried")
+            mapping = self.command("sh", "-c", shlex.quote("if [ -f /etc/iproute2/group ]; then cat /etc/iproute2/group; fi"))
+        except Exception as error:
+            raise LinkScopeError("group_inventory_unavailable") from error
+        if any(re.search(r"\b(?:devgroup|src-group|dst-group|iifgroup|oifgroup|suppress_ifgroup)\b", text)
+               for text in inventories):
+            raise LinkScopeError("group_policy_conflict")
+        self._firewall_before = inventories[:2]
+        self._mapped_groups = set()
+        for line in mapping.splitlines():
+            parts = line.split()
+            if not parts or parts[0].startswith("#"):
+                continue
+            if len(parts) != 2 or not parts[0].isdigit():
+                raise LinkScopeError("group_inventory_unavailable")
+            self._mapped_groups.add(int(parts[0]))
+
+    def _current_plan(self, *, require_group=True):
+        owned = tuple(link["ifb"] for link in self.links if "ifb" in link["installed"])
+        for link in self.links:
+            if link["ifb"] in owned:
+                detail = self.command("ip", "-d", "link", "show", "dev", link["ifb"])
+                if ("alias " + link["alias"]) not in detail or "ifb" not in detail:
+                    raise LinkScopeError("collision_ifb")
+        current = self._snapshot(owned_ifbs=owned)
+        before = {(item["name"], item["ifindex"], item["kind"])
+                  for item in self.plan["external"] + self.plan["sinks"]}
+        after = {(item["name"], item["ifindex"], item["kind"])
+                 for item in current["external"] + current["sinks"]}
+        if before != after:
+            raise LinkScopeError("recheck_link_set_changed")
+        for link in self.links:
+            if "ifb" in link["installed"] and link.get("ifb_index") is not None:
+                item = current["all"].get(link["ifb"])
+                if item is None or item["ifindex"] != link["ifb_index"] or item["kind"] != "ifb":
+                    raise LinkScopeError("collision_ifb")
+        if require_group:
+            names = {link["identity"]["name"] for link in self.links}
+            for name, item in current["all"].items():
+                expected = self.group if self.tagged and name in names else self.plan["all"].get(name, item)["group"]
+                if item["group"] != expected:
+                    raise LinkScopeError("recheck_group_identity_changed")
+        return current
+
+    def _tag_links(self):
+        for link in self.links:
+            name = link["identity"]["name"]
+            link["tag_possible"] = True
+            self.command("ip", "link", "set", "dev", name, "group", str(self.group))
+            current = self._current_plan(require_group=False)
+            if current["all"][name]["ifindex"] != link["identity"]["ifindex"] or current["all"][name]["group"] != self.group:
+                raise LinkScopeError("group_assignment_mismatch")
+        self.tagged = True
+        self._current_plan()
+
+    def _install_link(self, link):
+        name, ifb = link["identity"]["name"], link["ifb"]
+        if ifb in self._current_plan()["all"]:
+            raise LinkScopeError("collision_ifb")
+        link["installed"].append("ifb")
+        link["ifb_confirmed"] = False
+        self.command("ip", "link", "add", ifb, "type", "ifb")
+        link["ifb_confirmed"] = True
+        created = self._cleanup_identity(ifb)
+        if created is None or created["kind"] != "ifb":
+            raise LinkScopeError("collision_ifb")
+        link["ifb_index"] = created["ifindex"]
+        self.command("ip", "link", "set", "dev", ifb, "alias", link["alias"])
+        link["alias_confirmed"] = True
+        self.command("ip", "link", "set", ifb, "up")
+        self._current_plan()
+        if self.command("tc", "qdisc", "show", "dev", name).strip() != link["before_qdisc"]:
+            raise LinkScopeError("conflicting_qdisc")
+        link["installed"].append("egress")
+        self.command("tc", "qdisc", "replace", "dev", name, "root", "handle", link["egress"],
+            "netem", "delay", "75ms", "10ms", "distribution", "normal", "loss", "0.1%")
+        link["installed"].append("ingress")
+        link["ingress_confirmed"] = False
+        self._current_plan()
+        if "qdisc ingress ffff:" in self.command("tc", "qdisc", "show", "dev", name):
+            raise LinkScopeError("collision_ingress_filter")
+        if self.command("tc", "filter", "show", "dev", name, "parent", "ffff:").strip():
+            raise LinkScopeError("collision_ingress_filter")
+        self.command("tc", "qdisc", "add", "dev", name, "handle", "ffff:", "ingress")
+        link["ingress_confirmed"] = True
+        self.command("tc", "filter", "add", "dev", name, "parent", "ffff:", "protocol", "all",
+            "prio", str(link["prio"]), "matchall", "action", "mirred", "egress", "redirect", "dev", ifb)
+        link["filter_confirmed"] = True
+        self.command("tc", "qdisc", "replace", "dev", ifb, "root", "handle", link["ingress"],
+            "netem", "delay", "75ms", "10ms", "distribution", "normal", "loss", "0.1%")
+
+    @staticmethod
+    def _rule_tokens(line):
+        try:
+            tokens = shlex.split(line)
+        except ValueError as error:
+            raise LinkScopeError("guard_current_mismatch") from error
+        for marker in ("--dst-group", "--src-group"):
+            if marker in tokens:
+                index = tokens.index(marker) + 1
+                if index >= len(tokens):
+                    raise LinkScopeError("guard_current_mismatch")
+                parts = tokens[index].split("/")
+                if len(parts) > 2 or not all(re.fullmatch(r"(?:0x[0-9a-fA-F]+|[0-9]+)", part) for part in parts):
+                    raise LinkScopeError("guard_current_mismatch")
+                if len(parts) == 2 and int(parts[1], 0) != 0xffffffff:
+                    raise LinkScopeError("guard_current_mismatch")
+                tokens[index] = str(int(parts[0], 0))
+        return tokens
+
+    def _chain_rules(self, entry):
+        listing = self.command(entry["family"], "-S", entry["chain"])
+        lines = [line.strip() for line in listing.splitlines() if line.startswith("-A ")]
+        return [self._rule_tokens(line) for line in lines]
+
+    def _guard_shape(self, entry):
+        expected = [self._rule_tokens(rule) for rule in entry["rules"]]
+        if self._chain_rules(entry) != expected:
+            raise LinkScopeError("guard_current_mismatch")
+        hooks = self.command(entry["family"], "-S", entry["hook"])
+        matches = [self._rule_tokens(line) for line in hooks.splitlines() if line.startswith("-A ")]
+        jump = self._rule_tokens(entry["jump"])
+        if matches.count(jump) != 1:
+            raise LinkScopeError("guard_current_mismatch")
+        if any(tokens[-2:] == ["-j", entry["chain"]] and
+               tokens != jump for tokens in matches):
+            raise LinkScopeError("guard_current_mismatch")
+        allowed_prefix = []
+        if entry["hook"] == "OUTPUT" and self.owner._blocked:
+            for family, args, _ in self.owner._drop_rules:
+                if family == entry["family"]:
+                    allowed_prefix.append(self._rule_tokens("-A OUTPUT " + " ".join(args)))
+        if matches[:len(allowed_prefix) + 1] != allowed_prefix + [jump]:
+            raise LinkScopeError("guard_current_mismatch")
+
+    def _install_guard(self):
+        value = "0x" + format(self.group, "x") + "/0xffffffff"
+        for family in ("iptables", "ip6tables"):
+            for direction in ("OUTPUT", "INPUT"):
+                chain = "MC" + uuid4().hex[:16].upper()
+                if any(re.search(r"^:" + re.escape(chain) + r"\s", rules, re.M)
+                       for rules in self._firewall_before):
+                    raise LinkScopeError("guard_chain_collision")
+                comment = self.owner.rule + ("-out" if direction == "OUTPUT" else "-in")
+                entry = {"family": family, "hook": direction, "chain": chain,
+                         "comment": comment, "rules": [], "created": False,
+                         "created_possible": True, "jumped": False}
+                self.guard.append(entry)
+                self.command(family, "-N", chain)
+                entry["created"] = True
+                for link in self.links:
+                    name = link["identity"]["name"]
+                    flag = "-o" if direction == "OUTPUT" else "-i"
+                    group_flag = "--dst-group" if direction == "OUTPUT" else "--src-group"
+                    label = comment + "-" + name
+                    args = [flag, name, "-m", "devgroup", group_flag, value,
+                            "-m", "comment", "--comment", label, "-j", "RETURN"]
+                    entry["rules"].append("-A " + chain + " " + " ".join(args))
+                    self.command(family, "-A", chain, *args)
+                args = ["-m", "comment", "--comment", comment + "-drop", "-j", "DROP"]
+                entry["rules"].append("-A " + chain + " " + " ".join(args))
+                self.command(family, "-A", chain, *args)
+                jump_args = (["-p", "udp", "-m", "owner", "--uid-owner", self.owner.uid]
+                             if direction == "OUTPUT" else ["-p", "udp"])
+                jump_args += ["-m", "comment", "--comment", comment + "-jump", "-j", chain]
+                entry["jump_args"] = jump_args
+                entry["jump"] = "-A " + direction + " " + " ".join(jump_args)
+        # Every child chain is complete before the first hook can expose it.
+        for entry in self.guard:
+            if self._chain_rules(entry) != [self._rule_tokens(rule) for rule in entry["rules"]]:
+                raise LinkScopeError("guard_install_incomplete")
+        for entry in self.guard:
+            family, direction, jump_args = entry["family"], entry["hook"], entry["jump_args"]
+            entry["jumped"] = True  # An error reply may follow a successful insert.
+            self.command(family, "-I", direction, "1", *jump_args)
+            self._guard_shape(entry)
+
+    def _guard_count(self, entry, marker):
+        listing = self.command(entry["family"], "-nvx", "-L", entry["chain"])
+        lines = [line.split() for line in listing.splitlines() if marker in line.split()]
+        if len(lines) != 1 or not lines[0][0].isdigit():
+            raise LinkScopeError("guard_capability_unavailable")
+        return int(lines[0][0])
+
+    @staticmethod
+    def _ingress_filter_owned(value, link):
+        lines = value.splitlines()
+        headers = [line for line in lines if line.lstrip().startswith("filter ")]
+        actions = [line for line in lines if re.search(r"\baction\b", line)]
+        marker = "pref " + str(link["prio"]) + " matchall"
+        return (1 <= len(headers) <= 2
+            and all("protocol all" in line and marker in line for line in headers)
+            and len(actions) == 1 and "mirred" in actions[0]
+            and "redirect" in actions[0].lower()
+            and re.search(r"\b" + re.escape(link["ifb"]) + r"\b", actions[0]) is not None)
+
+    def guard_counts(self):
+        values = {"output": 0, "input": 0, "output_drop": 0, "input_drop": 0,
+                  "chain": {}}
+        for entry in self.guard:
+            self._guard_shape(entry)
+            name = "output" if entry["hook"] == "OUTPUT" else "input"
+            allowed = 0
+            for link in self.links:
+                # The exact interface label is kept only in the private rule.
+                allowed += self._guard_count(entry, entry["comment"] + "-" + link["identity"]["name"])
+            dropped = self._guard_count(entry, entry["comment"] + "-drop")
+            values[name] += allowed
+            values[name + "_drop"] += dropped
+            values["chain"][entry["chain"]] = {"allowed": allowed, "drop": dropped,
+                                                "direction": name}
+        return values
+
+    def install(self):
+        try:
+            self._tag_links()
+            for link in self.links:
+                self._install_link(link)
+            self._current_plan()
+            self._install_guard()
+            self.before_guard = self.guard_counts()
+            self.before = self.counters()
+        except Exception as error:
+            try:
+                self.close()
+            except Exception as cleanup_error:
+                self.owner._setup_cleanup_failure = cleanup_error
+                raise error from cleanup_error
+            raise
+
+    def current(self):
+        self._current_plan()
+        for link in self.links:
+            if "ingress" not in link["installed"]:
+                raise LinkScopeError("guard_current_mismatch")
+            name, ifb = link["identity"]["name"], link["ifb"]
+            qdisc = self.command("tc", "qdisc", "show", "dev", name)
+            iqdisc = self.command("tc", "qdisc", "show", "dev", ifb)
+            filter_text = self.command("tc", "filter", "show", "dev", name, "parent", "ffff:")
+            if ("qdisc netem " + link["egress"] + " root" not in qdisc
+                    or "delay 75ms 10ms" not in qdisc or "loss 0.1%" not in qdisc):
+                raise LinkScopeError("profile_egress_mismatch")
+            if ("qdisc ingress ffff:" not in qdisc or
+                    "qdisc netem " + link["ingress"] + " root" not in iqdisc
+                    or "delay 75ms 10ms" not in iqdisc or "loss 0.1%" not in iqdisc
+                    or not self._ingress_filter_owned(filter_text, link)):
+                raise LinkScopeError("profile_ingress_mismatch")
+        if len(self.guard) != 4:
+            raise LinkScopeError("guard_current_mismatch")
+        for entry in self.guard:
+            self._guard_shape(entry)
+
+    def counters(self):
+        totals = {direction: dict.fromkeys(("bytes", "packets", "dropped"), 0)
+                  for direction in ("egress", "ingress")}
+        for link in self.links:
+            name = link["identity"]["name"]
+            samples = {"egress": netem_counter(self.command("tc", "-s", "qdisc", "show", "dev", name), link["egress"]),
+                       "ingress": netem_counter(self.command("tc", "-s", "qdisc", "show", "dev", link["ifb"]), link["ingress"])}
+            if "before" in link:
+                for direction in samples:
+                    for field, value in samples[direction].items():
+                        if value < link["before"][direction][field]:
+                            raise LinkScopeError("profile_counter_regression")
+                        totals[direction][field] += value - link["before"][direction][field]
+            else:
+                link["before"] = samples
+        return totals
+
+    def report(self):
+        self.current()
+        counts = self.guard_counts()
+        delta = {key: counts[key] - self.before_guard[key]
+                 for key in ("output", "input", "output_drop", "input_drop")}
+        for chain, after in counts["chain"].items():
+            before = self.before_guard["chain"].get(chain)
+            if before is None or after["direction"] != before["direction"]:
+                raise LinkScopeError("guard_current_mismatch")
+            if after["drop"] != before["drop"]:
+                raise LinkScopeError("guard_output_drop" if after["direction"] == "output" else "guard_input_drop")
+            if after["allowed"] < before["allowed"]:
+                raise LinkScopeError("guard_current_mismatch")
+        if delta["output_drop"] != 0 or delta["output"] < 0:
+            raise LinkScopeError("guard_output_drop")
+        if delta["input_drop"] != 0 or delta["input"] < 0:
+            raise LinkScopeError("guard_input_drop")
+        if delta["output"] <= 0 or delta["input"] <= 0:
+            raise LinkScopeError("guard_input_path_unverified")
+        counters = self.counters()
+        if any(counters[direction][field] <= 0 for direction in counters for field in ("bytes", "packets")):
+            raise ValueError("Kernel impairment lacks actual routed packets")
+        return {"kind": "android_emulator_linux_kernel_tc_netem", "delay_ms_each_way": 75,
+            "jitter_ms_each_way": 10, "loss_percent_each_way": 0.1,
+            "added_nominal_rtt_ms": 150, "link_scope": "isolated_emulator_route",
+            "loss_observed": sum(item["dropped"] for item in counters.values()) > 0,
+            "counters": counters, "link_coverage": {
+                "admitted_links": len(self.links), "impaired_links": len(self.links),
+                "excluded_sink_links": len(self.plan["sinks"]), "disjoint_paths": True,
+                "current": True, "guard_current": True, "group_identity_guard": True,
+                "allowed_output_packets": delta["output"], "allowed_input_packets": delta["input"],
+                "uncovered_udp_drops": 0}}
+
+    def close(self):
+        failures = []
+        for entry in reversed(self.guard):
+            family, chain = entry["family"], entry["chain"]
+            try:
+                if entry.get("jumped"):
+                    hooks = self.command(family, "-S", entry["hook"])
+                    actual = [self._rule_tokens(line) for line in hooks.splitlines() if line.startswith("-A ")]
+                    expected = self._rule_tokens(entry["jump"])
+                    if actual.count(expected) > 1 or any(tokens[-2:] == ["-j", chain] and tokens != expected
+                                                          for tokens in actual):
+                        raise ValueError("Guard hook ownership changed")
+                    if expected in actual:
+                        self.command(family, "-D", entry["hook"], *entry["jump_args"])
+                        if expected in [self._rule_tokens(line) for line in
+                                self.command(family, "-S", entry["hook"]).splitlines() if line.startswith("-A ")]:
+                            raise ValueError("Guard hook remains")
+                    entry["jumped"] = False
+                if entry.get("created"):
+                    actual = self._chain_rules(entry)
+                    expected = [self._rule_tokens(rule) for rule in entry["rules"]]
+                    if actual != expected[:len(actual)]:
+                        raise ValueError("Guard chain ownership changed")
+                    for rule in reversed(entry["rules"][:len(actual)]):
+                        self.command(family, "-D", chain, *shlex.split(rule)[2:])
+                    self.command(family, "-X", chain)
+                    entry["created"] = False
+                    entry["created_possible"] = False
+                elif entry.get("created_possible"):
+                    raise ValueError("Guard chain creation reply was ambiguous")
+            except Exception:
+                failures.append("guard")
+        self.guard = [entry for entry in self.guard if entry["created"] or entry["jumped"]
+                      or entry.get("created_possible")]
+        for link in reversed(self.links):
+            name, ifb = link["identity"]["name"], link["ifb"]
+            for resource in reversed(tuple(link["installed"])):
+                try:
+                    current = self._cleanup_identity(name)
+                    if (current is None or current["ifindex"] != link["identity"]["ifindex"]
+                            or current["kind"] != link["identity"]["kind"]):
+                        raise ValueError("Original link identity changed")
+                    if resource == "ingress":
+                        qdisc = self.command("tc", "qdisc", "show", "dev", name)
+                        if "qdisc ingress ffff:" in qdisc:
+                            if not link.get("ingress_confirmed"):
+                                raise ValueError("Ambiguous ingress ownership")
+                            filters = self.command("tc", "filter", "show", "dev", name, "parent", "ffff:")
+                            if (link.get("filter_confirmed") and
+                                    not self._ingress_filter_owned(filters, link)) or (
+                                    not link.get("filter_confirmed") and filters.strip()):
+                                raise ValueError("Foreign ingress filter")
+                            self.command("tc", "qdisc", "del", "dev", name, "ingress")
+                    elif resource == "egress":
+                        qdisc = self.command("tc", "qdisc", "show", "dev", name).strip()
+                        if "qdisc netem " + link["egress"] + " root" in qdisc:
+                            if "delay 75ms 10ms" not in qdisc or "loss 0.1%" not in qdisc:
+                                raise ValueError("Foreign root profile")
+                            self.command("tc", "qdisc", "del", "dev", name, "root")
+                        elif qdisc != link["before_qdisc"]:
+                            raise ValueError("Foreign root qdisc")
+                        if self.command("tc", "qdisc", "show", "dev", name).strip() != link["before_qdisc"]:
+                            raise ValueError("Original root qdisc was not restored")
+                    else:
+                        current_ifb = self._cleanup_identity(ifb)
+                        detail = self.command("ip", "-d", "link", "show", "dev", ifb)
+                        if (not link.get("ifb_confirmed") or "ifb" not in detail
+                                or current_ifb is None or current_ifb["kind"] != "ifb"
+                                or current_ifb["ifindex"] != link.get("ifb_index")
+                                or (link.get("alias_confirmed") and "alias " + link["alias"] not in detail)
+                                or (not link.get("alias_confirmed") and "alias" in detail)):
+                            raise ValueError("Foreign IFB")
+                        self.command("ip", "link", "del", ifb)
+                    link["installed"].remove(resource)
+                except Exception:
+                    failures.append(resource)
+            if link["tag_possible"]:
+                try:
+                    current = self._cleanup_identity(name)
+                    if (current is None or current["ifindex"] != link["identity"]["ifindex"]
+                            or current["kind"] != link["identity"]["kind"]):
+                        raise ValueError("Original link identity changed")
+                    if current["group"] == self.group:
+                        self.command("ip", "link", "set", "dev", name, "group", str(link["identity"]["group"]))
+                        if self._cleanup_identity(name)["group"] != link["identity"]["group"]:
+                            raise ValueError("Original link group was not restored")
+                    elif current["group"] != link["identity"]["group"]:
+                        raise ValueError("Foreign link group")
+                    link["tag_possible"] = False
+                except Exception:
+                    failures.append("group")
+        if failures:
+            raise RuntimeError("Exact kernel fault cleanup is incomplete")
+
+    def _cleanup_identity(self, name):
+        """Read identity without requiring routes that may have drifted."""
+        raw = self.command("ip", "-j", "-d", "link", "show")
+        links = json.loads(raw)
+        matches = [item for item in links if item.get("ifname") == name]
+        if len(matches) != 1:
+            return None
+        item = matches[0]
+        values = link_metadata(self.command, raw)[name]
+        try: group = _numeric_group(item.get("group"))
+        except LinkScopeError: return None
+        if (values[0] != 1 or values[1] != item.get("ifindex")
+                or values[2] != values[1] or values[3]
+                or group != values[4]
+                or type(item.get("linkinfo", {})) is not dict):
+            return None
+        return {"ifindex": values[1], "kind": item.get("linkinfo", {}).get("info_kind"),
+                "group": values[4]}
+
+
 class AndroidKernelPath:
     """Only the explicitly booted rootable CI emulator may execute these rules."""
     def __init__(self, peer, observation, turn_url, *, resolver=socket.getaddrinfo, diagnostics=None,
@@ -307,8 +774,7 @@ class AndroidKernelPath:
                 self._check_scope()
             with path_stage(path_diagnostics, "kernel_link_coverage"):
                 try:
-                    self.device = covered_link(*link_snapshot(self.command))
-                    self._qdisc_before = self._default_qdisc()
+                    self.coverage = _BoundedUdpLinks(self)
                 except LinkScopeError as error:
                     try: path_diagnostics.observe(error, "kernel_link_coverage", error.reason)
                     except Exception: pass
@@ -333,6 +799,13 @@ class AndroidKernelPath:
         return value
 
     def _link_current(self):
+        if self.uid_udp_mode:
+            try:
+                self.coverage.current()
+            except LinkScopeError as error:
+                self._observe_link_error(error)
+                raise
+            return
         try:
             owned_ifb = self.ifb if "ifb" in self._installed else None
             if owned_ifb is not None:
@@ -453,40 +926,9 @@ class AndroidKernelPath:
             raise ValueError("The declared impairment profile requires the selected UDP path")
         if self.uid_udp_mode:
             try:
-                self._link_current()
-                if self.ifb in link_names(self.command("ip", "-o", "link", "show")):
-                    raise LinkScopeError("alternate_link")
-                self._ifb_prechecked_absent = True
-                if self._default_qdisc() != self._qdisc_before:
-                    raise LinkScopeError("conflicting_qdisc")
-                self._installed.append("ifb")
-                self._ifb_add_confirmed = False
-                self.command("ip", "link", "add", self.ifb, "type", "ifb")
-                self._ifb_add_confirmed = True
-                self.command("ip", "link", "set", "dev", self.ifb, "alias", self.rule)
-                self.command("ip", "link", "set", self.ifb, "up")
-                self._installed.append("egress")
-                self.command("tc", "qdisc", "replace", "dev", self.device, "root", "handle", self.egress_handle,
-                    "netem", "delay", "75ms", "10ms", "distribution", "normal", "loss", "0.1%")
-                self._installed.append("ingress")
-                self._ingress_confirmed = False
-                self.command("tc", "qdisc", "add", "dev", self.device, "handle", "ffff:", "ingress")
-                self._ingress_confirmed = True
-                self._ingress_filter_complete = False
-                self.command("tc", "filter", "add", "dev", self.device, "parent", "ffff:",
-                    "protocol", "all", "prio", str(self.filter_prio), "matchall", "action", "mirred", "egress",
-                    "redirect", "dev", self.ifb)
-                self._ingress_filter_complete = True
-                self.command("tc", "qdisc", "replace", "dev", self.ifb, "root", "handle", self.ingress_handle,
-                    "netem", "delay", "75ms", "10ms", "distribution", "normal", "loss", "0.1%")
-                self._link_current()
-                self.before = self.counters()
+                self.coverage.install()
             except Exception as error:
                 self._observe_link_error(error)
-                try: self.close()
-                except Exception as cleanup_error:
-                    self._setup_cleanup_failure = cleanup_error
-                    raise error from cleanup_error
                 raise
             return
         try:
@@ -511,6 +953,8 @@ class AndroidKernelPath:
             raise
 
     def counters(self):
+        if self.uid_udp_mode:
+            return self.coverage.counters()
         return {"egress": netem_counter(self.command("tc", "-s", "qdisc", "show", "dev", self.device), self.egress_handle),
                 "ingress": netem_counter(self.command("tc", "-s", "qdisc", "show", "dev", self.ifb), self.ingress_handle)}
 
@@ -671,6 +1115,7 @@ class AndroidKernelPath:
     def report(self):
         if self.uid_udp_mode:
             self.require_current()
+            return self.coverage.report()
         after = self.counters()
         delta = {direction: {key: after[direction][key] - self.before[direction][key]
                             for key in ("bytes", "packets", "dropped")} for direction in ("egress", "ingress")}
@@ -683,6 +1128,22 @@ class AndroidKernelPath:
                 "loss_observed": sum(item["dropped"] for item in delta.values()) > 0, "counters": delta}
 
     def _close_link(self):
+        if self.uid_udp_mode:
+            failures = []
+            try:
+                if self._blocked:
+                    self._delete_endpoint_rules()
+            except Exception:
+                failures.append("block")
+            try:
+                self.coverage.close()
+            except Exception:
+                failures.append("coverage")
+            if failures:
+                raise negative_control_error(getattr(self, "_negative_diagnostics", None),
+                    "fault_cleanup", RuntimeError("Exact kernel fault cleanup is incomplete"),
+                    "cleanup_incomplete")
+            return
         failures = []
         try:
             if self._blocked:

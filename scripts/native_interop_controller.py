@@ -170,6 +170,7 @@ class Controller:
         self._retirement_context = self._retirement_failure = None
         self._path_diagnostics = None
         self._final_path_failure = None
+        self._fault_cleanup_failure = None
         try: self._negative_diagnostics = NegativeControlDiagnostics()
         except Exception: self._negative_diagnostics = None
         self.workload = required_workload(workload)
@@ -305,6 +306,19 @@ class Controller:
             return {"native_path_failure": selected}
         except Exception:
             return {}
+
+    def failure_kernel_cleanup(self, error):
+        """Keep exact primary error identity and a separate fixed cleanup label."""
+        try:
+            record = self._fault_cleanup_failure
+            if (type(record) is tuple and len(record) == 2 and record[0] is error
+                    and type(record[1]) is dict
+                    and record[1] == {"scenario": "impaired", "stage": "fault_cleanup",
+                                      "reason": "cleanup_incomplete"}):
+                return {"kernel_cleanup_failure": dict(record[1]), "cleanup_failed": True}
+        except Exception:
+            pass
+        return {}
 
     def negative_traffic(self, before, after):
         with negative_control_stage(self._negative_diagnostics, "final_traffic"):
@@ -745,6 +759,7 @@ class Controller:
     def path_case(self, scenario, initiator):
         self._retirement_context = self._retirement_failure = None
         self._final_path_failure = None
+        self._fault_cleanup_failure = None
         self._negative_diagnostics = reset_negative_control(self._negative_diagnostics, scenario)
         session, url = self.negotiate(scenario, initiator)
         if self.contact is None: self.pair(session, initiator)
@@ -822,13 +837,24 @@ class Controller:
                     "native_delta": self.negative_traffic(before, after), "messages": messages, "impairment": impairment, "negative": negative})
         finally:
             if fault is not None:
-                active = sys.exc_info()[1]
-                try:
-                    with negative_control_stage(self._negative_diagnostics, "fault_cleanup"): fault.close()
-                except Exception as cleanup_error:
-                    if active is not None and getattr(fault, "_setup_cleanup_failure", None) is not None:
-                        raise active from cleanup_error
-                    raise
+                if scenario != "impaired":
+                    with negative_control_stage(self._negative_diagnostics, "fault_cleanup"):
+                        fault.close()
+                else:
+                    active = sys.exc_info()[1]
+                    observer = self._negative_diagnostics
+                    previous = getattr(observer, "_failure", None)
+                    try:
+                        with negative_control_stage(self._negative_diagnostics, "fault_cleanup"): fault.close()
+                    except Exception as cleanup_error:
+                        if active is not None:
+                            if type(previous) is tuple and len(previous) == 2 and previous[0] is active:
+                                try: observer._failure = previous
+                                except Exception: pass
+                            self._fault_cleanup_failure = (active, {"scenario": "impaired",
+                                "stage": "fault_cleanup", "reason": "cleanup_incomplete"})
+                            raise active from cleanup_error
+                        raise
         self._path_diagnostics = None
         self._negative_diagnostics = reset_negative_control(self._negative_diagnostics)
         self.phase = scenario + "_native_lease_retirement"
@@ -1013,6 +1039,8 @@ def main():
             result.update(controller.failure_negative_control(error))
             result.update(controller.failure_final_path(error))
             result.update(controller.failure_native_path(error))
+            try: result.update(controller.failure_kernel_cleanup(error))
+            except Exception: pass  # Optional cleanup metadata cannot replace the primary report.
             try:
                 core = controller.failure_core(error)
                 result.update(core)
