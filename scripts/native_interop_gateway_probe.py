@@ -50,7 +50,20 @@ def rule_tokens(tokens):
     if "--ctstate" in result:
         index = result.index("--ctstate") + 1
         result[index] = ",".join(sorted(result[index].split(",")))
-    return result
+    # iptables -S prints base selectors in canonical order, independently of
+    # their input order. Preserve extension order and every option/value.
+    if len(result) < 2 or result[0] != "-A":
+        return tuple(result)
+    base, extensions = [], []
+    index = 2
+    while index < len(result):
+        if result[index] in {"-s", "-d", "-i", "-o", "-p"} and index + 1 < len(result):
+            base.append((result[index], result[index + 1]))
+            index += 2
+        else:
+            extensions.append(result[index])
+            index += 1
+    return tuple(result[:2]), tuple(sorted(base)), tuple(extensions)
 
 
 def counter_delta(before, after):
@@ -122,6 +135,14 @@ class Gateway:
         rows = json.loads(command("ip", "-j", "-d", "link", "show", "dev", name))
         require(len(rows) == 1 and rows[0]["ifname"] == name
                 and rows[0].get("linkinfo", {}).get("info_kind") == "veth", "veth_identity_unavailable")
+        peer = command("cat", "/sys/class/net/" + name + "/iflink")
+        require(peer.isdigit() and int(peer) > 0, "veth_peer_identity_unavailable")
+        if "link_index" in rows[0]:
+            require(rows[0]["link_index"] == int(peer), "veth_peer_identity_changed")
+        else:
+            require(rows[0].get("link") == (self.guest if name == self.host else self.host),
+                    "veth_peer_name_unavailable")
+        rows[0]["link_index"] = int(peer)
         return rows[0]
 
     def check_links(self):
@@ -166,6 +187,8 @@ class Gateway:
         require(lines.count(expected) <= 1, "duplicate_owned_rule")
         if expected in lines:
             self.run("iptables", "-w", "5", "-t", table, "-D", chain, *args)
+            after = self.run("iptables", "-w", "5", "-t", table, "-S", chain)
+            require(expected not in [rule_tokens(shlex.split(line)) for line in after.splitlines()], "owned_rule_remains")
         self.rules.remove(rule)
 
     def create(self, temporary):
