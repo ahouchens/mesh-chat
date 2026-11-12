@@ -1,5 +1,10 @@
 # Independent public consumer qualification proposal
 
+Integration `b71cb05` passes all 1,386 offline interop cases with the controlled
+TCP/TLS endpoint negative control. This changes private qualification evidence,
+not the consumer API or WebRTC dependency. Full native CI and the remaining
+public-consumer scenario matrix are still pending.
+
 Current direction (2026-11-12): the network qualification harness is replacing
 its extra unique-TCP-socket assumption with isolated app-UID/TURN-destination
 blocking, as allowed by runtime specification §9.3/SC12. This needs no WebRTC

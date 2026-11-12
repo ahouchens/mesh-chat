@@ -1,5 +1,10 @@
 # Private packaged qualification control
 
+The controlled TCP/TLS harness is integrated through `b71cb05`; all 1,386 offline
+interop cases pass. Private negative-control evidence now names a UID and TURN
+destination scope, while UDP retains its socket/flow scope. No public Core API
+or WebRTC dependency changed. Full packaged native qualification is pending.
+
 Current direction (2026-11-12): TCP/TLS network negative controls are being
 revised to use isolated app-UID/TURN-destination scope, without a WebRTC fork
 or public Core API change. Runtime specification §9.3/SC12 does not require a

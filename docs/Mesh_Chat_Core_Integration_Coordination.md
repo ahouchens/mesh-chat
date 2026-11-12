@@ -1,5 +1,10 @@
 # Core integration coordination — 2026-11-09
 
+Harness integration `b71cb05` contains C's endpoint rules, exact cleanup and
+verified bootstrap-helper overlap changes through `bd4d5c2`. Root's seven-file
+interop run passes 1,386 cases, without skips. Next is full packaged native CI
+with exact-source evidence; no fork/AAR changes or native acceptance are claimed.
+
 Current assignment correction (2026-11-12): use controlled network-level
 qualification as specified in §9.3/SC12, without modifying WebRTC. C implements
 isolated UID/TURN-destination TCP/TLS rules and truthful evidence; B reviews

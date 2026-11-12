@@ -1,5 +1,10 @@
 # Acceptance reconciliation: specification invariants and scenarios
 
+Integration `b71cb05` contains the controlled TCP/TLS destination-block harness
+and passes 1,386 offline interop cases with no skips. This establishes harness
+regressions only. Packaged native CI, the rest of SC12, and unresolved lifecycle
+failure disposition remain required before roadmap promotion.
+
 ## Current direction: controlled network qualification (2026-11-12)
 
 Runtime specification §9.3 and SC12 require selected-path evidence, packet

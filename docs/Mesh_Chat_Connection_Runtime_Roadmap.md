@@ -1,5 +1,10 @@
 # Connection runtime implementation and qualification
 
+The controlled TCP/TLS network harness is now integrated through `b71cb05` and
+passes all 1,386 offline interop cases. Run the full packaged Windows/Android
+qualification next. No WebRTC dependency change is needed. This is progress on
+the selected-path negative control, not completion of SC12 or the refactoring.
+
 ## Current direction: controlled network qualification (2026-11-12)
 
 The next step is a test-harness correction, without a WebRTC fork. Specification
@@ -53,9 +58,9 @@ unavailable; relay candidate endpoints are not that socket.
 Windows subsequently reports `PeerFailure` / `scenario_deadline` at
 `receipt_delivery_wait`; the aggregate gate rejects the failed native workload.
 The final-observation diagnostic below is not reached. No full native acceptance
-is established. Read-only work is determining an implementable selected-socket
-binding from the native transport owner; arbitrary socket selection, broad
-blocking, added retries or a weaker gate are not justified. The previous final
+is established. The earlier selected-socket investigation is superseded by
+the controlled app-UID/TURN-destination test described above. Arbitrary socket
+selection and additional retries are unnecessary. The previous final
 path disappearance, local `97c32d5` lifecycle timeout and Windows delivery failure
 remain unresolved. Helper retirement and subsequent roadmap promotion remain
 deferred pending native acceptance and failure disposition.

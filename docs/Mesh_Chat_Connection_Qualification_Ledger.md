@@ -1,5 +1,28 @@
 # Connection runtime qualification ledger
 
+## Controlled network harness integrated (2026-11-12)
+
+TCP/TLS component `bd4d5c2` (including `8de0a3c` and `4b38a9c`) is integrated
+through `b71cb05`. It admits multiple app-owned TURN connections and blocks the
+app UID at every frozen TURN destination and port. It preserves selected relay
+statistics, positive drop counters, no blocked authenticated receipt, exact
+rule cleanup and once-only delivery after restoration. The evidence names
+`uid_tcp_turn_destination_set`; it does not claim one internal WebRTC socket.
+
+The known retiring `:mesh_bootstrap` helper may overlap only with its verified
+identity and no observed external TCP socket. Unexpected processes, resources
+or established external endpoints reject the test. Host DNS is a bounded
+candidate set, not proof of guest DNS completeness. Loopback is justified by
+the instrumentation control server and ADB forwarding; the fixture configures
+no local TURN proxy. UDP socket/flow and bidirectional netem checks remain.
+
+The old-source two-socket contract failed and the replacement passes. The
+component passes 885 affected cases; integration `b71cb05` passes all **1,386**
+cases in the seven interop test files, with no skips and exact execution
+inventory. These are offline checks. Full native CI is the next gate; numeric
+Android UID inventory and IPv6 firewall capability are not yet demonstrated.
+Earlier native/lifecycle failures remain retained and unresolved.
+
 ## Design correction: network path evidence, not internal socket identity (2026-11-12)
 
 Specification §9.3 and SC12 do not require a unique internal WebRTC socket. The
