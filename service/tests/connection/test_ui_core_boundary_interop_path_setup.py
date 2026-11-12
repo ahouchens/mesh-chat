@@ -62,6 +62,118 @@ def test_sysfs_stack_probe_passes_one_quoted_remote_shell_program():
     assert link_metadata(command, links)["eth0"] == (1, 2, 2, False, 0)
     assert len(observed) == 1
 
+
+def test_plain_inventory_handles_captured_erspan_detail_without_json_repair():
+    from native_interop_link_scope import inventory, LinkScopeError
+    basic = ("1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 group default\\    link/loopback 00\n"
+             "2: wlan0: <BROADCAST,UP> mtu 1500 group default\\    link/ether 02\n"
+             "3: erspan0@NONE: <BROADCAST> mtu 1450 group default\\    link/ether 00\n")
+    details = {
+        "lo": "1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 group default\n    link/loopback 00\n",
+        "wlan0": "2: wlan0: <BROADCAST,UP> mtu 1500 group default\n    link/ether 02\n",
+        "erspan0": ("3: erspan0@NONE: <BROADCAST> mtu 1450 group default\n"
+                    "    link/ether 00\n    erspan remote any local any okey 0.0.0.0 erspan_index 0\n"),
+    }
+    observed = []
+    def command(*args):
+        observed.append(args)
+        if args == ("ip", "-o", "link", "show"): return basic
+        if args[:5] == ("ip", "-d", "link", "show", "dev"):
+            return details[args[5]]
+        raise AssertionError(args)
+    links = json.loads(inventory(command))
+    assert [(item["ifname"], item.get("linkinfo", {}).get("info_kind")) for item in links] == [
+        ("lo", None), ("wlan0", None), ("erspan0", "erspan")]
+    assert ("ip", "-j", "-d", "link", "show") not in observed
+    details["wlan0"] = details["wlan0"].replace("2: wlan0:", "9: wlan0:")
+    with pytest.raises(LinkScopeError, match="initial_inventory_unavailable"):
+        inventory(command)
+    details["wlan0"] = details["wlan0"].replace("9: wlan0:", "2: wlan0:")
+    details["wlan0"] += "    dummy peer 3\n"
+    with pytest.raises(LinkScopeError, match="initial_kind_unproven"):
+        inventory(command)
+
+
+@pytest.mark.parametrize("change", ["new_up_link", "changed_flags", "unproven_kind"])
+def test_plain_inventory_rejects_unstable_or_unproven_up_topology(change):
+    from native_interop_link_scope import inventory, covered_links, link_metadata, LinkScopeError
+    basic = ("1: lo: <LOOPBACK,UP> mtu 65536 group default\\    link/loopback 00\n"
+             "2: wlan0: <BROADCAST,UP> mtu 1500 group default\\    link/ether 02\n")
+    details = {"lo": "1: lo: <LOOPBACK,UP> mtu 65536 group default\n    link/loopback 00\n",
+               "wlan0": "2: wlan0: <BROADCAST,UP> mtu 1500 group default\n    link/ether 02\n"}
+    if change == "new_up_link":
+        basic += "3: tun0: <UP> mtu 1500 group default\\    link/none 00\n"
+        details["tun0"] = "3: tun0: <UP> mtu 1500 group default\n    link/none 00\n    tun addrgenmode eui64\n"
+    elif change == "changed_flags":
+        details["wlan0"] = details["wlan0"].replace("BROADCAST,UP", "BROADCAST")
+    else:
+        details["wlan0"] += "    veth addrgenmode eui64\n"
+    def command(*args):
+        if args == ("ip", "-o", "link", "show"): return basic
+        if args[:5] == ("ip", "-d", "link", "show", "dev"): return details[args[5]]
+        if args[0] == "cat":
+            name, field = args[1].split("/")[-2:]
+            return str({"type": 772 if name == "lo" else 1,
+                        "ifindex": {"lo": 1, "wlan0": 2, "tun0": 3}[name],
+                        "iflink": {"lo": 1, "wlan0": 2, "tun0": 3}[name],
+                        "netdev_group": 0}[field])
+        if args[:2] == ("sh", "-c"): return "0"
+        raise AssertionError(args)
+    if change == "changed_flags":
+        with pytest.raises(LinkScopeError, match="initial_inventory_unavailable"):
+            inventory(command)
+    else:
+        links = inventory(command)
+        rules = "0: from all lookup local\n100: from all lookup main\n"
+        with pytest.raises(LinkScopeError, match="initial_stack_unsupported"):
+            covered_links(links, "default dev wlan0 table main\n", "", rules, rules,
+                          link_metadata(command, links))
+
+
+def test_plain_inventory_rejects_link_added_during_detail_reads():
+    from native_interop_link_scope import inventory, LinkScopeError
+    first = "1: lo: <LOOPBACK,UP> mtu 65536 group default\\    link/loopback 00\n"
+    reads = 0
+    def command(*args):
+        nonlocal reads
+        if args == ("ip", "-o", "link", "show"):
+            reads += 1
+            return first if reads == 1 else first + "2: tun0: <UP> mtu 1500 group default\\    link/none 00\n"
+        if args == ("ip", "-d", "link", "show", "dev", "lo"):
+            return "1: lo: <LOOPBACK,UP> mtu 65536 group default\n    link/loopback 00\n"
+        raise AssertionError(args)
+    with pytest.raises(LinkScopeError, match="initial_inventory_unavailable"):
+        inventory(command)
+
+
+def test_plain_inventory_matches_owned_ifb_alias_continuation():
+    from native_interop_link_scope import inventory, LinkScopeError
+    basic = ("1: lo: <LOOPBACK,UP> mtu 65536 group default\\    link/loopback 00\n"
+             "2: mci123: <UP> mtu 1500 group default\\    link/ether 02\\    alias mesh-ci-test\n")
+    details = {"lo": "1: lo: <LOOPBACK,UP> mtu 65536 group default\n    link/loopback 00\n",
+               "mci123": ("2: mci123: <UP> mtu 1500 group default\n    link/ether 02\n"
+                          "    ifb addrgenmode eui64\n    alias mesh-ci-test\n")}
+    def command(*args):
+        if args == ("ip", "-o", "link", "show"): return basic
+        if args[:5] == ("ip", "-d", "link", "show", "dev"): return details[args[5]]
+        raise AssertionError(args)
+    assert json.loads(inventory(command))[1]["linkinfo"] == {"info_kind": "ifb"}
+    details["mci123"] = details["mci123"].replace("alias mesh-ci-test", "alias foreign")
+    with pytest.raises(LinkScopeError, match="initial_inventory_unavailable"):
+        inventory(command)
+
+
+def test_plain_inventory_rejects_master_disagreement_between_reads():
+    from native_interop_link_scope import inventory, LinkScopeError
+    basic = "2: wlan0: <BROADCAST,UP> mtu 1500 master bridge0 group default\\    link/ether 02\n"
+    detail = "2: wlan0: <BROADCAST,UP> mtu 1500 group default\n    link/ether 02\n"
+    def command(*args):
+        if args == ("ip", "-o", "link", "show"): return basic
+        if args == ("ip", "-d", "link", "show", "dev", "wlan0"): return detail
+        raise AssertionError(args)
+    with pytest.raises(LinkScopeError, match="initial_inventory_unavailable"):
+        inventory(command)
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 import native_interop_controller as controller
 import native_interop_faults as faults
@@ -161,8 +273,15 @@ def kernel_boundary(*, point=None, ambiguous=False, tcp_rows=None, fd_links=None
                 return "PRIVATE_ROUTE_WITHOUT_DEVICE" if point == "kernel_socket_route" else "198.51.100.2 dev wlan0 src 10.0.2.15"
             if args[1:5] == ("ip", "-o", "link", "show"):
                 if point == "link_capability": raise RuntimeError("PRIVATE_COMMAND_OUTPUT")
-                return ("1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536\n2: eth0: <BROADCAST,UP,LOWER_UP> mtu 1500\n"
-                        + ("3: tun0: <POINTOPOINT,UP> mtu 1500\n" if point == "link_alternate" else ""))
+                return ("1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 group default\\    link/loopback 00\n"
+                        "2: eth0: <BROADCAST,UP,LOWER_UP> mtu 1500 group default\\    link/ether 02\n"
+                        + ("3: tun0: <POINTOPOINT,UP> mtu 1500 group default\\    link/none 00\n"
+                           if point == "link_alternate" else ""))
+            if args[1:6] == ("ip", "-d", "link", "show", "dev"):
+                name = args[6]
+                return {"lo": "1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 group default\n    link/loopback 00\n",
+                        "eth0": "2: eth0: <BROADCAST,UP,LOWER_UP> mtu 1500 group default\n    link/ether 02\n",
+                        "tun0": "3: tun0: <POINTOPOINT,UP> mtu 1500 group default\n    link/none 00\n    tun addrgenmode eui64\n"}[name]
             if args[1:2] in (("iptables-save",), ("ip6tables-save",)):
                 return "*filter\nCOMMIT\n"
             if args[1:4] == ("nft", "list", "ruleset"):

@@ -15,7 +15,7 @@ from uuid import uuid4
 
 from native_interop_diagnostics import negative_control_error, negative_control_stage
 from native_interop_link_scope import (LinkScopeError, _numeric_group, covered_link, covered_links,
-    link_metadata, link_names, snapshot as link_snapshot)
+    inventory, link_metadata, link_names, snapshot as link_snapshot)
 
 
 PATH_FAILURE_REASONS = {
@@ -255,6 +255,8 @@ class _BoundedUdpLinks:
     def _snapshot(self, *, owned_ifbs=()):
         try:
             output = link_snapshot(self.command)
+        except LinkScopeError:
+            raise
         except Exception as error:
             raise LinkScopeError("initial_inventory_unavailable") from error
         return covered_links(*output, link_metadata(self.command, output[0]), owned_ifbs=owned_ifbs)
@@ -272,9 +274,17 @@ class _BoundedUdpLinks:
             nft = self.command("sh", "-c", shlex.quote("command -v nft >/dev/null 2>&1 && echo present || echo absent"))
             if nft == "present":
                 inventories.append(self.command("nft", "list", "ruleset"))
+            elif nft == "absent":
+                config = self.command("sh", "-c", shlex.quote(
+                    "if [ -r /proc/config.gz ] && command -v zcat >/dev/null 2>&1; then "
+                    "c=$(zcat /proc/config.gz 2>/dev/null) || exit 1; "
+                    "printf '%s\\n' \"$c\" | grep -E "
+                    "'^(CONFIG_NF_TABLES=(y|m|n)|# CONFIG_NF_TABLES is not set)$'; "
+                    "else exit 1; fi"))
+                if config != "# CONFIG_NF_TABLES is not set":
+                    raise ValueError("Running kernel nft status is not disabled")
             else:
-                # A missing userspace binary says nothing about kernel rules.
-                raise ValueError("Active nft ruleset cannot be inventoried")
+                raise ValueError("nft capability is unknown")
             mapping = self.command("sh", "-c", shlex.quote("if [ -f /etc/iproute2/group ]; then cat /etc/iproute2/group; fi"))
         except Exception as error:
             raise LinkScopeError("group_inventory_unavailable") from error
@@ -672,7 +682,7 @@ class _BoundedUdpLinks:
 
     def _cleanup_identity(self, name):
         """Read identity without requiring routes that may have drifted."""
-        raw = self.command("ip", "-j", "-d", "link", "show")
+        raw = inventory(self.command)
         links = json.loads(raw)
         matches = [item for item in links if item.get("ifname") == name]
         if len(matches) != 1:
@@ -684,6 +694,8 @@ class _BoundedUdpLinks:
         if (values[0] != 1 or values[1] != item.get("ifindex")
                 or values[2] != values[1] or values[3]
                 or group != values[4]
+                or item.get("master") is not None
+                or item.get("link_index") not in (None, values[1])
                 or type(item.get("linkinfo", {})) is not dict):
             return None
         return {"ifindex": values[1], "kind": item.get("linkinfo", {}).get("info_kind"),

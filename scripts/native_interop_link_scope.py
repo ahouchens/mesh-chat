@@ -186,6 +186,106 @@ def link_metadata(command, links):
     return result
 
 
+_LINK_HEADER = re.compile(
+    r"([0-9]+): ([A-Za-z0-9_.-]{1,15})(?:@([^: ]+))?: <([^>]*)> .*?\bgroup (-?[A-Za-z0-9_]+)(?:\s.*)?$")
+
+
+def _plain_link_header(line):
+    match = _LINK_HEADER.fullmatch(line.strip())
+    if match is None or int(match[1]) <= 0:
+        raise LinkScopeError("initial_inventory_unavailable")
+    flags = match[4].split(",") if match[4] else []
+    if any(re.fullmatch(r"[A-Z0-9_-]+", flag) is None for flag in flags) or len(flags) != len(set(flags)):
+        raise LinkScopeError("initial_inventory_unavailable")
+    attributes = line.strip().split(">", 1)[1].split()
+    if len(attributes) % 2:
+        raise LinkScopeError("initial_inventory_unavailable")
+    pairs = dict(zip(attributes[::2], attributes[1::2]))
+    if (len(pairs) != len(attributes) // 2 or pairs.get("group") != match[5]
+            or ("master" in pairs and re.fullmatch(r"[A-Za-z0-9_.-]{1,15}", pairs["master"]) is None)):
+        raise LinkScopeError("initial_inventory_unavailable")
+    if "UP" in flags:
+        if any(key not in {"mtu", "qdisc", "state", "mode", "group", "qlen", "master"}
+               for key in pairs):
+            raise LinkScopeError("initial_kind_unproven")
+    return int(match[1]), match[2], match[3], flags, _numeric_group(match[5]), pairs.get("master")
+
+
+def _generic_detail(tokens):
+    allowed = {"addrgenmode", "numtxqueues", "numrxqueues", "gso_max_size",
+               "gso_max_segs", "gro_max_size", "gso_ipv4_max_size", "gso_ipv4_max_segs"}
+    return (len(tokens) % 2 == 0 and all(tokens[index] in allowed
+            and re.fullmatch(r"[A-Za-z0-9_.-]+", tokens[index + 1])
+            for index in range(0, len(tokens), 2)))
+
+
+def inventory(command):
+    """Cross-check a complete basic inventory against each device's own detail."""
+    basic = command("ip", "-o", "link", "show")
+    lines = basic.splitlines()
+    if not 1 <= len(lines) <= 32:
+        raise LinkScopeError("initial_inventory_unavailable")
+    links, names, indices = [], set(), set()
+    for line in lines:
+        segments = line.split("\\")
+        head = segments[0]
+        index, name, parent, flags, group, master = _plain_link_header(head)
+        if len(segments) < 2 or name in names or index in indices:
+            raise LinkScopeError("initial_inventory_unavailable")
+        names.add(name)
+        indices.add(index)
+        basic_details = [part.strip() for part in segments[1:]]
+        body = basic_details[0]
+        match_type = re.fullmatch(r"link/([A-Za-z0-9./_-]+)\s+.+", body)
+        if match_type is None:
+            raise LinkScopeError("initial_inventory_unavailable")
+        if any(not part.startswith(("alias ", "altname ")) for part in basic_details[1:]):
+            raise LinkScopeError("initial_inventory_unavailable")
+        try:
+            detail = command("ip", "-d", "link", "show", "dev", name)
+        except Exception as error:
+            raise LinkScopeError("initial_inventory_unavailable") from error
+        detail_lines = detail.splitlines()
+        if len(detail_lines) < 2:
+            raise LinkScopeError("initial_inventory_unavailable")
+        if _plain_link_header(detail_lines[0]) != (index, name, parent, flags, group, master):
+            raise LinkScopeError("initial_inventory_unavailable")
+        detail_type = re.fullmatch(r"\s*link/([A-Za-z0-9./_-]+)\s+.+", detail_lines[1])
+        if (detail_type is None or detail_type[1] != match_type[1]
+                or not detail_lines[1].strip().startswith(body)):
+            raise LinkScopeError("initial_inventory_unavailable")
+        detailed_continuations = [entry.strip() for entry in detail_lines[2:]]
+        if any(detailed_continuations.count(part) != 1 for part in basic_details[1:]):
+            raise LinkScopeError("initial_inventory_unavailable")
+        item = {"ifindex": index, "ifname": name, "flags": flags,
+                "link_type": match_type[1], "group": group}
+        if parent is not None:
+            item["link_index"] = parent
+        if master is not None:
+            item["master"] = master
+        # iproute2 prints virtual kinds in detail lines; generic attributes
+        # cannot be taken as proof of a physical link.
+        for extra in detail_lines[2:]:
+            tokens = extra.strip().split()
+            token = tokens[0] if tokens else ""
+            if token in {"alias", "altname"}:
+                continue
+            if token == "addrgenmode":
+                if "UP" in flags and not _generic_detail(tokens):
+                    raise LinkScopeError("initial_kind_unproven")
+                continue
+            if token:
+                if re.fullmatch(r"[A-Za-z0-9_-]+", token) is None or "linkinfo" in item:
+                    raise LinkScopeError("initial_kind_unproven")
+                if "UP" in flags and not _generic_detail(tokens[1:]):
+                    raise LinkScopeError("initial_kind_unproven")
+                item["linkinfo"] = {"info_kind": token}
+        links.append(item)
+    if command("ip", "-o", "link", "show") != basic:
+        raise LinkScopeError("initial_inventory_unavailable")
+    return json.dumps(links)
+
+
 def covered_link(links, route4, route6, rule4, rule6, *, owned_ifb=None):
     names = link_names(links)
     for rules in (rule4, rule6):
@@ -226,7 +326,7 @@ def covered_link(links, route4, route6, rule4, rule6, *, owned_ifb=None):
 
 def snapshot(command):
     """Read both families and all tables; never infer coverage from one lookup."""
-    return (command("ip", "-j", "-d", "link", "show"),
+    return (inventory(command),
         command("ip", "-4", "route", "show", "table", "all"),
         command("ip", "-6", "route", "show", "table", "all"),
         command("ip", "-4", "rule", "show"),

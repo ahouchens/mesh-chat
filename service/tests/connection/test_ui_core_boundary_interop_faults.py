@@ -66,7 +66,7 @@ def kernel_fixture(protocol="udp"):
 
 def udp_link_fixture(monkeypatch, *, second_link=False, sink=False, canonical=False,
                      nft_available=True, policy_conflict=False, initial_group=0,
-                     replace_on_group=False, state_ref=None):
+                     replace_on_group=False, state_ref=None, nft_config="unknown"):
     """Exercise the real AndroidKernelPath composition against a fake kernel."""
     state = SimpleNamespace(commands=[], ifb=False, alias=False, root="default", ingress=False,
         filter=False, rules={}, egress_packets=0, ingress_packets=0, failure=None,
@@ -77,7 +77,8 @@ def udp_link_fixture(monkeypatch, *, second_link=False, sink=False, canonical=Fa
         extra_group=0, extra_root="default", extra_ingress=False, extra_filter=False,
         extra_ifb=None, extra_alias=False, extra_egress_packets=0, extra_ingress_packets=0,
         sink=sink, policy_conflict=policy_conflict, guard_drop_by_chain={},
-        ifb_index=4 if second_link else 3, replace_on_group=replace_on_group)
+        ifb_index=4 if second_link else 3, replace_on_group=replace_on_group,
+        foreign_master=False, foreign_parent=False)
     if state_ref is not None:
         state_ref.append(state)
     value = None
@@ -91,7 +92,7 @@ def udp_link_fixture(monkeypatch, *, second_link=False, sink=False, canonical=Fa
             return f"Uid:\t{state.uid}\t{state.uid}\t{state.uid}\t{state.uid}\n"
         if args == ("pm", "list", "packages", "-U"): return "package:PRIVATE_APP uid:10053\n"
         if args == ("ps", "-A", "-o", "UID,PID"): return "UID PID\n10053 123\n"
-        if args == ("ip", "-j", "-d", "link", "show"):
+        if args == ("ip", "-o", "link", "show") or args[:5] == ("ip", "-d", "link", "show", "dev"):
             links = [{"ifindex": 1, "ifname": "lo", "flags": ["LOOPBACK", "UP"],
                       "link_type": "loopback", "group": 0},
                      {"ifindex": state.wlan_index, "ifname": "wlan0", "flags": ["UP"],
@@ -106,7 +107,26 @@ def udp_link_fixture(monkeypatch, *, second_link=False, sink=False, canonical=Fa
             if state.extra_ifb:
                 links.append({"ifindex": 5, "ifname": state.extra_ifb, "flags": ["UP"],
                     "link_type": "ether", "linkinfo": {"info_kind": "ifb"}, "group": 0})
-            return json.dumps(links)
+            def header(item):
+                name = item["ifname"] + ("@if9" if item["ifname"] == "wlan0" and state.foreign_parent else "")
+                master = " master bridge0" if item["ifname"] == "wlan0" and state.foreign_master else ""
+                return (f'{item["ifindex"]}: {name}: <{",".join(item["flags"])}> '
+                        f'mtu 1500 group {item["group"]}{master}')
+            def body(item):
+                kind = item.get("linkinfo", {}).get("info_kind")
+                active_alias = state.alias if item["ifname"] == state.ifb_name else state.extra_alias
+                alias = (next((link["alias"] for link in value.coverage.links
+                               if link["ifb"] == item["ifname"]), None)
+                         if value is not None and active_alias else None)
+                return (f'    link/{item["link_type"]} 00\n'
+                        + (f'    {kind} addrgenmode eui64\n' if kind else '')
+                        + (f'    alias {alias}\n' if alias else ''))
+            if args[1] == "-o":
+                return "".join(header(item) + "\\" + "\\".join(
+                    part for part in body(item).splitlines() if not part.strip().startswith(
+                        item.get("linkinfo", {}).get("info_kind", "\0") + " ")) + "\n" for item in links)
+            item = next(item for item in links if item["ifname"] == args[-1])
+            return header(item) + "\n" + body(item)
         if args[0:1] == ("cat",) and args[1].startswith("/sys/class/net/"):
             name, field = args[1].split("/")[-2:]
             index = {"lo": 1, "wlan0": state.wlan_index, "wlan1": 3,
@@ -116,6 +136,9 @@ def udp_link_fixture(monkeypatch, *, second_link=False, sink=False, canonical=Fa
                     state.extra_group if name == "wlan1" else 0}[field])
         if args[0:2] == ("sh", "-c"):
             if "command -v nft" in args[2]: return "present" if state.nft_available else "absent"
+            if "/proc/config.gz" in args[2]:
+                if nft_config is None: raise RuntimeError("Kernel config unavailable")
+                return nft_config
             if "/etc/iproute2/group" in args[2]: return "0 default"
             if "/sys/class/net/" in args[2]: return "0"
         if args == ("iptables-save",) or args == ("ip6tables-save",):
@@ -502,6 +525,22 @@ def test_group_preflight_rejects_incomplete_active_policy_inventory(monkeypatch,
                          policy_conflict=missing == "group_policy")
 
 
+def test_missing_nft_binary_requires_running_kernel_disabled_evidence(monkeypatch):
+    value, state = udp_link_fixture(monkeypatch, nft_available=False,
+                                    nft_config="# CONFIG_NF_TABLES is not set")
+    assert any("/proc/config.gz" in args[2] for args in state.commands if args[:2] == ("sh", "-c"))
+    value.close()
+
+
+@pytest.mark.parametrize("config", ["CONFIG_NF_TABLES=y", "CONFIG_NF_TABLES=m", "unknown",
+                                    "# CONFIG_NF_TABLES is not set\nCONFIG_NF_TABLES=m", None])
+def test_missing_nft_binary_rejects_non_disabled_or_ambiguous_kernel_config(monkeypatch, config):
+    states = []
+    with pytest.raises(ValueError, match="group_inventory_unavailable"):
+        udp_link_fixture(monkeypatch, nft_available=False, nft_config=config, state_ref=states)
+    assert not any(args[:3] == ("ip", "link", "set") for args in states[0].commands)
+
+
 def test_same_name_replacement_is_not_mutated_during_cleanup(monkeypatch):
     value, state = udp_link_fixture(monkeypatch)
     value.install()
@@ -509,6 +548,16 @@ def test_same_name_replacement_is_not_mutated_during_cleanup(monkeypatch):
     with pytest.raises(RuntimeError, match="cleanup is incomplete"):
         value.close()
     assert not any(item[:3] == ("tc", "qdisc", "del") for item in state.commands)
+
+
+@pytest.mark.parametrize("relationship", ["foreign_master", "foreign_parent"])
+def test_cleanup_does_not_own_link_after_relationship_changes(monkeypatch, relationship):
+    value, state = udp_link_fixture(monkeypatch)
+    value.install()
+    setattr(state, relationship, True)
+    assert value.coverage._cleanup_identity("wlan0") is None
+    with pytest.raises(RuntimeError, match="cleanup is incomplete"):
+        value.close()
 
 
 def test_name_replacement_between_group_write_and_readback_is_not_restored(monkeypatch):
