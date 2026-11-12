@@ -1,6 +1,7 @@
 """Fixed-site native path diagnostics; synthetic inputs are never native CI evidence."""
 
 from pathlib import Path
+import ipaddress
 import json
 import sys
 from types import SimpleNamespace
@@ -22,7 +23,7 @@ def test_native_path_diagnostic_cases_are_in_the_fast_boundary_gate():
     assert "service/tests/connection/test_ui_core_boundary_interop_path_setup.py" in PYTHON_SELECTION
 
 
-def kernel_boundary(*, point=None, ambiguous=False, tcp_rows=None, fd_links=None):
+def kernel_boundary(*, point=None, ambiguous=False, tcp_rows=None, fd_links=None, dns_addresses=None):
     events = []
     class Peer:
         APP = "PRIVATE_APP"
@@ -45,33 +46,39 @@ def kernel_boundary(*, point=None, ambiguous=False, tcp_rows=None, fd_links=None
             if args[-2:] == ("cat", "/proc/123/net/tcp6"): return "header\n"
             if args[-2:] == ("cat", "/proc/123/status"):
                 return "Name: app\n" if point == "kernel_process_uid" else "Uid:\t10053\t10053\t10053\t10053\n"
+            if args[1:5] == ("pm", "list", "packages", "-U"):
+                return "package:OTHER uid:10053\n" if point == "kernel_scope_exclusivity" else "package:PRIVATE_APP uid:10053\n"
+            if args[1:5] == ("ps", "-A", "-o", "UID,PID"):
+                return "UID PID\n10053 123\n" + ("10053 456\n" if point == "extra_uid_process" else "")
             if args[1:4] == ("ip", "route", "get"):
                 return "PRIVATE_ROUTE_WITHOUT_DEVICE" if point == "kernel_socket_route" else "198.51.100.2 dev wlan0 src 10.0.2.15"
             raise AssertionError("Unexpected private command shape")
     def resolver(*args):
         events.append(("resolver", len(args)))
         if point == "kernel_turn_resolution": raise ValueError("PRIVATE_RESOLVER_OUTPUT")
-        return [(None, None, None, None, ("198.51.100.2", 3478))]
+        return [(None, None, None, None, (address, args[1]))
+                for address in (dns_addresses or ("198.51.100.2",))]
     return Peer(), resolver, events
 
 
 @pytest.mark.parametrize("point,observation,url,stage", [
     ("kernel_relay_evidence", {"pair": {"relay_protocol": "tcp", "local": {"type": "host"}}}, TURN, "kernel_relay_evidence"),
     ("kernel_emulator_identity", OBSERVATION, TURN, "kernel_emulator_identity"),
-    ("kernel_turn_url", OBSERVATION, "PRIVATE_INVALID_URL", "kernel_turn_url"),
+    ("kernel_turn_url", OBSERVATION, "PRIVATE_INVALID_URL", "kernel_turn_resolution"),
     ("kernel_turn_resolution", OBSERVATION, TURN, "kernel_turn_resolution"),
     ("kernel_process_identity", OBSERVATION, TURN, "kernel_process_identity"),
     ("kernel_socket_inventory", OBSERVATION, TURN, "kernel_socket_inventory"),
     ("kernel_socket_parse", OBSERVATION, TURN, "kernel_socket_parse"),
     ("kernel_socket_correlation", OBSERVATION, TURN, "kernel_socket_correlation"),
     ("kernel_process_uid", OBSERVATION, TURN, "kernel_process_uid"),
-    ("kernel_socket_route", OBSERVATION, TURN, "kernel_socket_route"),
+    ("kernel_scope_exclusivity", OBSERVATION, TURN, "kernel_scope_exclusivity"),
 ])
 def test_actual_kernel_constructor_labels_exact_failing_check_without_values(point, observation, url, stage):
     peer, resolver, _ = kernel_boundary(point=point)
     diagnostic = faults.NativePathDiagnostics("turn_tcp")
     with pytest.raises((ValueError, RuntimeError)) as caught:
-        faults.AndroidKernelPath(peer, observation, url, resolver=resolver, path_diagnostics=diagnostic)
+        faults.AndroidKernelPath(peer, observation, url, resolver=resolver, path_diagnostics=diagnostic,
+                                resource_check=lambda: True)
     selected = diagnostic.failure_observation(caught.value)
     expected = {"scenario": "turn_tcp", "stage": stage}
     if stage == "kernel_socket_correlation": expected["reason"] = "no_owned_match"
@@ -80,15 +87,13 @@ def test_actual_kernel_constructor_labels_exact_failing_check_without_values(poi
     assert "PRIVATE" not in repr(selected)
 
 
-def test_exact_own_process_socket_remains_unique_and_reports_ambiguous_reason():
+def test_multiple_owned_tcp_sockets_are_one_covered_turn_endpoint_scope():
     peer, resolver, _ = kernel_boundary(ambiguous=True)
     diagnostic = faults.NativePathDiagnostics("turn_tcp")
-    with pytest.raises(ValueError) as caught:
-        faults.AndroidKernelPath(peer, OBSERVATION, TURN, resolver=resolver, path_diagnostics=diagnostic)
-    assert diagnostic.failure_observation(caught.value) == {"scenario": "turn_tcp",
-        "stage": "kernel_socket_correlation", "reason": "ambiguous_owned_matches",
-        "tcp_state_summary": "multiple_established", "owned_inode_relation": "distinct"}
-    assert "PRIVATE" not in repr(diagnostic.failure_observation(caught.value))
+    path = faults.AndroidKernelPath(peer, OBSERVATION, TURN, resolver=resolver,
+                                    path_diagnostics=diagnostic, resource_check=lambda: True)
+    assert path.endpoint_mode and len(path.matches) == 2 and path.socket is None
+    assert path.target_kind == "uid_tcp_turn_destination_set" and path.rule_count == 1
 
 
 @pytest.mark.parametrize("states,inodes,summary,relation", [
@@ -98,19 +103,21 @@ def test_exact_own_process_socket_remains_unique_and_reports_ambiguous_reason():
     (("01", "PRIVATE"), ("1234", "5678"), "unclassifiable", "distinct"),
     (("01", "01"), ("1234", "1234"), "multiple_established", "same"),
 ])
-def test_actual_tcp_ambiguity_reports_only_bounded_kernel_state_and_inode_relation(states, inodes, summary, relation):
+def test_tcp_endpoint_aggregate_requires_at_least_one_established_owned_match(states, inodes, summary, relation):
     rows = "".join(ROW.replace(" 01 ", f" {state} ").replace("1234", inode)
                    for state, inode in zip(states, inodes))
     peer, resolver, _ = kernel_boundary(tcp_rows=rows, fd_links=" ".join(f"socket:[{inode}]" for inode in inodes))
     diagnostic = faults.NativePathDiagnostics("turn_tcp")
-    with pytest.raises(ValueError) as caught:
-        faults.AndroidKernelPath(peer, OBSERVATION, TURN, resolver=resolver, path_diagnostics=diagnostic)
-    assert str(caught.value) == "Selected TURN path lacks one unambiguous own-process kernel socket"
-    assert diagnostic.failure_observation(caught.value) == {
-        "scenario": "turn_tcp", "stage": "kernel_socket_correlation", "reason": "ambiguous_owned_matches",
-        "tcp_state_summary": summary, "owned_inode_relation": relation}
-    assert diagnostic.failure_observation(ValueError("PRIVATE_FOREIGN")) == {}
-    assert "PRIVATE" not in repr(diagnostic.failure_observation(caught.value))
+    if summary == "no_established":
+        with pytest.raises(ValueError) as caught:
+            faults.AndroidKernelPath(peer, OBSERVATION, TURN, resolver=resolver,
+                path_diagnostics=diagnostic, resource_check=lambda: True)
+        assert diagnostic.failure_observation(caught.value) == {
+            "scenario": "turn_tcp", "stage": "kernel_socket_correlation", "reason": "no_owned_match"}
+    else:
+        path = faults.AndroidKernelPath(peer, OBSERVATION, TURN, resolver=resolver,
+            path_diagnostics=diagnostic, resource_check=lambda: True)
+        assert path.matches and diagnostic.failure_observation(ValueError("PRIVATE_FOREIGN")) == {}
 
 
 def test_actual_owned_socket_ambiguity_keeps_unrelated_scenario_report_unchanged():
@@ -133,7 +140,7 @@ def test_actual_owned_socket_observer_fault_does_not_change_ambiguous_rejection(
                             path_diagnostics=diagnostic)
 
 
-def test_tls_ambiguity_projects_only_fixed_summary_for_same_escaping_error():
+def test_tls_multiple_rows_admit_the_established_covered_endpoint():
     rows = ROW + ROW.replace(" 01 ", " 08 ").replace("1234", "5678")
     peer, resolver, _ = kernel_boundary(tcp_rows=rows, fd_links="socket:[1234] socket:[5678]")
     diagnostic = faults.NativePathDiagnostics("turn_tls")
@@ -141,15 +148,9 @@ def test_tls_ambiguity_projects_only_fixed_summary_for_same_escaping_error():
     instance.phase = "turn_tls_authenticated_receipts"
     instance._path_diagnostics = diagnostic
     observation = {"pair": {"relay_protocol": "tls", "local": {"type": "relay"}}}
-    with pytest.raises(ValueError) as caught:
-        faults.AndroidKernelPath(peer, observation, "turns:turn.example:3478", resolver=resolver,
-                                path_diagnostics=diagnostic)
-    assert instance.failure_native_path(caught.value) == {"native_path_failure": {
-        "scenario": "turn_tls", "stage": "kernel_socket_correlation", "reason": "ambiguous_owned_matches",
-        "tcp_state_summary": "one_established_plus_other", "owned_inode_relation": "distinct"}}
-    assert instance.failure_native_path(ValueError("PRIVATE_FOREIGN")) == {}
-    instance.phase = "turn_tls_kernel_block_negative_control"
-    assert instance.failure_native_path(caught.value) == {}
+    path = faults.AndroidKernelPath(peer, observation, "turns:turn.example:3478", resolver=resolver,
+                                    path_diagnostics=diagnostic, resource_check=lambda: True)
+    assert len(path.matches) == 1 and instance.failure_native_path(ValueError("PRIVATE_FOREIGN")) == {}
 
 
 @pytest.mark.parametrize("value", [
@@ -170,15 +171,88 @@ def test_tcp_socket_ambiguity_summary_allowlist_rejects_unrelated_or_private_fie
     assert faults.path_failure_observation(value) == {}
 
 
-def test_exact_own_process_socket_success_retains_kernel_tuple_and_no_failure_label():
+def test_one_established_turn_endpoint_retains_only_private_aggregate_and_no_failure_label():
     peer, resolver, events = kernel_boundary()
     diagnostic = faults.NativePathDiagnostics("turn_tcp")
-    path = faults.AndroidKernelPath(peer, OBSERVATION, TURN, resolver=resolver, path_diagnostics=diagnostic)
-    assert path.socket == {"local": "10.0.2.15", "local_port": 50000,
-        "remote": "198.51.100.2", "remote_port": 3478, "inode": "1234"}
-    assert path.protocol == "tcp" and path.uid == "10053" and path.device == "wlan0"
+    path = faults.AndroidKernelPath(peer, OBSERVATION, TURN, resolver=resolver,
+                                    path_diagnostics=diagnostic, resource_check=lambda: True)
+    assert path.matches == frozenset({("1234", "10.0.2.15", 50000, "198.51.100.2", 3478)})
+    assert path.protocol == "tcp" and path.uid == "10053" and path.socket is None
     assert diagnostic.failure_observation(ValueError("PRIVATE_UNRELATED")) == {}
     assert events.count(("resolver", 4)) == 1
+
+
+def test_host_dns_candidate_set_must_cover_observed_guest_owned_turn_endpoint():
+    peer, resolver, _ = kernel_boundary(dns_addresses=("203.0.113.7",))
+    diagnostic = faults.NativePathDiagnostics("turn_tcp")
+    with pytest.raises(ValueError, match="outside the scoped TURN") as caught:
+        faults.AndroidKernelPath(peer, OBSERVATION, TURN, resolver=resolver,
+            path_diagnostics=diagnostic, resource_check=lambda: True)
+    assert diagnostic.failure_observation(caught.value) == {
+        "scenario": "turn_tcp", "stage": "kernel_socket_correlation", "reason": "uncovered_endpoint"}
+
+
+def test_external_owned_tcp_on_different_port_is_not_silently_ignored():
+    row = ROW.replace("026433C6:0D96", "097100CB:01BB")
+    peer, resolver, _ = kernel_boundary(tcp_rows=ROW + row)
+    diagnostic = faults.NativePathDiagnostics("turn_tcp")
+    with pytest.raises(ValueError, match="outside the scoped TURN") as caught:
+        faults.AndroidKernelPath(peer, OBSERVATION, TURN, resolver=resolver,
+            path_diagnostics=diagnostic, resource_check=lambda: True)
+    assert diagnostic.failure_observation(caught.value)["reason"] == "uncovered_endpoint"
+
+
+def test_exact_known_mailbox_endpoint_and_guest_loopback_do_not_widen_turn_rule():
+    mailbox = ROW.replace("026433C6:0D96", "026433C6:01BB").replace("1234", "5678")
+    loopback = ROW.replace("026433C6:0D96", "0100007F:4E20").replace("1234", "9012")
+    peer, resolver, _ = kernel_boundary(tcp_rows=ROW + mailbox + loopback,
+        fd_links="socket:[1234] socket:[5678] socket:[9012]")
+    path = faults.AndroidKernelPath(peer, OBSERVATION, TURN, resolver=resolver,
+        resource_check=lambda: True, control_urls=("https://mail.example",))
+    assert len(path.matches) == 1 and path.addresses == ("198.51.100.2",)
+    assert path.control_endpoints == frozenset({("198.51.100.2", 443)})
+
+
+@pytest.mark.parametrize("url,dns", [
+    ("turn:turn.example:0?transport=tcp", ("198.51.100.2",)),
+    ("turn:turn.example:3478?transport=udp", ("198.51.100.2",)),
+    (TURN, ("fe80::1%eth0",)),
+    (TURN, ("0.0.0.0",)),
+])
+def test_turn_endpoint_admission_rejects_invalid_port_protocol_or_address(url, dns):
+    peer, resolver, _ = kernel_boundary(dns_addresses=dns)
+    with pytest.raises(ValueError):
+        faults.AndroidKernelPath(peer, OBSERVATION, url, resolver=resolver,
+            resource_check=lambda: True)
+
+
+def test_multiple_a_aaaa_answers_and_two_owned_sockets_are_one_endpoint_scope():
+    address = ipaddress.ip_address("2001:db8::2")
+    encoded = b"".join(address.packed[index:index + 4][::-1] for index in range(0, 16, 4)).hex().upper()
+    row6 = ROW.replace("026433C6", encoded).replace("1234", "5678")
+    peer, resolver, _ = kernel_boundary(tcp_rows=ROW, fd_links="socket:[1234] socket:[5678]",
+        dns_addresses=("198.51.100.2", "2001:db8::2", "198.51.100.2"))
+    original = peer._adb
+    def adb(*args):
+        if args[-2:] == ("cat", "/proc/123/net/tcp6"): return "header\n" + row6
+        return original(*args)
+    peer._adb = adb
+    path = faults.AndroidKernelPath(peer, OBSERVATION, TURN, resolver=resolver,
+        resource_check=lambda: True)
+    assert path.addresses == ("198.51.100.2", "2001:db8::2")
+    assert len(path.matches) == 2 and path.rule_count == 2
+
+
+def test_tls_mailbox_overlap_and_extra_same_uid_process_reject_scope():
+    peer, resolver, _ = kernel_boundary()
+    observation = {"pair": {"relay_protocol": "tls", "local": {"type": "relay"}}}
+    with pytest.raises(ValueError, match="overlap"):
+        faults.AndroidKernelPath(peer, observation, "turns:turn.example:443", resolver=resolver,
+            resource_check=lambda: True, control_urls=("https://mail.example",))
+    peer, resolver, _ = kernel_boundary(point="extra_uid_process")
+    with pytest.raises(ValueError, match="process-exclusive"):
+        faults.AndroidKernelPath(peer, OBSERVATION, TURN, resolver=resolver,
+            resource_check=lambda: True)
 
 
 @pytest.mark.parametrize("value", [

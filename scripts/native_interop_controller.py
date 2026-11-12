@@ -22,7 +22,8 @@ from native_interop_diagnostics import (NegativeControlDiagnostics, PreflightDia
     record_final_path_skip, rendezvous_observation, reset_negative_control)
 from native_interop_peers import AndroidEmulator, AndroidPeer, PeerFailure, WindowsPeer
 from native_interop_core_observation import core_failure_observation
-from native_interop_preflight import android_environment, android_network_diagnostic, outbound_services
+from native_interop_preflight import (DEFAULT_SIGNAL_MAILBOX_URL, android_environment,
+    android_network_diagnostic, outbound_services)
 from native_interop_rendezvous import Rendezvous, checked_payload
 from native_interop_workload import workload as required_workload
 from test_packaged_lifecycle import source_identity
@@ -284,6 +285,19 @@ class Controller:
     def negative_traffic(self, before, after):
         with negative_control_stage(self._negative_diagnostics, "final_traffic"):
             return traffic(before, after)
+
+    def endpoint_resource_current(self, before):
+        inventory = self.peer.inventory()
+        resources = inventory.get("resources")
+        counts = accounting(inventory.get("host_accounting"))
+        return (type(resources) is list and len(resources) == 1
+                and resources[0].get("logical_session") == before["logical_session"]
+                and resources[0].get("physical_resource") == before["resource"]
+                and resources[0].get("adopted") is True
+                and resources[0].get("owner_state") == "authorized"
+                and inventory.get("service_incarnation") == before["service_incarnation"]
+                and inventory.get("profile_incarnation") == before["profile_incarnation"]
+                and counts["active_count"] == 1 and counts["creating_count"] == counts["retiring_count"] == 0)
 
     def _retirement_poll_observation(self, state=None, resources=None, counts=None):
         context = self._retirement_context
@@ -598,9 +612,13 @@ class Controller:
             if len(inbound) != 1 or len(outbound) != 1:
                 raise negative_control_error(observer, "recovered_records",
                     ValueError("Blocked-path recovery duplicated the queued durable message"), "record_count")
+        if fault is not None and getattr(fault, "endpoint_mode", False):
+            with negative_control_stage(observer, "kernel_restore_current"):
+                fault.require_current()
         return {"blocked_packets": packets, "delivered_while_blocked": False, "delivered_after_restore": True,
                 "kernel_protocol": fault.protocol if fault is not None else None,
-                "kernel_socket": digest(fault.socket) if fault is not None else None,
+                "kernel_target": {"kind": fault.target_kind, "digest": digest(fault.target_material),
+                                  "rule_count": fault.rule_count} if fault is not None else None,
                 "outbound": digest(outbound[0]["id"]), "inbound": digest(inbound[0]["id"])}
 
     def path_case(self, scenario, initiator):
@@ -632,7 +650,9 @@ class Controller:
             if scenario in {"turn_tcp", "turn_tls", "impaired"} and self.role == "android":
                 from native_interop_faults import AndroidKernelPath
                 fault = AndroidKernelPath(self.peer, before, url, diagnostics=self._negative_diagnostics,
-                                          path_diagnostics=self._path_diagnostics)
+                                          path_diagnostics=self._path_diagnostics,
+                                          resource_check=lambda: self.endpoint_resource_current(before),
+                                          control_urls=(DEFAULT_SIGNAL_MAILBOX_URL,))
             if scenario == "impaired":
                 if self.role == "android":
                     fault.install()

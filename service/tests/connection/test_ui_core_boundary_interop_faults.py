@@ -52,6 +52,7 @@ def test_malformed_kernel_socket_data_is_not_a_path(raw):
 
 def kernel_fixture(protocol="udp"):
     value = object.__new__(faults.AndroidKernelPath)
+    value.endpoint_mode = False  # Exercise the retained exact-flow UDP branch.
     value.protocol = protocol
     value.ip_protocol = "17" if protocol == "udp" else "6"
     value.device, value.ifb, value.uid, value.rule = "wlan0", "mci12345678", "10053", "mesh-ci-test"
@@ -282,6 +283,140 @@ def test_actual_kernel_success_retains_same_commands_and_no_failure_evidence(mon
     assert len(state.commands) == 11
     assert [args[:2] for args in state.commands if args[0] == "iptables"] == [
         ("iptables", "-I"), ("iptables", "-nvx"), ("iptables", "-D")]
+
+
+def endpoint_rule_fixture(monkeypatch, *, addresses=("198.51.100.2", "2001:db8::2")):
+    value = kernel_fixture("tcp")
+    value.endpoint_mode = True
+    value.addresses, value.port = addresses, 3478
+    value._drop_rules = []
+    value._negative_diagnostics = NegativeControlDiagnostics()
+    value._negative_diagnostics.reset("turn_tcp")
+    state = SimpleNamespace(commands=[], rules={}, failure=None)
+    monkeypatch.setattr(value, "require_current", lambda: None)
+    def command(*args):
+        state.commands.append(args)
+        if args[1] == "-I":
+            comment = args[args.index("--comment") + 1]
+            state.rules[comment] = [args[0], 0]
+            if state.failure == "insert_reply": raise RuntimeError("PRIVATE_INSERT_REPLY")
+        elif args[1] == "-C":
+            comment = args[args.index("--comment") + 1]
+            if comment not in state.rules or state.failure == "check": raise RuntimeError("PRIVATE_CHECK")
+        elif args[1] == "-D":
+            comment = args[args.index("--comment") + 1]
+            if state.failure == "delete": raise RuntimeError("PRIVATE_DELETE")
+            state.rules.pop(comment)
+        elif args[1] == "-nvx":
+            if state.failure == "read": raise RuntimeError("PRIVATE_READ")
+            return "\n".join(f"1 {count} {count * 20} DROP tcp -- * * PRIVATE PRIVATE /* {comment} */"
+                for comment, (family, count) in state.rules.items() if family == args[0])
+        return ""
+    monkeypatch.setattr(value, "command", command)
+    return value, state
+
+
+def test_endpoint_scope_blocks_every_ipv4_ipv6_turn_destination_and_sums_exact_counters(monkeypatch):
+    value, state = endpoint_rule_fixture(monkeypatch)
+    value.block()
+    assert len(value._drop_rules) == 2 and len(state.rules) == 2
+    inserts = [args for args in state.commands if args[1] == "-I"]
+    assert {args[0] for args in inserts} == {"iptables", "ip6tables"}
+    for args in inserts:
+        assert args[2:4] == ("OUTPUT", "1")
+        assert args[args.index("--uid-owner") + 1] == "10053"
+        assert args[args.index("--dport") + 1] == "3478"
+        assert args[args.index("-d") + 1] in value.addresses
+    for item in state.rules.values(): item[1] = 3
+    assert value.unblock() == 6
+    assert state.rules == {} and value._blocked is False
+    assert len([args for args in state.commands if args[1] == "-D"]) == 2
+
+
+def test_endpoint_insert_reply_failure_still_deletes_possible_exact_rule(monkeypatch):
+    value, state = endpoint_rule_fixture(monkeypatch, addresses=("198.51.100.2",))
+    state.failure = "insert_reply"
+    with pytest.raises(RuntimeError, match="PRIVATE_INSERT_REPLY"): value.block()
+    assert state.rules == {} and value._drop_rules == [] and value._blocked is False
+    assert [args[1] for args in state.commands] == ["-I", "-D"]
+
+
+def test_endpoint_insert_check_failure_rolls_back_and_does_not_claim_rule_absence(monkeypatch):
+    value, state = endpoint_rule_fixture(monkeypatch, addresses=("198.51.100.2",))
+    state.failure = "check"
+    with pytest.raises(RuntimeError, match="PRIVATE_CHECK"):
+        value.block()
+    assert [args[1] for args in state.commands] == ["-I", "-C", "-D"]
+    assert state.rules == {} and value._blocked is False
+
+
+def test_endpoint_ambiguous_insert_and_failed_delete_retains_exact_cleanup_ownership(monkeypatch):
+    value, state = endpoint_rule_fixture(monkeypatch, addresses=("198.51.100.2",))
+    original = value.command
+    def command(*args):
+        if args[1] == "-D":
+            state.commands.append(args)
+            raise RuntimeError("PRIVATE_DELETE")
+        return original(*args)
+    monkeypatch.setattr(value, "command", command)
+    state.failure = "insert_reply"
+    with pytest.raises(RuntimeError, match="PRIVATE_DELETE") as failure:
+        value.block()
+    assert "PRIVATE_INSERT_REPLY" in str(failure.value.__context__)
+    assert value._blocked is True and len(value._drop_rules) == 1
+    monkeypatch.setattr(value, "command", original)
+    state.failure = None
+    value.close()
+    assert state.rules == {} and value._blocked is False
+
+
+def test_endpoint_delete_failure_keeps_exact_rule_for_close_retry(monkeypatch):
+    value, state = endpoint_rule_fixture(monkeypatch, addresses=("198.51.100.2",))
+    value.block()
+    state.failure = "read"
+    original = value.command
+    def command(*args):
+        if args[1] == "-D":
+            state.commands.append(args)
+            raise RuntimeError("PRIVATE_DELETE")
+        return original(*args)
+    monkeypatch.setattr(value, "command", command)
+    with pytest.raises(RuntimeError, match="PRIVATE_DELETE") as failure: value.unblock()
+    assert "PRIVATE_READ" in str(failure.value.__context__)
+    assert value._blocked is True and len(value._drop_rules) == 1
+    monkeypatch.setattr(value, "command", original)
+    state.failure = None
+    value.close()
+    assert value._blocked is False and state.rules == {}
+
+
+def test_partial_dual_family_insert_reply_failure_rolls_back_both_exact_rules(monkeypatch):
+    value, state = endpoint_rule_fixture(monkeypatch)
+    original = value.command
+    def command(*args):
+        if args[:2] == ("ip6tables", "-I"):
+            state.commands.append(args)
+            comment = args[args.index("--comment") + 1]
+            state.rules[comment] = ["ip6tables", 0]
+            raise RuntimeError("PRIVATE_INSERT_REPLY")
+        return original(*args)
+    monkeypatch.setattr(value, "command", command)
+    with pytest.raises(RuntimeError, match="PRIVATE_INSERT_REPLY"):
+        value.block()
+    assert value._drop_rules == [] and value._blocked is False and state.rules == {}
+    assert [args[0] for args in state.commands if args[1] == "-D"] == ["ip6tables", "iptables"]
+
+
+def test_endpoint_counter_read_failure_preserves_stage_after_exact_dual_rule_deletion(monkeypatch):
+    value, state = endpoint_rule_fixture(monkeypatch)
+    value.block()
+    state.failure = "read"
+    with pytest.raises(RuntimeError, match="PRIVATE_READ") as failure:
+        value.unblock()
+    assert value._negative_diagnostics.failure_observation(failure.value) == {
+        "scenario": "turn_tcp", "stage": "kernel_counter_read"}
+    assert state.rules == {} and value._drop_rules == [] and value._blocked is False
+    value.close()
 
 
 @pytest.mark.parametrize("after", [False, True])

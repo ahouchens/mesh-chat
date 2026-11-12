@@ -267,15 +267,21 @@ def verify_report(record, source, tree, role, *, workload="full"):
         for message in case["messages"]: _message(message, identities)
         negative = case["negative"]
         if scenario in {"turn_tcp", "turn_tls", "impaired"}:
-            _require(isinstance(negative, dict) and set(negative) == {"blocked_packets", "delivered_while_blocked", "delivered_after_restore", "kernel_protocol", "kernel_socket", "outbound", "inbound"}
+            _require(isinstance(negative, dict) and set(negative) == {"blocked_packets", "delivered_while_blocked", "delivered_after_restore", "kernel_protocol", "kernel_target", "outbound", "inbound"}
                 and negative["delivered_while_blocked"] is False and negative["delivered_after_restore"] is True,
                 "Selected TURN transport lacks its blocked-path negative control")
             if role == "android":
+                target = negative["kernel_target"]
+                expected_kind = "pid_udp_socket_flow" if scenario == "impaired" else "uid_tcp_turn_destination_set"
                 _require(type(negative["blocked_packets"]) is int and negative["blocked_packets"] > 0
                     and negative["kernel_protocol"] == ("udp" if scenario == "impaired" else "tcp")
-                    and token(negative["kernel_socket"], 64), "TURN negative control lacks actual own-socket kernel drops")
+                    and type(target) is dict and set(target) == {"kind", "digest", "rule_count"}
+                    and target["kind"] == expected_kind and token(target["digest"], 64)
+                    and type(target["rule_count"]) is int
+                    and 1 <= target["rule_count"] <= (1 if scenario == "impaired" else 16),
+                    "TURN negative control lacks actual scoped kernel drops")
             else:
-                _require(negative["blocked_packets"] is None and negative["kernel_protocol"] is None and negative["kernel_socket"] is None,
+                _require(negative["blocked_packets"] is None and negative["kernel_protocol"] is None and negative["kernel_target"] is None,
                          "Windows role cannot claim Android kernel counters")
             for name in ("outbound", "inbound"):
                 _require(token(negative[name], 64) and negative[name] not in identities, "Negative control reused a message")

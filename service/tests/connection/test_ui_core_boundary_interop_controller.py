@@ -924,6 +924,10 @@ def negative_control_case(monkeypatch, sample, *, role="android", point="receipt
     peer.core = command
     class Fault:
         protocol, socket = "tcp", {"PRIVATE_SOCKET": "PRIVATE_ADDRESS"}
+        endpoint_mode = False
+        target_kind, target_material, rule_count = (
+            "pid_udp_socket_flow" if scenario == "impaired" else "uid_tcp_turn_destination_set",
+            {"PRIVATE_SOCKET": "PRIVATE_ADDRESS"}, 1)
         def block(self):
             state.events.append("block")
             if state.point == "block_error": raise state.boundary_error
@@ -2305,7 +2309,8 @@ def interop_reports(source="a" * 40, tree="b" * 40, android_artifacts=None, *, w
             if name in {"turn_tcp", "turn_tls", "impaired"}:
                 negative = {"blocked_packets": 2 if role == "android" else None, "delivered_while_blocked": False,
                     "delivered_after_restore": True, "kernel_protocol": ("udp" if name == "impaired" else "tcp") if role == "android" else None,
-                    "kernel_socket": evidence.digest([name, "kernel socket"]) if role == "android" else None,
+                    "kernel_target": {"kind": "pid_udp_socket_flow" if name == "impaired" else "uid_tcp_turn_destination_set",
+                        "digest": evidence.digest([name, "kernel target"]), "rule_count": 1} if role == "android" else None,
                     "outbound": message("negative:" + name, role)["outbound"], "inbound": message("negative:" + name, role)["inbound"]}
             impairment = None
             if name == "impaired" and role == "android":
@@ -2347,6 +2352,40 @@ def interop_reports(source="a" * 40, tree="b" * 40, android_artifacts=None, *, w
 def test_complete_two_role_fixture_is_accepted_only_with_cross_matching_actual_message_identities():
     windows, android = interop_reports()
     assert evidence.verify_pair(windows, android, "a" * 40, "b" * 40) == (windows, android)
+
+
+@pytest.mark.parametrize("change", ["wrong_kind", "zero_rules", "raw_address", "old_socket_name"])
+def test_tcp_negative_artifact_requires_neutral_bounded_endpoint_target(change):
+    windows, android = interop_reports()
+    case = next(item for item in android["execution"]["scenarios"] if item["scenario"] == "turn_tcp")
+    negative = case["negative"]
+    if change == "wrong_kind": negative["kernel_target"]["kind"] = "pid_udp_socket_flow"
+    elif change == "zero_rules": negative["kernel_target"]["rule_count"] = 0
+    elif change == "raw_address": negative["kernel_target"]["address"] = "198.51.100.2"
+    else: negative["kernel_socket"] = negative.pop("kernel_target")
+    with pytest.raises(ValueError):
+        evidence.verify_pair(windows, android, "a" * 40, "b" * 40)
+
+
+@pytest.mark.parametrize("change", ["extra_resource", "wrong_owner", "extra_lease", "new_profile"])
+def test_endpoint_scope_requires_one_current_authorized_native_resource(change):
+    before = {"logical_session": "logical", "resource": "physical",
+        "service_incarnation": "a" * 32, "profile_incarnation": "b" * 32}
+    inventory = {"service_incarnation": before["service_incarnation"],
+        "profile_incarnation": before["profile_incarnation"],
+        "resources": [{"logical_session": "logical", "physical_resource": "physical",
+            "adopted": True, "owner_state": "authorized"}],
+        "host_accounting": {"v": 1, "complete": True, "semantics": "native_allocation_leases",
+            "availability": dict.fromkeys(evidence.ACCOUNTING, True), "capacity": 16,
+            "reserved_count": 1, "creating_count": 0, "allocated_count": 1,
+            "active_count": 1, "retiring_count": 0}}
+    instance = controller.Controller("android", SimpleNamespace(inventory=lambda: inventory), None, None, {})
+    assert instance.endpoint_resource_current(before) is True
+    if change == "extra_resource": inventory["resources"].append(dict(inventory["resources"][0]))
+    elif change == "wrong_owner": inventory["resources"][0]["owner_state"] = "pending_adoption"
+    elif change == "extra_lease": inventory["host_accounting"].update(reserved_count=2, allocated_count=2, active_count=2)
+    else: inventory["profile_incarnation"] = "c" * 32
+    assert instance.endpoint_resource_current(before) is False
 
 
 @pytest.mark.parametrize("role", ["windows", "android"])
@@ -3219,7 +3258,9 @@ class CompletionWorld:
 
 class CompletionFault:
     protocol, socket = "tcp", {"modeled_socket": True}
-    def __init__(self, peer, _sample, _url, *, diagnostics=None, path_diagnostics=None):
+    endpoint_mode = False
+    target_kind, target_material, rule_count = "uid_tcp_turn_destination_set", {"modeled_target": True}, 1
+    def __init__(self, peer, _sample, _url, *, diagnostics=None, path_diagnostics=None, **_kwargs):
         assert type(path_diagnostics) is completion_faults.NativePathDiagnostics
         self.world = peer.world
     def block(self):
