@@ -1,5 +1,56 @@
 # Connection runtime qualification ledger
 
+## Impaired-case link admission failed after pairing (2026-11-12)
+
+Full run [43276371484](https://github.com/ahouchens/mesh-chat/actions/runs/43276371484)
+at `794ced6cd5af626fb401930a6cc08079a6a34def` completed with **10 successful
+and three failed jobs**. All nonnative evidence independently validates:
+5,857 policy cases, 2,021 Python UI and 12 rendered cases, scoped Windows host
+reports, 56 Android emulator cases and 83 exact JVM identities with 17 artifact
+hashes, 72 layout cases, and each platform's 25 transport, 10 recovery and
+12 setup cases. Layout pixels were not visually reviewed. The redundant
+automatic run was confirmed canceled after the full manual run became active.
+
+Both peers reached `impaired_authenticated_receipts` after negotiation,
+transferred-carrier readiness and identity checks. Android failed with
+`LinkScopeError` at `kernel_link_coverage/alternate_link`; Windows then failed
+at `rendezvous_receive/partner_wait/deadline_exhausted`. No `impaired_ready`
+marker was published. The report does not identify the concrete interface or
+which admission/install recheck failed, and does not establish that no kernel
+mutation occurred. Prior direct/UDP/TCP/TLS completion markers remain progress
+metadata, not independently accepted full native case reports. There is no
+completed impairment, counted negative-control or recovery evidence for this run.
+Closure manifest SHA-256:
+`af180904a7a8698d70762fd4a85b3c99dd82d0733258f288d2fcc66f6ff52361`.
+
+Spec 9.3 permits a controlled network test without modifying WebRTC. It requires
+actual selected-path traffic, impairment in both directions, no bypass, counted
+blocking and recovery; it does not require one internal socket or one interface.
+Earlier pairing, checking and lease failures remain unresolved history. Reaching
+this later stage does not prove that observation-only diagnostics repaired them.
+
+Reviewed component `d10fa9a`, integrated as `3fa2b92`, controls a
+bounded set of independent external emulator links. Each admitted link has
+separately owned ingress/egress netem and monotone counters. Supported route
+changes within the controlled set are allowed. Known dummy sinks are explicitly
+denied; virtual backing alone does not disqualify an independent emulator link.
+Continuous IPv4/IPv6 UDP guards require exact interface names and full-width
+run-owned netdevice groups, preventing transient or same-name replacements from
+using an unimpaired path. No loopback, IFB or dummy allowance exists. Group-
+dependent policy or unsupported kernel capability fails preflight. The guard's
+scope is app-UID OUTPUT and disposable-emulator UDP INPUT, with positive allowed
+traffic and zero uncovered drops required. Existing two-rule UID UDP blocking,
+selected native counters, 20 authenticated exchanges, RTT, recovery and original
+deadlines remain required. Exact rollback preserves the primary failure and
+separate bounded cleanup evidence, and never restores a same-name replacement.
+
+Root's eight affected offline suites pass **1,639 cases, zero failures/errors/skips**.
+This is component evidence. Real Android command support, netdevice groups,
+IFB reinjection, guards, impairment and recovery require fresh full native CI.
+No WebRTC dependency, native host, public API or connection policy is changed.
+Remaining SC12 work and the broader refactoring are incomplete. Frozen helper
+retirement follows independently accepted full native qualification.
+
 ## Impaired-case pairing failed before network controls (2026-11-12)
 
 Full run [43265844092](https://github.com/ahouchens/mesh-chat/actions/runs/43265844092)

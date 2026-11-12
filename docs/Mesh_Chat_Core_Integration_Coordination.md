@@ -1,21 +1,20 @@
 # Core integration coordination — 2026-11-09
 
-Full run `43265844092` at `110833c` failed impaired-case pairing before
-network controls. Android returned `gather_answer/failed/invalid_document` and
-Windows later timed out in `wait_answer`. All nonnative evidence validates.
-Prior direct/relay completion markers do not establish full native acceptance.
-`NativeUnavailable` is a `ValidationError` subclass, so the failure label alone
-does not identify a bad document or native cause.
-Reviewed integration `e2b8aaa` adds fixed exception/code observations and
-existing application milestones selected at the exact accepted Failed timestamp,
-while preserving the earlier Tick/deadline diagnostic and primary behavior.
-All 1,675 cases in 15 affected offline suites pass. Full native CI is pending.
-There is no WebRTC, Kotlin, public API, deadline or success-predicate change.
-The UDP-link correction, remaining SC12 work and full refactoring remain unqualified.
+Full run `43276371484` at `794ced6` reached impaired-case traffic setup
+after pairing, then failed Android `kernel_link_coverage/alternate_link`.
+Windows timed out waiting for its partner. All nonnative evidence validates;
+the actual topology and precise admission/install recheck are not retained.
+There is no completed impairment qualification or full native acceptance.
+Reviewed integration `3fa2b92` controls a bounded set of independent links
+with separate two-way netem and continuous interface-name plus netdevice-group
+UDP guards. It preserves the counted negative control, authenticated receipts,
+selected-path counters, original deadlines and exact cleanup. No WebRTC or
+native-host modification is required. All 1,639 cases in eight affected offline
+suites pass; actual Android capability and full native qualification remain pending.
+Earlier pairing/lease failures and remaining SC12/refactoring work remain open.
 
-Next: qualify the failed-gather observation and existing UDP-link test in full
-native CI, then begin frozen helper retirement after independent acceptance.
-Preserve separate historical failures as unresolved history.
+Next: qualify the bounded controlled-network harness in full native CI,
+then begin frozen helper retirement after independent acceptance.
 
 ## Earlier checkpoints
 
