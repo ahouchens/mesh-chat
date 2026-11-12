@@ -1041,6 +1041,73 @@ def test_negative_report_classifies_actual_assertion_without_losing_original_fai
     assert "PRIVATE" not in run.output and not run.state.requests
 
 
+def test_final_path_miss_reports_only_allowlisted_unavailable_for_unsampled_wrapper(
+        tmp_path, monkeypatch, capsys, sample):
+    run = run_negative_control_report(tmp_path, monkeypatch, capsys, sample, point="path_missing")
+    assert run.code == 1 and run.record["failure_type"] == "ValueError"
+    assert run.record["negative_control"] == {
+        "scenario": "turn_tcp", "stage": "final_observation", "reason": "path_missing"}
+    assert run.record["final_path_missing"] == "unavailable"
+    assert "PRIVATE" not in run.output and not run.state.requests
+    assert run.state.controller.failure_final_path(ValueError("PRIVATE_FOREIGN")) == {}
+    run.state.controller._final_path_failure = run.state.escaping_error, "PRIVATE_FORGED"
+    assert run.state.controller.failure_final_path(run.state.escaping_error) == {}
+
+
+def test_final_path_miss_explanation_does_not_survive_cleanup_replacement(
+        tmp_path, monkeypatch, capsys, sample):
+    run = run_negative_control_report(tmp_path, monkeypatch, capsys, sample,
+        point="path_missing", cleanup_error=True)
+    assert run.record["failure_type"] == "RuntimeError"
+    assert run.record["negative_control"] == {"scenario": "turn_tcp", "stage": "fault_cleanup"}
+    assert "final_path_missing" not in run.record
+    assert run.state.controller.failure_final_path(run.state.escaping_error) == {}
+
+
+@pytest.mark.parametrize("mode", ["observe", "projection", "malformed", "forged_projection"])
+def test_final_path_miss_observer_fault_or_forgery_cannot_publish_private_data(
+        tmp_path, monkeypatch, capsys, sample, mode):
+    run = run_negative_control_report(tmp_path, monkeypatch, capsys, sample,
+        point="path_missing", observer_mode=mode)
+    assert run.code == 1 and run.record["failure_type"] == "ValueError"
+    assert "final_path_missing" not in run.record
+    assert "PRIVATE" not in run.output
+
+
+def test_final_path_miss_collector_failure_keeps_original_error(tmp_path, monkeypatch, capsys, sample):
+    def broken(_reasons): raise RuntimeError("PRIVATE_COLLECTOR")
+    monkeypatch.setattr(controller, "final_path_missing_reason", broken)
+    run = run_negative_control_report(tmp_path, monkeypatch, capsys, sample, point="path_missing")
+    assert run.code == 1 and run.record["failure_type"] == "ValueError"
+    assert run.record["negative_control"]["reason"] == "path_missing"
+    assert run.record["final_path_missing"] == "unavailable"
+    assert "PRIVATE" not in run.output
+
+
+@pytest.mark.parametrize("poison", [None, False, 0, [], {}, "PRIVATE_PATH", ""])
+def test_final_path_miss_projection_rejects_unapproved_values(poison):
+    from native_interop_diagnostics import final_path_missing_observation
+    assert final_path_missing_observation(poison) is None
+
+
+def test_other_negative_failure_has_no_final_path_explanation(tmp_path, monkeypatch, capsys, sample):
+    run = run_negative_control_report(tmp_path, monkeypatch, capsys, sample, point="zero_drop")
+    assert run.code == 1 and run.record["negative_control"]["stage"] == "dropped_count"
+    assert "final_path_missing" not in run.record
+
+
+def test_successful_case_clears_prior_final_path_explanation_without_changing_retirement(
+        monkeypatch, sample):
+    state = negative_control_case(monkeypatch, sample, point="success")
+    stale = ValueError("PRIVATE_STALE")
+    state.controller._final_path_failure = stale, "no_resource"
+    state.controller.path_case("turn_tcp", "windows")
+    assert state.controller._final_path_failure is None
+    assert state.controller.failure_final_path(stale) == {}
+    assert state.controller.cases[-1]["owner_retirement_acknowledged"] is True
+    assert "final_path_missing" not in state.controller.cases[-1]
+
+
 @pytest.mark.parametrize("point,stage,reason", [
     ("enqueue", "blocked_enqueue", "not_accepted"), ("enqueue_error", "blocked_enqueue", None),
     ("block_error", "kernel_block", None), ("publish_error", "ready_publish", None),
@@ -1457,6 +1524,82 @@ def test_empty_inventory_still_returns_no_sample(path_observer):
     state.inventory["resources"] = []
     assert state.controller.observe() is None
     assert state.events == ["inventory"] and state.controller.samples.previous == {}
+
+
+@pytest.mark.parametrize("kind", ["no_resource", "pending_adoption"])
+def test_final_path_miss_uses_existing_inventory_without_path_rpc(path_observer, kind):
+    state, reasons = path_observer, set()
+    if kind == "no_resource": state.inventory["resources"][0]["logical_session"] = "PRIVATE_OTHER"
+    else: state.inventory["resources"][0]["owner_state"] = "pending_adoption"
+    assert state.controller.observe("logical", ready=True, scenario="turn_tcp", missing_reasons=reasons) is None
+    assert reasons == {kind} and state.events == ["inventory"] and state.challenges == []
+
+
+@pytest.mark.parametrize("readiness,expected", [
+    ({"adopted": False, "attached": False, "messaging_ready": False}, "adopted_not_true"),
+    ({"attached": False, "messaging_ready": False}, "attached_not_true"),
+    ({"messaging_ready": False}, "messaging_ready_not_true"),
+    ({"status": "PRIVATE_OTHER"}, "nonselected"),
+])
+def test_final_path_miss_uses_first_existing_skip_and_short_circuit(
+        path_observer, readiness, expected):
+    state, reasons, reads = path_observer, set(), []
+    class ReadTrace(dict):
+        def __deepcopy__(self, memo): return self
+        def get(self, key, default=None):
+            if key in {"adopted", "attached", "messaging_ready", "status"}: reads.append(key)
+            return super().get(key, default)
+    state.value = ReadTrace(state.value)
+    state.value.update(readiness)
+    assert state.controller.observe("logical", ready=True, scenario="turn_tcp", missing_reasons=reasons) is None
+    expected_reads = ["adopted"]
+    if expected != "adopted_not_true": expected_reads.append("attached")
+    if expected not in {"adopted_not_true", "attached_not_true"}: expected_reads.append("messaging_ready")
+    if expected == "nonselected": expected_reads.append("status")
+    assert reads == expected_reads and reasons == {expected}
+    assert state.events == ["inventory", ("path", "logical", "physical")]
+    assert len(state.challenges) == 1 and state.controller.samples.previous == {}
+
+
+def test_final_path_miss_mixed_from_same_two_path_reads(path_observer):
+    state, reasons = path_observer, set()
+    state.inventory["resources"].append(dict(logical_session="logical", physical_resource="PRIVATE_SECOND",
+        owner_state="authorized"))
+    original_path = state.controller.peer.path
+    def path(logical, physical, challenge):
+        value = original_path(logical, physical, challenge)
+        if physical == "physical": value["adopted"] = False
+        else: value["status"] = "PRIVATE_OTHER"
+        return value
+    state.controller.peer.path = path
+    assert state.controller.observe("logical", ready=True, scenario="turn_tcp", missing_reasons=reasons) is None
+    assert reasons == {"adopted_not_true", "nonselected"}
+    assert state.events == ["inventory", ("path", "logical", "physical"),
+        ("path", "logical", "PRIVATE_SECOND")]
+    assert len(state.challenges) == 2 and state.controller.samples.previous == {}
+
+
+@pytest.mark.parametrize("different", [False, True])
+def test_final_path_miss_aggregates_at_most_two_distinct_reasons(path_observer, different):
+    from native_interop_diagnostics import final_path_missing_reason
+    state, reasons = path_observer, set()
+    state.inventory["resources"].extend([
+        dict(logical_session="logical", physical_resource="PRIVATE_SECOND", owner_state="authorized"),
+        dict(logical_session="logical", physical_resource="PRIVATE_THIRD", owner_state="authorized")])
+    original_path = state.controller.peer.path
+    def path(logical, physical, challenge):
+        value = original_path(logical, physical, challenge)
+        if physical == "PRIVATE_SECOND" and different: value["attached"] = False
+        elif physical == "PRIVATE_THIRD" and different: value["status"] = "PRIVATE_OTHER"
+        else: value["adopted"] = False
+        return value
+    state.controller.peer.path = path
+    assert state.controller.observe("logical", ready=True, scenario="turn_tcp", missing_reasons=reasons) is None
+    assert reasons == ({"adopted_not_true", "attached_not_true"} if different else {"adopted_not_true"})
+    assert final_path_missing_reason(reasons) == ("mixed" if different else "adopted_not_true")
+    assert state.events == ["inventory", ("path", "logical", "physical"),
+        ("path", "logical", "PRIVATE_SECOND"), ("path", "logical", "PRIVATE_THIRD")]
+    assert len(state.challenges) == 3
 
 
 def test_controller_draws_exactly_one_fresh_sixteen_byte_request_per_path_rpc(path_observer, monkeypatch):
