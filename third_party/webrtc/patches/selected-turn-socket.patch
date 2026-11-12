@@ -1,0 +1,333 @@
+diff --git a/p2p/base/connection_info.h b/p2p/base/connection_info.h
+index 4356050..5195742 100644
+--- a/p2p/base/connection_info.h
++++ b/p2p/base/connection_info.h
+@@ -18,6 +18,7 @@
+ 
+ #include "api/candidate.h"
+ #include "api/units/timestamp.h"
++#include "p2p/base/turn_tcp_socket_tuple.h"
+ 
+ namespace webrtc {
+ 
+@@ -39,6 +40,8 @@ struct ConnectionInfo {
+   ~ConnectionInfo();
+ 
+   bool best_connection;         // Is this the best connection we have?
++  // Populated only by the explicit qualification snapshot, never GetStats.
++  std::optional<TurnTcpSocketTuple> outer_turn_tcp_socket;
+   bool writable;                // Has this connection received a STUN response?
+   bool receiving;               // Has this connection received anything?
+   bool timeout;                 // Has this connection timed out?
+diff --git a/p2p/base/p2p_transport_channel.cc b/p2p/base/p2p_transport_channel.cc
+index 4edd58d..3034294 100644
+--- a/p2p/base/p2p_transport_channel.cc
++++ b/p2p/base/p2p_transport_channel.cc
+@@ -1658,6 +1658,17 @@ int P2PTransportChannel::SendPacket(const char* data,
+ }
+ 
+ bool P2PTransportChannel::GetStats(IceTransportStats* ice_transport_stats) {
++  return GetStatsInternal(ice_transport_stats, false);
++}
++
++bool P2PTransportChannel::GetStatsForQualification(
++    IceTransportStats* ice_transport_stats) {
++  return GetStatsInternal(ice_transport_stats, true);
++}
++
++bool P2PTransportChannel::GetStatsInternal(
++    IceTransportStats* ice_transport_stats,
++    bool include_selected_turn_tcp_socket) {
+   RTC_DCHECK_RUN_ON(&network_thread_);
+   // Gather candidate and candidate pair stats.
+   ice_transport_stats->candidate_stats_list.clear();
+@@ -1674,6 +1685,10 @@ bool P2PTransportChannel::GetStats(IceTransportStats* ice_transport_stats) {
+     stats.local_candidate = SanitizeLocalCandidate(stats.local_candidate);
+     stats.remote_candidate = SanitizeRemoteCandidate(stats.remote_candidate);
+     stats.best_connection = (selected_connection_ == connection);
++    if (include_selected_turn_tcp_socket && stats.best_connection) {
++      stats.outer_turn_tcp_socket =
++          connection->port()->GetTurnTcpSocketTuple();
++    }
+     ice_transport_stats->connection_infos.push_back(std::move(stats));
+   }
+ 
+diff --git a/p2p/base/p2p_transport_channel.h b/p2p/base/p2p_transport_channel.h
+index 92f8dfe..497d08f 100644
+--- a/p2p/base/p2p_transport_channel.h
++++ b/p2p/base/p2p_transport_channel.h
+@@ -151,6 +151,8 @@ class RTC_EXPORT P2PTransportChannel : public IceTransportInternal,
+   bool GetOption(Socket::Option opt, int* value) override;
+   int GetError() override;
+   bool GetStats(IceTransportStats* ice_transport_stats) override;
++  // Opt-in network-thread snapshot for a trusted qualification consumer.
++  bool GetStatsForQualification(IceTransportStats* ice_transport_stats);
+   std::optional<int> GetRttEstimate() override;
+   const Connection* selected_connection() const;
+   std::optional<const CandidatePair> GetSelectedCandidatePair() const override;
+@@ -250,6 +252,9 @@ class RTC_EXPORT P2PTransportChannel : public IceTransportInternal,
+   size_t PermissionQueriesOutstandingForTesting() const;
+ 
+  private:
++  bool GetStatsInternal(IceTransportStats* ice_transport_stats,
++                        bool include_selected_turn_tcp_socket);
++
+   struct CandidateAndResolver final {
+     CandidateAndResolver(const Candidate& candidate,
+                          std::unique_ptr<AsyncDnsResolverInterface>&& resolver);
+diff --git a/p2p/base/p2p_transport_channel_unittest.cc b/p2p/base/p2p_transport_channel_unittest.cc
+index 1df544f..ddfa0da 100644
+--- a/p2p/base/p2p_transport_channel_unittest.cc
++++ b/p2p/base/p2p_transport_channel_unittest.cc
+@@ -1375,6 +1375,14 @@ TEST_F(P2PTransportChannelTest, GetStats) {
+   IceTransportStats ice_transport_stats;
+   ASSERT_TRUE(ep1_ch1()->GetStats(&ice_transport_stats));
+   ASSERT_GE(ice_transport_stats.connection_infos.size(), 1u);
++  for (const ConnectionInfo& info : ice_transport_stats.connection_infos) {
++    EXPECT_FALSE(info.outer_turn_tcp_socket.has_value());
++  }
++  IceTransportStats qualification_stats;
++  ASSERT_TRUE(ep1_ch1()->GetStatsForQualification(&qualification_stats));
++  for (const ConnectionInfo& info : qualification_stats.connection_infos) {
++    EXPECT_FALSE(info.outer_turn_tcp_socket.has_value());
++  }
+   ASSERT_GE(ice_transport_stats.candidate_stats_list.size(), 1u);
+   EXPECT_EQ(ice_transport_stats.selected_candidate_pair_changes, 1u);
+   ConnectionInfo* best_conn_info = nullptr;
+@@ -1423,6 +1431,13 @@ TEST_F(P2PTransportChannelTest, GetStatsSwitchConnection) {
+   IceTransportStats ice_transport_stats;
+   ASSERT_TRUE(ep1_ch1()->GetStats(&ice_transport_stats));
+   ASSERT_GE(ice_transport_stats.connection_infos.size(), 2u);
++  // Multiple ports exist, but none owns a direct TURN/TCP socket.
++  IceTransportStats qualification_stats;
++  ASSERT_TRUE(ep1_ch1()->GetStatsForQualification(&qualification_stats));
++  ASSERT_GE(qualification_stats.connection_infos.size(), 2u);
++  for (const ConnectionInfo& info : qualification_stats.connection_infos) {
++    EXPECT_FALSE(info.outer_turn_tcp_socket.has_value());
++  }
+   ASSERT_GE(ice_transport_stats.candidate_stats_list.size(), 2u);
+   EXPECT_EQ(ice_transport_stats.selected_candidate_pair_changes, 1u);
+ 
+@@ -5393,6 +5408,51 @@ TEST_F(P2PTransportChannelMostLikelyToWorkFirstTest, TestTcpTurn) {
+   // Finally, Local/Relay will be pinged.
+   VerifyNextPingableConnection(IceCandidateType::kHost,
+                                IceCandidateType::kRelay);
++
++  // Three connections share the snapshot. Only a deliberately selected
++  // connection with an actual direct TURN/TCP socket may carry the tuple.
++  Connection* tcp_connection = nullptr;
++  Connection* other_connection = nullptr;
++  for (Connection* connection : ch.connections()) {
++    if (connection->port()->GetTurnTcpSocketTuple().has_value()) {
++      ASSERT_EQ(nullptr, tcp_connection);
++      tcp_connection = connection;
++    } else {
++      other_connection = connection;
++    }
++  }
++  ASSERT_NE(nullptr, tcp_connection);
++  ASSERT_NE(nullptr, other_connection);
++  auto actual_tuple = tcp_connection->port()->GetTurnTcpSocketTuple();
++  ASSERT_TRUE(actual_tuple.has_value());
++
++  ch.SwitchSelectedConnection(tcp_connection,
++                              IceSwitchReason::NEW_CONNECTION_FROM_LOCAL_CANDIDATE);
++  IceTransportStats ordinary;
++  ASSERT_TRUE(ch.GetStats(&ordinary));
++  for (const ConnectionInfo& info : ordinary.connection_infos) {
++    EXPECT_FALSE(info.outer_turn_tcp_socket.has_value());
++  }
++  IceTransportStats qualified;
++  ASSERT_TRUE(ch.GetStatsForQualification(&qualified));
++  ASSERT_EQ(3u, qualified.connection_infos.size());
++  for (const ConnectionInfo& info : qualified.connection_infos) {
++    if (info.key == tcp_connection) {
++      ASSERT_TRUE(info.best_connection);
++      ASSERT_TRUE(info.outer_turn_tcp_socket.has_value());
++      EXPECT_EQ(actual_tuple->local, info.outer_turn_tcp_socket->local);
++      EXPECT_EQ(actual_tuple->remote, info.outer_turn_tcp_socket->remote);
++    } else {
++      EXPECT_FALSE(info.outer_turn_tcp_socket.has_value());
++    }
++  }
++
++  ch.SwitchSelectedConnection(other_connection,
++                              IceSwitchReason::NEW_CONNECTION_FROM_LOCAL_CANDIDATE);
++  ASSERT_TRUE(ch.GetStatsForQualification(&qualified));
++  for (const ConnectionInfo& info : qualified.connection_infos) {
++    EXPECT_FALSE(info.outer_turn_tcp_socket.has_value());
++  }
+ }
+ 
+ // Test that a resolver is created, asked for a result, and destroyed
+diff --git a/p2p/base/port_interface.h b/p2p/base/port_interface.h
+index 6ff4c4c..a744375 100644
+--- a/p2p/base/port_interface.h
++++ b/p2p/base/port_interface.h
+@@ -28,6 +28,7 @@
+ #include "api/packet_socket_factory.h"
+ #include "api/task_queue/task_queue_base.h"
+ #include "p2p/base/transport_description.h"
++#include "p2p/base/turn_tcp_socket_tuple.h"
+ #include "rtc_base/async_packet_socket.h"
+ #include "rtc_base/dscp.h"
+ #include "rtc_base/net_helper.h"
+@@ -63,6 +64,12 @@ class PortInterface {
+ 
+   virtual bool SharedSocket() const = 0;
+ 
++  // Available only for a live, nonshared, direct TURN/TCP allocation.
++  // Other ports do not expose an outer socket. Call on the network thread.
++  virtual std::optional<TurnTcpSocketTuple> GetTurnTcpSocketTuple() const {
++    return std::nullopt;
++  }
++
+   virtual bool SupportsProtocol(absl::string_view protocol) const = 0;
+ 
+   // PrepareAddress will attempt to get an address for this port that other
+diff --git a/p2p/base/turn_port.cc b/p2p/base/turn_port.cc
+index 10e9d1e..db8b9a4 100644
+--- a/p2p/base/turn_port.cc
++++ b/p2p/base/turn_port.cc
+@@ -595,6 +595,21 @@ void TurnPort::OnSocketConnect(AsyncPacketSocket* socket) {
+   SendRequest(new TurnAllocateRequest(this), 0);
+ }
+ 
++std::optional<TurnTcpSocketTuple> TurnPort::GetTurnTcpSocketTuple() const {
++  // Read from the currently owned socket; never retain an address across
++  // allocation mismatch, socket replacement, or closure.
++  if (!ready() || SharedSocket() || GetProtocol() != PROTO_TCP ||
++      !owned_socket_ || socket_ != owned_socket_.get()) {
++    return std::nullopt;
++  }
++  TurnTcpSocketTuple tuple{socket_->GetLocalAddress(),
++                           socket_->GetRemoteAddress()};
++  if (tuple.local.port() == 0 || tuple.remote.port() == 0) {
++    return std::nullopt;
++  }
++  return tuple;
++}
++
+ void TurnPort::OnSocketClose(AsyncPacketSocket* socket, int error) {
+   RTC_LOG(LS_WARNING) << ToString()
+                       << ": Connection with server failed with error: "
+diff --git a/p2p/base/turn_port.h b/p2p/base/turn_port.h
+index 04a1e34..1ceb710 100644
+--- a/p2p/base/turn_port.h
++++ b/p2p/base/turn_port.h
+@@ -15,6 +15,7 @@
+ #include <cstdint>
+ #include <map>
+ #include <memory>
++#include <optional>
+ #include <set>
+ #include <span>
+ #include <string>
+@@ -141,6 +142,7 @@ class TurnPort : public Port {
+   const RelayCredentials& credentials() const { return credentials_; }
+ 
+   ProtocolType GetProtocol() const override;
++  std::optional<TurnTcpSocketTuple> GetTurnTcpSocketTuple() const override;
+ 
+   virtual TlsCertPolicy GetTlsCertPolicy() const;
+   virtual void SetTlsCertPolicy(TlsCertPolicy tls_cert_policy);
+diff --git a/p2p/base/turn_port_unittest.cc b/p2p/base/turn_port_unittest.cc
+index 346f4b7..c1944b0 100644
+--- a/p2p/base/turn_port_unittest.cc
++++ b/p2p/base/turn_port_unittest.cc
+@@ -1035,6 +1035,7 @@ TEST_F(TurnPortTest, TestTurnAllocateWithoutLoggingId) {
+   turn_server_.server()->SetStunMessageObserver(
+       std::make_unique<TurnLoggingIdValidator>(nullptr));
+   TestTurnAllocateSucceeds(kSimulatedRtt * 2);
++  EXPECT_FALSE(turn_port_->GetTurnTcpSocketTuple().has_value());
+ }
+ 
+ // Test bad credentials.
+@@ -1086,7 +1087,14 @@ TEST_F(TurnPortTest, TestTurnTcpAllocate) {
+   turn_server_.AddInternalSocket(kTurnTcpIntAddr, PROTO_TCP);
+   CreateTurnPort(kTurnUsername, kTurnPassword, kTurnTcpProtoAddr);
+   EXPECT_EQ(0, turn_port_->SetOption(Socket::OPT_SNDBUF, 10 * 1024));
++  // Before and after allocation, read only the currently owned TCP socket.
++  // TestTurnAllocateSucceeds performs PrepareAddress, so verify the ready case.
+   TestTurnAllocateSucceeds(kSimulatedRtt * 3);
++  auto tuple = turn_port_->GetTurnTcpSocketTuple();
++  ASSERT_TRUE(tuple.has_value());
++  ASSERT_NE(nullptr, turn_port_->socket());
++  EXPECT_EQ(tuple->local, turn_port_->socket()->GetLocalAddress());
++  EXPECT_EQ(tuple->remote, turn_port_->socket()->GetRemoteAddress());
+ }
+ 
+ // Test case for WebRTC issue 3927 where a proxy binds to the local host address
+@@ -1316,10 +1324,14 @@ TEST_F(TurnPortTest, TestTurnAllocateMismatch) {
+                 {.timeout = kSimulatedRtt * 2, .clock = &time_controller_}),
+       IsRtcOk());
+   SocketAddress first_addr(turn_port_->socket()->GetLocalAddress());
++  auto first_tuple = turn_port_->GetTurnTcpSocketTuple();
++  ASSERT_TRUE(first_tuple.has_value());
++  EXPECT_EQ(first_addr, first_tuple->local);
+ 
+   // Clear connected_ flag on turnport to suppress the release of
+   // the allocation.
+   turn_port_->OnSocketClose(turn_port_->socket(), 0);
++  EXPECT_FALSE(turn_port_->GetTurnTcpSocketTuple().has_value());
+ 
+   // Forces the socket server to assign the same port.
+   ss_->SetNextPortForTesting(first_addr.port());
+@@ -1420,6 +1432,11 @@ TEST_F(TurnPortTest, TestTurnTcpAllocateMismatch) {
+ 
+   // Verifies that the new port has a different address now.
+   EXPECT_NE(first_addr, turn_port_->socket()->GetLocalAddress());
++  auto replacement_tuple = turn_port_->GetTurnTcpSocketTuple();
++  ASSERT_TRUE(replacement_tuple.has_value());
++  EXPECT_EQ(replacement_tuple->local, turn_port_->socket()->GetLocalAddress());
++  EXPECT_EQ(replacement_tuple->remote, turn_port_->socket()->GetRemoteAddress());
++  EXPECT_NE(first_tuple->local, replacement_tuple->local);
+ }
+ 
+ TEST_F(TurnPortTest, TestRefreshRequestGetsErrorResponse) {
+@@ -1481,7 +1498,9 @@ TEST_F(TurnPortTest, TestStopProcessingPacketsAfterClosed) {
+ TEST_F(TurnPortTest, TestCreateConnectionWhenSocketClosed) {
+   turn_server_.AddInternalSocket(kTurnTcpIntAddr, PROTO_TCP);
+   CreateTurnPort(kTurnUsername, kTurnPassword, kTurnTcpProtoAddr);
++  EXPECT_FALSE(turn_port_->GetTurnTcpSocketTuple().has_value());
+   PrepareTurnAndUdpPorts(PROTO_TCP);
++  ASSERT_TRUE(turn_port_->GetTurnTcpSocketTuple().has_value());
+   // Create a connection.
+   Connection* conn1 = turn_port_->CreateConnection(udp_port_->Candidates()[0],
+                                                    Port::ORIGIN_MESSAGE);
+@@ -1489,6 +1508,7 @@ TEST_F(TurnPortTest, TestCreateConnectionWhenSocketClosed) {
+ 
+   // Close the socket and create a connection again.
+   turn_port_->OnSocketClose(turn_port_->socket(), 1);
++  EXPECT_FALSE(turn_port_->GetTurnTcpSocketTuple().has_value());
+   conn1 = turn_port_->CreateConnection(udp_port_->Candidates()[0],
+                                        Port::ORIGIN_MESSAGE);
+   ASSERT_TRUE(conn1 == nullptr);
+diff --git a/p2p/base/turn_tcp_socket_tuple.h b/p2p/base/turn_tcp_socket_tuple.h
+new file mode 100644
+index 0000000..6ca93c1
+--- /dev/null
++++ b/p2p/base/turn_tcp_socket_tuple.h
+@@ -0,0 +1,22 @@
++/*
++ * Copyright 2026 The WebRTC Project Authors. All rights reserved.
++ *
++ * Use of this source code is governed by a BSD-style license
++ * that can be found in the LICENSE file in the root of the source tree.
++ */
++#ifndef P2P_BASE_TURN_TCP_SOCKET_TUPLE_H_
++#define P2P_BASE_TURN_TCP_SOCKET_TUPLE_H_
++
++#include "rtc_base/socket_address.h"
++
++namespace webrtc {
++
++// Actual local and remote endpoints of one live, direct TURN/TCP socket.
++struct TurnTcpSocketTuple {
++  SocketAddress local;
++  SocketAddress remote;
++};
++
++}  // namespace webrtc
++
++#endif  // P2P_BASE_TURN_TCP_SOCKET_TUPLE_H_
