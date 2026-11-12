@@ -133,6 +133,26 @@ def test_valid_archive_is_read_without_extracting_paths(pair):
     assert exchange.verify_artifact(metadata, archive, CONTEXT, "windows", "key") == windows.public_manifest()
 
 
+def test_archive_metadata_preflight_returns_immutable_same_run_identity_before_download():
+    metadata, archive = artifact({"public_key": "synthetic"})
+    assert exchange.validated_artifact_metadata(metadata, CONTEXT, "windows", "key") == (
+        metadata["name"], 456, "a" * 40, 123, len(archive), metadata["digest"])
+
+
+@pytest.mark.parametrize("fault", ["name", "attempt", "expired", "run", "source", "repository", "size", "digest_shape"])
+def test_archive_metadata_preflight_rejects_invalid_provenance_or_shape(fault):
+    metadata, _ = artifact({"public_key": "synthetic"})
+    if fault == "name": metadata["name"] += "-PRIVATE"
+    elif fault == "attempt": metadata["name"] = exchange.artifact_name({**CONTEXT, "run_attempt": 2}, "windows", "key")
+    elif fault == "expired": metadata["expired"] = True
+    elif fault == "run": metadata["workflow_run"]["id"] += 1
+    elif fault == "source": metadata["workflow_run"]["head_sha"] = "b" * 40
+    elif fault == "repository": metadata["workflow_run"]["repository_id"] += 1
+    elif fault == "size": metadata["size_in_bytes"] = exchange.MAX_ARCHIVE + 1
+    else: metadata["digest"] = "PRIVATE_DIGEST"
+    with pytest.raises(ValueError): exchange.validated_artifact_metadata(metadata, CONTEXT, "windows", "key")
+
+
 @pytest.mark.parametrize("role", ["windows", "android"])
 def test_cold_capabilities_use_distinct_sealed_single_use_phase_with_existing_limits(pair, role):
     from mesh_chat.reconnect import MAX_CAPABILITY_BYTES

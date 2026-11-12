@@ -133,8 +133,8 @@ def validate_upload(context, role, phase, value):
     return value
 
 
-def verify_artifact(metadata, archive, context, role, phase):
-    """Metadata comes from authenticated REST scoped to the SAME repository/run."""
+def validated_artifact_metadata(metadata, context, role, phase):
+    """Return immutable provenance fields from same-run REST metadata."""
     expected = artifact_name(context, role, phase)
     workflow = metadata.get("workflow_run", {}) if isinstance(metadata, dict) else {}
     if (not isinstance(metadata, dict) or metadata.get("name") != expected or metadata.get("expired") is not False
@@ -142,8 +142,17 @@ def verify_artifact(metadata, archive, context, role, phase):
             or workflow.get("id") != context["run_id"] or workflow.get("head_sha") != context["source_commit"]
             or workflow.get("repository_id") != context["repository_id"]
             or type(metadata.get("size_in_bytes")) is not int or not 0 < metadata["size_in_bytes"] <= MAX_ARCHIVE
-            or not isinstance(archive, bytes) or not 0 < len(archive) <= MAX_ARCHIVE
             or not isinstance(metadata.get("digest"), str)
+            or re.fullmatch(r"sha256:[a-f0-9]{64}", metadata["digest"]) is None):
+        raise ValueError("Bootstrap artifact has wrong provenance, identity, size or digest")
+    return (expected, workflow["id"], workflow["head_sha"], workflow["repository_id"],
+            metadata["size_in_bytes"], metadata["digest"])
+
+
+def verify_artifact(metadata, archive, context, role, phase):
+    """Metadata comes from authenticated REST scoped to the SAME repository/run."""
+    validated_artifact_metadata(metadata, context, role, phase)
+    if (not isinstance(archive, bytes) or not 0 < len(archive) <= MAX_ARCHIVE
             or not hmac.compare_digest(metadata["digest"], "sha256:" + hashlib.sha256(archive).hexdigest())):
         raise ValueError("Bootstrap artifact has wrong provenance, identity, size or digest")
     with zipfile.ZipFile(BytesIO(archive)) as zipped:

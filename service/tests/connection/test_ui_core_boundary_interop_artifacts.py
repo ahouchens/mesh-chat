@@ -184,10 +184,11 @@ def test_closing_artifact_transport_fences_later_publish_and_wait(tmp_path):
         peer.close()
 
 
-def scripted_receive(tmp_path, monkeypatch, fault="inventory_http", *, status=403, role="windows", phase="key"):
+def scripted_receive(tmp_path, monkeypatch, fault="inventory_http", *, status=403, role="windows", phase="key",
+                     archive_statuses=()):
     """Actual request/wait with inert stdlib opener boundaries, no network."""
     state = SimpleNamespace(fault=fault, status=status, calls=[], sleeps=[], now=0.0,
-                            original_http=None, transient_done=False)
+                            original_http=None, transient_done=False, archive_statuses=list(archive_statuses))
     state.bundle = {"producer_job": backend.PRODUCER_JOBS[role], "PRIVATE_BODY": "PRIVATE_PAYLOAD"}
     state.metadata, state.blob = archive(state.bundle)
     state.metadata["name"] = artifact_name(CONTEXT, role, phase)
@@ -220,6 +221,14 @@ def scripted_receive(tmp_path, monkeypatch, fault="inventory_http", *, status=40
             stage = ("inventory_request" if request.full_url.endswith("/artifacts?per_page=100")
                      else "blob_request" if request.full_url.startswith("https://synthetic.invalid/") else "archive_request")
             state.calls.append({"stage": stage, "timeout": timeout, "bearer": request.get_header("Authorization") is not None})
+            if stage == "archive_request" and state.archive_statuses:
+                code = state.archive_statuses.pop(0)
+                state.original_http = urllib.error.HTTPError(request.full_url, code, "PRIVATE_HTTP_MESSAGE", {}, None)
+                raise state.original_http
+            if stage == "archive_request" and state.fault == "archive_404_near_deadline":
+                state.now = 27
+                state.original_http = urllib.error.HTTPError(request.full_url, 404, "PRIVATE_HTTP_MESSAGE", {}, None)
+                raise state.original_http
             if (state.fault == "inventory_http" and stage == "inventory_request"
                     or state.fault == "archive_http" and stage == "archive_request"
                     or state.fault == "inventory_http_once" and stage == "inventory_request" and not state.transient_done
@@ -278,6 +287,156 @@ def test_transient_http_503_retries_same_run_artifact_read(tmp_path, monkeypatch
         "inventory_request", "archive_request", "blob_request"]
     assert state.sleeps == [3]
     assert all(call["bearer"] is (call["stage"] != "blob_request") for call in state.calls)
+
+
+def test_validated_archive_404_repolls_same_identity_then_verifies_bundle(tmp_path, monkeypatch):
+    state = scripted_receive(tmp_path, monkeypatch, "archive_http_once", status=404)
+    assert state.transport.wait(state.role, state.phase, timeout=30) == state.bundle
+    assert [call["stage"] for call in state.calls] == ["inventory_request", "archive_request"] * 2 + ["blob_request"]
+    assert state.sleeps == [3]
+    assert all(call["bearer"] is (call["stage"] != "blob_request") for call in state.calls)
+
+
+def test_persistent_validated_archive_404_keeps_final_sanitized_status_after_shared_cap(tmp_path, monkeypatch):
+    state = scripted_receive(tmp_path, monkeypatch, "archive_http", status=404)
+    with pytest.raises(backend.RendezvousUnavailable) as caught:
+        state.transport.wait(state.role, state.phase, timeout=30)
+    assert [call["stage"] for call in state.calls] == ["inventory_request", "archive_request"] * 3
+    assert state.sleeps == [3, 3]
+    assert state.transport.failure_observation(caught.value) == {
+        "rendezvous_stage": "archive_request", "rendezvous_reason": "http_rejected", "rendezvous_http_status": 404}
+    assert state.transport.failure_observation(backend.RendezvousUnavailable("PRIVATE_FOREIGN")) == {}
+    assert "PRIVATE" not in str(caught.value)
+
+
+@pytest.mark.parametrize("statuses,success", [((503, 404), True), ((503, 404, 404), False)])
+def test_mixed_503_and_validated_archive_404_share_two_retries(tmp_path, monkeypatch, statuses, success):
+    state = scripted_receive(tmp_path, monkeypatch, "archive_sequence", archive_statuses=statuses)
+    if success:
+        assert state.transport.wait(state.role, state.phase, timeout=30) == state.bundle
+    else:
+        with pytest.raises(backend.RendezvousUnavailable) as caught:
+            state.transport.wait(state.role, state.phase, timeout=30)
+        assert state.transport.failure_observation(caught.value) == {
+            "rendezvous_stage": "archive_request", "rendezvous_reason": "http_rejected", "rendezvous_http_status": 404}
+    assert [call["stage"] for call in state.calls] == ["inventory_request", "archive_request"] * 3
+    assert state.sleeps == [3, 3]
+
+
+@pytest.mark.parametrize("mutation", ["disappear", "id", "run", "source", "repository", "digest", "size", "expired"])
+def test_archive_404_repoll_rejects_disappeared_or_changed_metadata(tmp_path, monkeypatch, mutation):
+    state = scripted_receive(tmp_path, monkeypatch, "archive_http_once", status=404)
+    previous_sleep = state.transport.sleep
+    def change_after_retry(seconds):
+        previous_sleep(seconds)
+        if mutation == "disappear": state.metadata["name"] = "PRIVATE_OTHER_NAME"
+        elif mutation == "id": state.metadata["id"] += 1
+        elif mutation == "run": state.metadata["workflow_run"]["id"] += 1
+        elif mutation == "source": state.metadata["workflow_run"]["head_sha"] = "b" * 40
+        elif mutation == "repository": state.metadata["workflow_run"]["repository_id"] += 1
+        elif mutation == "digest": state.metadata["digest"] = "sha256:" + "f" * 64
+        elif mutation == "size": state.metadata["size_in_bytes"] += 1
+        else: state.metadata["expired"] = True
+    state.transport.sleep = change_after_retry
+    with pytest.raises((ValueError, backend.RendezvousUnavailable)):
+        state.transport.wait(state.role, state.phase, timeout=30)
+    assert state.sleeps == [3]
+    assert [call["stage"] for call in state.calls] == ["inventory_request", "archive_request", "inventory_request"]
+
+
+@pytest.mark.parametrize("mutation", ["run", "source", "repository", "expired", "size", "digest_shape"])
+def test_invalid_inventory_metadata_cannot_open_archive_before_retry(tmp_path, monkeypatch, mutation):
+    state = scripted_receive(tmp_path, monkeypatch, "archive_http", status=404)
+    if mutation == "run": state.metadata["workflow_run"]["id"] += 1
+    elif mutation == "source": state.metadata["workflow_run"]["head_sha"] = "b" * 40
+    elif mutation == "repository": state.metadata["workflow_run"]["repository_id"] += 1
+    elif mutation == "expired": state.metadata["expired"] = True
+    elif mutation == "size": state.metadata["size_in_bytes"] = backend.MAX_ARCHIVE + 1
+    else: state.metadata["digest"] = "PRIVATE_DIGEST"
+    with pytest.raises(ValueError): state.transport.wait(state.role, state.phase, timeout=30)
+    assert [call["stage"] for call in state.calls] == ["inventory_request"]
+    assert state.sleeps == []
+
+
+@pytest.mark.parametrize("fault", ["inventory_http", "blob_http"])
+def test_archive_404_policy_never_retries_inventory_or_signed_blob_404(tmp_path, monkeypatch, fault):
+    state = scripted_receive(tmp_path, monkeypatch, fault, status=404)
+    with pytest.raises(backend.RendezvousUnavailable) as caught:
+        state.transport.wait(state.role, state.phase, timeout=30)
+    assert state.sleeps == []
+    assert state.transport.failure_observation(caught.value)["rendezvous_http_status"] == 404
+
+
+@pytest.mark.parametrize("status", [403, 410, 500])
+def test_archive_non404_non503_status_remains_immediate(tmp_path, monkeypatch, status):
+    state = scripted_receive(tmp_path, monkeypatch, "archive_http", status=status)
+    with pytest.raises(backend.RendezvousUnavailable): state.transport.wait(state.role, state.phase, timeout=30)
+    assert [call["stage"] for call in state.calls] == ["inventory_request", "archive_request"]
+    assert state.sleeps == []
+
+
+@pytest.mark.parametrize("status", [True, 404.0, "404"])
+def test_archive_404_retry_requires_exact_integer_status(tmp_path, monkeypatch, status):
+    state = scripted_receive(tmp_path, monkeypatch, "archive_http", status=status)
+    with pytest.raises(backend.RendezvousUnavailable) as caught:
+        state.transport.wait(state.role, state.phase, timeout=30)
+    assert state.transport.failure_observation(caught.value) == {
+        "rendezvous_stage": "archive_request", "rendezvous_reason": "http_rejected"}
+    assert [call["stage"] for call in state.calls] == ["inventory_request", "archive_request"]
+    assert state.sleeps == []
+
+
+def test_archive_404_http_error_subclass_cannot_enable_retry(tmp_path, monkeypatch):
+    state = scripted_receive(tmp_path, monkeypatch, "archive_http", status=404)
+    class SubclassedHTTPError(urllib.error.HTTPError):
+        pass
+    class ReplacingOpener:
+        def open(self, request, timeout):
+            stage = "inventory_request" if request.full_url.endswith("/artifacts?per_page=100") else "archive_request"
+            state.calls.append({"stage": stage, "timeout": timeout, "bearer": True})
+            if stage == "inventory_request": return BytesIO(json.dumps({"total_count": 1, "artifacts": [state.metadata]}).encode())
+            raise SubclassedHTTPError(request.full_url, 404, "PRIVATE_STATUS", {}, None)
+    monkeypatch.setattr(backend.urllib.request, "build_opener", lambda *_: ReplacingOpener())
+    with pytest.raises(backend.RendezvousUnavailable) as caught:
+        state.transport.wait(state.role, state.phase, timeout=30)
+    assert state.transport.failure_observation(caught.value) == {
+        "rendezvous_stage": "archive_request", "rendezvous_reason": "http_rejected"}
+    assert [call["stage"] for call in state.calls] == ["inventory_request", "archive_request"]
+    assert state.sleeps == []
+
+
+def test_archive_404_near_deadline_does_not_extend_wait_or_retry(tmp_path, monkeypatch):
+    state = scripted_receive(tmp_path, monkeypatch, "archive_404_near_deadline")
+    with pytest.raises(backend.RendezvousUnavailable) as caught:
+        state.transport.wait(state.role, state.phase, timeout=30)
+    assert state.transport.failure_observation(caught.value) == {
+        "rendezvous_stage": "archive_request", "rendezvous_reason": "http_rejected", "rendezvous_http_status": 404}
+    assert state.sleeps == [] and state.now == 27
+    assert [call["timeout"] for call in state.calls] == [10, 10]
+
+
+@pytest.mark.parametrize("fault", ["zip", "digest", "producer"])
+def test_archive_404_retry_cannot_admit_malformed_payload(tmp_path, monkeypatch, fault):
+    state = scripted_receive(tmp_path, monkeypatch, "archive_http_once", status=404)
+    if fault == "zip":
+        state.blob = b"PRIVATE_NOT_ZIP"
+        state.metadata["size_in_bytes"] = len(state.blob)
+        state.metadata["digest"] = "sha256:" + hashlib.sha256(state.blob).hexdigest()
+    elif fault == "digest": state.metadata["digest"] = "sha256:" + "f" * 64
+    else:
+        state.bundle["producer_job"] = "PRIVATE_JOB"
+        state.metadata, state.blob = archive(state.bundle)
+    with pytest.raises(zipfile.BadZipFile if fault == "zip" else ValueError):
+        state.transport.wait(state.role, state.phase, timeout=30)
+    assert state.sleeps == [3]
+    assert state.transport._retryable_read_503 is None
+
+
+def test_archive_404_retry_does_not_depend_on_failure_observer(tmp_path, monkeypatch):
+    state = scripted_receive(tmp_path, monkeypatch, "archive_http_once", status=404)
+    monkeypatch.setattr(state.transport, "failure_observation", lambda _: (_ for _ in ()).throw(AssertionError("observer called")))
+    assert state.transport.wait(state.role, state.phase, timeout=30) == state.bundle
+    assert state.sleeps == [3]
 
 
 def test_persistent_signed_blob_503_stops_after_three_reads_with_original_observation(tmp_path, monkeypatch):
