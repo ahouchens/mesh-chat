@@ -1,5 +1,18 @@
 # Connection runtime implementation and qualification
 
+Current step: qualify `e220c96`'s reviewed controller-only pairing observation
+after 1,410 offline interop cases pass. Full run `43231844458` at `a537bac`
+failed direct pairing on both native peers (`checking/tick/phase_timeout`)
+before the network controls or final-readiness correction ran. All nonnative
+evidence validates. Preserve the existing deadlines and collect the last
+controller-observed readiness labels to direct the next correction.
+
+Once full native qualification independently passes, start the frozen helper
+retirement implementation. Retain the original `97c32d5` native lease timeout
+as unresolved separate history; it is not an additional implementation gate
+for isolated helper completion. The remaining lifecycle/public-consumer matrix
+and full refactoring are still open. The WebRTC fork remains abandoned.
+
 Full run `43223611381` at `98a5d9e` is closed failed: all nonnative jobs pass,
 but Android's final TLS sample reports supervisor `messaging_ready=false` after
 restored delivery, and Windows then times out waiting for its completion.

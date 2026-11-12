@@ -1,5 +1,13 @@
 # Private packaged qualification control
 
+Latest full run `43231844458` at `a537bac` failed at direct supervisor pairing
+on both peers before network controls. The retained terminal cause is
+`checking/tick/phase_timeout`, not proof of a specific readiness blocker.
+Integration `e220c96` adds only fixed failure-report labels from existing
+controller status/inventory/stats reads; 1,410 offline interop cases pass.
+It introduces no Core request, product/WebRTC change, extra read or deadline
+extension. Full native qualification and causal diagnosis remain pending.
+
 Full run `43223611381` at `98a5d9e` is closed failed on one false final TLS
 supervisor-readiness sample after restored delivery. All nonnative checks
 validate. Integration `a88674b` keeps the private final-path checks within the

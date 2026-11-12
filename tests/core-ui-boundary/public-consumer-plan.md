@@ -1,5 +1,12 @@
 # Independent public consumer qualification proposal
 
+Full run `43231844458` at `a537bac` passed all nonnative jobs but failed
+direct pairing on both native peers at `checking/tick/phase_timeout`, before
+network controls. Reviewed `e220c96` retains bounded last-poll controller
+labels for that failure and passes 1,410 offline interop cases. This changes
+only private qualification diagnostics. Full native acceptance, the remaining
+consumer matrix and refactoring completion remain pending.
+
 Run `43223611381` at `98a5d9e` failed native TLS final supervisor readiness
 after restored delivery; its nonnative evidence validates. The reviewed
 shared recovery-window correction is integrated as `a88674b` and passes 1,400

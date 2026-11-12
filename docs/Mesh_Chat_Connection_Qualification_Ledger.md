@@ -1,5 +1,39 @@
 # Connection runtime qualification ledger
 
+## Direct pairing timeout; bounded existing-read observation (2026-11-12)
+
+Full run [43231844458](https://github.com/ahouchens/mesh-chat/actions/runs/43231844458)
+at `a537baccf2694f4bf177215073fab3038fa8aee2` completed with **10 successful
+and three failed jobs**. Independently validated nonnative evidence includes
+5,762 policy cases, 1,969 Python UI and 12 rendered cases, scoped Windows
+packaged/public-SDK reports, Android 56 emulator cases and 83 exact JVM identities
+with 17 artifact hashes, 72 layout cases, and each platform's 25 transport,
+10 recovery and 12 setup cases. Layout pixels were not visually reviewed.
+
+Both native peers failed at `direct_supervisor_owned_pairing_windows` with
+`supervisor_pairing_retired`, `pairing_status`, and
+`checking/tick/phase_timeout`. Source progression establishes answer
+publication/application, but the retained reports do not identify which
+readiness condition stayed false or whether checking work was still in flight.
+The network negative controls and shared final-readiness correction were not
+reached. The aggregate gate correctly rejected native interop failure.
+Closure manifest SHA-256:
+`42bb24da61abe9482817399fd53b86676aa4c412ddfc4629dc24b1ae5629a389`.
+
+Reviewed component `9921d52`, integrated as `e220c96`, preserves the last
+preterminal controller open-session observation as fixed status, resource-count,
+ICE and channel labels. It uses only existing reads, resets unread fields each
+poll, and binds failure output to the exact operation/scenario/exception. No
+extra I/O, retry, deadline, readiness predicate, product or WebRTC change is
+introduced. Six new cases failed before implementation; root's seven interop
+suites pass **1,410 cases, zero failures/errors/skips**. This is diagnostic
+coverage, not a causal repair or native acceptance; fresh full CI is required.
+
+The original `97c32d5` native lease timeout remains unresolved. Its separate
+scope does not add a prerequisite to starting frozen helper retirement after
+independently validated full native qualification. It cannot be called repaired
+from later passes. The broader scenario matrix and refactoring remain incomplete.
+
 ## Full network-control run closed; bounded readiness correction (2026-11-12)
 
 Source `98a5d9e7bbb4b0fe5e09f633d3a923e71aaaf6a4`, full run

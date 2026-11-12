@@ -1,5 +1,13 @@
 # Acceptance reconciliation: specification invariants and scenarios
 
+Latest full run `43231844458` at `a537bac` failed before network controls:
+both native peers retired during direct pairing at `checking/tick/phase_timeout`.
+All nonnative evidence independently validates. Reviewed integration `e220c96`
+adds only bounded last-poll failure labels from existing controller reads and
+passes 1,410 offline interop cases. The timeout's underlying cause and native
+acceptance remain unresolved; neither this diagnostic nor the earlier readiness
+correction completes SC12 or the refactoring. No WebRTC change is required.
+
 Run `43223611381` at `98a5d9e` failed native TLS final readiness; all nonnative
 evidence validates. The failure is one false supervisor-ready snapshot after
 restored receipts, not proof of persistent loss or a need to modify WebRTC.

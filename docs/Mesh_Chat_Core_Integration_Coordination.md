@@ -1,11 +1,14 @@
 # Core integration coordination — 2026-11-09
 
-Current checkpoint: full run `43223611381` is closed failed at Android TLS
-final supervisor readiness; nonnative evidence independently validates.
-C's reviewed `f96075b` is integrated as `a88674b`, with 1,400 interop tests
-passing. Root now runs fresh full CI for the shared 90-second recovery window.
-A's WebRTC fork remains held; B reviews source/evidence, and D maintains the
-bounded artifact reader. No new permission or native dependency change is needed.
+Current checkpoint: full run `43231844458` at `a537bac` is closed failed at
+direct pairing on both peers (`checking/tick/phase_timeout`); all nonnative
+evidence independently validates. C's reviewed `9921d52` is integrated as
+`e220c96`, with 1,410 interop tests passing. Root now qualifies bounded
+last-preterminal-poll labels from existing controller reads; no timeout or
+success predicate changes. A's source audit cannot establish the failed gate
+from existing reports. B reviews source/evidence; D's bound tooling is reusable.
+The WebRTC fork remains abandoned. The frozen helper implementation follows
+full native acceptance; separate historical lease failure remains unresolved.
 
 Harness integration `b71cb05` contains C's endpoint rules, exact cleanup and
 verified bootstrap-helper overlap changes through `bd4d5c2`. Root's seven-file
