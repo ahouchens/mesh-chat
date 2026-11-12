@@ -891,7 +891,7 @@ def negative_control_case(monkeypatch, sample, *, role="android", point="receipt
     state = retirement_case(monkeypatch, sample, role=role)
     instance, peer = state.controller, state.controller.peer
     def sleep(seconds):
-        assert seconds in (0.1, 0.25)
+        assert seconds == 0.1 or 0 < seconds <= 0.25 + 1e-9
         state.events.append(("sleep", seconds))
         state.now += seconds
     monkeypatch.setattr(controller, "time", SimpleNamespace(monotonic=lambda: state.now, sleep=sleep))
@@ -976,9 +976,9 @@ def negative_control_case(monkeypatch, sample, *, role="android", point="receipt
     original = instance.observe
     def observe(*args, **kwargs):
         value = original(*args, **kwargs)
+        if state.observation >= 3 and state.point == "path_missing": return None
         if state.observation == 3:
             if state.point == "final_observation_error": raise state.boundary_error
-            if state.point == "path_missing": return None
             if state.point == "traffic": value["application"] = dict.fromkeys(evidence.APPLICATION, 0)
             if state.point == "selection": value["pair"] = None
         return value
@@ -1110,6 +1110,202 @@ def test_successful_case_clears_prior_final_path_explanation_without_changing_re
     assert state.controller.failure_final_path(stale) == {}
     assert state.controller.cases[-1]["owner_retirement_acknowledged"] is True
     assert "final_path_missing" not in state.controller.cases[-1]
+
+
+@pytest.mark.parametrize("scenario", ["turn_tcp", "turn_tls"])
+def test_final_ready_recovers_inside_original_restored_delivery_window(monkeypatch, sample, scenario):
+    state = negative_control_case(monkeypatch, sample, point="success", scenario=scenario)
+    original = state.controller.observe
+    final_reads = []
+    def observe(*args, **kwargs):
+        value = original(*args, **kwargs)
+        if state.observation >= 3:
+            final_reads.append(state.now)
+            if len(final_reads) == 1:
+                kwargs["missing_reasons"].add("messaging_ready_not_true")
+                return None
+        return value
+    state.controller.observe = observe
+    state.controller.path_case(scenario, "windows")
+    assert len(final_reads) == 2 and final_reads[1] - final_reads[0] == pytest.approx(0.25)
+    assert state.controller.cases[-1]["negative"]["delivered_after_restore"] is True
+    assert state.controller.cases[-1]["owner_retirement_acknowledged"] is True
+
+
+def test_final_ready_persistent_unready_uses_last_reason_and_existing_deadline(monkeypatch, sample):
+    state = negative_control_case(monkeypatch, sample, point="success", scenario="turn_tls")
+    state.controller.deadline = 2.5
+    original = state.controller.observe
+    final_reads = []
+    def observe(*args, **kwargs):
+        value = original(*args, **kwargs)
+        if state.observation >= 3:
+            final_reads.append(state.now)
+            kwargs["missing_reasons"].add("messaging_ready_not_true")
+            return None
+        return value
+    state.controller.observe = observe
+    with pytest.raises(ValueError) as failure:
+        state.controller.path_case("turn_tls", "windows")
+    assert state.controller.failure_final_path(failure.value) == {
+        "final_path_missing": "messaging_ready_not_true"}
+    assert final_reads == [pytest.approx(2.0), pytest.approx(2.25)]
+    assert state.now == pytest.approx(2.5) and not state.requests
+
+
+def test_final_ready_budget_expired_before_snapshot_does_not_probe(monkeypatch, sample):
+    state = negative_control_case(monkeypatch, sample, point="success", scenario="turn_tls")
+    state.kernel.endpoint_mode = True
+    state.kernel.require_current = lambda: setattr(state, "now", 92.01)
+    with pytest.raises(ValueError) as failure:
+        state.controller.path_case("turn_tls", "windows")
+    assert state.controller.failure_final_path(failure.value) == {"final_path_missing": "unavailable"}
+    assert state.observation == 2 and not state.requests
+
+
+def test_restored_receipt_and_inbound_share_one_ninety_second_deadline(monkeypatch, sample):
+    state = negative_control_case(monkeypatch, sample, point="success", scenario="turn_tls")
+    original_core = state.controller.peer.core
+    original_observe = state.controller.observe
+    original_wait = state.controller.wait
+    delayed, waits, final_reads = [False], [], []
+    def core(operation, params, key=None):
+        if operation == "message.query" and state.restored and not delayed[0]:
+            delayed[0] = True
+            state.now += 89
+        return original_core(operation, params, key)
+    def observe(*args, **kwargs):
+        value = original_observe(*args, **kwargs)
+        if state.observation >= 3:
+            final_reads.append(state.now)
+            if len(final_reads) == 1:
+                kwargs["missing_reasons"].add("messaging_ready_not_true")
+                return None
+        return value
+    def wait(action, **kwargs):
+        waits.append(kwargs["timeout"])
+        return original_wait(action, **kwargs)
+    state.controller.peer.core = core
+    state.controller.observe = observe
+    state.controller.wait = wait
+    state.controller.path_case("turn_tls", "windows")
+    assert waits[3] == pytest.approx(90)
+    assert waits[4] == pytest.approx(1)
+    assert len(final_reads) == 2 and final_reads[-1] < 92
+
+
+def test_ready_sample_returned_after_restoration_deadline_is_not_accepted(monkeypatch, sample):
+    state = negative_control_case(monkeypatch, sample, point="success", scenario="turn_tls")
+    state.kernel.endpoint_mode = True
+    state.kernel.require_current = lambda: setattr(state, "now", 91.9)
+    original = state.controller.observe
+    def observe(*args, **kwargs):
+        value = original(*args, **kwargs)
+        if state.observation == 3: state.now = 92.1
+        return value
+    state.controller.observe = observe
+    with pytest.raises(ValueError) as failure:
+        state.controller.path_case("turn_tls", "windows")
+    assert state.controller.failure_final_path(failure.value) == {"final_path_missing": "unavailable"}
+    assert state.observation == 3 and not state.requests
+
+
+def test_final_ready_probe_error_after_unready_preserves_original_exception(monkeypatch, sample):
+    state = negative_control_case(monkeypatch, sample, point="success", scenario="turn_tls")
+    original = state.controller.observe
+    def observe(*args, **kwargs):
+        value = original(*args, **kwargs)
+        if state.observation == 3:
+            kwargs["missing_reasons"].add("messaging_ready_not_true")
+            return None
+        if state.observation == 4: raise state.boundary_error
+        return value
+    state.controller.observe = observe
+    with pytest.raises(ValueError) as failure:
+        state.controller.path_case("turn_tls", "windows")
+    assert failure.value is state.boundary_error
+    assert state.controller.failure_negative_control(failure.value) == {
+        "negative_control": {"scenario": "turn_tls", "stage": "final_observation"}}
+    assert state.controller.failure_final_path(failure.value) == {}
+
+
+def test_final_ready_rechecks_current_endpoint_scope_after_wait(monkeypatch, sample):
+    state = negative_control_case(monkeypatch, sample, point="success", scenario="turn_tls")
+    state.kernel.endpoint_mode = True
+    checks = []
+    def require_current():
+        checks.append(state.observation)
+        if state.observation >= 3: raise state.boundary_error
+    state.kernel.require_current = require_current
+    original = state.controller.observe
+    def observe(*args, **kwargs):
+        value = original(*args, **kwargs)
+        if state.observation == 3:
+            kwargs["missing_reasons"].add("messaging_ready_not_true")
+            return None
+        return value
+    state.controller.observe = observe
+    with pytest.raises(ValueError) as failure:
+        state.controller.path_case("turn_tls", "windows")
+    assert failure.value is state.boundary_error and checks == [2, 4]
+    assert state.controller.failure_negative_control(failure.value) == {
+        "negative_control": {"scenario": "turn_tls", "stage": "kernel_restore_current"}}
+    assert not state.requests
+
+
+def test_final_ready_does_not_start_scope_probe_after_budget_expiry(monkeypatch, sample):
+    state = negative_control_case(monkeypatch, sample, point="success", scenario="turn_tls")
+    state.kernel.endpoint_mode = True
+    checks = []
+    state.kernel.require_current = lambda: checks.append(state.observation)
+    original = state.controller.final_ready_observation
+    def final_ready(*args):
+        value = original(*args)
+        state.now = 92.01
+        return value
+    state.controller.final_ready_observation = final_ready
+    with pytest.raises(ValueError) as failure:
+        state.controller.path_case("turn_tls", "windows")
+    assert state.controller.failure_final_path(failure.value) == {"final_path_missing": "unavailable"}
+    assert checks == [2] and not state.requests
+
+
+@pytest.mark.parametrize("change", ["resource", "epoch", "pair", "counters"])
+def test_final_ready_recovery_still_rejects_changed_identity_or_counters(monkeypatch, sample, change):
+    state = negative_control_case(monkeypatch, sample, point="success", scenario="turn_tls")
+    original = state.controller.observe
+    def observe(*args, **kwargs):
+        value = original(*args, **kwargs)
+        if state.observation == 3:
+            kwargs["missing_reasons"].add("messaging_ready_not_true")
+            return None
+        if state.observation == 4:
+            if change == "resource": value["resource"] = "PRIVATE_OTHER_RESOURCE"
+            elif change == "epoch": value["adapter_epoch"] = "f" * 32
+            elif change == "pair": value["pair"]["token"] = "f" * 32
+            else: value["application"] = dict.fromkeys(evidence.APPLICATION, 0)
+        return value
+    state.controller.observe = observe
+    with pytest.raises(ValueError) as failure:
+        state.controller.path_case("turn_tls", "windows")
+    assert state.controller.failure_negative_control(failure.value) == {
+        "negative_control": {"scenario": "turn_tls", "stage": "final_traffic"}}
+    assert not state.requests
+
+
+def test_final_ready_recovery_propagates_stale_native_sample(path_observer):
+    state = path_observer
+    state.value["pair"]["relay_protocol"] = "tls"
+    state.controller.observe("logical", ready=True, scenario="turn_tls")
+    state.value["messaging_ready"] = False
+    def resume_with_stale_sequence():
+        state.value["messaging_ready"] = True
+        state.sequence = 0
+    state.on_sleep = resume_with_stale_sequence
+    with pytest.raises(ValueError) as failure:
+        state.controller.final_ready_observation("logical", "turn_tls", state.now + 1)
+    assert state.controller.samples.failure_reason(failure.value) == "sample_replay"
+    assert len(state.challenges) == 3
 
 
 @pytest.mark.parametrize("point,stage,reason", [

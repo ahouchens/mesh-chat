@@ -526,6 +526,20 @@ class Controller:
                 return self.samples.consume(value, inventory, requested, sample_request=sample_request, ready=ready, scenario=scenario)
         return None
 
+    def final_ready_observation(self, logical, scenario, deadline):
+        """Use only the remaining restored-delivery window for TCP/TLS readiness."""
+        last_reasons = set()
+        while time.monotonic() < deadline:
+            reasons = set()
+            value = self.observe(logical, ready=True, scenario=scenario, missing_reasons=reasons)
+            if value is not None and time.monotonic() <= deadline:
+                return value, reasons
+            last_reasons = reasons
+            remaining = deadline - time.monotonic()
+            if remaining > 0:
+                time.sleep(min(0.25, remaining))
+        return None, last_reasons
+
     def text(self, scenario, index=0, *, sender=None, padded=False):
         value = f"mesh-native-ci:{self.context['run_id']}:{self.context['run_attempt']}:{scenario}:{index}:{sender or self.role}"
         # Retained snapshots for the entire matrix must remain inside the
@@ -603,10 +617,29 @@ class Controller:
         else:
             with negative_control_stage(observer, "checked_publish"):
                 self.publish("negative_checked_" + scenario, {"approved": True})
+        restoration_deadline = None
         with negative_control_stage(observer, "restored_delivery"):
-            self.wait(lambda: self.delivered(handle), timeout=90)
+            if scenario in {"turn_tcp", "turn_tls"}:
+                # Receipt, inbound record, and final path share this one window.
+                restoration_deadline = min(self.deadline, time.monotonic() + 90)
+                self.wait(lambda: self.delivered(handle),
+                          timeout=max(0, restoration_deadline - time.monotonic()))
+                if time.monotonic() > restoration_deadline:
+                    raise PeerFailure("scenario_deadline")
+            else:
+                self.wait(lambda: self.delivered(handle), timeout=90)
         with negative_control_stage(observer, "recovered_inbound"):
-            inbound = self.wait(lambda: self.records(self.text("blocked_path_" + scenario, sender=self.partner), "inbound"), timeout=90)
+            if restoration_deadline is not None:
+                remaining = restoration_deadline - time.monotonic()
+                if remaining <= 0:
+                    raise PeerFailure("scenario_deadline")
+                inbound = self.wait(lambda: self.records(
+                    self.text("blocked_path_" + scenario, sender=self.partner), "inbound"), timeout=remaining)
+                if time.monotonic() > restoration_deadline:
+                    raise PeerFailure("scenario_deadline")
+            else:
+                inbound = self.wait(lambda: self.records(
+                    self.text("blocked_path_" + scenario, sender=self.partner), "inbound"), timeout=90)
         with negative_control_stage(observer, "recovered_records"):
             outbound = self.records(self.text("blocked_path_" + scenario), "outbound")
             if len(inbound) != 1 or len(outbound) != 1:
@@ -619,7 +652,7 @@ class Controller:
                 "kernel_protocol": fault.protocol if fault is not None else None,
                 "kernel_target": {"kind": fault.target_kind, "digest": digest(fault.target_material),
                                   "rule_count": fault.rule_count} if fault is not None else None,
-                "outbound": digest(outbound[0]["id"]), "inbound": digest(inbound[0]["id"])}
+                "outbound": digest(outbound[0]["id"]), "inbound": digest(inbound[0]["id"])}, restoration_deadline
 
     def path_case(self, scenario, initiator):
         self._retirement_context = self._retirement_failure = None
@@ -662,10 +695,21 @@ class Controller:
             messages = [self.exchange(scenario + ":" + initiator, index, padded=scenario == "impaired",
                                       path_diagnostics=self._path_diagnostics)[0]
                         for index in range(20 if scenario == "impaired" else 1)]
-            negative = self.negative(fault, scenario) if scenario in {"turn_tcp", "turn_tls", "impaired"} else None
+            negative, restoration_deadline = (self.negative(fault, scenario)
+                if scenario in {"turn_tcp", "turn_tls", "impaired"} else (None, None))
             with negative_control_stage(self._negative_diagnostics, "final_observation"):
                 missing_reasons = set() if scenario in {"turn_tcp", "turn_tls", "impaired"} else None
-                if missing_reasons is None:
+                if scenario in {"turn_tcp", "turn_tls"}:
+                    after, missing_reasons = self.final_ready_observation(
+                        session, scenario, restoration_deadline)
+                    if after is not None and time.monotonic() > restoration_deadline:
+                        after, missing_reasons = None, set()
+                    if after is not None and fault is not None and getattr(fault, "endpoint_mode", False):
+                        with negative_control_stage(self._negative_diagnostics, "kernel_restore_current"):
+                            fault.require_current()
+                        if time.monotonic() > restoration_deadline:
+                            after, missing_reasons = None, set()
+                elif missing_reasons is None:
                     after = self.observe(session, ready=True, scenario=scenario)
                 else:
                     after = self.observe(session, ready=True, scenario=scenario, missing_reasons=missing_reasons)
