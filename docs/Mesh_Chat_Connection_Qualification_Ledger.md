@@ -1,5 +1,43 @@
 # Connection runtime qualification ledger
 
+## Existing Android clsact conflicts with test harness (2026-11-12)
+
+Full qualification [43312523571](https://github.com/ahouchens/mesh-chat/actions/runs/43312523571)
+at `2971c32` is closed **failed**: 10 successful, three failed and one
+intentionally skipped diagnostic job. Android fails at
+`impaired_authenticated_receipts/kernel_link_coverage/conflicting_qdisc`;
+Windows times out waiting for its partner. No `impaired_ready`, completed
+impairment, counted blocking/recovery or full native acceptance was established.
+The fixed reason alone cannot distinguish initial queue admission from the later
+pre-replacement equality check or establish whether mutation occurred.
+
+Read-only diagnostic [43322062943](https://github.com/ahouchens/mesh-chat/actions/runs/43322062943)
+at `e56285a` completed with successful bootstrap and cleanup. Both bounded,
+untruncated samples of admitted `wlan0` show `noqueue` root plus existing
+`clsact`. This concrete shape fails the current single-line queue predicate.
+The report nevertheless remains **unavailable** under its strict consistency
+check: IPv6 route expiry counters decrease by three seconds between reads.
+It is not app-active proof of the earlier failure site or native qualification.
+The revised diagnostic passes 23 focused cases and four unchanged resource
+contracts; its workflow and WebRTC dependency are unchanged.
+
+A production correction must preserve Android's existing queue policy. Merely
+admitting a second line is insufficient: the current harness next creates an
+ingress queue and assumes ownership of that queue during cleanup. Controlled
+external network impairment remains permitted by Spec 9.3, with actual peer
+traffic, bidirectional counters, no bypass, counted blocking and recovery.
+The broader refactoring remains incomplete; helper retirement stays behind
+independently accepted full native qualification.
+
+All scoped nonnative evidence for the failed full run validates: 5,907 policy
+cases; 2,071 Python UI and 12 rendered cases; scoped Windows reports;
+56 Android emulator cases, 83 exact JVM identities and 17 artifact hashes;
+72 layout cases; and each platform's 25 transport, 10 recovery and 12 setup
+cases. Layout pixels were not reviewed. Full-run closure SHA-256:
+`6cca198020e928842333a8d76b21918bd8506e736e2f827be52595076025ea23`.
+Diagnostic manifest SHA-256:
+`040296aa279aec5c28ea572c8113d30a21f3728cb5d47b00f8f453b01fcf3e26`.
+
 ## Android link inventory compatibility (2026-11-12)
 
 Full qualification run `43293822522` at `7b02a9a` completed with 10

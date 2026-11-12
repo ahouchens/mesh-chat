@@ -1,33 +1,31 @@
 # Core integration coordination — 2026-11-09
 
-Full qualification run `43293822522` at `7b02a9a` completed with 10
-successful and three failed jobs. Android reached the impaired case but failed
-`kernel_link_coverage/initial_inventory_unavailable`; Windows timed out waiting
-for its partner. No `impaired_ready` marker or completed impairment, counted
-blocking, recovery, or full native acceptance was established. The report does
-not identify which snapshot failed or prove that no kernel mutation occurred.
+Full qualification [43312523571](https://github.com/ahouchens/mesh-chat/actions/runs/43312523571)
+at `2971c32` is closed **failed**: 10 successful, three failed and one
+intentionally skipped diagnostic job. Android fails at
+`impaired_authenticated_receipts/kernel_link_coverage/conflicting_qdisc`;
+Windows times out waiting for its partner. No `impaired_ready`, completed
+impairment, counted blocking/recovery or full native acceptance was established.
+The fixed reason alone cannot distinguish initial queue admission from the later
+pre-replacement equality check or establish whether mutation occurred.
 
-Read-only diagnostic run `43303328513` at `cae9759` completed successfully,
-including emulator boot and cleanup. Its API35 image revision 9 emits invalid
-JSON from `ip -j -d link show`: an unused ERSPAN detail contains unquoted text.
-The command exits zero without truncation. The same probe finds no `nft` binary
-and reads an explicit NF_TABLES-disabled value from the running kernel config.
-This is boot-time diagnostic evidence, not application topology or qualification;
-the earlier failed run did not retain identical image-byte proof.
+Read-only diagnostic [43322062943](https://github.com/ahouchens/mesh-chat/actions/runs/43322062943)
+at `e56285a` completed with successful bootstrap and cleanup. Both bounded,
+untruncated samples of admitted `wlan0` show `noqueue` root plus existing
+`clsact`. This concrete shape fails the current single-line queue predicate.
+The report nevertheless remains **unavailable** under its strict consistency
+check: IPv6 route expiry counters decrease by three seconds between reads.
+It is not app-active proof of the earlier failure site or native qualification.
+The revised diagnostic passes 23 focused cases and four unchanged resource
+contracts; its workflow and WebRTC dependency are unchanged.
 
-Reviewed correction `e055fdd`, integrated as `29bb4e3`, uses complete
-one-line link inventory reconciled with individual detailed link and sysfs reads.
-It preserves strict topology, identity, group, route, no-bypass and cleanup checks.
-Missing `nft` is acceptable only with explicit disabled support in the running
-kernel; missing, failed, enabled, module or contradictory evidence is rejected.
-Root's eight affected offline suites pass **1,654 cases with zero
-failures, errors or skips**. Fresh full native qualification remains required.
-
-Spec 9.3 permits this controlled network test without modifying WebRTC. Actual
-selected-path traffic, bidirectional impairment, counters, blocking and recovery
-remain required. No WebRTC dependency, native host or public API changed. The
-broader refactoring and remaining SC12 scenarios are incomplete; frozen helper
-retirement follows independently accepted full native qualification.
+A production correction must preserve Android's existing queue policy. Merely
+admitting a second line is insufficient: the current harness next creates an
+ingress queue and assumes ownership of that queue during cleanup. Controlled
+external network impairment remains permitted by Spec 9.3, with actual peer
+traffic, bidirectional counters, no bypass, counted blocking and recovery.
+The broader refactoring remains incomplete; helper retirement stays behind
+independently accepted full native qualification.
 
 ## Earlier checkpoints
 
