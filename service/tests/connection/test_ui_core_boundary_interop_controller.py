@@ -3316,6 +3316,32 @@ def gather_example():
             "stage_age": "20to25s"}
 
 
+def failed_gather_example():
+    return {**gather_example(), "as_of": "failed_result",
+            "exception_kind": "native_unavailable", "native_code": "no_candidates"}
+
+
+@pytest.mark.parametrize("case", ["valid_failed", "wrong_as_of_failed", "wrong_as_of_tick",
+    "bad_pair", "private_key", "wrong_reason", "wrong_phase"])
+def test_failed_gather_report_requires_retirement_affinity_and_coherent_dto(
+        tmp_path, monkeypatch, capsys, case):
+    failure = {"phase": "gather_answer", "event": "failed", "reason": "invalid_document"}
+    tick = {"phase": "gather_answer", "event": "tick", "reason": "phase_timeout"}
+    retirement = tick if case == "wrong_as_of_tick" else dict(failure)
+    if case == "wrong_reason": retirement["reason"] = "transient"
+    if case == "wrong_phase": retirement["phase"] = "wait_answer"
+    gather = failed_gather_example()
+    if case == "wrong_as_of_failed": gather = gather_example()
+    if case == "bad_pair": gather = {**gather, "native_code": "not_applicable"}
+    if case == "private_key": gather = {**gather, "sdp": "PRIVATE_SDP"}
+    run = run_negotiate_report(tmp_path, monkeypatch, capsys, "android", "retirement",
+        status_reply=lambda operation: {"operation_id": operation, "state": "retired",
+            "retirement": retirement, "gather_failure": gather})
+    assert run.exit_code == 1 and run.record["error_code"] == "supervisor_pairing_retired"
+    assert run.record.get("gather_failure") == (gather if case == "valid_failed" else None)
+    assert "PRIVATE_" not in run.output
+
+
 @pytest.mark.parametrize("valid", [True, False])
 def test_gather_failure_attaches_only_to_terminal_pairing_status_error(tmp_path, monkeypatch, capsys, valid):
     gather = gather_example()

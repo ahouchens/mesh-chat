@@ -13,22 +13,28 @@ import pytest
 
 from mesh_chat.connection.diagnostics import (
     PAIRING_RETIREMENT_EVENTS, PAIRING_RETIREMENT_PHASES, PAIRING_RETIREMENT_REASONS,
-    gather_failure_at_deadline, validated_gather_failure, validated_pairing_retirement,
+    gather_failure_at_deadline, gather_failure_at_result, validated_gather_failure,
+    validated_gather_for_retirement, validated_pairing_retirement,
 )
 from mesh_chat.connection.model import (
     Adopted, Authority, ConnectionKey, ConnectionState, ContextChanged, Desired,
     Execution, Failed, Failure, Phase, Policy, Resource, Result, Tick, Work,
 )
 from mesh_chat.connection.supervisor import CapacityExceeded, ConnectionSupervisor
+from mesh_chat.connection.adapters.pairing import _gather_exception_labels
 from mesh_chat.core_api import qualification_host as private
 from mesh_chat.call_manager import CallOutcomeRequiresResync
-from mesh_chat.errors import ValidationError
+from mesh_chat.errors import IdentityMismatch, NativeUnavailable, ValidationError
 from test_pairing_runtime import native_pairing, run_until
 
 UNKNOWN = {"phase": "unknown", "event": "unknown", "reason": "unknown"}
 GATHER = {"as_of": "phase_deadline", "worker": "started", "stage": "native_accept",
           "stage_state": "entered", "last_completed": "ice_config", "queue_age": "lt1s",
           "stage_age": "20to25s"}
+FAILED_GATHER = {**GATHER, "as_of": "failed_result", "exception_kind": "native_unavailable",
+                 "native_code": "no_candidates"}
+FAILED_RETIREMENT = {"phase": "gather_answer", "event": "failed", "reason": "invalid_document"}
+TICK_RETIREMENT = {"phase": "gather_answer", "event": "tick", "reason": "phase_timeout"}
 
 
 @pytest.fixture(autouse=True)
@@ -77,6 +83,64 @@ def test_gather_failure_validator_is_exact_and_payload_free(bad):
     assert validated_gather_failure(bad) is None
     assert validated_gather_failure(GATHER) == GATHER
     assert validated_gather_failure(GATHER) is not GATHER
+
+
+def test_failed_gather_schema_requires_exact_triplet_shape_and_exception_code_pair():
+    assert validated_gather_failure(FAILED_GATHER) == FAILED_GATHER
+    assert validated_gather_for_retirement(FAILED_RETIREMENT, FAILED_GATHER) == FAILED_GATHER
+    assert validated_gather_for_retirement(TICK_RETIREMENT, GATHER) == GATHER
+    assert validated_gather_for_retirement(TICK_RETIREMENT, FAILED_GATHER) is None
+    assert validated_gather_for_retirement(FAILED_RETIREMENT, GATHER) is None
+    for kind, code in (("native_unavailable", "not_applicable"),
+                       ("validation_error", "no_candidates"),
+                       ("identity_mismatch", "unknown"), ("unknown", "no_candidates")):
+        assert validated_gather_failure({**FAILED_GATHER, "exception_kind": kind,
+                                         "native_code": code}) is None
+    assert validated_gather_failure({**FAILED_GATHER, "sdp": "PRIVATE_SDP"}) is None
+    assert validated_gather_failure({**GATHER, "exception_kind": "unknown"}) is None
+    assert validated_gather_failure({**FAILED_GATHER, "native_code": "unknown"}) is not None
+    assert validated_gather_failure({**FAILED_GATHER, "exception_kind": "unknown",
+                                     "native_code": "unknown"}) is not None
+    assert validated_gather_failure({**FAILED_GATHER, "exception_kind": "validation_error",
+                                     "native_code": "not_applicable"}) is not None
+
+
+@pytest.mark.parametrize("raw,label", [
+    ("native_webrtc_answer_failed", "answer_failed"),
+    ("native_webrtc_network_monitor_failed", "network_monitor_failed"),
+    ("native_webrtc_session_closed", "session_closed"),
+    ("native_webrtc_disposal_timeout", "disposal_timeout"),
+    ("native_webrtc_no_candidates", "no_candidates"),
+    ("native_webrtc_missing_data_channel", "missing_data_channel"),
+    ("native_webrtc_sdp_failed", "sdp_failed"),
+])
+def test_native_exception_label_uses_only_exact_allowlisted_literals(raw, label):
+    assert _gather_exception_labels(NativeUnavailable(raw)) == ("native_unavailable", label)
+
+
+def test_native_exception_label_rejects_dynamic_absent_nonstring_and_multiarg_values():
+    for error in (NativeUnavailable(), NativeUnavailable("PRIVATE_DYNAMIC"),
+                  NativeUnavailable(17), NativeUnavailable("native_webrtc_no_candidates", "PRIVATE_EXTRA")):
+        assert _gather_exception_labels(error) == ("native_unavailable", "unknown")
+    assert _gather_exception_labels(IdentityMismatch("PRIVATE_ID")) == (
+        "identity_mismatch", "not_applicable")
+    assert _gather_exception_labels(CallOutcomeRequiresResync("PRIVATE_RESYNC")) == (
+        "validation_error", "not_applicable")
+
+
+def test_failed_result_cutoff_keeps_stage_entered_before_late_runner_completion():
+    worker = (("queued", 10.0), ("started", 10.1), ("completed", 15.1))
+    stages = (("ice_config", "entered", 10.2), ("ice_config", "completed", 10.3),
+              ("native_accept", "entered", 11.0), ("native_accept", "completed", 15.1))
+    result = gather_failure_at_result(15.0, worker, stages, "native_unavailable", "no_candidates")
+    assert (result["as_of"], result["worker"], result["stage"], result["stage_state"],
+            result["last_completed"], result["exception_kind"], result["native_code"]) == (
+                "failed_result", "started", "native_accept", "entered", "ice_config",
+                "native_unavailable", "no_candidates")
+    assert gather_failure_at_result(15.0, worker, stages, "native_unavailable", "not_applicable")[
+        "exception_kind"] == "unknown"
+    assert gather_failure_at_result(float("nan"), worker, stages, "native_unavailable",
+                                    "no_candidates")["stage"] == "unknown"
 
 
 def test_deadline_selection_excludes_late_stage_and_worker_completion():
@@ -238,6 +302,44 @@ def test_gather_deadline_custody_exposes_only_exact_original_work():
     assert owner.pairing_gather_deadline_diagnostic(**exact) == (gather, gather.deadline)
 
 
+def test_failed_gather_custody_uses_accepted_result_time_and_exact_work():
+    owner = ConnectionSupervisor("epoch")
+    discover = start(owner, "intent")
+    wait_offer = advance(owner, discover)
+    gather = advance(owner, wait_offer, 0.2)
+    exact = {"key": gather.operation.key, "runtime_epoch": "epoch", "source": gather.resource}
+    failed = Failed(gather.operation, gather.deadline - 1, Failure.INVALID_DOCUMENT,
+                    allocated=gather.resource)
+    owner.dispatch(gather.operation.key, failed)
+    assert owner.pairing_gather_failed_diagnostic(**exact) == (gather, failed.now)
+    assert owner.pairing_gather_failed_diagnostic(**{**exact, "source": Resource("native", "wrong")}) is None
+    assert owner.pairing_gather_failed_diagnostic(**{**exact, "runtime_epoch": "old"}) is None
+    assert owner.pairing_gather_failed_diagnostic(**{**exact,
+        "key": ConnectionKey("pairing", "foreign", "PRIVATE_IDENTITY", None)}) is None
+    owner.dispatch(gather.operation.key, ContextChanged(gather.deadline + 1, desired=Desired.STOPPED))
+    assert owner.pairing_gather_failed_diagnostic(**exact) == (gather, failed.now)
+    trace = owner._pairing_traces[gather.operation.key]
+    cause = trace.retirement
+    for field in ("sequence", "generation", "policy_revision"):
+        trace.retirement = replace(cause, gather_work=replace(gather,
+            operation=replace(gather.operation, **{field: getattr(gather.operation, field) + 1})))
+        assert owner.pairing_gather_failed_diagnostic(**exact) is None
+    trace.retirement = cause
+
+
+def test_other_or_late_failed_result_cannot_claim_failed_gather_observation():
+    for failure, late, allocated in ((Failure.TRANSIENT, False, True),
+                                      (Failure.INVALID_DOCUMENT, True, True),
+                                      (Failure.INVALID_DOCUMENT, False, False)):
+        owner = ConnectionSupervisor("epoch")
+        gather = advance(owner, advance(owner, start(owner, "intent")), 0.2)
+        now = gather.deadline if late else gather.deadline - 1
+        owner.dispatch(gather.operation.key, Failed(gather.operation, now, failure,
+            allocated=gather.resource if allocated else Resource("native", "wrong")))
+        assert owner.pairing_gather_failed_diagnostic(key=gather.operation.key,
+            runtime_epoch="epoch", source=gather.resource) is None
+
+
 def test_late_current_completion_records_deadline_transition_not_native_failure_guess():
     owner = ConnectionSupervisor("epoch")
     work = advance(owner, start(owner, "intent"))
@@ -311,7 +413,30 @@ def qualified(create, directory):
     return private.QualificationControl(lambda: service), service, host, created, closed
 
 
-@pytest.mark.parametrize("case", ["invalid_offer", "native_answer", "ice_deadline",
+@pytest.mark.parametrize("case", ["valid_failed", "wrong_as_of_failed", "wrong_as_of_tick",
+    "bad_pair", "raw_value", "wrong_reason"])
+def test_private_qualification_host_requires_exact_failed_shape_and_retirement(
+        native_pairing, tmp_path, case):
+    port, service, *_ = qualified(native_pairing[0], tmp_path / "mesh-qualification-host")
+    operation = str(uuid4())
+    port.dispatch("qualification.pairing_begin", {"operation_id": operation, "role": "offer"})
+    retirement = dict(TICK_RETIREMENT if case == "wrong_as_of_tick" else FAILED_RETIREMENT)
+    if case == "wrong_reason": retirement["reason"] = "transient"
+    gather = dict(GATHER if case == "wrong_as_of_failed" else FAILED_GATHER)
+    if case == "bad_pair": gather["native_code"] = "not_applicable"
+    if case == "raw_value": gather["raw_error"] = "PRIVATE_RAW_ERROR"
+    service.native_pairing_qualification_status = lambda _: {
+        "state": "retired", "retirement": retirement, "gather_failure": gather}
+    result = port.dispatch("qualification.pairing_status", {"operation_id": operation})
+    assert result.get("gather_failure") == (gather if case == "valid_failed" else None)
+    assert "PRIVATE_" not in json.dumps(result)
+
+
+@pytest.mark.parametrize("case", ["invalid_offer", "native_answer", "native_fixed",
+                                  "native_fixed_late_status",
+                                  "ice_failure", "sign_failure", "bind_failure",
+                                  "identity_failure", "resync_failure", "observer_failure",
+                                  "ice_deadline",
                                   "ice_marker_fail",
                                   "gather_deadline", "gather_deadline_late", "sign_deadline",
                                   "bind_deadline", "pause", "cancel"])
@@ -326,7 +451,7 @@ def test_actual_qualified_terminal_paths_preserve_the_bound_first_cause(native_p
     run_until(offer_service, lambda: bool(status(offer_port, offer_id)["pairing_code"]))
     offered = status(offer_port, offer_id)
     assert "retirement" not in offered
-    port, service, host, _, _ = qualified(create, tmp_path / "mesh-qualification-answer")
+    port, service, host, _, closed = qualified(create, tmp_path / "mesh-qualification-answer")
     entered, release = Event(), Event()
     offset = [0.0]
     if case in {"ice_deadline", "ice_marker_fail", "gather_deadline_late", "sign_deadline", "bind_deadline"}:
@@ -338,6 +463,25 @@ def test_actual_qualified_terminal_paths_preserve_the_bound_first_cause(native_p
         service.signal_fetch = invalid
     elif case == "native_answer":
         host.acceptOffer = lambda *args: '{"ok":false,"error":"PRIVATE_NATIVE_ANSWER_ERROR"}'
+    elif case in {"native_fixed", "native_fixed_late_status", "observer_failure"}:
+        host.acceptOffer = lambda *args: '{"ok":false,"error":"native_webrtc_no_candidates"}'
+        if case == "observer_failure":
+            pairing = service._connection_runtime.executor.pairing
+            pairing.ports = replace(pairing.ports,
+                mark_gather_failure=lambda *args: (_ for _ in ()).throw(RuntimeError("PRIVATE_MARKER_ERROR")))
+    elif case in {"ice_failure", "sign_failure", "bind_failure",
+                  "identity_failure", "resync_failure"}:
+        method = {"ice_failure": "call_ice_servers",
+                  "sign_failure": "webrtc_onboarding_answer",
+                  "bind_failure": "native_webrtc_bind_onboarding",
+                  "identity_failure": "webrtc_onboarding_answer",
+                  "resync_failure": "webrtc_onboarding_answer"}[case]
+        error = (IdentityMismatch("PRIVATE_IDENTITY") if case == "identity_failure" else
+                 CallOutcomeRequiresResync("PRIVATE_RESYNC") if case == "resync_failure" else
+                 ValidationError("PRIVATE_VALIDATION"))
+        def invalid(*args, **kwargs):
+            raise error
+        setattr(service, method, invalid)
     elif case in {"gather_deadline", "gather_deadline_late"}:
         accept = host.acceptOffer
         def blocked(*args):
@@ -385,12 +529,26 @@ def test_actual_qualified_terminal_paths_preserve_the_bound_first_cause(native_p
                 service._background_availability_enabled = lambda: False
             else:
                 port.dispatch("qualification.pairing_cancel", {"operation_id": operation})
+        elif case == "native_fixed_late_status":
+            owner = service._connection_runtime.owner
+            run_until(service, lambda: any(trace.retirement is not None
+                for trace in owner._pairing_traces.values()))
+            run_until(service, lambda: service._connection_runtime.runner.active == 0)
+            context = next(iter(service._native_pairing_contexts.values()))
+            key = next(iter(owner._pairing_traces))
+            work, cutoff = owner.pairing_gather_failed_diagnostic(
+                key=key, runtime_epoch=context["runtime_epoch"], source=context["source"])
+            assert any(state == "completed" and when > cutoff for state, when in
+                       service._connection_runtime.runner.gather_milestones(work))
         run_until(service, lambda: status(port, operation)["state"] == "retired")
         observed = status(port, operation)
         retirement = observed["retirement"]
         assert validated_pairing_retirement(retirement) == retirement and retirement != UNKNOWN
         expected = {"invalid_offer": ("wait_offer", "failed", "invalid_document"),
                     "native_answer": ("gather_answer", "failed", "invalid_document"),
+                    **{name: ("gather_answer", "failed", "invalid_document") for name in (
+                        "native_fixed", "native_fixed_late_status", "ice_failure", "sign_failure", "bind_failure",
+                        "identity_failure", "resync_failure", "observer_failure")},
                     "gather_deadline": ("gather_answer", "tick", "phase_timeout"),
                     "gather_deadline_late": ("gather_answer", "tick", "phase_timeout"),
                     "ice_deadline": ("gather_answer", "tick", "phase_timeout"),
@@ -414,13 +572,48 @@ def test_actual_qualified_terminal_paths_preserve_the_bound_first_cause(native_p
             assert (gather["stage"], gather["stage_state"], gather["last_completed"]) == (
                 stage, "unknown" if case == "ice_marker_fail" else "entered", completed)
             assert validated_gather_failure(gather) == gather
-        else:
+        elif case not in {"native_answer", "native_fixed", "native_fixed_late_status",
+                          "ice_failure", "sign_failure",
+                          "bind_failure", "identity_failure", "resync_failure", "observer_failure"}:
             assert "gather_failure" not in observed
+        if case in {"native_answer", "native_fixed", "native_fixed_late_status",
+                    "ice_failure", "sign_failure",
+                    "bind_failure", "identity_failure", "resync_failure", "observer_failure"}:
+            gather = observed["gather_failure"]
+            stage, completed = {
+                "native_answer": ("native_accept", "ice_config"),
+                "native_fixed": ("native_accept", "ice_config"),
+                "native_fixed_late_status": ("native_accept", "ice_config"),
+                "observer_failure": ("native_accept", "ice_config"),
+                "ice_failure": ("ice_config", "none"),
+                "sign_failure": ("answer_sign", "native_accept"),
+                "identity_failure": ("answer_sign", "native_accept"),
+                "resync_failure": ("answer_sign", "native_accept"),
+                "bind_failure": ("bind_onboarding", "answer_sign")}[case]
+            assert (gather["as_of"], gather["stage"], gather["stage_state"],
+                    gather["last_completed"]) == ("failed_result", stage, "entered", completed)
+            kind, code = ({"native_answer": ("native_unavailable", "unknown"),
+                           "native_fixed": ("native_unavailable", "no_candidates"),
+                           "native_fixed_late_status": ("native_unavailable", "no_candidates"),
+                           "observer_failure": ("unknown", "unknown"),
+                           "identity_failure": ("identity_mismatch", "not_applicable")}.get(
+                               case, ("validation_error", "not_applicable")))
+            assert (gather["exception_kind"], gather["native_code"]) == (kind, code)
+            assert validated_gather_for_retirement(retirement, gather) == gather
+            if case == "native_fixed_late_status":
+                assert gather["worker"] == "started"
+            if case in {"native_fixed", "native_fixed_late_status", "observer_failure"}:
+                physical = next(iter(service._native_pairing_contexts.values()))["physical"]
+                assert physical is not None and physical in closed
         service._connection_runtime.step()
         assert next(iter(service._connection_runtime.snapshots().values()))["reason"] == "ineligible"
         assert status(port, operation)["retirement"] == retirement
         if case in {"ice_deadline", "ice_marker_fail", "gather_deadline", "gather_deadline_late",
                     "sign_deadline", "bind_deadline"}:
+            assert status(port, operation)["gather_failure"] == gather
+        if case in {"native_answer", "native_fixed", "native_fixed_late_status",
+                    "ice_failure", "sign_failure",
+                    "bind_failure", "identity_failure", "resync_failure", "observer_failure"}:
             assert status(port, operation)["gather_failure"] == gather
         internal = next(iter(service._native_pairing_contexts))
         assert "retirement" not in service.native_pairing_status(internal)

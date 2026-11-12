@@ -14,7 +14,9 @@ from weakref import ref
 from uuid import UUID, uuid4, uuid5
 
 from .call_manager import CallOutcomeRequiresResync
-from .connection.diagnostics import gather_failure_at_deadline, validated_gather_failure
+from .connection.diagnostics import (
+    gather_failure_at_deadline, gather_failure_at_result, validated_gather_for_retirement,
+)
 from .connection.model import Phase, Resource
 from .connection.reconcile import authority_signature, connection_key
 from .errors import ContactNotApproved, NativeUnavailable, ValidationError
@@ -304,7 +306,7 @@ class NativePairingServiceMixin:
                                          imported["expires_at"] if imported else float("inf")),
                        "direct": allow_direct_ip_disclosure, "state": "reserved", "admitted": False,
                        "physical": None, "source": None, "allocation_attempted": False,
-                       "gather_work": None, "gather_stages": ()}
+                       "gather_work": None, "gather_stages": (), "gather_exception": None}
             contexts[operation_id] = context
             intent = {"action": "native_pairing", "runtime_epoch": self._runtime_incarnation,
                       "identity_hash": profile["identity_hash"], "intent": operation_id,
@@ -395,9 +397,21 @@ class NativePairingServiceMixin:
                             stages = (context["gather_stages"] if context.get("gather_work") == work else None)
                             observed = gather_failure_at_deadline(deadline,
                                 self._connection_runtime.runner.gather_milestones(work), stages)
-                            context["gather_failure_snapshot"] = validated_gather_failure(observed)
                         else:
-                            context["gather_failure_snapshot"] = None
+                            custody = self._connection_runtime.owner.pairing_gather_failed_diagnostic(
+                                key=key, runtime_epoch=context["runtime_epoch"], source=context["source"])
+                            observed = None
+                            if custody is not None:
+                                work, cutoff = custody
+                                stages = (context["gather_stages"] if context.get("gather_work") == work else None)
+                                marker = context.get("gather_exception")
+                                kind, code = (marker[1:] if marker is not None and marker[0] == work
+                                              else ("unknown", "unknown"))
+                                observed = gather_failure_at_result(cutoff,
+                                    self._connection_runtime.runner.gather_milestones(work), stages,
+                                    kind, code)
+                        context["gather_failure_snapshot"] = validated_gather_for_retirement(
+                            result["retirement"], observed)
                     except Exception:
                         context["gather_failure_snapshot"] = None
                 if context["gather_failure_snapshot"] is not None:
@@ -463,6 +477,18 @@ class NativePairingServiceMixin:
                     and work.resource == context["source"]
                     and context.get("gather_work") in (None, work)):
                 context["gather_work"] = work
+        except Exception:
+            pass
+
+    def _native_pairing_mark_gather_failure(self, context, work, kind, code):
+        """Retain only fixed labels bound to this exact answer Work."""
+        try:
+            if (context["role"] == "answer" and context.get("gather_work") == work
+                    and work.phase is Phase.GATHER_ANSWER
+                    and work.operation.runtime_epoch == context["runtime_epoch"]
+                    and work.resource == context["source"]
+                    and context.get("gather_exception") is None):
+                context["gather_exception"] = (work, kind, code)
         except Exception:
             pass
 

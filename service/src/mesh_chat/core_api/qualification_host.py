@@ -16,7 +16,7 @@ from pathlib import Path
 from uuid import UUID
 
 from ..errors import ContactNotApproved, ValidationError
-from ..connection.diagnostics import validated_gather_failure, validated_pairing_retirement
+from ..connection.diagnostics import validated_gather_for_retirement, validated_pairing_retirement
 from ..native_path_evidence import validate_sample_request
 
 PAIRING_COMMANDS = frozenset({"qualification.pairing_begin", "qualification.pairing_status", "qualification.pairing_cancel"})
@@ -353,10 +353,9 @@ class QualificationControl:
             retirement = validated_pairing_retirement(result.get("retirement"))
             if retirement is not None:
                 projected["retirement"] = retirement
-            if retirement == {"phase": "gather_answer", "event": "tick", "reason": "phase_timeout"}:
-                gather = validated_gather_failure(result.get("gather_failure"))
-                if gather is not None:
-                    projected["gather_failure"] = gather
+            gather = validated_gather_for_retirement(retirement, result.get("gather_failure"))
+            if gather is not None:
+                projected["gather_failure"] = gather
         return projected
 
 

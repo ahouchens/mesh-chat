@@ -13,7 +13,7 @@ from uuid import uuid4
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "service/src"))
 
-from mesh_chat.connection.diagnostics import validated_gather_failure, validated_pairing_retirement
+from mesh_chat.connection.diagnostics import validated_gather_for_retirement, validated_pairing_retirement
 from native_interop_artifacts import GithubArtifacts, RendezvousUnavailable, context_from_environment
 from native_interop_evidence import SCENARIOS, SAMPLE_REJECTION_REASONS, Samples, accounting, digest, selection, traffic
 from native_interop_faults import NativePathDiagnostics, path_failure_observation, path_stage
@@ -450,9 +450,7 @@ class Controller:
             if value.get("state") in {"retired", "retiring"}:
                 error = PeerFailure("supervisor_pairing_retired")
                 retirement = validated_pairing_retirement(value.get("retirement"))
-                gather = (validated_gather_failure(value.get("gather_failure"))
-                          if retirement == {"phase": "gather_answer", "event": "tick",
-                                            "reason": "phase_timeout"} else None)
+                gather = validated_gather_for_retirement(retirement, value.get("gather_failure"))
                 self._pairing_failure = error, value["state"], retirement, gather
                 self._bind_pairing_open_failure(error)
                 raise error

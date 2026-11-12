@@ -25,6 +25,32 @@ class PairingPort:
     ready: Callable
     retire: Callable
     mark_gather_work: Callable | None = None
+    mark_gather_failure: Callable | None = None
+
+
+_NATIVE_GATHER_CODES = {
+    "native_webrtc_answer_failed": "answer_failed",
+    "native_webrtc_network_monitor_failed": "network_monitor_failed",
+    "native_webrtc_session_closed": "session_closed",
+    "native_webrtc_disposal_timeout": "disposal_timeout",
+    "native_webrtc_no_candidates": "no_candidates",
+    "native_webrtc_missing_data_channel": "missing_data_channel",
+    "native_webrtc_sdp_failed": "sdp_failed",
+}
+
+
+def _gather_exception_labels(error):
+    """Classify fixed literals only; never copy a native error message."""
+    if isinstance(error, NativeUnavailable):
+        args = error.args
+        code = (_NATIVE_GATHER_CODES.get(args[0], "unknown")
+                if len(args) == 1 and type(args[0]) is str else "unknown")
+        return "native_unavailable", code
+    if isinstance(error, IdentityMismatch):
+        return "identity_mismatch", "not_applicable"
+    if isinstance(error, ValidationError):
+        return "validation_error", "not_applicable"
+    return "unknown", "unknown"
 
 
 class PairingExecutor:
@@ -51,6 +77,7 @@ class PairingExecutor:
         return self.ports.context(work.operation.key)
 
     def execute(self, work, cancellation):
+        context = None
         try:
             context = self._check(work, cancellation)
             with self._lock:
@@ -78,7 +105,14 @@ class PairingExecutor:
                           allocated=work.resource, verified=ready, handoff=ready)
         except ContactNotApproved:
             failure = Failure.REVOKED
-        except (IdentityMismatch, ValidationError):
+        except (IdentityMismatch, ValidationError) as error:
+            if (work.phase is Phase.GATHER_ANSWER and context is not None
+                    and self.ports.mark_gather_failure is not None):
+                try:
+                    kind, code = _gather_exception_labels(error)
+                    self.ports.mark_gather_failure(context, work, kind, code)
+                except Exception:
+                    pass  # Observation cannot change the primary classified failure.
             failure = Failure.INVALID_DOCUMENT
         except Exception:
             # Unknown native/signaling outcomes terminate this admitted intent.
