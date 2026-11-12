@@ -1,5 +1,45 @@
 # Connection runtime qualification ledger
 
+## Android link inventory compatibility (2026-11-12)
+
+Full qualification run `43293822522` at `7b02a9a` completed with 10
+successful and three failed jobs. Android reached the impaired case but failed
+`kernel_link_coverage/initial_inventory_unavailable`; Windows timed out waiting
+for its partner. No `impaired_ready` marker or completed impairment, counted
+blocking, recovery, or full native acceptance was established. The report does
+not identify which snapshot failed or prove that no kernel mutation occurred.
+
+Read-only diagnostic run `43303328513` at `cae9759` completed successfully,
+including emulator boot and cleanup. Its API35 image revision 9 emits invalid
+JSON from `ip -j -d link show`: an unused ERSPAN detail contains unquoted text.
+The command exits zero without truncation. The same probe finds no `nft` binary
+and reads an explicit NF_TABLES-disabled value from the running kernel config.
+This is boot-time diagnostic evidence, not application topology or qualification;
+the earlier failed run did not retain identical image-byte proof.
+
+Reviewed correction `e055fdd`, integrated as `29bb4e3`, uses complete
+one-line link inventory reconciled with individual detailed link and sysfs reads.
+It preserves strict topology, identity, group, route, no-bypass and cleanup checks.
+Missing `nft` is acceptable only with explicit disabled support in the running
+kernel; missing, failed, enabled, module or contradictory evidence is rejected.
+Root's eight affected offline suites pass **1,654 cases with zero
+failures, errors or skips**. Fresh full native qualification remains required.
+
+Spec 9.3 permits this controlled network test without modifying WebRTC. Actual
+selected-path traffic, bidirectional impairment, counters, blocking and recovery
+remain required. No WebRTC dependency, native host or public API changed. The
+broader refactoring and remaining SC12 scenarios are incomplete; frozen helper
+retirement follows independently accepted full native qualification.
+
+All nonnative evidence for the closed full run validates: 5,892 policy
+cases; 2,056 Python UI and 12 rendered cases; scoped Windows reports;
+56 Android emulator cases, 83 exact JVM identities and 17 artifact hashes;
+72 layout cases; and each platform's 25 transport, 10 recovery and
+12 setup cases. Layout pixels were not visually reviewed. Closure SHA-256:
+`583d94d1fa5c0cb7275754b481695b21026ffb3d34e2d58347151f052d7d3bf1`.
+Diagnostic report SHA-256:
+`dbe44b3f19a85677dd9d7c6242c7578ed0dfad4a676cded4ec2e491ec2089a90`.
+
 ## Impaired-case link admission failed after pairing (2026-11-12)
 
 Full run [43276371484](https://github.com/ahouchens/mesh-chat/actions/runs/43276371484)

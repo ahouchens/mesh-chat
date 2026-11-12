@@ -1,20 +1,33 @@
 # Connection runtime implementation and qualification
 
-Full run `43276371484` at `794ced6` reached impaired-case traffic setup
-after pairing, then failed Android `kernel_link_coverage/alternate_link`.
-Windows timed out waiting for its partner. All nonnative evidence validates;
-the actual topology and precise admission/install recheck are not retained.
-There is no completed impairment qualification or full native acceptance.
-Reviewed integration `3fa2b92` controls a bounded set of independent links
-with separate two-way netem and continuous interface-name plus netdevice-group
-UDP guards. It preserves the counted negative control, authenticated receipts,
-selected-path counters, original deadlines and exact cleanup. No WebRTC or
-native-host modification is required. All 1,639 cases in eight affected offline
-suites pass; actual Android capability and full native qualification remain pending.
-Earlier pairing/lease failures and remaining SC12/refactoring work remain open.
+Full qualification run `43293822522` at `7b02a9a` completed with 10
+successful and three failed jobs. Android reached the impaired case but failed
+`kernel_link_coverage/initial_inventory_unavailable`; Windows timed out waiting
+for its partner. No `impaired_ready` marker or completed impairment, counted
+blocking, recovery, or full native acceptance was established. The report does
+not identify which snapshot failed or prove that no kernel mutation occurred.
 
-Next: qualify the bounded controlled-network harness in full native CI,
-then begin frozen helper retirement after independent acceptance.
+Read-only diagnostic run `43303328513` at `cae9759` completed successfully,
+including emulator boot and cleanup. Its API35 image revision 9 emits invalid
+JSON from `ip -j -d link show`: an unused ERSPAN detail contains unquoted text.
+The command exits zero without truncation. The same probe finds no `nft` binary
+and reads an explicit NF_TABLES-disabled value from the running kernel config.
+This is boot-time diagnostic evidence, not application topology or qualification;
+the earlier failed run did not retain identical image-byte proof.
+
+Reviewed correction `e055fdd`, integrated as `29bb4e3`, uses complete
+one-line link inventory reconciled with individual detailed link and sysfs reads.
+It preserves strict topology, identity, group, route, no-bypass and cleanup checks.
+Missing `nft` is acceptable only with explicit disabled support in the running
+kernel; missing, failed, enabled, module or contradictory evidence is rejected.
+Root's eight affected offline suites pass **1,654 cases with zero
+failures, errors or skips**. Fresh full native qualification remains required.
+
+Spec 9.3 permits this controlled network test without modifying WebRTC. Actual
+selected-path traffic, bidirectional impairment, counters, blocking and recovery
+remain required. No WebRTC dependency, native host or public API changed. The
+broader refactoring and remaining SC12 scenarios are incomplete; frozen helper
+retirement follows independently accepted full native qualification.
 
 ## Earlier checkpoints
 
