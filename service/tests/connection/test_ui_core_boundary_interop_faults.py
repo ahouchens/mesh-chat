@@ -199,11 +199,62 @@ def test_actual_kernel_unblock_preserves_current_check_delete_order_and_new_erro
     assert state.observer.failure_observation(failure.value) == expected
     if point.endswith("error"): assert failure.value is state.error
     if stage == "kernel_restore_current":
-        assert state.value._blocked is False and state.commands[-1][:2] == ("iptables", "-D")
         assert str(failure.value) == "The blocked native kernel socket changed before restoration"
-    else: assert state.value._blocked is True
+    assert state.value._blocked is (stage == "kernel_restore_delete")
     assert state.commands[0] == ("iptables", "-nvx", "-L", "OUTPUT", "--line-numbers")
+    assert state.commands[-1] == ("iptables", "-D", "OUTPUT", *state.value.drop_args)
     assert "PRIVATE" not in repr(expected)
+
+
+def test_unblock_counter_failure_deletes_exact_rule_once_and_close_does_not_repeat(monkeypatch):
+    state = diagnostic_kernel(monkeypatch)
+    state.value.block()
+    state.commands.clear()
+    state.fault = "counter_read_error"
+    with pytest.raises(type(state.error)) as failure: state.value.unblock()
+    assert failure.value is state.error
+    assert state.observer.failure_observation(failure.value) == {
+        "scenario": "turn_tcp", "stage": "kernel_counter_read"}
+    assert state.commands == [
+        ("iptables", "-nvx", "-L", "OUTPUT", "--line-numbers"),
+        ("iptables", "-D", "OUTPUT", *state.value.drop_args)]
+    assert state.value._blocked is False
+    state.value.close()
+    assert len(state.commands) == 2
+
+
+def test_unblock_delete_failure_supersedes_counter_error_with_context_and_keeps_rule_owned(monkeypatch):
+    state = diagnostic_kernel(monkeypatch)
+    state.value.block()
+    state.commands.clear()
+    original = state.value.command
+    def command(*args):
+        if args[:2] == ("iptables", "-D"):
+            state.commands.append(args)
+            raise RuntimeError("PRIVATE_DELETE_ERROR")
+        return original(*args)
+    monkeypatch.setattr(state.value, "command", command)
+    state.fault = "counter_read_error"
+    with pytest.raises(RuntimeError, match="PRIVATE_DELETE_ERROR") as failure:
+        state.value.unblock()
+    assert failure.value.__context__ is state.error
+    assert state.observer.failure_observation(failure.value) == {
+        "scenario": "turn_tcp", "stage": "kernel_restore_delete"}
+    assert state.value._blocked is True
+    assert state.commands == [
+        ("iptables", "-nvx", "-L", "OUTPUT", "--line-numbers"),
+        ("iptables", "-D", "OUTPUT", *state.value.drop_args)]
+    state.fault = None
+    monkeypatch.setattr(state.value, "command", original)
+    state.value.close()
+    assert state.value._blocked is False
+    assert state.commands[-1] == ("iptables", "-D", "OUTPUT", *state.value.drop_args)
+
+
+def test_unblock_already_clear_issues_no_kernel_commands(monkeypatch):
+    state = diagnostic_kernel(monkeypatch)
+    assert state.value.unblock() == 0
+    assert state.commands == []
 
 
 def test_actual_kernel_cleanup_replacement_has_own_literal_reason_and_no_primary_attribution(monkeypatch):

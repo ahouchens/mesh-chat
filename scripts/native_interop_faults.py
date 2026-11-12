@@ -263,20 +263,22 @@ class AndroidKernelPath:
         if not self._blocked:
             return 0
         observer = getattr(self, "_negative_diagnostics", None)
-        with negative_control_stage(observer, "kernel_counter_read"):
-            text = self.command("iptables", "-nvx", "-L", "OUTPUT", "--line-numbers")
-        with negative_control_stage(observer, "kernel_counter_parse"):
-            lines = [line.split() for line in text.splitlines() if self.rule in line]
-            if len(lines) != 1 or len(lines[0]) < 4 or lines[0][3] != "DROP":
-                raise negative_control_error(observer, "kernel_counter_parse",
-                    ValueError("Exact kernel block rule counter is unavailable"), "counter_unavailable")
-            packets = int(lines[0][1])
         current = True
-        try: self.require_current()
-        except Exception: current = False
-        with negative_control_stage(observer, "kernel_restore_delete"):
-            self.command("iptables", "-D", "OUTPUT", *self.drop_args)
-        self._blocked = False
+        try:
+            with negative_control_stage(observer, "kernel_counter_read"):
+                text = self.command("iptables", "-nvx", "-L", "OUTPUT", "--line-numbers")
+            with negative_control_stage(observer, "kernel_counter_parse"):
+                lines = [line.split() for line in text.splitlines() if self.rule in line]
+                if len(lines) != 1 or len(lines[0]) < 4 or lines[0][3] != "DROP":
+                    raise negative_control_error(observer, "kernel_counter_parse",
+                        ValueError("Exact kernel block rule counter is unavailable"), "counter_unavailable")
+                packets = int(lines[0][1])
+            try: self.require_current()
+            except Exception: current = False
+        finally:
+            with negative_control_stage(observer, "kernel_restore_delete"):
+                self.command("iptables", "-D", "OUTPUT", *self.drop_args)
+            self._blocked = False
         if not current:
             raise negative_control_error(observer, "kernel_restore_current",
                 ValueError("The blocked native kernel socket changed before restoration"), "current_check_failed")
