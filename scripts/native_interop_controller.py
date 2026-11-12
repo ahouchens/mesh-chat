@@ -17,8 +17,9 @@ from mesh_chat.connection.diagnostics import validated_pairing_retirement
 from native_interop_artifacts import GithubArtifacts, RendezvousUnavailable, context_from_environment
 from native_interop_evidence import SCENARIOS, SAMPLE_REJECTION_REASONS, Samples, accounting, digest, selection, traffic
 from native_interop_faults import NativePathDiagnostics, path_failure_observation, path_stage
-from native_interop_diagnostics import (NegativeControlDiagnostics, PreflightDiagnostics, negative_control_error,
-    negative_control_observation, negative_control_stage, rendezvous_observation, reset_negative_control)
+from native_interop_diagnostics import (NegativeControlDiagnostics, PreflightDiagnostics, final_path_missing_observation,
+    final_path_missing_reason, negative_control_error, negative_control_observation, negative_control_stage,
+    record_final_path_skip, rendezvous_observation, reset_negative_control)
 from native_interop_peers import AndroidEmulator, AndroidPeer, PeerFailure, WindowsPeer
 from native_interop_core_observation import core_failure_observation
 from native_interop_preflight import android_environment, android_network_diagnostic, outbound_services
@@ -143,6 +144,7 @@ class Controller:
         self._substage_failure: tuple[Exception, str] | None = None
         self._retirement_context = self._retirement_failure = None
         self._path_diagnostics = None
+        self._final_path_failure = None
         try: self._negative_diagnostics = NegativeControlDiagnostics()
         except Exception: self._negative_diagnostics = None
         self.workload = required_workload(workload)
@@ -243,6 +245,23 @@ class Controller:
             selected = negative_control_observation(observer.failure_observation(error))
             if selected != negative_control_observation(record[1]): return {}
             return {"negative_control": selected} if selected else {}
+        except Exception:
+            return {}
+
+    def failure_final_path(self, error):
+        try:
+            record = self._final_path_failure
+            if (type(error) is not ValueError or type(record) is not tuple or len(record) != 2
+                    or record[0] is not error):
+                return {}
+            selected = self.failure_negative_control(error).get("negative_control")
+            if (type(selected) is not dict or selected.get("stage") != "final_observation"
+                    or selected.get("reason") != "path_missing"
+                    or selected.get("scenario") not in {"turn_tcp", "turn_tls", "impaired"}
+                    or self.phase != selected["scenario"] + "_kernel_block_negative_control"):
+                return {}
+            reason = final_path_missing_observation(record[1])
+            return {"final_path_missing": reason} if reason is not None else {}
         except Exception:
             return {}
 
@@ -458,13 +477,17 @@ class Controller:
             if self.role == "android": self.publish("approved", {"approved": True})
             elif self.receive("approved") != {"approved": True}: raise ValueError("Peer approval was not explicit")
 
-    def observe(self, logical=None, *, ready=True, scenario=None):
+    def observe(self, logical=None, *, ready=True, scenario=None, missing_reasons=None):
         with self._substage("path_inventory"):
             inventory = self.peer.inventory()
             resources = [item for item in inventory["resources"] if logical is None or item["logical_session"] == logical]
+            if not resources:
+                record_final_path_skip(missing_reasons, "no_resource")
+                return None
             if ready and len(resources) == 1:
                 owner_state = resources[0].get("owner_state")
                 if type(owner_state) is str and owner_state == "pending_adoption":
+                    record_final_path_skip(missing_reasons, "pending_adoption")
                     return None
         for resource in resources:
             with self._substage("path_read"):
@@ -473,9 +496,18 @@ class Controller:
                 value = self.peer.path(resource["logical_session"], resource["physical_resource"], sample_request)
             with self._substage("path_validation"):
                 self.samples.check_request(value, sample_request)
-                if ready and any(value.get(field) is not True for field in ("adopted", "attached", "messaging_ready")):
+                first_unready = None
+                if ready:
+                    for field, reason in (("adopted", "adopted_not_true"), ("attached", "attached_not_true"),
+                                          ("messaging_ready", "messaging_ready_not_true")):
+                        if value.get(field) is not True:
+                            first_unready = reason
+                            break
+                if first_unready is not None:
+                    record_final_path_skip(missing_reasons, first_unready)
                     continue
                 if value.get("status") != "selected":
+                    record_final_path_skip(missing_reasons, "nonselected")
                     continue
                 return self.samples.consume(value, inventory, requested, sample_request=sample_request, ready=ready, scenario=scenario)
         return None
@@ -573,6 +605,7 @@ class Controller:
 
     def path_case(self, scenario, initiator):
         self._retirement_context = self._retirement_failure = None
+        self._final_path_failure = None
         self._negative_diagnostics = reset_negative_control(self._negative_diagnostics, scenario)
         session, url = self.negotiate(scenario, initiator)
         if self.contact is None: self.pair(session, initiator)
@@ -611,10 +644,18 @@ class Controller:
                         for index in range(20 if scenario == "impaired" else 1)]
             negative = self.negative(fault, scenario) if scenario in {"turn_tcp", "turn_tls", "impaired"} else None
             with negative_control_stage(self._negative_diagnostics, "final_observation"):
-                after = self.observe(session, ready=True, scenario=scenario)
+                missing_reasons = set() if scenario in {"turn_tcp", "turn_tls", "impaired"} else None
+                if missing_reasons is None:
+                    after = self.observe(session, ready=True, scenario=scenario)
+                else:
+                    after = self.observe(session, ready=True, scenario=scenario, missing_reasons=missing_reasons)
                 if after is None:
-                    raise negative_control_error(self._negative_diagnostics, "final_observation",
-                        ValueError("Native selected path disappeared after receipt delivery"), "path_missing")
+                    error = ValueError("Native selected path disappeared after receipt delivery")
+                    if missing_reasons is not None:
+                        try: reason = final_path_missing_reason(missing_reasons)
+                        except Exception: reason = "unavailable"
+                        self._final_path_failure = error, reason
+                    raise negative_control_error(self._negative_diagnostics, "final_observation", error, "path_missing")
             with negative_control_stage(self._negative_diagnostics, "final_evidence"):
                 if fault is not None and scenario == "impaired": impairment = fault.report()
                 if scenario == "impaired" and self.role == "android" and (
@@ -810,6 +851,7 @@ def main():
             result.update(controller.failure_rendezvous(error))
             result.update(controller.failure_retirement(error))
             result.update(controller.failure_negative_control(error))
+            result.update(controller.failure_final_path(error))
             result.update(controller.failure_native_path(error))
             try:
                 core = controller.failure_core(error)

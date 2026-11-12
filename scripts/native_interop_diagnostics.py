@@ -30,6 +30,30 @@ NEGATIVE_CONTROL_REASONS = {
     "fault_cleanup": frozenset({"cleanup_incomplete"}),
 }
 
+FINAL_PATH_MISSING_REASONS = frozenset({"no_resource", "pending_adoption", "adopted_not_true",
+    "attached_not_true", "messaging_ready_not_true", "nonselected", "mixed", "unavailable"})
+FINAL_PATH_SKIP_REASONS = FINAL_PATH_MISSING_REASONS - {"mixed", "unavailable"}
+
+
+def record_final_path_skip(reasons, reason):
+    try:
+        if type(reasons) is set and reason in FINAL_PATH_SKIP_REASONS and len(reasons) < 2:
+            reasons.add(reason)
+    except Exception:
+        pass  # Optional explanation cannot change the observed path result.
+
+
+def final_path_missing_reason(reasons):
+    """Reduce at most two fixed skip labels; missing collection is unavailable."""
+    if type(reasons) is not set or len(reasons) > 2 or not reasons <= FINAL_PATH_SKIP_REASONS:
+        return "unavailable"
+    if not reasons: return "unavailable"
+    return next(iter(reasons)) if len(reasons) == 1 else "mixed"
+
+
+def final_path_missing_observation(value):
+    return value if type(value) is str and value in FINAL_PATH_MISSING_REASONS else None
+
 
 def negative_control_observation(value):
     if (type(value) is not dict or not {"scenario", "stage"} <= set(value)
