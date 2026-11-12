@@ -1,7 +1,7 @@
-"""Manual, read-only inventory of a fresh API-35 KVM emulator.
+"""Manual, read-only network-ready qdisc probe of an API-35 KVM emulator.
 
-This report diagnoses command availability and parsing. It is not native
-interoperability evidence and never installs an app or changes network policy.
+This report diagnoses admitted route and default-qdisc availability. It is
+not native interoperability evidence and never installs an app or changes policy.
 """
 
 import argparse
@@ -18,7 +18,8 @@ import sys
 import time
 from uuid import uuid4
 
-from native_interop_link_scope import LinkScopeError, covered_links, link_metadata, snapshot
+from native_interop_link_scope import (LinkScopeError, covered_links, link_metadata,
+    link_names, snapshot)
 
 
 IMAGE = "system-images;android-35;google_apis;x86_64"
@@ -33,6 +34,10 @@ MAX_REPORT = 512 * 1024
 READ_SECONDS = 10
 READ_BUDGET_SECONDS = 180
 BOOT_SECONDS = 600
+READY_POLLS = 6
+READY_INTERVAL_SECONDS = 15
+FINAL_READ_RESERVE_SECONDS = 60
+FINAL_CAPTURE_RESERVE_BYTES = 64 * 1024
 BEGIN = "MESH_NETWORK_INVENTORY_JSON_BEGIN"
 END = "MESH_NETWORK_INVENTORY_JSON_END"
 
@@ -233,12 +238,10 @@ class Inventory:
         self.bytes_kept = 0
         self.deadline = time.monotonic() + READ_BUDGET_SECONDS
 
-    def capture(self, *argv):
+    def _execute(self, argv, *, phase=None, attempt=None):
         if len(self.report["commands"]) >= MAX_COMMANDS:
             raise ProbeFailure("command_limit_exceeded")
         key = tuple(str(value) for value in argv)
-        if key in self.records:
-            return self.records[key]
         room = max(0, MAX_CAPTURE - self.bytes_kept)
         remaining = self.deadline - time.monotonic()
         if remaining <= 0:
@@ -251,27 +254,154 @@ class Inventory:
                 stderr_limit=stderr_limit,
                 env=self.emulator.env)
         value = {"argv": list(key), **value}
+        if phase is not None:
+            value["phase"] = phase
+        if attempt is not None:
+            value["attempt"] = attempt
         self.bytes_kept += len(value["stdout"].encode("utf-8")) + len(value["stderr"].encode("utf-8"))
-        self.records[key] = value
         self.report["commands"].append(value)
         return value
+
+    def capture(self, *argv):
+        key = tuple(str(value) for value in argv)
+        if key not in self.records:
+            self.records[key] = self._execute(key)
+        return self.records[key]
+
+    def fresh(self, *argv, phase, attempt=None):
+        return self._execute(argv, phase=phase, attempt=attempt)
+
+    @staticmethod
+    def _output(record):
+        if (record["exit_code"] != 0 or record["timed_out"]
+                or record["stdout_truncated"] or record["stderr_truncated"]
+                or record["stderr"].strip()):
+            return None
+        return record["stdout"].strip()
+
+    @staticmethod
+    def _default_qdisc_shape(value):
+        # The exact initial predicate in _BoundedUdpLinks._default_qdisc.
+        return (len(value.splitlines()) == 1 and
+                re.match(r"^qdisc (?:noqueue|pfifo_fast|fq_codel) 0: root(?:\s|$)", value) is not None)
+
+    def unavailable(self, stage, reason=None):
+        polls = self.report.get("readiness", {}).get("polls", 0)
+        self.report["readiness"] = {"result": "unavailable", "polls": polls}
+        self.report["classification"] = {"stage": stage, "result": "unavailable"}
+        if reason is not None:
+            self.report["classification"]["reason"] = reason
+
+    def _possible_external_route(self, links, routes, attempt):
+        try:
+            names = link_names(links)
+        except LinkScopeError:
+            return False, 0
+        if len(names) > MAX_LINKS:
+            return False, len(names)
+        candidates = set()
+        for route in routes:
+            for line in route.splitlines():
+                parts = line.split()
+                if (not parts or parts[0] in {"local", "broadcast", "anycast", "unreachable",
+                                             "blackhole", "prohibit", "throw"} or parts.count("dev") != 1):
+                    continue
+                index = parts.index("dev") + 1
+                if index < len(parts) and parts[index] in names and parts[index] != "lo" and "UP" in names[parts[index]]:
+                    candidates.add(parts[index])
+        if len(candidates) > 4:
+            return False, len(names)
+        for name in sorted(candidates):
+            detail = self._output(self.fresh("ip", "-d", "link", "show", "dev", name,
+                                             phase="readiness_poll", attempt=attempt))
+            if (detail is not None and re.match(r"^[0-9]+:\s+" + re.escape(name) + r"(?:@[^:]+)?:", detail)
+                    and re.search(r"(?m)^\s+dummy(?:\s|$)", detail) is None):
+                return True, len(names)
+        return False, len(names)
+
+    def wait_for_route(self):
+        polls = 0
+        for attempt in range(1, READY_POLLS + 1):
+            if (time.monotonic() >= self.deadline - FINAL_READ_RESERVE_SECONDS
+                    or self.bytes_kept >= MAX_CAPTURE - FINAL_CAPTURE_RESERVE_BYTES):
+                break
+            polls = attempt
+            values = [self._output(self.fresh(*args, phase="readiness_poll", attempt=attempt))
+                      for args in (("ip", "-o", "link", "show"),
+                                   ("ip", "-4", "route", "show", "table", "all"),
+                                   ("ip", "-6", "route", "show", "table", "all"))]
+            if all(value is not None for value in values):
+                possible, count = self._possible_external_route(values[0], values[1:], attempt)
+                # Reserve a complete per-link inventory, policy reads, two qdisc
+                # samples and fresh identity/route reads inside the same caps.
+                if len(self.report["commands"]) + 6 * count + 34 > MAX_COMMANDS:
+                    break
+                if self.bytes_kept >= MAX_CAPTURE - FINAL_CAPTURE_RESERVE_BYTES:
+                    break
+                if possible:
+                    if time.monotonic() >= self.deadline - FINAL_READ_RESERVE_SECONDS:
+                        break
+                    self.report["readiness"] = {"result": "candidate", "polls": attempt}
+                    return True
+            if attempt < READY_POLLS:
+                remaining = self.deadline - FINAL_READ_RESERVE_SECONDS - time.monotonic()
+                if remaining > 0:
+                    time.sleep(min(READY_INTERVAL_SECONDS, remaining))
+        self.report["readiness"] = {"result": "unavailable", "polls": polls}
+        self.unavailable("network_ready")
+        return False
 
     def cached(self, *argv):
         record = self.records.get(tuple(argv))
         if (record is None or record["exit_code"] != 0 or record["timed_out"]
-                or record["stdout_truncated"] or record["stderr_truncated"]):
+                or record["stdout_truncated"] or record["stderr_truncated"]
+                or record["stderr"].strip()):
             raise ProbeFailure("captured_command_unavailable")
         return record["stdout"].strip()
 
+    def collect_auxiliary(self):
+        """Capture context only after the qdisc evidence has had first claim on bounds."""
+        self.report["auxiliary"] = "captured"
+        for args in (("getprop", "ro.build.fingerprint"), ("ip", "-V"),
+                     ("ip", "-j", "-d", "link", "show"), ("iptables-save",),
+                     ("ip6tables-save",),
+                     ("sh", "-c", shlex.quote("command -v nft >/dev/null 2>&1")),
+                     ("sh", "-c", shlex.quote(
+                         "if [ -r /proc/config.gz ] && command -v zcat >/dev/null 2>&1; "
+                         "then zcat /proc/config.gz 2>/dev/null | "
+                         "grep -E '^(CONFIG_NF_TABLES=(y|m|n)|# CONFIG_NF_TABLES is not set)$' "
+                         "|| echo unknown; else echo unknown; fi"))):
+            if (len(self.report["commands"]) >= MAX_COMMANDS
+                    or self.bytes_kept >= MAX_CAPTURE - MAX_STDERR
+                    or time.monotonic() >= self.deadline):
+                self.report["auxiliary"] = "incomplete"
+                return
+            record = self.capture(*args)
+            if (record["timed_out"] or record["stdout_truncated"]
+                    or record["stderr_truncated"]):
+                self.report["auxiliary"] = "incomplete"
+        nft = self.records[("sh", "-c", shlex.quote("command -v nft >/dev/null 2>&1"))]
+        if nft["exit_code"] == 0 and not nft["timed_out"]:
+            if (len(self.report["commands"]) >= MAX_COMMANDS
+                    or self.bytes_kept >= MAX_CAPTURE - MAX_STDERR
+                    or time.monotonic() >= self.deadline):
+                self.report["auxiliary"] = "incomplete"
+            else:
+                record = self.capture("nft", "list", "ruleset")
+                if (record["exit_code"] != 0 or record["timed_out"]
+                        or record["stdout_truncated"] or record["stderr_truncated"]):
+                    self.report["auxiliary"] = "incomplete"
+
     def collect(self):
-        self.capture("ip", "-V")
-        self.capture("ip", "-j", "-d", "link", "show")
+        if not self.wait_for_route():
+            self.collect_auxiliary()
+            return
         old = self.capture("ip", "-o", "link", "show")
         for args in (("ip", "-4", "route", "show", "table", "all"),
                      ("ip", "-6", "route", "show", "table", "all"),
                      ("ip", "-4", "rule", "show"), ("ip", "-6", "rule", "show")):
             self.capture(*args)
-        if old["exit_code"] == 0 and not old["timed_out"] and not old["stdout_truncated"]:
+        if self._output(old) is not None:
             names = []
             for line in old["stdout"].splitlines():
                 match = re.fullmatch(r"\s*[0-9]+:\s+([A-Za-z0-9_.-]{1,15})(?:@[^:]+)?:\s+<[^>]*>.*", line)
@@ -289,53 +419,72 @@ class Inventory:
                               + root + "/upper_*; do if [ -e \"$p\" ]; then echo 1; exit; fi; done; echo 0")
                     self.capture("sh", "-c", shlex.quote(script))
                     self.capture("ip", "-d", "link", "show", "dev", name)
-                    self.capture("tc", "qdisc", "show", "dev", name)
         else:
             self.report["name_inventory"] = "unavailable"
-        for args in (("getprop", "ro.build.fingerprint"), ("iptables-save",),
-                     ("ip6tables-save",),
-                     ("sh", "-c", shlex.quote("command -v nft >/dev/null 2>&1")),
-                     ("sh", "-c", shlex.quote(
-                         "if [ -r /proc/config.gz ] && command -v zcat >/dev/null 2>&1; "
-                         "then zcat /proc/config.gz 2>/dev/null | "
-                         "grep -E '^(CONFIG_NF_TABLES=(y|m|n)|# CONFIG_NF_TABLES is not set)$' "
-                         "|| echo unknown; "
-                         "else echo unknown; fi"))):
-            self.capture(*args)
-        nft = self.records[("sh", "-c", shlex.quote("command -v nft >/dev/null 2>&1"))]
-        if nft["exit_code"] == 0 and not nft["timed_out"]:
-            self.capture("nft", "list", "ruleset")
         self.classify()
+        self.collect_auxiliary()
 
     def classify(self):
         try:
             links, route4, route6, rule4, rule6 = snapshot(self.cached)
-        except ProbeFailure:
-            self.report["classification"] = {"stage": "snapshot_command", "result": "unavailable"}
+        except (ProbeFailure, LinkScopeError):
+            self.unavailable("network_ready")
             return
         try:
             parsed = json.loads(links)
         except (TypeError, ValueError):
-            self.report["classification"] = {"stage": "json_decode", "result": "rejected"}
+            self.unavailable("network_ready")
             return
         if type(parsed) is not list:
-            self.report["classification"] = {"stage": "json_shape", "result": "rejected"}
+            self.unavailable("network_ready")
             return
         try:
             metadata = link_metadata(self.cached, links)
         except (LinkScopeError, ProbeFailure) as error:
             reason = error.reason if type(error) is LinkScopeError else "captured_command_unavailable"
-            self.report["classification"] = {"stage": "link_metadata", "result": "rejected", "reason": reason}
+            self.unavailable("network_ready", reason)
             return
         try:
             plan = covered_links(links, route4, route6, rule4, rule6, metadata)
         except LinkScopeError as error:
-            self.report["classification"] = {"stage": "covered_links", "result": "rejected",
-                                             "reason": error.reason}
+            self.unavailable("network_ready", error.reason)
             return
-        self.report["classification"] = {"stage": "covered_links", "result": "accepted",
-                                         "admitted_count": len(plan["external"]),
-                                         "denied_sink_count": len(plan["sinks"])}
+        external = plan["external"]
+        if not external:
+            self.unavailable("network_ready")
+            return
+        first = [self.fresh("tc", "qdisc", "show", "dev", item["name"], phase="qdisc_baseline")
+                 for item in external]
+        contexts = [
+            (("ip", "-o", "link", "show"), self.cached("ip", "-o", "link", "show")),
+            (("ip", "-4", "route", "show", "table", "all"), route4),
+            (("ip", "-6", "route", "show", "table", "all"), route6),
+            (("ip", "-4", "rule", "show"), rule4),
+            (("ip", "-6", "rule", "show"), rule6),
+        ]
+        contexts.extend((("ip", "-d", "link", "show", "dev", item["name"]),
+                         self.cached("ip", "-d", "link", "show", "dev", item["name"]))
+                        for item in external)
+        stable = True
+        for args, expected in contexts:
+            if self._output(self.fresh(*args, phase="stability_check")) != expected.strip():
+                stable = False
+        second = [self.fresh("tc", "qdisc", "show", "dev", item["name"], phase="qdisc_second")
+                  for item in external]
+        self.report["qdisc_links"] = [
+            {"name": item["name"], "ifindex": item["ifindex"], "kind": item["kind"],
+             "group": item["group"], "baseline_command": self.report["commands"].index(before),
+             "second_command": self.report["commands"].index(after)}
+            for item, before, after in zip(external, first, second)]
+        baseline = [self._output(record) for record in first]
+        after = [self._output(record) for record in second]
+        if not stable or any(value is None for value in baseline + after) or baseline != after:
+            self.unavailable("network_ready_qdisc")
+            return
+        self.report["readiness"] = {"result": "observed", "polls": self.report["readiness"]["polls"]}
+        self.report["classification"] = {"stage": "network_ready_qdisc", "result": "observed",
+            "baseline_shape": "compatible" if all(map(self._default_qdisc_shape, baseline)) else "unsupported",
+            "admitted_count": len(external), "denied_sink_count": len(plan["sinks"])}
 
 
 def _bounded_json(report):
@@ -349,6 +498,8 @@ def _bounded_json(report):
                 record[field] = record[field][:len(record[field]) // 2]
                 record[field + "_truncated"] = True
                 report["classification"] = {"stage": "report_limit", "result": "unavailable"}
+                if "readiness" in report:
+                    report["readiness"]["result"] = "unavailable"
                 break
         else:
             raise ProbeFailure("report_limit_unavailable")
@@ -361,13 +512,15 @@ def main():
     args = parser.parse_args()
     if args.output != Path("dist/reports/android-network-inventory.json"):
         parser.error("--output must be dist/reports/android-network-inventory.json")
-    report = {"kind": "android_network_inventory_probe_v1",
+    report = {"kind": "android_network_ready_qdisc_probe_v2", "mode": "network_ready_qdisc",
               "evidence_level": "diagnostic_only_not_qualification", "qualification": False,
               "network_mutations": False, "image_package": IMAGE,
               "github_run_id": os.environ.get("GITHUB_RUN_ID"),
               "github_run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT"),
               "source_commit": None, "source_tree": None, "image_revision": None,
               "image_fingerprint": None, "commands": [], "name_inventory": "unavailable",
+              "readiness": {"result": "unavailable", "polls": 0}, "qdisc_links": [],
+              "auxiliary": "not_started",
               "classification": {"stage": "bootstrap", "result": "unavailable"},
               "bootstrap": "unavailable", "cleanup": "not_needed"}
     failure = False
@@ -392,9 +545,13 @@ def main():
         failure = True
         report["bootstrap"] = "failed" if report["bootstrap"] != "passed" else "passed"
         report["probe_failure"] = error.reason
+        report["readiness"]["result"] = "unavailable"
+        report["classification"] = {"stage": "probe_command", "result": "unavailable"}
     except Exception:
         failure = True
         report["probe_failure"] = "unexpected_probe_failure"
+        report["readiness"]["result"] = "unavailable"
+        report["classification"] = {"stage": "probe_command", "result": "unavailable"}
     finally:
         if emulator is not None:
             try:
