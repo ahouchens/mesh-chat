@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import re
+import select
 import selectors
 import shlex
 import signal
@@ -51,20 +52,31 @@ def process_identity(pid):
         return None
 
 
-def retire_exact_process(identity):
+def process_parent(pid):
+    try:
+        return int(Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[1])
+    except FileNotFoundError:
+        return None
+
+
+def same_process(left, right):
+    return left is not None and all(left[key] == right[key] for key in ("pid", "start", "uid", "namespace"))
+
+
+def retire_exact_process(identity, descriptor):
     for kind in (signal.SIGTERM, signal.SIGKILL):
+        if select.select([descriptor], [], [], 0)[0]:
+            return
         current = process_identity(identity["pid"])
         if current is None:
             return
-        require(current == identity, "helper_process_identity_changed")
-        os.kill(identity["pid"], kind)
-        deadline = time.monotonic() + 5
-        while time.monotonic() < deadline:
-            current = process_identity(identity["pid"])
-            if current is None:
-                return
-            require(current == identity, "helper_process_identity_changed")
-            time.sleep(0.1)
+        require(same_process(current, identity), "helper_process_identity_changed")
+        try:
+            signal.pidfd_send_signal(descriptor, kind)
+        except ProcessLookupError:
+            return
+        if select.select([descriptor], [], [], 5)[0]:
+            return
     raise Unavailable("helper_process_remains")
 
 
@@ -579,6 +591,8 @@ class Child:
         self.results = []
         self.deadline = None
         self.helpers = []
+        self.helper_descriptors = {}
+        self.helper_observations = []
 
     def read(self, timeout):
         deadline = time.monotonic() + timeout
@@ -611,23 +625,60 @@ class Child:
         pids = gateway.run("ip", "netns", "pids", gateway.ns).splitlines()
         require(len(pids) <= 32 and all(pid.isdigit() for pid in pids), "namespace_process_inventory_unavailable")
         known = {item["pid"]: item for item in self.helpers}
+        observations = []
         for value in pids:
             pid = int(value)
-            if pid == self.pid:
-                continue
             identity = process_identity(pid)
             if identity is None:
                 continue
-            require(identity["namespace"] == self.inode and identity["uid"] == os.getuid()
-                    and int(identity["start"]) >= int(self.start_time)
-                    and Path(identity["executable"]).is_relative_to(sdk), "unowned_namespace_process")
-            require(pid not in known or known[pid] == identity, "helper_process_identity_changed")
-            if pid not in known:
-                self.helpers.append(identity)
+            parent = process_parent(pid)
+            if parent is None:
+                continue
+            observations.append({**identity, "parent": parent})
+        self.helper_observations.append(observations)
+        for identity in observations:
+            if identity["pid"] == self.pid:
+                require(identity["start"] == self.start_time and identity["namespace"] == self.inode
+                        and identity["uid"] == os.getuid(), "child_process_identity_changed")
+        owned = {self.pid, *known}
+        pending = [item for item in observations if item["pid"] != self.pid]
+        while pending:
+            progress = False
+            for observed in pending[:]:
+                identity = {key: value for key, value in observed.items() if key != "parent"}
+                pid = identity["pid"]
+                require(identity["namespace"] == self.inode and identity["uid"] == os.getuid()
+                        and int(identity["start"]) >= int(self.start_time), "unowned_namespace_process")
+                if not Path(identity["executable"]).is_relative_to(sdk) and observed["parent"] not in owned:
+                    continue
+                require(pid not in known or same_process(known[pid], identity), "helper_process_identity_changed")
+                if pid not in known:
+                    descriptor = os.pidfd_open(pid)
+                    current = process_identity(pid)
+                    if current is None:
+                        os.close(descriptor)
+                    else:
+                        if not same_process(current, identity):
+                            os.close(descriptor)
+                            raise Unavailable("helper_process_identity_changed")
+                        self.helpers.append(identity)
+                        self.helper_descriptors[pid] = descriptor
+                owned.add(pid)
+                pending.remove(observed)
+                progress = True
+            require(progress, "unowned_namespace_process")
 
     def retire_helpers(self):
-        for identity in self.helpers:
-            retire_exact_process(identity)
+        failures = []
+        for identity in reversed(self.helpers):
+            descriptor = self.helper_descriptors.pop(identity["pid"])
+            try:
+                retire_exact_process(identity, descriptor)
+            except Exception as error:
+                failures.append(str(error))
+            finally:
+                os.close(descriptor)
+        require(not failures, "helper_retirement_failed:" + ",".join(failures)[:160])
 
     def send(self, value):
         self.process.stdin.write(json.dumps(value).encode() + b"\n")
@@ -752,8 +803,9 @@ def main():
         if child is not None and gateway is not None:
             try:
                 child.capture_helpers(gateway)
-            except Exception:
+            except Exception as error:
                 failures.append("helper_inventory")
+                report.setdefault("cleanup_reasons", {})["helper_inventory"] = str(error)[:256]
         for name, resource in (("child", child), ("echo", echo), ("gateway", gateway)):
             if resource is not None:
                 try:
@@ -772,6 +824,7 @@ def main():
         if child is not None:
             report["guest_attempts"] = child.results
             report["owned_helpers"] = child.helpers
+            report["helper_observations"] = child.helper_observations
         if temporary is not None:
             try:
                 temporary.rmdir()
