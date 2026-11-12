@@ -1,3 +1,35 @@
+diff --git a/p2p/BUILD.gn b/p2p/BUILD.gn
+index 3b76b26..62cadd8 100644
+--- a/p2p/BUILD.gn
++++ b/p2p/BUILD.gn
+@@ -231,6 +231,7 @@ rtc_library("connection_info") {
+     "base/connection_info.h",
+   ]
+   deps = [
++    ":turn_tcp_socket_tuple",
+     "../api:candidate",
+     "../api/units:timestamp",
+   ]
+@@ -618,6 +619,7 @@ rtc_library("port_interface") {
+   ]
+   deps = [
+     ":transport_description",
++    ":turn_tcp_socket_tuple",
+     "../api:candidate",
+     "../api:packet_socket_factory",
+     "../api/task_queue",
+@@ -824,6 +826,11 @@ rtc_source_set("transport_info") {
+   deps = [ ":transport_description" ]
+ }
+ 
++rtc_source_set("turn_tcp_socket_tuple") {
++  sources = [ "base/turn_tcp_socket_tuple.h" ]
++  deps = [ "../rtc_base:socket_address" ]
++}
++
+ rtc_library("turn_port") {
+   sources = [
+     "base/turn_port.cc",
 diff --git a/p2p/base/connection_info.h b/p2p/base/connection_info.h
 index 4356050..5195742 100644
 --- a/p2p/base/connection_info.h
@@ -186,14 +218,15 @@ index 6ff4c4c..a744375 100644
  
    // PrepareAddress will attempt to get an address for this port that other
 diff --git a/p2p/base/turn_port.cc b/p2p/base/turn_port.cc
-index 10e9d1e..db8b9a4 100644
+index 10e9d1e..dbdaff6 100644
 --- a/p2p/base/turn_port.cc
 +++ b/p2p/base/turn_port.cc
-@@ -595,6 +595,21 @@ void TurnPort::OnSocketConnect(AsyncPacketSocket* socket) {
+@@ -595,6 +595,25 @@ void TurnPort::OnSocketConnect(AsyncPacketSocket* socket) {
    SendRequest(new TurnAllocateRequest(this), 0);
  }
  
 +std::optional<TurnTcpSocketTuple> TurnPort::GetTurnTcpSocketTuple() const {
++  RTC_DCHECK_RUN_ON(const_cast<TurnPort*>(this)->thread());
 +  // Read from the currently owned socket; never retain an address across
 +  // allocation mismatch, socket replacement, or closure.
 +  if (!ready() || SharedSocket() || GetProtocol() != PROTO_TCP ||
@@ -202,7 +235,10 @@ index 10e9d1e..db8b9a4 100644
 +  }
 +  TurnTcpSocketTuple tuple{socket_->GetLocalAddress(),
 +                           socket_->GetRemoteAddress()};
-+  if (tuple.local.port() == 0 || tuple.remote.port() == 0) {
++  if (tuple.local.port() == 0 || tuple.remote.port() == 0 ||
++      tuple.local.IsAnyIP() || tuple.remote.IsAnyIP() ||
++      tuple.local.IsUnresolvedIP() || tuple.remote.IsUnresolvedIP() ||
++      tuple.local.ipaddr().IsNil() || tuple.remote.ipaddr().IsNil()) {
 +    return std::nullopt;
 +  }
 +  return tuple;
@@ -232,7 +268,7 @@ index 04a1e34..1ceb710 100644
    virtual TlsCertPolicy GetTlsCertPolicy() const;
    virtual void SetTlsCertPolicy(TlsCertPolicy tls_cert_policy);
 diff --git a/p2p/base/turn_port_unittest.cc b/p2p/base/turn_port_unittest.cc
-index 346f4b7..c1944b0 100644
+index 346f4b7..9b0eac8 100644
 --- a/p2p/base/turn_port_unittest.cc
 +++ b/p2p/base/turn_port_unittest.cc
 @@ -1035,6 +1035,7 @@ TEST_F(TurnPortTest, TestTurnAllocateWithoutLoggingId) {
@@ -258,8 +294,21 @@ index 346f4b7..c1944b0 100644
  }
  
  // Test case for WebRTC issue 3927 where a proxy binds to the local host address
-@@ -1316,10 +1324,14 @@ TEST_F(TurnPortTest, TestTurnAllocateMismatch) {
+@@ -1316,10 +1324,12 @@ TEST_F(TurnPortTest, TestTurnAllocateMismatch) {
                  {.timeout = kSimulatedRtt * 2, .clock = &time_controller_}),
+       IsRtcOk());
+   SocketAddress first_addr(turn_port_->socket()->GetLocalAddress());
++  EXPECT_FALSE(turn_port_->GetTurnTcpSocketTuple().has_value());
+ 
+   // Clear connected_ flag on turnport to suppress the release of
+   // the allocation.
+   turn_port_->OnSocketClose(turn_port_->socket(), 0);
++  EXPECT_FALSE(turn_port_->GetTurnTcpSocketTuple().has_value());
+ 
+   // Forces the socket server to assign the same port.
+   ss_->SetNextPortForTesting(first_addr.port());
+@@ -1397,10 +1407,14 @@ TEST_F(TurnPortTest, TestTurnTcpAllocateMismatch) {
+                 {.timeout = kSimulatedRtt * 3, .clock = &time_controller_}),
        IsRtcOk());
    SocketAddress first_addr(turn_port_->socket()->GetLocalAddress());
 +  auto first_tuple = turn_port_->GetTurnTcpSocketTuple();
@@ -273,7 +322,7 @@ index 346f4b7..c1944b0 100644
  
    // Forces the socket server to assign the same port.
    ss_->SetNextPortForTesting(first_addr.port());
-@@ -1420,6 +1432,11 @@ TEST_F(TurnPortTest, TestTurnTcpAllocateMismatch) {
+@@ -1420,6 +1434,11 @@ TEST_F(TurnPortTest, TestTurnTcpAllocateMismatch) {
  
    // Verifies that the new port has a different address now.
    EXPECT_NE(first_addr, turn_port_->socket()->GetLocalAddress());
@@ -285,7 +334,7 @@ index 346f4b7..c1944b0 100644
  }
  
  TEST_F(TurnPortTest, TestRefreshRequestGetsErrorResponse) {
-@@ -1481,7 +1498,9 @@ TEST_F(TurnPortTest, TestStopProcessingPacketsAfterClosed) {
+@@ -1481,7 +1500,9 @@ TEST_F(TurnPortTest, TestStopProcessingPacketsAfterClosed) {
  TEST_F(TurnPortTest, TestCreateConnectionWhenSocketClosed) {
    turn_server_.AddInternalSocket(kTurnTcpIntAddr, PROTO_TCP);
    CreateTurnPort(kTurnUsername, kTurnPassword, kTurnTcpProtoAddr);
@@ -295,7 +344,7 @@ index 346f4b7..c1944b0 100644
    // Create a connection.
    Connection* conn1 = turn_port_->CreateConnection(udp_port_->Candidates()[0],
                                                     Port::ORIGIN_MESSAGE);
-@@ -1489,6 +1508,7 @@ TEST_F(TurnPortTest, TestCreateConnectionWhenSocketClosed) {
+@@ -1489,6 +1510,7 @@ TEST_F(TurnPortTest, TestCreateConnectionWhenSocketClosed) {
  
    // Close the socket and create a connection again.
    turn_port_->OnSocketClose(turn_port_->socket(), 1);
@@ -305,7 +354,7 @@ index 346f4b7..c1944b0 100644
    ASSERT_TRUE(conn1 == nullptr);
 diff --git a/p2p/base/turn_tcp_socket_tuple.h b/p2p/base/turn_tcp_socket_tuple.h
 new file mode 100644
-index 0000000..6ca93c1
+index 0000000..3537934
 --- /dev/null
 +++ b/p2p/base/turn_tcp_socket_tuple.h
 @@ -0,0 +1,22 @@

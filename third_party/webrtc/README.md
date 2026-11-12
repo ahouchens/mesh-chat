@@ -8,8 +8,10 @@ with it.
 
 The patch reads the *current* socket owned by a ready, nonshared, direct TCP
 `TurnPort`. It returns a value containing that socket's local and remote
-`SocketAddress` values. Other ports return no value. It does not cache the
-addresses, so a closed or replaced socket cannot yield an earlier tuple.
+`SocketAddress` values after a network-thread check. It rejects unspecified,
+unresolved, or zero-port endpoints. Other ports return no value. It does not
+cache the addresses, so a closed or replaced socket cannot yield an earlier
+tuple. The patch declares the new header and its dependencies in `p2p/BUILD.gn`.
 
 `P2PTransportChannel::GetStatsForQualification` is the explicit network-thread
 entry point. It copies the tuple only onto the currently selected connection's
