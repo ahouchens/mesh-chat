@@ -252,7 +252,8 @@ def run_command(name: str, command: list[str], cwd: Path, env: dict,
         tail = log.read_text(encoding="utf-8", errors="replace").splitlines()[-25:]
         print("\n".join(tail), file=sys.stderr)
         raise PrototypeError(f"{name} failed ({code}); see {log}")
-    if name in ("test-list", "depot-revision", "depot-post-sync-revision",
+    if name in ("test-list", "depot-revision", "depot-post-bootstrap-revision",
+                "depot-post-sync-revision",
                 "source-revision", "source-post-sync-revision"):
         return log.read_text(encoding="utf-8", errors="replace")
     return ""
@@ -272,6 +273,37 @@ def git_pinned_checkout(name: str, url: str, revision: str, path: Path,
                          path, env, evidence, evidence_dir).strip()
     if actual != revision:
         raise PrototypeError(f"{name} revision mismatch: {actual}")
+
+
+def bootstrap_depot_tools(depot: Path, env: dict, evidence: dict,
+                          evidence_dir: Path) -> dict:
+    """Initialize wrapper Python without updating the pinned depot_tools Git tree."""
+    if env.get("DEPOT_TOOLS_UPDATE") != "0":
+        raise PrototypeError("depot_tools bootstrap requires DEPOT_TOOLS_UPDATE=0")
+    if env.get("DEPOT_TOOLS_BOOTSTRAP_PYTHON3") != "1":
+        raise PrototypeError("depot_tools bootstrap requires DEPOT_TOOLS_BOOTSTRAP_PYTHON3=1")
+    bootstrap = depot / "ensure_bootstrap"
+    if not bootstrap.is_file():
+        raise PrototypeError("pinned depot_tools ensure_bootstrap script absent")
+    run_command("depot-bootstrap", [str(bootstrap)], depot, env, evidence,
+                evidence_dir, timeout=1200)
+    marker = depot / "python3_bin_reldir.txt"
+    if not marker.is_file():
+        raise PrototypeError("depot_tools bootstrap did not create python3_bin_reldir.txt")
+    relative = Path(marker.read_text(encoding="utf-8").strip())
+    if relative.is_absolute() or ".." in relative.parts or not relative.parts:
+        raise PrototypeError("depot_tools Python bootstrap marker has unsafe path")
+    python = (depot / relative / "python3").resolve()
+    if not python.is_relative_to(depot.resolve()) or not python.is_file():
+        raise PrototypeError("depot_tools bootstrap Python executable absent")
+    actual = run_command("depot-post-bootstrap-revision", ["git", "rev-parse", "HEAD"],
+                         depot, env, evidence, evidence_dir).strip()
+    if actual != DEPOT_REVISION:
+        raise PrototypeError(f"bootstrap changed pinned depot_tools revision: {actual}")
+    return {"bootstrapScriptSha256": sha256(bootstrap),
+            "markerRelativePath": str(relative), "markerSha256": sha256(marker),
+            "pythonSha256": sha256(python), "pythonBytes": python.stat().st_size,
+            "depotRevisionAfterBootstrap": actual}
 
 
 def run_prototype(repo: Path, work_dir: Path, evidence_dir: Path) -> None:
@@ -303,10 +335,13 @@ def run_prototype(repo: Path, work_dir: Path, evidence_dir: Path) -> None:
         evidence["initialMemory"] = initial_memory
         env = os.environ.copy()
         env["DEPOT_TOOLS_UPDATE"] = "0"
+        env["DEPOT_TOOLS_BOOTSTRAP_PYTHON3"] = "1"
         depot = work_dir / "depot_tools"
         git_pinned_checkout("depot", DEPOT_REPO, DEPOT_REVISION, depot,
                             env, evidence, evidence_dir)
         env["PATH"] = f"{depot}{os.pathsep}{env.get('PATH', '')}"
+        evidence["depotTools"]["bootstrap"] = bootstrap_depot_tools(
+            depot, env, evidence, evidence_dir)
         checkout = work_dir / "checkout"
         checkout.mkdir()
         (checkout / ".gclient").write_text(

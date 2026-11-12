@@ -136,6 +136,70 @@ class ResolvedInputs(unittest.TestCase):
             self.assertEqual(kinds["gcsDepsPinned"], 1)
 
 
+class DepotBootstrap(unittest.TestCase):
+    def test_pinned_ensure_bootstrap_precedes_wrapper_use(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            depot = Path(directory) / "depot_tools"
+            depot.mkdir()
+            bootstrap = depot / "ensure_bootstrap"
+            bootstrap.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+            calls = []
+
+            def fake_command(name, command, cwd, env, evidence, evidence_dir, timeout=1200):
+                calls.append((name, command, env["DEPOT_TOOLS_UPDATE"]))
+                if name == "depot-bootstrap":
+                    (depot / "python3_bin_reldir.txt").write_text("bootstrap-python/bin\n", encoding="utf-8")
+                    python = depot / "bootstrap-python" / "bin" / "python3"
+                    python.parent.mkdir(parents=True)
+                    python.write_bytes(b"pinned CIPD Python")
+                if name == "depot-post-bootstrap-revision":
+                    return prototype.DEPOT_REVISION + "\n"
+                return ""
+
+            with patch.object(prototype, "run_command", side_effect=fake_command):
+                inventory = prototype.bootstrap_depot_tools(
+                    depot, {"DEPOT_TOOLS_UPDATE": "0", "DEPOT_TOOLS_BOOTSTRAP_PYTHON3": "1"},
+                    {}, Path(directory))
+            self.assertEqual([item[0] for item in calls], [
+                "depot-bootstrap", "depot-post-bootstrap-revision"])
+            self.assertEqual(calls[0][1], [str(bootstrap)])
+            self.assertEqual(inventory["depotRevisionAfterBootstrap"], prototype.DEPOT_REVISION)
+            self.assertEqual(inventory["pythonSha256"], prototype.sha256(
+                depot / "bootstrap-python" / "bin" / "python3"))
+
+    def test_missing_bootstrap_marker_fails_before_gn(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            depot = Path(directory) / "depot_tools"
+            depot.mkdir()
+            (depot / "ensure_bootstrap").write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+            with patch.object(prototype, "run_command", return_value="") as runner:
+                with self.assertRaisesRegex(prototype.PrototypeError, "did not create"):
+                    prototype.bootstrap_depot_tools(
+                        depot, {"DEPOT_TOOLS_UPDATE": "0", "DEPOT_TOOLS_BOOTSTRAP_PYTHON3": "1"},
+                        {}, Path(directory))
+            self.assertEqual(runner.call_count, 1)
+
+    def test_bootstrap_rejects_moving_revision_or_unsafe_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            depot = Path(directory) / "depot_tools"
+            depot.mkdir()
+            (depot / "ensure_bootstrap").write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+            with self.assertRaisesRegex(prototype.PrototypeError, "DEPOT_TOOLS_UPDATE=0"):
+                prototype.bootstrap_depot_tools(
+                    depot, {"DEPOT_TOOLS_UPDATE": "1", "DEPOT_TOOLS_BOOTSTRAP_PYTHON3": "1"},
+                    {}, Path(directory))
+            with self.assertRaisesRegex(prototype.PrototypeError, "DEPOT_TOOLS_BOOTSTRAP_PYTHON3=1"):
+                prototype.bootstrap_depot_tools(
+                    depot, {"DEPOT_TOOLS_UPDATE": "0", "DEPOT_TOOLS_BOOTSTRAP_PYTHON3": "0"},
+                    {}, Path(directory))
+            (depot / "python3_bin_reldir.txt").write_text("../outside\n", encoding="utf-8")
+            with patch.object(prototype, "run_command", return_value=""):
+                with self.assertRaisesRegex(prototype.PrototypeError, "unsafe path"):
+                    prototype.bootstrap_depot_tools(
+                        depot, {"DEPOT_TOOLS_UPDATE": "0", "DEPOT_TOOLS_BOOTSTRAP_PYTHON3": "1"},
+                        {}, Path(directory))
+
+
 class TestReceipts(unittest.TestCase):
     def test_binary_inventory_must_contain_new_test(self) -> None:
         listed = prototype.extract_listed_tests("ExistingSuite.\n  ExistingCase\n")
