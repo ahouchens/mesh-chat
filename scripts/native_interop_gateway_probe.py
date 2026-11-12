@@ -374,7 +374,11 @@ class Gateway:
             try:
                 require(self.netns_inode is not None and "veth" not in self.resources, "namespace_cleanup_unproven")
                 self.check_namespace()
-                require(not self.run("ip", "netns", "pids", self.ns), "namespace_processes_remain")
+                remaining = self.run("ip", "netns", "pids", self.ns).splitlines()
+                if remaining:
+                    require(len(remaining) <= 32 and all(pid.isdigit() for pid in remaining), "namespace_process_inventory_unavailable")
+                    self.run("ps", "-p", ",".join(remaining), "-o", "pid,ppid,uid,comm")
+                    raise Unavailable("namespace_processes_remain")
                 self.run("ip", "netns", "del", self.ns)
                 self.resources.remove("namespace")
             except Exception:
@@ -593,6 +597,7 @@ class Child:
         self.helpers = []
         self.helper_descriptors = {}
         self.helper_observations = []
+        self.helper_process_summaries = []
 
     def read(self, timeout):
         deadline = time.monotonic() + timeout
@@ -624,6 +629,8 @@ class Child:
         gateway.check_namespace()
         pids = gateway.run("ip", "netns", "pids", gateway.ns).splitlines()
         require(len(pids) <= 32 and all(pid.isdigit() for pid in pids), "namespace_process_inventory_unavailable")
+        if pids:
+            self.helper_process_summaries.append(gateway.run("ps", "-p", ",".join(pids), "-o", "pid,ppid,uid,comm"))
         known = {item["pid"]: item for item in self.helpers}
         observations = []
         for value in pids:
@@ -825,6 +832,7 @@ def main():
             report["guest_attempts"] = child.results
             report["owned_helpers"] = child.helpers
             report["helper_observations"] = child.helper_observations
+            report["helper_process_summaries"] = child.helper_process_summaries
         if temporary is not None:
             try:
                 temporary.rmdir()
