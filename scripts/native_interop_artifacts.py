@@ -12,7 +12,8 @@ import urllib.parse
 import urllib.request
 
 from native_interop_rendezvous import (MAX_ARCHIVE, MAX_BLOB, PRODUCER_JOBS, artifact_name,
-                                        canonical, checked_context, validate_upload, verify_artifact)
+                                        canonical, checked_context, validate_upload, validated_artifact_metadata,
+                                        verify_artifact)
 
 API = "https://api.github.com"
 API_VERSION = "2026-03-10"
@@ -55,11 +56,13 @@ class GithubArtifacts:
         self._receiving = False
         self._receive_failure = None
         self._retryable_read_503 = None
+        self._retryable_archive_404 = None
 
     @contextmanager
     def _receive_scope(self):
         self._receive_failure = None
         self._retryable_read_503 = None
+        self._retryable_archive_404 = None
         self._receiving = True
         try:
             yield
@@ -72,6 +75,7 @@ class GithubArtifacts:
         finally:
             self._receiving = False
             self._retryable_read_503 = None
+            self._retryable_archive_404 = None
 
     def _unavailable(self, stage, reason, message, http_error=None):
         error = RendezvousUnavailable(message)
@@ -85,6 +89,8 @@ class GithubArtifacts:
                     if (status == 503 and reason == "http_rejected" and stage in
                             {"inventory_request", "archive_request", "blob_request"}):
                         self._retryable_read_503 = error
+                    if status == 404 and reason == "http_rejected" and stage == "archive_request":
+                        self._retryable_archive_404 = error
             self._receive_failure = error, selected
         return error
 
@@ -99,6 +105,7 @@ class GithubArtifacts:
     def _request(self, path, *, binary=False, deadline=None):
         self._receive_failure = None
         self._retryable_read_503 = None
+        self._retryable_archive_404 = None
         self._live()
         url = API + path
         request = urllib.request.Request(url, headers={"Authorization": "Bearer " + self._token,
@@ -196,8 +203,10 @@ class GithubArtifacts:
         name = artifact_name(self.context, role, phase)
         endpoint = f"/repos/{self.context['repository']}/actions/runs/{self.context['run_id']}"
         deadline = self.clock() + timeout
-        transient_503s = 0
+        transient_reads = 0
+        retry_identity = None
         while self.clock() < deadline:
+            current_identity = None
             try:
                 inventory = self._request(endpoint + "/artifacts?per_page=100", deadline=deadline)
                 entries = inventory.get("artifacts") if isinstance(inventory, dict) else None
@@ -207,11 +216,16 @@ class GithubArtifacts:
                 matching = [value for value in entries if value.get("name") == name]
                 if len(matching) > 1:
                     raise self._unavailable("inventory_check", "duplicate_identity", "Duplicate bootstrap artifact identity")
+                if retry_identity is not None and not matching:
+                    raise ValueError("Bootstrap artifact disappeared during archive retry")
                 if matching:
                     metadata = matching[0]
                     identifier = metadata.get("id")
                     if type(identifier) is not int or identifier <= 0:
                         raise self._unavailable("inventory_check", "missing_identity", "Missing bootstrap artifact identity")
+                    current_identity = (identifier, *validated_artifact_metadata(metadata, self.context, role, phase))
+                    if retry_identity is not None and current_identity != retry_identity:
+                        raise ValueError("Bootstrap artifact changed during archive retry")
                     archive = self._request(f"/repos/{self.context['repository']}/actions/artifacts/{identifier}/zip",
                                             binary=True, deadline=deadline)
                     verified = verify_artifact(metadata, archive, self.context, role, phase)
@@ -220,10 +234,13 @@ class GithubArtifacts:
                                                 "Required partner bootstrap artifact did not arrive before deadline")
                     return verified
             except RendezvousUnavailable as error:
-                if (transient_503s >= 2 or self._retryable_read_503 is not error
+                retry_archive_404 = self._retryable_archive_404 is error and current_identity is not None
+                if (transient_reads >= 2 or not (self._retryable_read_503 is error or retry_archive_404)
                         or deadline - self.clock() <= 3):
                     raise
-                transient_503s += 1
+                if retry_archive_404 and retry_identity is None:
+                    retry_identity = current_identity
+                transient_reads += 1
                 self.sleep(3)
                 continue
             self.sleep(min(3, max(0, deadline - self.clock())))
@@ -234,3 +251,5 @@ class GithubArtifacts:
         # shareables never enter this transport; temporary bundles are removed.
         self._token = None
         self._receive_failure = None
+        self._retryable_read_503 = None
+        self._retryable_archive_404 = None
