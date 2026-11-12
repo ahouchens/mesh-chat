@@ -42,6 +42,25 @@ FAILURE_SUBSTAGES = frozenset({
 })
 RETIREMENT_COUNTS = ("reserved_count", "creating_count", "allocated_count", "active_count", "retiring_count")
 RETIREMENT_STAGES = frozenset({"prepare", "completion_publish", "completion_receive", "commit", "poll"})
+PAIRING_OPEN_LABELS = {
+    "status": frozenset({"reserved", "offer_ready", "awaiting_approval", "transferred", "unknown"}),
+    "resources": frozenset({"unread", "zero", "one", "multiple"}),
+    "ice": frozenset({"unread", "new", "checking", "connected", "completed", "disconnected", "failed", "closed", "unknown"}),
+    "channel": frozenset({"unread", "connecting", "open", "closing", "closed", "unknown"}),
+}
+
+
+def pairing_open_observation(value):
+    """Copy only fixed labels from a controller poll into the public report."""
+    if (type(value) is not dict or set(value) != set(PAIRING_OPEN_LABELS)
+            or any(type(value[name]) is not str or value[name] not in labels
+                   for name, labels in PAIRING_OPEN_LABELS.items())):
+        return None
+    return {name: value[name] for name in PAIRING_OPEN_LABELS}
+
+
+def pairing_open_label(value, labels):
+    return value if type(value) is str and value in labels else "unknown"
 
 
 def retirement_failure_snapshot(value):
@@ -142,6 +161,10 @@ class Controller:
         self.pairing = None
         self._operation_failure: tuple[Exception, str] | None = None
         self._pairing_failure: tuple[Exception, str, dict[str, str] | None] | None = None
+        self._pairing_open_context = None
+        self._pairing_open_active = False
+        self._pairing_open_last = None
+        self._pairing_open_failure = None
         self._substage_failure: tuple[Exception, str] | None = None
         self._retirement_context = self._retirement_failure = None
         self._path_diagnostics = None
@@ -328,6 +351,39 @@ class Controller:
             selected["pairing_retirement"] = dict(observed[2])
         return selected
 
+    def _observe_pairing_open(self, record):
+        try:
+            if self._pairing_open_active and self._pairing_open_context is not None:
+                selected = pairing_open_observation(record)
+                self._pairing_open_last = (self._pairing_open_context, selected) if selected is not None else None
+        except Exception:
+            self._pairing_open_last = None
+
+    def _bind_pairing_open_failure(self, error):
+        try:
+            last = self._pairing_open_last
+            if (self._pairing_open_active and last is not None
+                    and last[0] == self._pairing_open_context):
+                self._pairing_open_failure = error, last[0], last[1]
+        except Exception:
+            self._pairing_open_failure = None
+
+    def failure_pairing_open(self, error):
+        try:
+            observed = self._pairing_open_failure
+            if (observed is None or observed[0] is not error
+                    or observed[1] != self._pairing_open_context
+                    or observed[1] != (self.pairing, self._pairing_open_context[1], self.phase)):
+                return {}
+            if (type(error) is not PeerFailure
+                    or not ((error.code == "supervisor_pairing_retired" and self.failure_site(error) == "pairing_status")
+                            or (error.code == "scenario_deadline" and self.failure_site(error) is None))):
+                return {}
+            selected = pairing_open_observation(observed[2])
+            return {"pairing_open_last": selected} if selected is not None else {}
+        except Exception:
+            return {}
+
     def wait(self, action, *, timeout=90, interval=0.25):
         deadline = min(self.deadline, time.monotonic() + timeout)
         while time.monotonic() < deadline:
@@ -391,10 +447,13 @@ class Controller:
             if value.get("state") in {"retired", "retiring"}:
                 error = PeerFailure("supervisor_pairing_retired")
                 self._pairing_failure = error, value["state"], validated_pairing_retirement(value.get("retirement"))
+                self._bind_pairing_open_failure(error)
                 raise error
             return value
 
     def negotiate(self, scenario, initiator):
+        self._pairing_open_context = self._pairing_open_last = self._pairing_open_failure = None
+        self._pairing_open_active = False
         self.phase = scenario + "_supervisor_owned_pairing_" + initiator
         ice, turn_url = selected_ice(self.broker_ice, scenario)
         server = ice["iceServers"][0]
@@ -405,6 +464,7 @@ class Controller:
         with self._failure_scope("negotiate_settings_update"):
             self.core("call.settings_update", {"profile": self.profile, "settings": settings})
         self.pairing = str(uuid4())
+        self._pairing_open_context = (self.pairing, scenario, self.phase)
         if self.role == initiator:
             with self._failure_scope("pairing_offer_begin"):
                 admitted = self.peer.pairing_begin(self.pairing, "offer", direct=scenario == "direct")
@@ -418,15 +478,38 @@ class Controller:
                 if admitted.get("operation_id") != self.pairing: raise PeerFailure("invalid_pairing_identity")
         def open_session():
             status = self.pairing_status()
+            record = {"status": pairing_open_label(status.get("state"), PAIRING_OPEN_LABELS["status"]),
+                "resources": "unread", "ice": "unread", "channel": "unread"}
+            self._observe_pairing_open(record)
             if type(status.get("state")) is str and status["state"] == "reserved":
                 return None
             with self._failure_scope("negotiate_inventory"):
                 resources = self.peer.inventory()["resources"]
-                if len(resources) != 1: return None
+                count = len(resources)
+                record["resources"] = "zero" if count == 0 else "one" if count == 1 else "multiple"
+                self._observe_pairing_open(record)
+                if count != 1: return None
                 logical = resources[0]["logical_session"]
             with self._failure_scope("negotiate_native_stats"):
-                return logical if self.native("native_webrtc_stats", session_id=logical).get("data_channel_state") == "open" else None
-        session = self.wait(open_session, timeout=120)
+                stats = self.native("native_webrtc_stats", session_id=logical)
+                channel = stats.get("data_channel_state")
+                try:
+                    record["ice"] = pairing_open_label(stats.get("ice_connection_state"), PAIRING_OPEN_LABELS["ice"])
+                    record["channel"] = pairing_open_label(channel, PAIRING_OPEN_LABELS["channel"])
+                    self._observe_pairing_open(record)
+                except Exception:
+                    self._pairing_open_last = None
+                return logical if channel == "open" else None
+        self._pairing_open_active = True
+        try:
+            session = self.wait(open_session, timeout=120)
+        except PeerFailure as error:
+            if error.code == "scenario_deadline" and self.failure_site(error) is None:
+                self._bind_pairing_open_failure(error)
+            raise
+        finally:
+            self._pairing_open_active = False
+        self._pairing_open_last = self._pairing_open_failure = None
         return session, turn_url
 
     def approved_contact(self):
@@ -911,6 +994,7 @@ def main():
             site = controller.failure_site(error)
             if site is not None: result["failure_site"] = site
             result.update(controller.failure_pairing(error))
+            result.update(controller.failure_pairing_open(error))
             result.update(controller.failure_observation(error))
             result.update(controller.failure_rendezvous(error))
             result.update(controller.failure_retirement(error))

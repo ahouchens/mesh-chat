@@ -3155,7 +3155,8 @@ FAILURE_REPORT_CASES = [
 ]
 
 
-def run_negotiate_report(tmp_path, monkeypatch, capsys, role, fault, *, status_reply=None):
+def run_negotiate_report(tmp_path, monkeypatch, capsys, role, fault, *, status_reply=None,
+                         inventory_reply=None, stats_reply=None):
     # Actual main/negotiate/wait/report flow, synthetic peer/artifact boundaries.
     # No native process, network, service allocation or successful evidence claim.
     import connection_ci
@@ -3176,6 +3177,7 @@ def run_negotiate_report(tmp_path, monkeypatch, capsys, role, fault, *, status_r
                 "command": "native_webrtc_stats", "payload": {"session_id": "PRIVATE_LOGICAL"}}
             events.append("stats")
             fail("negotiate_native_stats")
+            if stats_reply is not None: return stats_reply()
             return None if fault == "stats_shape" else {"data_channel_state": "open"}
         def pairing_begin(self, operation, pairing_role, **kwargs):
             self.operation = operation
@@ -3193,6 +3195,7 @@ def run_negotiate_report(tmp_path, monkeypatch, capsys, role, fault, *, status_r
         def inventory(self):
             events.append("inventory")
             fail("negotiate_inventory")
+            if inventory_reply is not None: return inventory_reply()
             return {"resources": [{}] if fault == "inventory_shape" else [{"logical_session": "PRIVATE_LOGICAL"}]}
 
     class Transport:
@@ -3369,6 +3372,143 @@ def test_successful_negotiate_report_never_gains_retirement_failure_fields(tmp_p
     assert "PRIVATE_" not in run.output
     # This intentionally incomplete component fixture cannot qualify native CI.
     with pytest.raises(ValueError): evidence.verify_report(run.record, "a" * 40, "b" * 40, role)
+
+
+@pytest.mark.parametrize("role", ["windows", "android"])
+def test_terminal_pairing_reports_last_existing_open_predicate_without_more_calls(
+        tmp_path, monkeypatch, capsys, role):
+    reads = [0]
+    def status(operation):
+        reads[0] += 1
+        state = ("offer_ready" if role == "windows" and reads[0] == 1 else
+                 "awaiting_approval" if reads[0] <= (2 if role == "windows" else 1) else "retired")
+        return {"operation_id": operation, "state": state, "pairing_code": "PRIVATE_CODE",
+                "retirement": retirement_example()}
+    run = run_negotiate_report(tmp_path, monkeypatch, capsys, role, "retirement",
+        status_reply=status, stats_reply=lambda: {"ice_connection_state": "checking",
+            "data_channel_state": "connecting", "sdp": "PRIVATE_SDP"})
+    assert run.record["pairing_open_last"] == {"status": "awaiting_approval", "resources": "one",
+        "ice": "checking", "channel": "connecting"}
+    assert run.record["error_code"] == "supervisor_pairing_retired"
+    assert run.record["pairing_retirement"] == retirement_example()
+    assert run.events == (["settings", "begin_offer", "status", "publish", "status", "inventory", "stats", "status"]
+                          if role == "windows" else
+                          ["settings", "receive", "begin_answer", "status", "inventory", "stats", "status"])
+    assert "PRIVATE" not in run.output
+
+
+def test_last_poll_replaces_old_stats_with_unread_when_status_becomes_reserved(
+        tmp_path, monkeypatch, capsys):
+    states = iter(("awaiting_approval", "reserved", "retired"))
+    def status(operation):
+        return {"operation_id": operation, "state": next(states),
+                "retirement": retirement_example()}
+    run = run_negotiate_report(tmp_path, monkeypatch, capsys, "android", "retirement",
+        status_reply=status, stats_reply=lambda: {"ice_connection_state": "checking",
+            "data_channel_state": "connecting"})
+    assert run.record["pairing_open_last"] == {"status": "reserved", "resources": "unread",
+        "ice": "unread", "channel": "unread"}
+    assert run.events == ["settings", "receive", "begin_answer", "status", "inventory", "stats",
+                          "status", "status"]
+
+
+def test_multiple_resources_and_private_labels_never_escape_pairing_diagnostic(
+        tmp_path, monkeypatch, capsys):
+    states = iter(("PRIVATE_STATE", "retired"))
+    def status(operation):
+        return {"operation_id": operation, "state": next(states), "pairing_code": "PRIVATE_CODE",
+                "retirement": retirement_example()}
+    run = run_negotiate_report(tmp_path, monkeypatch, capsys, "android", "retirement",
+        status_reply=status, inventory_reply=lambda: {"resources": [
+            {"logical_session": "PRIVATE_1"}, {"logical_session": "PRIVATE_2"}]},
+        stats_reply=lambda: pytest.fail("Stats must not be read for multiple resources"))
+    assert run.record["pairing_open_last"] == {"status": "unknown", "resources": "multiple",
+        "ice": "unread", "channel": "unread"}
+    assert run.events == ["settings", "receive", "begin_answer", "status", "inventory", "status"]
+    assert "PRIVATE" not in run.output
+
+
+def test_foreign_status_after_open_poll_cannot_inherit_pairing_diagnostic(
+        tmp_path, monkeypatch, capsys):
+    reads = [0]
+    def status(operation):
+        reads[0] += 1
+        return {"operation_id": operation if reads[0] == 1 else "PRIVATE_FOREIGN_ID",
+            "state": "awaiting_approval" if reads[0] == 1 else "retired"}
+    run = run_negotiate_report(tmp_path, monkeypatch, capsys, "android", "foreign_status",
+        status_reply=status, stats_reply=lambda: {"ice_connection_state": "PRIVATE_ICE",
+            "data_channel_state": "PRIVATE_CHANNEL", "raw_sdp": "PRIVATE_SDP"})
+    assert run.record["error_code"] == "invalid_pairing_identity"
+    assert run.record["failure_site"] == "pairing_status"
+    assert "pairing_open_last" not in run.record
+    assert "pairing_state" not in run.record
+    assert run.events == ["settings", "receive", "begin_answer", "status", "inventory", "stats", "status"]
+    assert "PRIVATE" not in run.output
+
+
+def test_unknown_native_stats_labels_are_bounded_in_terminal_diagnostic(
+        tmp_path, monkeypatch, capsys):
+    states = iter(("awaiting_approval", "retired"))
+    run = run_negotiate_report(tmp_path, monkeypatch, capsys, "android", "retirement",
+        status_reply=lambda operation: {"operation_id": operation, "state": next(states)},
+        stats_reply=lambda: {"ice_connection_state": "PRIVATE_ICE",
+            "data_channel_state": "PRIVATE_CHANNEL", "raw_sdp": "PRIVATE_SDP"})
+    assert run.record["pairing_open_last"] == {"status": "awaiting_approval", "resources": "one",
+        "ice": "unknown", "channel": "unknown"}
+    assert "PRIVATE" not in run.output
+
+
+def test_open_session_deadline_records_only_its_exact_last_predicate(negotiating_peer):
+    state = negotiating_peer("android")
+    state.status_value = "reserved"
+    state.controller.deadline = state.now + 0.5
+    with pytest.raises(controller.PeerFailure) as failure:
+        state.controller.negotiate("direct", "windows")
+    assert failure.value.code == "scenario_deadline"
+    assert state.controller.failure_pairing_open(failure.value) == {"pairing_open_last": {
+        "status": "reserved", "resources": "unread", "ice": "unread", "channel": "unread"}}
+    assert state.events == [*state.prefix, "status", "status"]
+    assert state.sleeps == [0.25, 0.25]
+    state.status_value = "awaiting_approval"
+    state.controller.deadline = state.now + 1
+    assert state.controller.negotiate("direct", "windows") == ("logical-session", None)
+    assert state.controller.failure_pairing_open(failure.value) == {}
+
+
+def test_pairing_open_observer_fault_never_changes_success_or_terminal_error(
+        negotiating_peer, monkeypatch):
+    state = negotiating_peer("android")
+    def broken(_value): raise RuntimeError("PRIVATE_OBSERVER")
+    monkeypatch.setattr(controller, "pairing_open_observation", broken, raising=False)
+    assert state.controller.negotiate("direct", "windows") == ("logical-session", None)
+    state.status_value = "awaiting_approval"
+    state.stats_value = {"data_channel_state": "connecting"}
+    state.on_sleep = lambda: setattr(state, "status_value", "retired")
+    with pytest.raises(controller.PeerFailure) as failure:
+        state.controller.negotiate("direct", "windows")
+    assert failure.value.code == "supervisor_pairing_retired"
+    assert state.controller.failure_pairing_open(failure.value) == {}
+
+
+@pytest.mark.parametrize("stage", ["status", "resources"])
+def test_pairing_open_observer_fault_at_early_poll_stage_does_not_change_outcome(
+        negotiating_peer, monkeypatch, stage):
+    state = negotiating_peer("android")
+    original = controller.pairing_open_observation
+    def broken(value):
+        if ((stage == "status" and value["resources"] == "unread")
+                or (stage == "resources" and value["resources"] == "one" and value["ice"] == "unread")):
+            raise RuntimeError("PRIVATE_OBSERVER")
+        return original(value)
+    monkeypatch.setattr(controller, "pairing_open_observation", broken)
+    assert state.controller.negotiate("direct", "windows") == ("logical-session", None)
+    state.stats_value = {"ice_connection_state": "checking", "data_channel_state": "connecting"}
+    state.on_sleep = lambda: setattr(state, "status_value", "retired")
+    with pytest.raises(controller.PeerFailure) as failure:
+        state.controller.negotiate("direct", "windows")
+    assert failure.value.code == "supervisor_pairing_retired"
+    assert state.controller.failure_pairing_open(failure.value) == {"pairing_open_last": {
+        "status": "awaiting_approval", "resources": "one", "ice": "checking", "channel": "connecting"}}
 
 
 # Derived from B's independently retained original-path reproducer; boundary models only.
