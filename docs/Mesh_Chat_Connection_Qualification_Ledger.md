@@ -2,6 +2,25 @@
 
 ## Integration revalidation (2026-11-09)
 
+### Exact native firewall cleanup component (2026-11-12)
+
+Reviewed component `acf48b989acae127051e059f37403048aec269fe` is integrated as
+`9b1baa388ef5abff8c1b7d8d57fa120528e8138c`. `AndroidKernelPath.unblock()` now
+attempts deletion of its stored exact DROP rule even when counter reading or
+parsing fails. Successful deletion preserves the original counter error;
+failed deletion retains rule ownership for the existing close-time retry.
+Socket selection, probes, deadlines and acceptance rules are unchanged.
+
+Pre-fix evidence contains seven failures among 11 focused cases. The component
+passes all 11 focused and 851 affected offline cases, retaining the previous
+848 and adding three regressions. Independent review approved its exact source;
+the lead reran all 51 cases in the changed test file after integration, passing.
+Evidence is retained under
+`.test-tmp/reviewed-exact-rule-cleanup-component/`, including the original
+red/green XML, source verification, independent review and integrated test XML.
+These are fake-kernel tests. This fix does not resolve the selected TURN/TCP
+socket ambiguity, and no newer full native qualification is claimed.
+
 ### Cold-restart containment: full CI completed; native pairing remains unqualified
 
 The latest completed qualification is `8fd57a445eec2ab12a86de51f3e0f4342f372d9c`

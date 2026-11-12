@@ -11,6 +11,15 @@ reports. Exact evidence and limits are in the ledger. Wave 2 is activated below.
 Existing human authorization covers continued implementation, integration and
 worker follow-ups without another permission request.
 
+The next bounded batch has integrated the independently reviewed exact-rule
+cleanup component as `9b1baa388ef5abff8c1b7d8d57fa120528e8138c`. Its 851 affected
+offline cases pass, and the lead's integrated rerun of the changed test file
+passes all 51 cases. Counter failure now still reaches deletion of the stored
+DROP rule; this does not change the socket matcher or resolve its ambiguity.
+The isolated upstream selected-socket prototype and its Linux C++ validation
+workflow are under review. No custom AAR, JNI path, application dependency
+replacement or full native acceptance follows from these component checks.
+
 The latest completed qualification is `8fd57a445eec2ab12a86de51f3e0f4342f372d9c`
 (tree `d2c69a224cd348ef316b623004d52fe7e16092ea`), full run
 [43152914113](https://github.com/ahouchens/mesh-chat/actions/runs/43152914113).
