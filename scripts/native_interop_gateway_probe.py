@@ -63,11 +63,12 @@ def same_process(left, right):
     return left is not None and all(left[key] == right[key] for key in ("pid", "start", "uid", "namespace"))
 
 
-def retire_exact_process(identity, descriptor):
-    for kind in (signal.SIGTERM, signal.SIGKILL):
+def retire_exact_process(identity, descriptor, *, reader=None, force=False):
+    reader = reader or process_identity
+    for kind in ((signal.SIGKILL,) if force else (signal.SIGTERM, signal.SIGKILL)):
         if select.select([descriptor], [], [], 0)[0]:
             return
-        current = process_identity(identity["pid"])
+        current = reader(identity["pid"])
         if current is None:
             return
         require(same_process(current, identity), "helper_process_identity_changed")
@@ -598,6 +599,8 @@ class Child:
         self.helper_descriptors = {}
         self.helper_observations = []
         self.helper_process_summaries = []
+        self.inspection_report = {"commands": []}
+        self.inspection_commands = Commands(self.inspection_report)
 
     def read(self, timeout):
         deadline = time.monotonic() + timeout
@@ -635,7 +638,7 @@ class Child:
         observations = []
         for value in pids:
             pid = int(value)
-            identity = process_identity(pid)
+            identity = self.inspect_process(pid)
             if identity is None:
                 continue
             parent = process_parent(pid)
@@ -656,12 +659,12 @@ class Child:
                 pid = identity["pid"]
                 require(identity["namespace"] == self.inode and identity["uid"] == os.getuid()
                         and int(identity["start"]) >= int(self.start_time), "unowned_namespace_process")
-                if not Path(identity["executable"]).is_relative_to(sdk) and observed["parent"] not in owned:
+                if pid not in known and not Path(identity["executable"]).is_relative_to(sdk) and observed["parent"] not in owned:
                     continue
                 require(pid not in known or same_process(known[pid], identity), "helper_process_identity_changed")
                 if pid not in known:
                     descriptor = os.pidfd_open(pid)
-                    current = process_identity(pid)
+                    current = self.inspect_process(pid)
                     if current is None:
                         os.close(descriptor)
                     else:
@@ -675,12 +678,48 @@ class Child:
                 progress = True
             require(progress, "unowned_namespace_process")
 
-    def retire_helpers(self):
+    def inspect_process(self, pid):
+        try:
+            return process_identity(pid)
+        except PermissionError:
+            value = json.loads(self.inspection_commands.run(sys.executable, "-B", str(Path(__file__).resolve()),
+                               "--inspect-process", str(pid), privileged=True))
+            require(value is None or value.get("pid") == pid, "process_inspection_mismatch")
+            return value
+
+    def retire_helpers(self, gateway):
         failures = []
+        frozen = set()
+        try:
+            # The emulator has exited. Stop known producers before a final
+            # descendant inventory, preventing a fork during retirement.
+            for _ in range(3):
+                for identity in self.helpers:
+                    pid = identity["pid"]
+                    descriptor = self.helper_descriptors[pid]
+                    if pid in frozen or select.select([descriptor], [], [], 0)[0]:
+                        continue
+                    current = self.inspect_process(pid)
+                    if current is None:
+                        continue
+                    require(same_process(current, identity), "helper_process_identity_changed")
+                    try:
+                        signal.pidfd_send_signal(descriptor, signal.SIGSTOP)
+                    except ProcessLookupError:
+                        continue
+                    frozen.add(pid)
+                count = len(self.helpers)
+                self.capture_helpers(gateway)
+                if len(self.helpers) == count:
+                    break
+            else:
+                raise Unavailable("helper_inventory_unstable")
+        except Exception as error:
+            failures.append(str(error))
         for identity in reversed(self.helpers):
             descriptor = self.helper_descriptors.pop(identity["pid"])
             try:
-                retire_exact_process(identity, descriptor)
+                retire_exact_process(identity, descriptor, reader=self.inspect_process, force=True)
             except Exception as error:
                 failures.append(str(error))
             finally:
@@ -742,7 +781,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--child", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--inspect-process", type=int, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.inspect_process is not None:
+        require(sys.platform == "linux" and 0 < args.inspect_process < 2**31, "invalid_process_inspection")
+        print(json.dumps(process_identity(args.inspect_process)))
+        return 0
     if args.child:
         child_main()
         return 0
@@ -822,7 +866,7 @@ def main():
                     report.setdefault("cleanup_reasons", {})[name] = str(error)[:256]
                 if name == "child":
                     try:
-                        child.retire_helpers()
+                        child.retire_helpers(gateway)
                     except Exception as error:
                         failures.append("helpers")
                         report.setdefault("cleanup_reasons", {})["helpers"] = str(error)[:256]
@@ -833,6 +877,7 @@ def main():
             report["owned_helpers"] = child.helpers
             report["helper_observations"] = child.helper_observations
             report["helper_process_summaries"] = child.helper_process_summaries
+            report["process_inspection_commands"] = getattr(child, "inspection_report", {}).get("commands", [])
         if temporary is not None:
             try:
                 temporary.rmdir()
