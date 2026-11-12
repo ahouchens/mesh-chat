@@ -16,9 +16,16 @@ cleanup component as `9b1baa388ef5abff8c1b7d8d57fa120528e8138c`. Its 851 affecte
 offline cases pass, and the lead's integrated rerun of the changed test file
 passes all 51 cases. Counter failure now still reaches deletion of the stored
 DROP rule; this does not change the socket matcher or resolve its ambiguity.
-The isolated upstream selected-socket prototype and its Linux C++ validation
-workflow are under review. No custom AAR, JNI path, application dependency
-replacement or full native acceptance follows from these component checks.
+The isolated upstream selected-socket prototype (`91c8b35`) and its Linux C++
+validation workflow (`8b2a468`) passed independent source review and are integrated
+through `c8e3bbaccd18ccedaf8859b8ec009c6b57a793b5`. The combined affected suite
+passes **869 offline cases**. The next step is one focused Linux C++ build/test
+run against pinned WebRTC source `73cb8180f7258ee292878d6edd05177f41883962`.
+The workflow requires all eight touched C++ tests to exist and execute exactly
+once, records patched source and binary hashes, and rejects skipped/unrun cases.
+No custom AAR, JNI path, application dependency replacement or full native
+acceptance follows from these component checks. Prototype source and approvals
+are retained in `.test-tmp/reviewed-native-prototype-integration/`.
 
 The latest completed qualification is `8fd57a445eec2ab12a86de51f3e0f4342f372d9c`
 (tree `d2c69a224cd348ef316b623004d52fe7e16092ea`), full run

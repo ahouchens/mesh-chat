@@ -21,6 +21,23 @@ red/green XML, source verification, independent review and integrated test XML.
 These are fake-kernel tests. This fix does not resolve the selected TURN/TCP
 socket ambiguity, and no newer full native qualification is claimed.
 
+### Selected TURN socket C++ prototype (2026-11-12)
+
+Source-only reviews approve upstream patch `91c8b35` and focused workflow
+`8b2a468`, integrated through `c8e3bbaccd18ccedaf8859b8ec009c6b57a793b5`.
+The combined cleanup/controller/path and workflow-gate tests pass **869 cases**.
+The patch applies to the pinned WebRTC source subset and captures a socket tuple
+only for an opt-in selected connection with a live port. Ordinary stats leave
+the field empty. Earlier test-scope, GN dependency and nullable-port defects
+were corrected before CI. The shutdown assertion checks stale tuple absence;
+it does not directly force a selected connection with a null port.
+
+The bounded workflow will compile `rtc_p2p_unittests` and require the eight
+touched cases to execute and pass, with source, binary and XML hashes retained.
+It has not yet built a native binary. The prototype has no private collector/JNI
+delivery, continuity token, Android AAR or application integration. It therefore
+does not repair or qualify the failing application's socket correlation.
+
 ### Cold-restart containment: full CI completed; native pairing remains unqualified
 
 The latest completed qualification is `8fd57a445eec2ab12a86de51f3e0f4342f372d9c`
