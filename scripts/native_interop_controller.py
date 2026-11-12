@@ -610,7 +610,7 @@ class Controller:
         return None
 
     def final_ready_observation(self, logical, scenario, deadline):
-        """Use only the remaining restored-delivery window for TCP/TLS readiness."""
+        """Use only the remaining restored-delivery window for relay readiness."""
         last_reasons = set()
         while time.monotonic() < deadline:
             reasons = set()
@@ -702,7 +702,7 @@ class Controller:
                 self.publish("negative_checked_" + scenario, {"approved": True})
         restoration_deadline = None
         with negative_control_stage(observer, "restored_delivery"):
-            if scenario in {"turn_tcp", "turn_tls"}:
+            if scenario in {"turn_tcp", "turn_tls", "impaired"}:
                 # Receipt, inbound record, and final path share this one window.
                 restoration_deadline = min(self.deadline, time.monotonic() + 90)
                 self.wait(lambda: self.delivered(handle),
@@ -728,7 +728,7 @@ class Controller:
             if len(inbound) != 1 or len(outbound) != 1:
                 raise negative_control_error(observer, "recovered_records",
                     ValueError("Blocked-path recovery duplicated the queued durable message"), "record_count")
-        if fault is not None and getattr(fault, "endpoint_mode", False):
+        if fault is not None and (getattr(fault, "endpoint_mode", False) or getattr(fault, "uid_udp_mode", False)):
             with negative_control_stage(observer, "kernel_restore_current"):
                 fault.require_current()
         return {"blocked_packets": packets, "delivered_while_blocked": False, "delivered_after_restore": True,
@@ -782,12 +782,13 @@ class Controller:
                 if scenario in {"turn_tcp", "turn_tls", "impaired"} else (None, None))
             with negative_control_stage(self._negative_diagnostics, "final_observation"):
                 missing_reasons = set() if scenario in {"turn_tcp", "turn_tls", "impaired"} else None
-                if scenario in {"turn_tcp", "turn_tls"}:
+                if scenario in {"turn_tcp", "turn_tls", "impaired"}:
                     after, missing_reasons = self.final_ready_observation(
                         session, scenario, restoration_deadline)
                     if after is not None and time.monotonic() > restoration_deadline:
                         after, missing_reasons = None, set()
-                    if after is not None and fault is not None and getattr(fault, "endpoint_mode", False):
+                    if after is not None and fault is not None and (
+                            getattr(fault, "endpoint_mode", False) or getattr(fault, "uid_udp_mode", False)):
                         with negative_control_stage(self._negative_diagnostics, "kernel_restore_current"):
                             fault.require_current()
                         if time.monotonic() > restoration_deadline:
@@ -816,7 +817,13 @@ class Controller:
                     "native_delta": self.negative_traffic(before, after), "messages": messages, "impairment": impairment, "negative": negative})
         finally:
             if fault is not None:
-                with negative_control_stage(self._negative_diagnostics, "fault_cleanup"): fault.close()
+                active = sys.exc_info()[1]
+                try:
+                    with negative_control_stage(self._negative_diagnostics, "fault_cleanup"): fault.close()
+                except Exception as cleanup_error:
+                    if active is not None and getattr(fault, "_setup_cleanup_failure", None) is not None:
+                        raise active from cleanup_error
+                    raise
         self._path_diagnostics = None
         self._negative_diagnostics = reset_negative_control(self._negative_diagnostics)
         self.phase = scenario + "_native_lease_retirement"

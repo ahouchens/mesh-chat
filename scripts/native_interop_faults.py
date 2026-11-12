@@ -12,6 +12,7 @@ from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
 from native_interop_diagnostics import negative_control_error, negative_control_stage
+from native_interop_link_scope import LinkScopeError, covered_link, link_names, snapshot as link_snapshot
 
 
 PATH_FAILURE_REASONS = {
@@ -22,6 +23,7 @@ PATH_FAILURE_REASONS = {
     "kernel_socket_correlation": frozenset({"no_owned_match", "ambiguous_owned_matches", "uncovered_endpoint"}),
     "kernel_process_uid": frozenset(), "kernel_scope_exclusivity": frozenset(),
     "kernel_socket_route": frozenset(),
+    "kernel_link_coverage": LinkScopeError.REASONS,
     "receipt_enqueue": frozenset(), "receipt_delivery_wait": frozenset(),
     "receipt_inbound_wait": frozenset(), "receipt_outbound_records": frozenset(),
     "receipt_record_validation": frozenset(),
@@ -227,10 +229,14 @@ class AndroidKernelPath:
                  path_diagnostics=None, resource_check=None, control_urls=()):
         self.peer, self._blocked = peer, False
         self._negative_diagnostics = diagnostics
+        self._path_diagnostics = path_diagnostics
         self._installed = []
         self._drop_rules = []
         self.rule = "mesh-ci-" + uuid4().hex[:12]
-        self.ifb = "mci" + uuid4().hex[:8]
+        self.ifb = "mci" + uuid4().hex[:12]
+        self.filter_prio = 10000 + int(uuid4().hex[:4], 16) % 50000
+        self.egress_handle = format(0x100 + int(uuid4().hex[:4], 16) % 0x7000, "x") + ":"
+        self.ingress_handle = format(0x8000 + int(uuid4().hex[:4], 16) % 0x7000, "x") + ":"
         with path_stage(path_diagnostics, "kernel_relay_evidence"):
             relay_protocol = observation["pair"]["relay_protocol"]
             if observation["pair"]["local"]["type"] != "relay" or relay_protocol not in {"udp", "tcp", "tls"}:
@@ -239,15 +245,13 @@ class AndroidKernelPath:
             self.relay_protocol = relay_protocol
             self.ip_protocol = "17" if self.protocol == "udp" else "6"
             self.endpoint_mode = relay_protocol in {"tcp", "tls"}
+            self.uid_udp_mode = relay_protocol == "udp"
         with path_stage(path_diagnostics, "kernel_emulator_identity"):
             if peer._adb("shell", "id", "-u") != "0" or peer._adb("shell", "getprop", "ro.kernel.qemu") != "1":
                 raise ValueError("Kernel fault injection requires the explicit rootable CI emulator")
         with path_stage(path_diagnostics, "kernel_turn_url"):
-            if not self.endpoint_mode:
-                parsed = urlsplit("//" + turn_url.split(":", 1)[-1])
-                if not turn_url.startswith(("turn:", "turns:")) or not parsed.hostname:
-                    raise ValueError("Required selected TURN URL is unavailable")
-                port = parsed.port or (5349 if turn_url.startswith("turns:") else 3478)
+            if self.uid_udp_mode and (not isinstance(turn_url, str) or not turn_url.startswith("turn:")):
+                raise ValueError("Selected UDP relay configuration is unavailable")
         with path_stage(path_diagnostics, "kernel_turn_resolution"):
             if self.endpoint_mode:
                 addresses, port = turn_endpoints(turn_url, relay_protocol, resolver)
@@ -268,31 +272,22 @@ class AndroidKernelPath:
                         raise ValueError("TURN and control endpoints overlap")
                     control_endpoints.update((address, control_port) for address in control_addresses)
                 self.control_endpoints = frozenset(control_endpoints)
-            else:
-                addresses = {item[4][0] for item in resolver(parsed.hostname, port, socket.AF_INET,
-                             socket.SOCK_DGRAM if self.protocol == "udp" else socket.SOCK_STREAM)}
         with path_stage(path_diagnostics, "kernel_process_identity"):
             pid = peer._adb("shell", "pidof", peer.APP)
             if re.fullmatch(r"[0-9]{1,8}", pid) is None:
                 raise ValueError("Native application process is ambiguous")
-        # Only descriptors actually owned by this native app PID may correlate
-        # a selected protocol with the kernel path. Reject ambiguous sockets.
-        with path_stage(path_diagnostics, "kernel_socket_inventory"):
-            links = peer._adb("shell", "sh", "-c", f"'for f in /proc/{pid}/fd/*; do readlink \"$f\" 2>/dev/null || true; done'")
-            inodes = set(re.findall(r"socket:\[([0-9]+)\]", links))
-            tables = [peer._adb("shell", "cat", f"/proc/{pid}/net/{self.protocol}"),
-                      peer._adb("shell", "cat", f"/proc/{pid}/net/{self.protocol}6")]
-            self.pid, self.addresses, self.port = pid, addresses, port
-            try: conntrack = peer._adb("shell", "cat", "/proc/net/nf_conntrack") if self.protocol == "udp" else ""
-            except Exception: conntrack = ""
-        with path_stage(path_diagnostics, "kernel_socket_correlation"):
-            if self.endpoint_mode:
+        self.pid = pid
+        if self.endpoint_mode:
+            with path_stage(path_diagnostics, "kernel_socket_inventory"):
+                links = peer._adb("shell", "sh", "-c", f"'for f in /proc/{pid}/fd/*; do readlink \"$f\" 2>/dev/null || true; done'")
+                inodes = set(re.findall(r"socket:\[([0-9]+)\]", links))
+                tables = [peer._adb("shell", "cat", f"/proc/{pid}/net/{self.protocol}"),
+                          peer._adb("shell", "cat", f"/proc/{pid}/net/{self.protocol}6")]
+                self.addresses, self.port = addresses, port
+            with path_stage(path_diagnostics, "kernel_socket_correlation"):
                 self.matches = owned_turn_endpoints("\n".join(tables), inodes, addresses, port,
                     controls=self.control_endpoints, path_diagnostics=path_diagnostics)
                 self.socket = None
-            else:
-                self.socket = owned_socket("\n".join(tables), inodes, addresses, port, conntrack,
-                                           path_diagnostics=path_diagnostics)
         with path_stage(path_diagnostics, "kernel_process_uid"):
             status = peer._adb("shell", "cat", f"/proc/{pid}/status")
             uid = re.search(r"^Uid:\s+([0-9]+)\s", status, re.M)
@@ -307,18 +302,81 @@ class AndroidKernelPath:
             self.target_material = [self.uid, self.protocol, self.port, self.addresses]
             self.rule_count = len(self.addresses)
         else:
-            with path_stage(path_diagnostics, "kernel_socket_route"):
-                route = peer._adb("shell", "ip", "route", "get", self.socket["remote"])
-                device = re.search(r"\bdev ([A-Za-z0-9_.-]{1,15})\b", route)
-                if device is None:
-                    raise ValueError("Selected socket's kernel route is unavailable")
-                self.device = device[1]
-            self.target_kind = "pid_udp_socket_flow"
-            self.target_material = self.socket
-            self.rule_count = 1
+            self._resource_check = resource_check
+            with path_stage(path_diagnostics, "kernel_scope_exclusivity"):
+                self._check_scope()
+            with path_stage(path_diagnostics, "kernel_link_coverage"):
+                try:
+                    self.device = covered_link(*link_snapshot(self.command))
+                    self._qdisc_before = self._default_qdisc()
+                except LinkScopeError as error:
+                    try: path_diagnostics.observe(error, "kernel_link_coverage", error.reason)
+                    except Exception: pass
+                    raise
+                except Exception as error:
+                    failure = LinkScopeError("capability_unavailable")
+                    try: path_diagnostics.observe(failure, "kernel_link_coverage", failure.reason)
+                    except Exception: pass
+                    raise failure from error
+            self.target_kind = "uid_udp_all_destinations"
+            self.target_material = [self.uid, "udp", "all_destinations"]
+            self.rule_count = 2
 
     def command(self, *args):
         return self.peer._adb("shell", *map(str, args))
+
+    def _default_qdisc(self):
+        value = self.command("tc", "qdisc", "show", "dev", self.device).strip()
+        if (len(value.splitlines()) != 1
+                or re.match(r"^qdisc (?:noqueue|pfifo_fast|fq_codel) 0: root(?:\s|$)", value) is None):
+            raise LinkScopeError("conflicting_qdisc")
+        return value
+
+    def _link_current(self):
+        try:
+            owned_ifb = self.ifb if "ifb" in self._installed else None
+            if owned_ifb is not None:
+                detail = self.command("ip", "-d", "link", "show", "dev", owned_ifb)
+                if not re.search(r"\balias\s+" + re.escape(self.rule) + r"\b", detail):
+                    raise LinkScopeError("alternate_link")
+            if covered_link(*link_snapshot(self.command), owned_ifb=owned_ifb) != self.device:
+                raise LinkScopeError("alternate_link")
+            if self._installed:
+                qdisc = self.command("tc", "qdisc", "show", "dev", self.device)
+                ifb_qdisc = self.command("tc", "qdisc", "show", "dev", self.ifb)
+                if ("qdisc netem " + self.egress_handle + " root" not in qdisc
+                        or "qdisc ingress ffff:" not in qdisc
+                        or "qdisc netem " + self.ingress_handle + " root" not in ifb_qdisc
+                        or any(not all(field in value for field in ("delay 75ms 10ms", "loss 0.1%"))
+                               for value in (qdisc, ifb_qdisc))
+                        or not self._owned_ingress_filter(self.command("tc", "filter", "show", "dev",
+                            self.device, "parent", "ffff:"))):
+                    raise LinkScopeError("conflicting_qdisc")
+        except LinkScopeError as error:
+            self._observe_link_error(error)
+            raise
+        except Exception as error:
+            failure = LinkScopeError("capability_unavailable")
+            self._observe_link_error(failure)
+            raise failure from error
+
+    def _observe_link_error(self, error):
+        try:
+            reason = error.reason if type(error) is LinkScopeError else "capability_unavailable"
+            self._path_diagnostics.observe(error, "kernel_link_coverage", reason)
+        except Exception:
+            pass
+
+    def _owned_ingress_filter(self, value):
+        lines = value.splitlines()
+        headers = [line for line in lines if line.lstrip().startswith("filter ")]
+        actions = [line for line in lines if re.search(r"\baction\b", line)]
+        marker = "pref " + str(self.filter_prio) + " matchall"
+        return (bool(headers) and len(headers) <= 2
+            and all("protocol all" in line and marker in line for line in headers)
+            and len(actions) == 1 and "mirred" in actions[0]
+            and "redirect" in actions[0].lower()
+            and re.search(r"\b" + re.escape(self.ifb) + r"\b", actions[0]) is not None)
 
     def _check_scope(self):
         if not callable(self._resource_check) or self._resource_check() is not True:
@@ -341,7 +399,8 @@ class AndroidKernelPath:
             cmdline = self.command("cat", f"/proc/{helper}/cmdline")
             if cmdline.split("\0", 1)[0] != self.peer.APP + ":mesh_bootstrap":
                 raise ValueError("Native endpoint block UID has an unrecognized helper")
-            self._check_helper_tcp(helper)
+            if self.endpoint_mode:
+                self._check_helper_tcp(helper)
         except Exception:
             # The bootstrap service may exit between ps and its proc reads.
             if self._same_uid_processes() == [self.pid]:
@@ -392,6 +451,44 @@ class AndroidKernelPath:
     def install(self):
         if self.protocol != "udp":
             raise ValueError("The declared impairment profile requires the selected UDP path")
+        if self.uid_udp_mode:
+            try:
+                self._link_current()
+                if self.ifb in link_names(self.command("ip", "-o", "link", "show")):
+                    raise LinkScopeError("alternate_link")
+                self._ifb_prechecked_absent = True
+                if self._default_qdisc() != self._qdisc_before:
+                    raise LinkScopeError("conflicting_qdisc")
+                self._installed.append("ifb")
+                self._ifb_add_confirmed = False
+                self.command("ip", "link", "add", self.ifb, "type", "ifb")
+                self._ifb_add_confirmed = True
+                self.command("ip", "link", "set", "dev", self.ifb, "alias", self.rule)
+                self.command("ip", "link", "set", self.ifb, "up")
+                self._installed.append("egress")
+                self.command("tc", "qdisc", "replace", "dev", self.device, "root", "handle", self.egress_handle,
+                    "netem", "delay", "75ms", "10ms", "distribution", "normal", "loss", "0.1%")
+                self._installed.append("ingress")
+                self._ingress_confirmed = False
+                self.command("tc", "qdisc", "add", "dev", self.device, "handle", "ffff:", "ingress")
+                self._ingress_confirmed = True
+                self._ingress_filter_complete = False
+                self.command("tc", "filter", "add", "dev", self.device, "parent", "ffff:",
+                    "protocol", "all", "prio", str(self.filter_prio), "matchall", "action", "mirred", "egress",
+                    "redirect", "dev", self.ifb)
+                self._ingress_filter_complete = True
+                self.command("tc", "qdisc", "replace", "dev", self.ifb, "root", "handle", self.ingress_handle,
+                    "netem", "delay", "75ms", "10ms", "distribution", "normal", "loss", "0.1%")
+                self._link_current()
+                self.before = self.counters()
+            except Exception as error:
+                self._observe_link_error(error)
+                try: self.close()
+                except Exception as cleanup_error:
+                    self._setup_cleanup_failure = cleanup_error
+                    raise error from cleanup_error
+                raise
+            return
         try:
             self.command("ip", "link", "add", self.ifb, "type", "ifb")
             self._installed.append("ifb")
@@ -414,21 +511,28 @@ class AndroidKernelPath:
             raise
 
     def counters(self):
-        return {"egress": netem_counter(self.command("tc", "-s", "qdisc", "show", "dev", self.device), "30:"),
-                "ingress": netem_counter(self.command("tc", "-s", "qdisc", "show", "dev", self.ifb), "40:")}
+        return {"egress": netem_counter(self.command("tc", "-s", "qdisc", "show", "dev", self.device), self.egress_handle),
+                "ingress": netem_counter(self.command("tc", "-s", "qdisc", "show", "dev", self.ifb), self.ingress_handle)}
 
     def block(self):
         self.require_current()
-        if self.endpoint_mode:
+        if self.endpoint_mode or self.uid_udp_mode:
             observer = getattr(self, "_negative_diagnostics", None)
             try:
                 with negative_control_stage(observer, "kernel_block_install"):
-                    for index, address in enumerate(self.addresses):
-                        family = "iptables" if ipaddress.ip_address(address).version == 4 else "ip6tables"
+                    targets = (("iptables" if ipaddress.ip_address(address).version == 4 else "ip6tables", address)
+                        for address in self.addresses) if self.endpoint_mode else (("iptables", None), ("ip6tables", None))
+                    for index, (family, address) in enumerate(targets):
                         comment = self.rule + "-" + str(index)
-                        args = ["-p", "tcp", "-d", address, "--dport", str(self.port),
+                        args = (["-p", "tcp", "-d", address, "--dport", str(self.port)] if self.endpoint_mode
+                                else ["-p", "udp"])
+                        args += [
                                 "-m", "owner", "--uid-owner", self.uid,
                                 "-m", "comment", "--comment", comment, "-j", "DROP"]
+                        if self.uid_udp_mode:
+                            existing = self.command(family, "-nvx", "-L", "OUTPUT", "--line-numbers")
+                            if any(comment in line.split() for line in existing.splitlines()):
+                                raise ValueError("Kernel block comment is already owned")
                         # Retain possible exact ownership before the insert: an ADB
                         # error cannot prove that the kernel rejected the rule.
                         self._drop_rules.append((family, args, comment))
@@ -453,7 +557,7 @@ class AndroidKernelPath:
         if not self._blocked:
             return 0
         observer = getattr(self, "_negative_diagnostics", None)
-        if self.endpoint_mode:
+        if self.endpoint_mode or self.uid_udp_mode:
             current = True
             try:
                 with negative_control_stage(observer, "kernel_counter_read"):
@@ -496,8 +600,10 @@ class AndroidKernelPath:
 
     def _endpoint_counters(self):
         counters = {}
-        for family, _, comment in self._drop_rules:
+        for family, args, comment in self._drop_rules:
             with negative_control_stage(self._negative_diagnostics, "kernel_counter_read"):
+                if self.uid_udp_mode:
+                    self.command(family, "-C", "OUTPUT", *args)
                 text = self.command(family, "-nvx", "-L", "OUTPUT", "--line-numbers")
             with negative_control_stage(self._negative_diagnostics, "kernel_counter_parse"):
                 lines = [line.split() for line in text.splitlines() if comment in line.split()]
@@ -538,7 +644,7 @@ class AndroidKernelPath:
             if self.peer._adb("shell", "pidof", self.peer.APP) != self.pid:
                 raise negative_control_error(observer, "kernel_current_process",
                     ValueError("The native process changed during kernel fault correlation"), "process_changed")
-        if self.endpoint_mode:
+        if self.endpoint_mode or self.uid_udp_mode:
             with negative_control_stage(observer, "kernel_current_socket"):
                 status = self.command("cat", f"/proc/{self.pid}/status")
                 uid = re.search(r"^Uid:\s+([0-9]+)\s", status, re.M)
@@ -546,7 +652,10 @@ class AndroidKernelPath:
                     raise negative_control_error(observer, "kernel_current_socket",
                         ValueError("The native endpoint UID changed"), "socket_changed")
                 self._check_scope()
-                self._owned_tcp_matches(allow_empty=self._blocked)
+                if self.endpoint_mode:
+                    self._owned_tcp_matches(allow_empty=self._blocked)
+                else:
+                    self._link_current()
             return
         with negative_control_stage(observer, "kernel_current_socket"):
             links = self.command("sh", "-c", f"'for f in /proc/{self.pid}/fd/*; do readlink \"$f\" 2>/dev/null || true; done'")
@@ -560,6 +669,8 @@ class AndroidKernelPath:
                     ValueError("The native kernel socket changed during its selected-path test"), "socket_changed")
 
     def report(self):
+        if self.uid_udp_mode:
+            self.require_current()
         after = self.counters()
         delta = {direction: {key: after[direction][key] - self.before[direction][key]
                             for key in ("bytes", "packets", "dropped")} for direction in ("egress", "ingress")}
@@ -568,10 +679,64 @@ class AndroidKernelPath:
             raise ValueError("Kernel impairment lacks actual routed packets and observed loss")
         return {"kind": "android_emulator_linux_kernel_tc_netem", "delay_ms_each_way": 75,
                 "jitter_ms_each_way": 10, "loss_percent_each_way": 0.1, "added_nominal_rtt_ms": 150,
-                "socket_correlation": "unique_own_pid_socket_and_kernel_flow",
+                "link_scope": "isolated_emulator_route",
                 "loss_observed": sum(item["dropped"] for item in delta.values()) > 0, "counters": delta}
 
+    def _close_link(self):
+        failures = []
+        try:
+            if self._blocked:
+                self._delete_endpoint_rules()
+        except Exception:
+            failures.append("block")
+        for item in reversed(self._installed):
+            try:
+                if item == "ingress":
+                    current = self.command("tc", "qdisc", "show", "dev", self.device)
+                    if "qdisc ingress ffff:" in current:
+                        if not getattr(self, "_ingress_confirmed", False):
+                            raise ValueError("Ingress creation reply was ambiguous")
+                        filters = self.command("tc", "filter", "show", "dev", self.device, "parent", "ffff:")
+                        if (filters.strip() and not self._owned_ingress_filter(filters)) or (
+                                not filters.strip() and getattr(self, "_ingress_filter_complete", False)):
+                            raise ValueError("Ingress filter ownership changed")
+                        self.command("tc", "qdisc", "del", "dev", self.device, "ingress")
+                    if "qdisc ingress ffff:" in self.command("tc", "qdisc", "show", "dev", self.device):
+                        raise ValueError("Owned ingress qdisc remains")
+                elif item == "egress":
+                    current = self.command("tc", "qdisc", "show", "dev", self.device).strip()
+                    if "qdisc netem " + self.egress_handle + " root" in current:
+                        if not all(item in current for item in ("delay 75ms 10ms", "loss 0.1%")):
+                            raise ValueError("Root netem ownership changed")
+                        self.command("tc", "qdisc", "del", "dev", self.device, "root")
+                    elif current != self._qdisc_before:
+                        raise ValueError("Unrecognized root qdisc cannot be removed")
+                    if self.command("tc", "qdisc", "show", "dev", self.device).strip() != self._qdisc_before:
+                        raise ValueError("Original root qdisc was not restored")
+                else:
+                    if self.ifb in link_names(self.command("ip", "-o", "link", "show")):
+                        if not getattr(self, "_ifb_add_confirmed", False):
+                            raise ValueError("IFB creation reply was ambiguous")
+                        detail = self.command("ip", "-d", "link", "show", "dev", self.ifb)
+                        has_alias = re.search(r"\balias\s+" + re.escape(self.rule) + r"\b", detail)
+                        if (not has_alias and (not getattr(self, "_ifb_add_confirmed", False)
+                                or not getattr(self, "_ifb_prechecked_absent", False)
+                                or re.search(r"\bifb\b", detail) is None or re.search(r"\balias\b", detail))):
+                            raise ValueError("Owned IFB identity changed")
+                        self.command("ip", "link", "del", self.ifb)
+                    if self.ifb in link_names(self.command("ip", "-o", "link", "show")):
+                        raise ValueError("Owned IFB remains")
+            except Exception:
+                failures.append(item)
+        self._installed = [item for item in self._installed if item in failures]
+        if failures:
+            raise negative_control_error(getattr(self, "_negative_diagnostics", None), "fault_cleanup",
+                RuntimeError("Exact kernel fault cleanup is incomplete"), "cleanup_incomplete")
+
     def close(self):
+        if self.uid_udp_mode:
+            self._close_link()
+            return
         failures = []
         try:
             if self._blocked:

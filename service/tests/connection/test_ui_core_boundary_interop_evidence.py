@@ -14,6 +14,16 @@ from mesh_chat.native_path_evidence import candidate, pair_token
 REQUEST = "c" * 32
 
 
+def test_impaired_pair_accepts_truthful_link_and_uid_udp_scope():
+    from test_ui_core_boundary_interop_controller import interop_reports
+    windows, android = interop_reports()
+    impaired = android["execution"]["scenarios"][-1]
+    evidence.verify_pair(windows, android, "a" * 40, "b" * 40)
+    impaired["negative"]["kernel_target"].update(kind="pid_udp_socket_flow", rule_count=1)
+    with pytest.raises(ValueError):
+        evidence.verify_pair(windows, android, "a" * 40, "b" * 40)
+
+
 def test_zero_native_counts_cannot_replace_positive_owner_retirement_acknowledgment():
     from test_ui_core_boundary_interop_controller import interop_reports
     windows, android = interop_reports()

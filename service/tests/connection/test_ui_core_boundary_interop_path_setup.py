@@ -19,6 +19,25 @@ OBSERVATION = {"pair": {"relay_protocol": "tcp", "local": {"type": "relay"}}}
 TURN = "turn:turn.example:3478?transport=tcp"
 
 
+@pytest.mark.parametrize("change", [None, "alternate_ipv4", "alternate_ipv6", "policy", "unknown_route", "vpn_link"])
+def test_disposable_link_admission_requires_complete_route_coverage(change):
+    from native_interop_link_scope import covered_link, LinkScopeError
+    links = "1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536\n2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500\n"
+    route4 = "default via 10.0.2.2 dev eth0 table main\n10.0.2.0/24 dev eth0 table main\n"
+    route6 = "2001:db8::/64 dev eth0 table main\n"
+    rule4 = "0: from all lookup local\n100: from all fwmark 0x1/0x1 lookup main\n"
+    rule6 = "0: from all lookup local\n100: from all lookup main\n"
+    if change == "alternate_ipv4": route4 += "default dev wlan0 table 100\n"
+    elif change == "alternate_ipv6": route6 += "default dev wlan0 table 100\n"
+    elif change == "policy": rule4 += "200: from all goto 300\n"
+    elif change == "unknown_route": route4 += "default PRIVATE_RAW_ROUTE\n"
+    elif change == "vpn_link": links += "3: tun0: <POINTOPOINT,UP,LOWER_UP> mtu 1500\n"
+    if change is None:
+        assert covered_link(links, route4, route6, rule4, rule6) == "eth0"
+    else:
+        with pytest.raises(LinkScopeError): covered_link(links, route4, route6, rule4, rule6)
+
+
 def test_native_path_diagnostic_cases_are_in_the_fast_boundary_gate():
     assert "service/tests/connection/test_ui_core_boundary_interop_path_setup.py" in PYTHON_SELECTION
 
@@ -66,6 +85,20 @@ def kernel_boundary(*, point=None, ambiguous=False, tcp_rows=None, fd_links=None
                     or (helper_state is not None and helper_state["alive"]) else "")
             if args[1:4] == ("ip", "route", "get"):
                 return "PRIVATE_ROUTE_WITHOUT_DEVICE" if point == "kernel_socket_route" else "198.51.100.2 dev wlan0 src 10.0.2.15"
+            if args[1:5] == ("ip", "-o", "link", "show"):
+                if point == "link_capability": raise RuntimeError("PRIVATE_COMMAND_OUTPUT")
+                return ("1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536\n2: eth0: <BROADCAST,UP,LOWER_UP> mtu 1500\n"
+                        + ("3: tun0: <POINTOPOINT,UP> mtu 1500\n" if point == "link_alternate" else ""))
+            if args[1:6] == ("ip", "-4", "route", "show", "table"):
+                return "default via 10.0.2.2 dev eth0 table main\n"
+            if args[1:6] == ("ip", "-6", "route", "show", "table"):
+                return ""
+            if args[1:5] == ("ip", "-4", "rule", "show") or args[1:5] == ("ip", "-6", "rule", "show"):
+                return "0: from all lookup local\n100: from all lookup main\n" + (
+                    "200: from all goto 300\n" if point == "link_policy" else "")
+            if args[1:5] == ("tc", "qdisc", "show", "dev"):
+                return ("qdisc netem 77: root delay 2ms\n" if point == "link_qdisc" else
+                        "qdisc noqueue 0: root refcnt 2\n")
             raise AssertionError("Unexpected private command shape")
     def resolver(*args):
         events.append(("resolver", len(args)))
@@ -108,6 +141,32 @@ def test_multiple_owned_tcp_sockets_are_one_covered_turn_endpoint_scope():
                                     path_diagnostics=diagnostic, resource_check=lambda: True)
     assert path.endpoint_mode and len(path.matches) == 2 and path.socket is None
     assert path.target_kind == "uid_tcp_turn_destination_set" and path.rule_count == 1
+
+
+def test_impaired_udp_admits_covered_link_without_socket_or_dns_ownership(monkeypatch):
+    peer, resolver, events = kernel_boundary()
+    def no_socket(*_args, **_kwargs): pytest.fail("UDP must not demand an internal socket")
+    monkeypatch.setattr(faults, "owned_socket", no_socket)
+    path = faults.AndroidKernelPath(peer, {"pair": {"relay_protocol": "udp", "local": {"type": "relay"}}},
+        "turn:turn.example:3478?transport=udp", resolver=resolver, resource_check=lambda: True)
+    assert path.device == "eth0" and path.uid_udp_mode and path.target_kind == "uid_udp_all_destinations"
+    assert path.rule_count == 2
+    assert not any(item[0] == "resolver" or "/fd/" in repr(item) or "/net/udp" in repr(item) for item in events)
+
+
+@pytest.mark.parametrize("point,reason", [("link_alternate", "alternate_link"),
+    ("link_policy", "unsupported_policy"), ("link_qdisc", "conflicting_qdisc"),
+    ("link_capability", "capability_unavailable")])
+def test_udp_link_admission_failures_publish_only_bounded_reason(point, reason):
+    peer, resolver, _ = kernel_boundary(point=point)
+    diagnostic = faults.NativePathDiagnostics("impaired")
+    with pytest.raises(ValueError) as failure:
+        faults.AndroidKernelPath(peer, {"pair": {"relay_protocol": "udp", "local": {"type": "relay"}}},
+            "turn:turn.example:3478?transport=udp", resolver=resolver,
+            path_diagnostics=diagnostic, resource_check=lambda: True)
+    selected = diagnostic.failure_observation(failure.value)
+    assert selected == {"scenario": "impaired", "stage": "kernel_link_coverage", "reason": reason}
+    assert "PRIVATE" not in repr(selected)
 
 
 @pytest.mark.parametrize("states,inodes,summary,relation", [

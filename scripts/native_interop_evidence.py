@@ -272,13 +272,13 @@ def verify_report(record, source, tree, role, *, workload="full"):
                 "Selected TURN transport lacks its blocked-path negative control")
             if role == "android":
                 target = negative["kernel_target"]
-                expected_kind = "pid_udp_socket_flow" if scenario == "impaired" else "uid_tcp_turn_destination_set"
+                expected_kind = "uid_udp_all_destinations" if scenario == "impaired" else "uid_tcp_turn_destination_set"
                 _require(type(negative["blocked_packets"]) is int and negative["blocked_packets"] > 0
                     and negative["kernel_protocol"] == ("udp" if scenario == "impaired" else "tcp")
                     and type(target) is dict and set(target) == {"kind", "digest", "rule_count"}
                     and target["kind"] == expected_kind and token(target["digest"], 64)
                     and type(target["rule_count"]) is int
-                    and 1 <= target["rule_count"] <= (1 if scenario == "impaired" else 16),
+                    and (target["rule_count"] == 2 if scenario == "impaired" else 1 <= target["rule_count"] <= 16),
                     "TURN negative control lacks actual scoped kernel drops")
             else:
                 _require(negative["blocked_packets"] is None and negative["kernel_protocol"] is None and negative["kernel_target"] is None,
@@ -289,10 +289,10 @@ def verify_report(record, source, tree, role, *, workload="full"):
         else: _require(negative is None, "Unexpected negative-control claim")
         impairment = case["impairment"]
         if scenario == "impaired" and role == "android":
-            _require(isinstance(impairment, dict) and set(impairment) == {"kind", "delay_ms_each_way", "jitter_ms_each_way", "loss_percent_each_way", "added_nominal_rtt_ms", "socket_correlation", "loss_observed", "counters"}
+            _require(isinstance(impairment, dict) and set(impairment) == {"kind", "delay_ms_each_way", "jitter_ms_each_way", "loss_percent_each_way", "added_nominal_rtt_ms", "link_scope", "loss_observed", "counters"}
                 and impairment["kind"] == "android_emulator_linux_kernel_tc_netem" and impairment["delay_ms_each_way"] == 75
                 and impairment["jitter_ms_each_way"] == 10 and impairment["loss_percent_each_way"] == 0.1 and impairment["added_nominal_rtt_ms"] == 150
-                and impairment["socket_correlation"] == "unique_own_pid_socket_and_kernel_flow", "Declared Linux-kernel impairment profile differs")
+                and impairment["link_scope"] == "isolated_emulator_route", "Declared Linux-kernel impairment profile differs")
             counters = impairment["counters"]
             _require(isinstance(counters, dict) and set(counters) == {"egress", "ingress"}, "Kernel impairment lacks both directions")
             for values in counters.values():

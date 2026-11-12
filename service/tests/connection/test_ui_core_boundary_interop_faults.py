@@ -53,12 +53,238 @@ def test_malformed_kernel_socket_data_is_not_a_path(raw):
 def kernel_fixture(protocol="udp"):
     value = object.__new__(faults.AndroidKernelPath)
     value.endpoint_mode = False  # Exercise the retained exact-flow UDP branch.
+    value.uid_udp_mode = False
     value.protocol = protocol
     value.ip_protocol = "17" if protocol == "udp" else "6"
     value.device, value.ifb, value.uid, value.rule = "wlan0", "mci12345678", "10053", "mesh-ci-test"
+    value.egress_handle, value.ingress_handle = "30:", "40:"
     value.socket = {"local": "10.0.2.15", "local_port": 50000, "remote": "198.51.100.2", "remote_port": 3478, "inode": "1234"}
     value._installed, value._blocked = [], False
     return value
+
+
+def udp_link_fixture(monkeypatch):
+    value = kernel_fixture()
+    value.uid_udp_mode, value.endpoint_mode = True, False
+    value.pid, value._qdisc_before = "123", "qdisc noqueue 0: root refcnt 2"
+    value.filter_prio = 12345
+    value.target_kind, value.target_material, value.rule_count = "uid_udp_all_destinations", ["10053", "udp"], 2
+    value._drop_rules = []
+    value._negative_diagnostics = None
+    state = SimpleNamespace(commands=[], ifb=False, alias=False, root="default", ingress=False, filter=False, rules={},
+        egress_packets=0, ingress_packets=0, failure=None, pid="123", uid="10053", resource=True,
+        route4="default via 10.0.2.2 dev wlan0 table main\n")
+    value.peer = SimpleNamespace(APP="PRIVATE_APP", _adb=lambda *_: state.pid)
+    def check_scope():
+        if not state.resource: raise ValueError("PRIVATE_STALE_RESOURCE")
+    monkeypatch.setattr(value, "_check_scope", check_scope)
+    def command(*args):
+        state.commands.append(args)
+        if args == ("ip", "-o", "link", "show"):
+            return ("1: lo: <LOOPBACK,UP> mtu 65536\n2: wlan0: <BROADCAST,UP> mtu 1500\n"
+                    + (f"3: {value.ifb}: <BROADCAST,UP> mtu 1500\n" if state.ifb else ""))
+        if args == ("ip", "-d", "link", "show", "dev", value.ifb):
+            return f"3: {value.ifb}: <BROADCAST,UP>\n    ifb" + (f" alias {value.rule}" if state.alias else "") + "\n"
+        if args == ("ip", "-4", "route", "show", "table", "all"):
+            return state.route4
+        if args == ("ip", "-6", "route", "show", "table", "all"): return ""
+        if args in (("ip", "-4", "rule", "show"), ("ip", "-6", "rule", "show")):
+            return "0: from all lookup local\n100: from all lookup main\n"
+        if args == ("cat", "/proc/123/status"):
+            return f"Uid:\t{state.uid}\t{state.uid}\t{state.uid}\t{state.uid}\n"
+        if args[:2] == ("ip", "link"):
+            if args[2] == "add":
+                state.ifb = True
+                if state.failure == "ifb_collision": raise RuntimeError("PRIVATE_IFB_COLLISION")
+            elif args[2] == "del": state.ifb = False
+            elif args[2] == "set" and "alias" in args:
+                if state.failure == "alias": raise RuntimeError("PRIVATE_ALIAS_FAILURE")
+                state.alias = True
+            return ""
+        if args[:3] == ("tc", "qdisc", "show"):
+            device = args[-1]
+            if device == value.ifb:
+                return "qdisc netem 40: root delay 75ms 10ms loss 0.1%\n" if state.ifb else ""
+            return (("qdisc netem 30: root delay 75ms 10ms loss 0.1%" if state.root == "netem"
+                     else "qdisc netem 30: root delay 5ms loss 5%" if state.root == "bad_profile"
+                     else "qdisc netem 77: root" if state.root == "foreign" else value._qdisc_before)
+                    + ("\nqdisc ingress ffff: parent ffff:fff1" if state.ingress else "") + "\n")
+        if args[:4] == ("tc", "-s", "qdisc", "show"):
+            packets = state.egress_packets if args[-1] == value.device else state.ingress_packets
+            handle = "30:" if args[-1] == value.device else "40:"
+            return f"qdisc netem {handle} root delay 75ms 10ms loss 0.1%\n Sent {packets * 100} bytes {packets} pkt (dropped 0, overlimits 0 requeues 0)\n"
+        if args[:2] == ("tc", "qdisc"):
+            if args[2] == "replace" and args[args.index("dev") + 1] == value.device: state.root = "netem"
+            elif args[2] == "add":
+                state.ingress = True
+                if state.failure == "ingress_collision": raise RuntimeError("PRIVATE_INGRESS_COLLISION")
+            elif args[2] == "del" and args[-1] == "root": state.root = "default"
+            elif args[2] == "del" and args[-1] == "ingress": state.ingress = state.filter = False
+            return ""
+        if args[:2] == ("tc", "filter"):
+            if args[2] == "show":
+                return (f"filter protocol all pref {value.filter_prio} matchall action mirred redirect dev {value.ifb}\n"
+                        if state.filter is True else "filter protocol all pref 1 u32 action drop\n"
+                        if state.filter == "foreign" else
+                        f"filter protocol all pref {value.filter_prio} matchall action mirred redirect dev {value.ifb}\n"
+                        "filter protocol all pref 7 u32 action drop\n" if state.filter == "mixed" else "")
+            if state.failure == "filter": raise RuntimeError("PRIVATE_FILTER_FAILURE")
+            assert "protocol" in args and args[args.index("protocol") + 1] == "all"
+            assert "matchall" in args and value.ifb in args
+            state.filter = True
+            return ""
+        if args[0] in {"iptables", "ip6tables"}:
+            if args[1] == "-I":
+                comment = args[args.index("--comment") + 1]
+                state.rules[comment] = [args[0], 0]
+                if state.failure == "insert_reply": raise RuntimeError("PRIVATE_INSERT_REPLY")
+            elif args[1] == "-C":
+                assert args[args.index("--comment") + 1] in state.rules
+            elif args[1] == "-D": state.rules.pop(args[args.index("--comment") + 1], None)
+            elif args[1] == "-nvx":
+                return "\n".join(f"1 {count} {count * 100} DROP udp -- * * 0.0.0.0/0 0.0.0.0/0 /* {comment} */"
+                    for comment, (family, count) in state.rules.items() if family == args[0])
+            return ""
+        raise AssertionError(args)
+    monkeypatch.setattr(value, "command", command)
+    return value, state
+
+
+def test_whole_link_netem_tracks_created_ifb_and_both_independent_directions(monkeypatch):
+    value, state = udp_link_fixture(monkeypatch)
+    value.install()
+    assert state.ifb and state.root == "netem" and state.ingress
+    profiles = [item for item in state.commands if item[:3] == ("tc", "qdisc", "replace")]
+    assert len(profiles) == 2 and all(item[-7:] == ("delay", "75ms", "10ms", "distribution", "normal", "loss", "0.1%") for item in profiles)
+    state.egress_packets, state.ingress_packets = 7, 9
+    assert value.report()["link_scope"] == "isolated_emulator_route"
+    assert value.report()["counters"]["egress"]["packets"] == 7
+    value.close()
+    assert not state.ifb and state.root == "default" and not state.ingress
+
+
+def test_uid_udp_block_has_exact_ipv4_ipv6_owner_rules_and_counter_delta(monkeypatch):
+    value, state = udp_link_fixture(monkeypatch)
+    value.install()
+    value.block()
+    inserts = [item for item in state.commands if item[0] in {"iptables", "ip6tables"} and item[1] == "-I"]
+    assert len(inserts) == 2 and {item[0] for item in inserts} == {"iptables", "ip6tables"}
+    assert all("udp" in item and "--uid-owner" in item and "10053" in item and "-d" not in item for item in inserts)
+    for entry in state.rules.values(): entry[1] = 3
+    assert value.unblock() == 6
+    assert not state.rules
+    value.close()
+
+
+def test_uid_udp_partial_insert_reply_removes_exact_possible_rule(monkeypatch):
+    value, state = udp_link_fixture(monkeypatch)
+    value.install()
+    state.failure = "insert_reply"
+    with pytest.raises(RuntimeError, match="PRIVATE_INSERT_REPLY"):
+        value.block()
+    assert state.rules == {} and value._drop_rules == [] and value._blocked is False
+    value.close()
+
+
+def test_removed_ingress_redirect_cannot_qualify_block_or_netem_report(monkeypatch):
+    value, state = udp_link_fixture(monkeypatch)
+    value.install()
+    state.filter = False
+    with pytest.raises(ValueError): value.block()
+    with pytest.raises(ValueError): value.report()
+    assert state.rules == {}
+    with pytest.raises(RuntimeError, match="cleanup is incomplete"): value.close()
+    assert state.ingress and "ingress" in value._installed
+
+
+@pytest.mark.parametrize("change", ["pid", "uid", "resource", "route"])
+def test_uid_udp_block_rejects_stale_current_scope_before_drop_rule(monkeypatch, change):
+    value, state = udp_link_fixture(monkeypatch)
+    value.install()
+    if change == "pid": state.pid = "456"
+    elif change == "uid": state.uid = "10054"
+    elif change == "resource": state.resource = False
+    else: state.route4 += "default dev tun0 table 100\n"
+    with pytest.raises(ValueError): value.block()
+    assert not any(item[0] in {"iptables", "ip6tables"} and item[1] == "-I" for item in state.commands)
+    value.close()
+
+
+def test_partial_whole_link_install_rolls_back_only_owned_state(monkeypatch):
+    value, state = udp_link_fixture(monkeypatch)
+    value._path_diagnostics = faults.NativePathDiagnostics("impaired")
+    state.failure = "filter"
+    with pytest.raises(RuntimeError, match="PRIVATE_FILTER_FAILURE") as failure:
+        value.install()
+    assert not state.ifb and state.root == "default" and not state.ingress and value._installed == []
+    assert value._path_diagnostics.failure_observation(failure.value) == {
+        "scenario": "impaired", "stage": "kernel_link_coverage", "reason": "capability_unavailable"}
+    assert value._path_diagnostics.failure_observation(RuntimeError("PRIVATE_FOREIGN")) == {}
+
+
+def test_ifb_alias_failure_after_creation_uses_prechecked_exact_name_for_cleanup(monkeypatch):
+    value, state = udp_link_fixture(monkeypatch)
+    state.failure = "alias"
+    with pytest.raises(RuntimeError, match="PRIVATE_ALIAS_FAILURE"):
+        value.install()
+    assert not state.ifb and value._installed == []
+
+
+def test_foreign_ifb_collision_after_absence_check_is_never_deleted(monkeypatch):
+    value, state = udp_link_fixture(monkeypatch)
+    state.failure = "ifb_collision"
+    with pytest.raises(RuntimeError, match="PRIVATE_IFB_COLLISION") as failure:
+        value.install()
+    assert state.ifb and "ifb" in value._installed
+    assert isinstance(failure.value.__cause__, RuntimeError)
+    assert getattr(value, "_setup_cleanup_failure", None) is failure.value.__cause__
+    assert not any(item[:3] == ("ip", "link", "del") for item in state.commands)
+
+
+def test_ambiguous_ingress_add_leaves_unknown_qdisc_untouched(monkeypatch):
+    value, state = udp_link_fixture(monkeypatch)
+    state.failure = "ingress_collision"
+    with pytest.raises(RuntimeError, match="PRIVATE_INGRESS_COLLISION") as failure:
+        value.install()
+    assert state.ingress and "ingress" in value._installed
+    assert isinstance(failure.value.__cause__, RuntimeError)
+    assert not any(item[:3] == ("tc", "qdisc", "del") and item[-1] == "ingress" for item in state.commands)
+
+
+def test_foreign_root_replacement_is_not_deleted_during_cleanup(monkeypatch):
+    value, state = udp_link_fixture(monkeypatch)
+    value.install()
+    state.root = "foreign"
+    with pytest.raises(RuntimeError, match="cleanup is incomplete"):
+        value.close()
+    assert state.root == "foreign" and "egress" in value._installed
+
+
+def test_changed_netem_profile_cannot_be_claimed_or_deleted(monkeypatch):
+    value, state = udp_link_fixture(monkeypatch)
+    value.install()
+    state.root = "bad_profile"
+    with pytest.raises(ValueError): value.report()
+    with pytest.raises(RuntimeError, match="cleanup is incomplete"): value.close()
+    assert state.root == "bad_profile" and "egress" in value._installed
+
+
+def test_foreign_ingress_filter_is_not_deleted_during_cleanup(monkeypatch):
+    value, state = udp_link_fixture(monkeypatch)
+    value.install()
+    state.filter = "foreign"
+    with pytest.raises(RuntimeError, match="cleanup is incomplete"):
+        value.close()
+    assert state.ingress and "ingress" in value._installed
+
+
+def test_mixed_own_and_foreign_ingress_filters_are_not_deleted(monkeypatch):
+    value, state = udp_link_fixture(monkeypatch)
+    value.install()
+    state.filter = "mixed"
+    with pytest.raises(RuntimeError, match="cleanup is incomplete"):
+        value.close()
+    assert state.ingress and "ingress" in value._installed
 
 
 def test_declared_netem_profile_matches_selected_tuple_both_directions_and_preserves_point_one_percent(monkeypatch):

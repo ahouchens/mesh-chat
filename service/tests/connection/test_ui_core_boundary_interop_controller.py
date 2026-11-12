@@ -923,11 +923,13 @@ def negative_control_case(monkeypatch, sample, *, role="android", point="receipt
         return {"messages": values}
     peer.core = command
     class Fault:
-        protocol, socket = "tcp", {"PRIVATE_SOCKET": "PRIVATE_ADDRESS"}
+        protocol, socket = ("udp" if scenario == "impaired" else "tcp"), {"PRIVATE_SOCKET": "PRIVATE_ADDRESS"}
         endpoint_mode = False
+        uid_udp_mode = scenario == "impaired"
         target_kind, target_material, rule_count = (
-            "pid_udp_socket_flow" if scenario == "impaired" else "uid_tcp_turn_destination_set",
-            {"PRIVATE_SOCKET": "PRIVATE_ADDRESS"}, 1)
+            "uid_udp_all_destinations" if scenario == "impaired" else "uid_tcp_turn_destination_set",
+            {"PRIVATE_SOCKET": "PRIVATE_ADDRESS"}, 2 if scenario == "impaired" else 1)
+        def require_current(self): pass
         def block(self):
             state.events.append("block")
             if state.point == "block_error": raise state.boundary_error
@@ -1068,6 +1070,20 @@ def test_final_path_miss_explanation_does_not_survive_cleanup_replacement(
     assert run.state.controller.failure_final_path(run.state.escaping_error) == {}
 
 
+def test_impaired_setup_error_stays_primary_when_exact_cleanup_retry_fails(monkeypatch, sample):
+    state = negative_control_case(monkeypatch, sample, point="success", scenario="impaired")
+    setup = ValueError("PRIVATE_SETUP")
+    cleanup = RuntimeError("PRIVATE_CLEANUP")
+    state.kernel._setup_cleanup_failure = cleanup
+    def fail_setup(): raise setup
+    def fail_cleanup(): raise cleanup
+    state.kernel.install = fail_setup
+    state.kernel.close = fail_cleanup
+    with pytest.raises(ValueError) as failure:
+        state.controller.path_case("impaired", "windows")
+    assert failure.value is setup and failure.value.__cause__ is cleanup
+
+
 @pytest.mark.parametrize("mode", ["observe", "projection", "malformed", "forged_projection"])
 def test_final_path_miss_observer_fault_or_forgery_cannot_publish_private_data(
         tmp_path, monkeypatch, capsys, sample, mode):
@@ -1112,8 +1128,9 @@ def test_successful_case_clears_prior_final_path_explanation_without_changing_re
     assert "final_path_missing" not in state.controller.cases[-1]
 
 
-@pytest.mark.parametrize("scenario", ["turn_tcp", "turn_tls"])
+@pytest.mark.parametrize("scenario", ["turn_tcp", "turn_tls", "impaired"])
 def test_final_ready_recovers_inside_original_restored_delivery_window(monkeypatch, sample, scenario):
+    if scenario == "impaired": sample[0]["pair"]["rtt_ms"] = 10
     state = negative_control_case(monkeypatch, sample, point="success", scenario=scenario)
     original = state.controller.observe
     final_reads = []
@@ -1132,8 +1149,9 @@ def test_final_ready_recovers_inside_original_restored_delivery_window(monkeypat
     assert state.controller.cases[-1]["owner_retirement_acknowledged"] is True
 
 
-def test_final_ready_persistent_unready_uses_last_reason_and_existing_deadline(monkeypatch, sample):
-    state = negative_control_case(monkeypatch, sample, point="success", scenario="turn_tls")
+@pytest.mark.parametrize("scenario", ["turn_tls", "impaired"])
+def test_final_ready_persistent_unready_uses_last_reason_and_existing_deadline(monkeypatch, sample, scenario):
+    state = negative_control_case(monkeypatch, sample, point="success", scenario=scenario)
     state.controller.deadline = 2.5
     original = state.controller.observe
     final_reads = []
@@ -1146,7 +1164,7 @@ def test_final_ready_persistent_unready_uses_last_reason_and_existing_deadline(m
         return value
     state.controller.observe = observe
     with pytest.raises(ValueError) as failure:
-        state.controller.path_case("turn_tls", "windows")
+        state.controller.path_case(scenario, "windows")
     assert state.controller.failure_final_path(failure.value) == {
         "final_path_missing": "messaging_ready_not_true"}
     assert final_reads == [pytest.approx(2.0), pytest.approx(2.25)]
@@ -1163,8 +1181,10 @@ def test_final_ready_budget_expired_before_snapshot_does_not_probe(monkeypatch, 
     assert state.observation == 2 and not state.requests
 
 
-def test_restored_receipt_and_inbound_share_one_ninety_second_deadline(monkeypatch, sample):
-    state = negative_control_case(monkeypatch, sample, point="success", scenario="turn_tls")
+@pytest.mark.parametrize("scenario", ["turn_tls", "impaired"])
+def test_restored_receipt_and_inbound_share_one_ninety_second_deadline(monkeypatch, sample, scenario):
+    if scenario == "impaired": sample[0]["pair"]["rtt_ms"] = 10
+    state = negative_control_case(monkeypatch, sample, point="success", scenario=scenario)
     original_core = state.controller.peer.core
     original_observe = state.controller.observe
     original_wait = state.controller.wait
@@ -1188,15 +1208,16 @@ def test_restored_receipt_and_inbound_share_one_ninety_second_deadline(monkeypat
     state.controller.peer.core = core
     state.controller.observe = observe
     state.controller.wait = wait
-    state.controller.path_case("turn_tls", "windows")
+    state.controller.path_case(scenario, "windows")
     assert waits[3] == pytest.approx(90)
     assert waits[4] == pytest.approx(1)
     assert len(final_reads) == 2 and final_reads[-1] < 92
 
 
-def test_ready_sample_returned_after_restoration_deadline_is_not_accepted(monkeypatch, sample):
-    state = negative_control_case(monkeypatch, sample, point="success", scenario="turn_tls")
-    state.kernel.endpoint_mode = True
+@pytest.mark.parametrize("scenario", ["turn_tls", "impaired"])
+def test_ready_sample_returned_after_restoration_deadline_is_not_accepted(monkeypatch, sample, scenario):
+    state = negative_control_case(monkeypatch, sample, point="success", scenario=scenario)
+    if scenario == "turn_tls": state.kernel.endpoint_mode = True
     state.kernel.require_current = lambda: setattr(state, "now", 91.9)
     original = state.controller.observe
     def observe(*args, **kwargs):
@@ -1205,7 +1226,7 @@ def test_ready_sample_returned_after_restoration_deadline_is_not_accepted(monkey
         return value
     state.controller.observe = observe
     with pytest.raises(ValueError) as failure:
-        state.controller.path_case("turn_tls", "windows")
+        state.controller.path_case(scenario, "windows")
     assert state.controller.failure_final_path(failure.value) == {"final_path_missing": "unavailable"}
     assert state.observation == 3 and not state.requests
 
@@ -2505,14 +2526,14 @@ def interop_reports(source="a" * 40, tree="b" * 40, android_artifacts=None, *, w
             if name in {"turn_tcp", "turn_tls", "impaired"}:
                 negative = {"blocked_packets": 2 if role == "android" else None, "delivered_while_blocked": False,
                     "delivered_after_restore": True, "kernel_protocol": ("udp" if name == "impaired" else "tcp") if role == "android" else None,
-                    "kernel_target": {"kind": "pid_udp_socket_flow" if name == "impaired" else "uid_tcp_turn_destination_set",
-                        "digest": evidence.digest([name, "kernel target"]), "rule_count": 1} if role == "android" else None,
+                    "kernel_target": {"kind": "uid_udp_all_destinations" if name == "impaired" else "uid_tcp_turn_destination_set",
+                        "digest": evidence.digest([name, "kernel target"]), "rule_count": 2 if name == "impaired" else 1} if role == "android" else None,
                     "outbound": message("negative:" + name, role)["outbound"], "inbound": message("negative:" + name, role)["inbound"]}
             impairment = None
             if name == "impaired" and role == "android":
                 impairment = {"kind": "android_emulator_linux_kernel_tc_netem", "delay_ms_each_way": 75,
                     "jitter_ms_each_way": 10, "loss_percent_each_way": 0.1, "added_nominal_rtt_ms": 150,
-                    "socket_correlation": "unique_own_pid_socket_and_kernel_flow", "loss_observed": False,
+                    "link_scope": "isolated_emulator_route", "loss_observed": False,
                     "counters": {direction: {"bytes": 1000, "packets": 10, "dropped": 0} for direction in ("egress", "ingress")}}
             cases.append({"scenario": name, "initiator": initiator, "supervisor_pairing": {
                 "operation": evidence.digest([role, case_id, "operation"]), "role": "offer" if role == initiator else "answer",
