@@ -4,7 +4,53 @@
 
 ### Cold-restart containment: full CI completed; native pairing remains unqualified
 
-The next candidate integrates three independently reviewed follow-ups:
+The latest completed qualification is `75df9027596b29bc0ee0f23675d2faa85b4c21f7`
+(tree `98e06fdb1480bd1376ee5d6cead071436bfd0776`), full diagnostic run
+[43133004290](https://github.com/ahouchens/mesh-chat/actions/runs/43133004290).
+The run **failed: nine successful jobs, four failed jobs, zero cancelled or skipped
+jobs**. Fresh local SDK staging/upgrade, strict policy types, six source-carrier
+cases, **5,681 policy cases**, **1,893 Python UI + 12 rendered cases**, and nine
+Windows boundary cases pass without skips. All 32 lifecycle composition controls
+pass. The earlier `97c32d5` retirement timeout remains retained and unexplained;
+these passes do not establish its repair. General service evidence remains
+historical at `67a5210`.
+
+CI policy and its required gate now succeed. The policy job takes nine minutes
+and 23 seconds, including cleanup; it does not exceed the old limit on this run.
+Policy and Python UI inventories exactly match local execution. Independently
+validated reports also cover Windows packaged/public-SDK pairing and lifecycle,
+Android **56 emulator + 83 JVM cases and 17 artifact hashes**, layout **72 cases**,
+and Linux direct **25 transport + 10 recovery + 12 setup** cases. Layout screenshots
+were not visually reviewed.
+
+Windows direct recovery has **nine passes and one failure**: the recurring
+`address_loss` case reconnects both authenticated peers, but the queued workspace
+message remains absent at the receiver through the original 45-second delivery
+wait. The sender trace now shows five sends rejected with no main RNS path, then
+one accepted LXMF handoff and a local `sending` update. No later endpoint status
+or receiver application ingress is recorded. The retained `transport_unavailable`
+field can describe earlier attempts; it does not prove the accepted handoff failed.
+The cause within native outbound processing, callback delivery or receiver ingress
+is still unknown. Later Windows fabric and setup suites do not execute.
+
+Native Android fails before peer execution while SDK manager prepares the API 35
+Google APIs x86_64 `r09` system-image ZIP, reporting a ZIP read error. The log does
+not establish network corruption, disk exhaustion or an SDK defect. Earlier runs
+unpacked the same revision successfully. No Android role report is produced;
+Windows exhausts its unchanged initial partner-key wait. The aggregate job fails
+while downloading the absent Android report, before manifest validation. No paired
+native path, guarded archive-404 recovery or TCP socket observation is exercised.
+
+The next bounded work adds reviewed test-only failure observations around the
+exact outbound native attempt. A scoped local reproduction may reuse the retained
+CI dispatcher only with verified unchanged compiled inputs and explicit mixed-origin
+labeling; it cannot establish new-source qualification or repair. A subsequent
+full CI must use a fresh run with both peers and exact-source artifacts. There is
+no justified SDK setup code change from this one unexplained extraction failure.
+Helper retirement and later roadmap promotion remain on hold until full native
+acceptance and disposition of the outstanding delivery, retirement and socket issues.
+
+That source integrates three independently reviewed follow-ups:
 `488f95c` gives the policy CI job fifteen minutes, `0577f58` adds bounded test-only
 retirement failure observations, and `a686f9e` adds guarded archive-404 retries.
 Artifact metadata is checked before archive download. Only an archive-open HTTP
@@ -17,11 +63,11 @@ required, and the repository token is never forwarded to signed blob storage.
 
 The archive/rendezvous focused pair passes **259 cases**, retaining all 218 prior
 cases and adding 41 controls. Retirement observations pass **22 focused cases**,
-retaining all 18 prior cases and adding four controls. Fresh combined local checks
-and full native qualification remain pending. The prior local retirement failure
+retaining all 18 prior cases and adding four controls. The combined local checks
+pass as recorded above; the full CI run does not establish native qualification. The prior local retirement failure
 and TCP socket ambiguity are unresolved, and the remote cause of HTTP 404 is unknown.
 
-The latest completed qualification is `97c32d5951fffa9f66161b17ae01c98484e22cab`
+The preceding completed qualification is `97c32d5951fffa9f66161b17ae01c98484e22cab`
 (tree `2ef51343ce32fe4aebd7a4950d849c2a20f524c6`), full diagnostic run
 [43124732545](https://github.com/ahouchens/mesh-chat/actions/runs/43124732545).
 GitHub records the run as **cancelled: eight successful jobs, four failed jobs,
