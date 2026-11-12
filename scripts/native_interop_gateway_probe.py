@@ -55,7 +55,7 @@ def process_identity(pid):
 def process_parent(pid):
     try:
         return int(Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[1])
-    except FileNotFoundError:
+    except (FileNotFoundError, ProcessLookupError):
         return None
 
 
@@ -663,16 +663,20 @@ class Child:
                     continue
                 require(pid not in known or same_process(known[pid], identity), "helper_process_identity_changed")
                 if pid not in known:
-                    descriptor = os.pidfd_open(pid)
-                    current = self.inspect_process(pid)
-                    if current is None:
-                        os.close(descriptor)
-                    else:
-                        if not same_process(current, identity):
-                            os.close(descriptor)
-                            raise Unavailable("helper_process_identity_changed")
-                        self.helpers.append(identity)
-                        self.helper_descriptors[pid] = descriptor
+                    try:
+                        descriptor = os.pidfd_open(pid)
+                    except ProcessLookupError:
+                        descriptor = None
+                    if descriptor is not None:
+                        try:
+                            current = self.inspect_process(pid)
+                            if current is not None:
+                                require(same_process(current, identity), "helper_process_identity_changed")
+                                self.helpers.append(identity)
+                                self.helper_descriptors[pid] = descriptor
+                        finally:
+                            if pid not in self.helper_descriptors:
+                                os.close(descriptor)
                 owned.add(pid)
                 pending.remove(observed)
                 progress = True
