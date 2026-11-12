@@ -1,5 +1,43 @@
 # Connection runtime qualification ledger
 
+## Initial answer gathering failed before network controls (2026-11-12)
+
+Full run [43252465356](https://github.com/ahouchens/mesh-chat/actions/runs/43252465356)
+at `1a545b8824950efc201e9706283df9fc2b1a0f28` completed with **10 successful
+and three failed jobs**. All nonnative evidence independently validates:
+5,805 policy cases, 2,012 Python UI and 12 rendered cases, scoped Windows host
+reports, 56 Android emulator cases and 83 exact JVM identities with 17 artifact
+hashes, 72 layout cases, and each platform's 25 transport, 10 recovery and
+12 setup cases. Layout pixels were not visually reviewed. The automatic
+duplicate run was canceled after the manual full run became active.
+
+Both native peers failed during initial `direct_supervisor_owned_pairing_windows`.
+Android retired at `gather_answer/tick/phase_timeout`, last observed as
+`reserved/unread/unread/unread`. Windows retired at
+`wait_answer/tick/phase_timeout`, last observed as
+`offer_ready/one/new/connecting`. Android had no supervisor-accepted gather
+result within the existing 25-second phase budget, so the normal answer-publish
+continuation was not scheduled. The reports do not identify the blocked
+suboperation; unread does not mean absent. UDP-link controls were not reached.
+Closure manifest SHA-256:
+`0db018cd7894d22b275699f96de9d3f0b4fc0f868d9e600dc4031318d218add6`.
+
+Reviewed component `86ea358`, integrated as `dbc3ab5`, adds bounded
+private gather-worker and application-stage observations. It retains exact Work
+and original-deadline custody, selects only milestones at or before that cutoff,
+and freezes a sanitized failure-only result. Later worker completion cannot
+rewrite the at-deadline observation. The diagnostic uses fixed labels and age
+buckets, preserves the original error and cleanup, and adds no polling or native
+query. Public API, Kotlin, WebRTC dependency, deadlines and success predicates
+are unchanged. A `native_accept` label identifies only the application call
+boundary, not an internal SDP or ICE-gathering wait.
+
+Root's 15 affected offline suites pass **1,642 cases, zero failures/errors/skips**.
+Fresh full CI is required; this is diagnostic coverage, not a causal repair or
+native acceptance. The reviewed UDP-link implementation remains in place.
+Frozen helper retirement follows independently accepted full native qualification;
+earlier lease/checking failures and the broader refactoring remain open.
+
 ## UDP link impairment replaces socket correlation (2026-11-12)
 
 Full run [43238956725](https://github.com/ahouchens/mesh-chat/actions/runs/43238956725)

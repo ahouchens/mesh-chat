@@ -1,14 +1,14 @@
 # Independent public consumer qualification proposal
 
-Full run `43238956725` at `c287269` is closed failed: Android stopped at
-the harness's UDP socket-correlation gate before impairment, and Windows then
-exhausted its partner wait. All nonnative evidence independently validates.
-Reviewed integration `347c228` replaces that extra gate with bidirectional
-disposable-link impairment and app-UID UDP blocking in IPv4 and IPv6, retaining
-selected-path, counter, blocked-receipt, cleanup and recovery requirements.
-All 1,443 offline interop cases pass. Full native qualification is pending;
-the public API and WebRTC dependency remain unchanged. Historical failures,
-remaining SC12 scenarios and the full refactoring are not declared complete.
+Full run `43252465356` at `1a545b8` failed initial direct pairing before
+network controls: Android exceeded its `gather_answer` phase budget and Windows
+timed out in `wait_answer`. All nonnative evidence independently validates.
+The retained observations do not identify Android's blocked suboperation.
+Reviewed integration `dbc3ab5` adds private exact-Work gather observations
+selected at the original deadline; late completion cannot overwrite that evidence.
+All 1,642 cases in 15 affected offline suites pass. Full native CI is pending.
+There is no WebRTC, Kotlin, public API, deadline or success-predicate change.
+The UDP-link correction, remaining SC12 work and full refactoring remain unqualified.
 
 ## Earlier checkpoints
 
