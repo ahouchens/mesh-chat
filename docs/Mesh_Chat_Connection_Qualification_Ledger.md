@@ -4,7 +4,42 @@
 
 ### Cold-restart containment: full CI completed; native pairing remains unqualified
 
-The next candidate integrates independently reviewed diagnostic component
+The latest completed qualification is `8fd57a445eec2ab12a86de51f3e0f4342f372d9c`
+(tree `d2c69a224cd348ef316b623004d52fe7e16092ea`), full run
+[43152914113](https://github.com/ahouchens/mesh-chat/actions/runs/43152914113).
+It **failed: ten successful jobs, three failed jobs, zero cancelled or skipped
+jobs**. All fresh local gates pass, including **5,711 policy cases**, **1,918 Python
+UI + 12 rendered cases**, 32 lifecycle composition controls, six source-carrier
+cases, nine Windows boundary cases, SDK staging/upgrade and strict policy types.
+Policy and Python UI inventories exactly match CI, retaining all previous cases.
+
+Every nonnative CI job passes and its evidence independently validates: Windows
+packaged/public-SDK pairing and lifecycle, Android **56 emulator + 83 JVM cases
+and 17 artifact hashes**, layout **72 cases**, and both Linux and Windows direct
+**25 transport + 10 recovery + 12 setup** cases. Windows `address_loss` passes in
+**142.770 seconds**; this diagnostic-only candidate does not establish repair of
+the previous delivery failure. Layout screenshots were not visually reviewed.
+
+Android fails at `turn_tcp_authenticated_receipts` before message exchange or
+kernel block. Its `native_path_failure` reports `kernel_socket_correlation` /
+`ambiguous_owned_matches`, with `tcp_state_summary=multiple_established` and
+`owned_inode_relation=distinct`. Multiple app-owned TCP sockets match the TURN
+endpoint, but the retained evidence does not bind one to the selected ICE pair
+or explain why they coexist. Filtering only established sockets cannot resolve
+this occurrence. The native DTO explicitly leaves the client-to-TURN socket
+unavailable; relay candidate endpoints are not that socket.
+
+Windows subsequently reports `PeerFailure` / `scenario_deadline` at
+`receipt_delivery_wait`; the aggregate gate rejects the failed native workload.
+The final-observation diagnostic below is not reached. No full native acceptance
+is established. Read-only work is determining an implementable selected-socket
+binding from the native transport owner; arbitrary socket selection, broad
+blocking, added retries or a weaker gate are not justified. The previous final
+path disappearance, local `97c32d5` lifecycle timeout and Windows delivery failure
+remain unresolved. Helper retirement and subsequent roadmap promotion remain
+deferred pending native acceptance and failure disposition.
+
+This tested source integrates independently reviewed diagnostic component
 `67aca65`. Its failure-only `final_path_missing` field classifies the existing
 final observation as `no_resource`, `pending_adoption`, `adopted_not_true`,
 `attached_not_true`, `messaging_ready_not_true`, `nonselected`, `mixed`, or
@@ -22,12 +57,12 @@ at the observation level; the serialized report path is tested with `unavailable
 Source inspection confirms the connection, but this remains a coverage limit
 until separate exact-source native execution exercises a precise failure label.
 
-Fresh combined qualification remains pending, with expected inventories of
-**5,711 policy** and **1,918 Python UI** cases. The closed `ee1d8d1` failure and all
-earlier unresolved histories remain retained. This diagnostic is not a repair or
-native acceptance, and helper retirement remains deferred.
+Fresh combined local and CI inventories contain **5,711 policy** and **1,918
+Python UI** cases as verified above. The closed `ee1d8d1` failure and all earlier
+unresolved histories remain retained. This diagnostic is not a repair or native
+acceptance, and helper retirement remains deferred.
 
-The latest completed qualification is `ee1d8d11732bf0e749cef42217a822e2c156cce1`
+The preceding completed qualification is `ee1d8d11732bf0e749cef42217a822e2c156cce1`
 (tree `be9b17f4ace1d4dab35678d4f1529c8de5c0a924`), full run
 [43144241820](https://github.com/ahouchens/mesh-chat/actions/runs/43144241820).
 The run **failed: ten successful jobs, three failed jobs, zero cancelled or skipped
