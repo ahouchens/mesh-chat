@@ -24,6 +24,7 @@ class PairingPort:
     apply_answer: Callable
     ready: Callable
     retire: Callable
+    mark_gather_work: Callable | None = None
 
 
 class PairingExecutor:
@@ -64,6 +65,11 @@ class PairingExecutor:
                 self.ports.reserve(context, work.resource)
                 pending = False
             else:
+                if work.phase is Phase.GATHER_ANSWER and self.ports.mark_gather_work is not None:
+                    try:
+                        self.ports.mark_gather_work(context, work)
+                    except Exception:
+                        pass  # Private observation cannot change a pairing result.
                 pending = bool(self._handlers[work.phase](context))
             if self._check(work, cancellation) is not context:
                 raise ContactNotApproved("Pairing authority changed")

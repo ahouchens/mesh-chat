@@ -3310,6 +3310,25 @@ def retirement_example():
     return value
 
 
+def gather_example():
+    return {"as_of": "phase_deadline", "worker": "started", "stage": "native_accept",
+            "stage_state": "entered", "last_completed": "ice_config", "queue_age": "lt1s",
+            "stage_age": "20to25s"}
+
+
+@pytest.mark.parametrize("valid", [True, False])
+def test_gather_failure_attaches_only_to_terminal_pairing_status_error(tmp_path, monkeypatch, capsys, valid):
+    gather = gather_example()
+    supplied = gather if valid else {**gather, "sdp": "PRIVATE_SDP"}
+    run = run_negotiate_report(tmp_path, monkeypatch, capsys, "android", "retirement",
+        status_reply=lambda operation: {"operation_id": operation, "state": "retired",
+            "retirement": {"phase": "gather_answer", "event": "tick", "reason": "phase_timeout"},
+            "gather_failure": supplied})
+    assert run.exit_code == 1 and run.record["error_code"] == "supervisor_pairing_retired"
+    assert run.record.get("gather_failure") == (gather if valid else None)
+    assert "PRIVATE_" not in run.output
+
+
 RETIREMENT_CASES = ("valid", "absent", "null", "empty", "missing_phase", "missing_event", "missing_reason",
     "extra_private", "phase_private", "event_private", "reason_private", "foreign_identity", "stale_time",
     "phase_number", "event_array", "reason_object", "scalar", "array")
@@ -3357,9 +3376,11 @@ def test_foreign_status_identity_cannot_attach_state_or_retirement(tmp_path, mon
     def forbidden_sanitize(_): pytest.fail("Foreign status detail was inspected")
     monkeypatch.setattr(controller, "validated_pairing_retirement", forbidden_sanitize)
     run = run_negotiate_report(tmp_path, monkeypatch, capsys, "windows", "foreign_status",
-        status_reply=lambda _: {"operation_id": "PRIVATE_FOREIGN_ID", "state": state, "retirement": value})
+        status_reply=lambda _: {"operation_id": "PRIVATE_FOREIGN_ID", "state": state,
+                                "retirement": value, "gather_failure": gather_example()})
     assert run.record["error_code"] == "invalid_pairing_identity" and run.record["failure_site"] == "pairing_status"
     assert "pairing_state" not in run.record and "pairing_retirement" not in run.record
+    assert "gather_failure" not in run.record
     assert "PRIVATE_" not in run.output
 
 
@@ -3369,12 +3390,15 @@ def test_retirement_detail_belongs_only_to_same_active_status_exception(tmp_path
     calls = []
     def reply(operation):
         calls.append(operation)
-        if len(calls) == 1: return {"operation_id": operation, "state": "retired", "retirement": value}
+        if len(calls) == 1: return {"operation_id": operation, "state": "retired",
+                                    "retirement": value, "gather_failure": gather_example()}
         return {"operation_id": "PRIVATE_OTHER_ID" if fault.endswith("foreign") else operation,
-                "state": "retired" if fault.endswith("foreign") else "offer_ready", "retirement": value}
+                "state": "retired" if fault.endswith("foreign") else "offer_ready",
+                "retirement": value, "gather_failure": gather_example()}
     run = run_negotiate_report(tmp_path, monkeypatch, capsys, "windows", fault, status_reply=reply)
     assert run.exit_code == 1 and run.record["passed"] is False
     assert "pairing_state" not in run.record and "pairing_retirement" not in run.record
+    assert "gather_failure" not in run.record
     if fault.endswith("foreign"):
         assert run.record["failure_site"] == "pairing_status" and run.record["error_code"] == "invalid_pairing_identity"
     else:
@@ -3387,9 +3411,10 @@ def test_successful_negotiate_report_never_gains_retirement_failure_fields(tmp_p
     value = retirement_example()
     run = run_negotiate_report(tmp_path, monkeypatch, capsys, role, "success",
         status_reply=lambda operation: {"operation_id": operation, "state": "offer_ready",
-            "pairing_code": "PRIVATE_SIGNED_CODE", "retirement": value})
+            "pairing_code": "PRIVATE_SIGNED_CODE", "retirement": value,
+            "gather_failure": gather_example()})
     assert run.exit_code == 0 and run.record["passed"] is True
-    assert not {"failure_site", "pairing_state", "pairing_retirement"} & set(run.record)
+    assert not {"failure_site", "pairing_state", "pairing_retirement", "gather_failure"} & set(run.record)
     assert "PRIVATE_" not in run.output
     # This intentionally incomplete component fixture cannot qualify native CI.
     with pytest.raises(ValueError): evidence.verify_report(run.record, "a" * 40, "b" * 40, role)

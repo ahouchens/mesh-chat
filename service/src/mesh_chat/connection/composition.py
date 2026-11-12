@@ -80,7 +80,8 @@ def native_runtime(service):
             service._native_pairing_publish, service._native_pairing_publish,
             lambda context: service._native_pairing_fetch(context, "answer"),
             service._native_pairing_apply, service._native_pairing_ready,
-            service._native_pairing_retire), current=current, now=monotonic)
+            service._native_pairing_retire,
+            service._native_pairing_mark_gather_work), current=current, now=monotonic)
         return PairingAndReconnectExecutor(pairing, reconnect)
 
     def prepare():

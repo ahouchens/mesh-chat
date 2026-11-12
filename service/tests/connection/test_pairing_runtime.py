@@ -11,11 +11,12 @@ import pytest
 
 from mesh_chat.connection.model import (
     Adopted, Authority, ConnectionKey, ConnectionState, ContextChanged, Desired, Failed,
-    Failure, Phase, Resource, Result, Retire, Tick, Work,
+    Failure, Operation, Phase, Policy, Resource, Result, Retire, Tick, Work,
 )
 from mesh_chat.connection.projection import snapshot
 from mesh_chat.connection.reducer import transition
 from mesh_chat.connection.runtime import ConnectionRuntime
+from mesh_chat.connection.effects import BoundedEffectRunner
 from mesh_chat.connection.model import Execution
 from mesh_chat.connection.supervisor import ConnectionSupervisor
 from mesh_chat.call_manager import CallOutcomeRequiresResync
@@ -27,6 +28,76 @@ from mesh_chat.vault import VaultStore
 def pairing(preferred=True):
     return ConnectionState(ConnectionKey("pairing", "intent", "local", None), "epoch",
                            Authority(1, True, True, preferred), Desired.ENABLED)
+
+
+def test_gather_worker_history_keeps_deadline_state_after_late_completion():
+    clock = [10.0]
+    entered, release = Event(), Event()
+    work = Work(operation=Operation("epoch", pairing().key, 1, 1, 1), phase=Phase.GATHER_ANSWER,
+        resource=Resource("native", "resource"), deadline=35.0)
+    class Executor:
+        def execute(self, effect, cancellation):
+            entered.set()
+            assert release.wait(3)
+            return Result(effect.operation, clock[0], allocated=effect.resource)
+        def retire(self, resource):
+            pass
+    runner = BoundedEffectRunner(Executor(), now=lambda: clock[0])
+    assert runner.submit(work)
+    assert entered.wait(3)
+    assert tuple(event[0] for event in runner.gather_milestones(work)) == ("queued", "started")
+    clock[0] = 36.0
+    release.set()
+    runner.next_completion(timeout=3)
+    assert tuple(event[0] for event in runner.gather_milestones(work) if event[1] <= work.deadline) == (
+        "queued", "started")
+    assert runner.gather_milestones(replace(work, resource=Resource("native", "foreign"))) == ()
+
+
+def test_queued_gather_expired_before_worker_entry_and_history_eviction(monkeypatch):
+    clock = [10.0]
+    deferred = []
+    class DeferredThread:
+        def __init__(self, *, target, args, **kwargs):
+            self.target, self.args = target, args
+            deferred.append(self)
+        def start(self):
+            pass
+    monkeypatch.setattr("mesh_chat.connection.effects.Thread", DeferredThread)
+    class Executor:
+        def execute(self, work, cancellation):
+            pytest.fail("Expired work must not call the executor")
+        def retire(self, resource):
+            pass
+    runner = BoundedEffectRunner(Executor(), Policy(max_actors=1, max_workers=1), now=lambda: clock[0])
+    work = Work(Operation("epoch", pairing().key, 1, 1, 1), Phase.GATHER_ANSWER,
+                Resource("native", "first"), 35.0)
+    assert runner.submit(work)
+    assert runner.gather_milestones(work) == (("queued", 10.0),)
+    clock[0] = 36.0
+    deferred[0].target(*deferred[0].args)
+    assert isinstance(runner.next_completion(timeout=1), Failed)
+    assert tuple(event[0] for event in runner.gather_milestones(work) if event[1] <= work.deadline) == ("queued",)
+    other = replace(work, operation=replace(work.operation, sequence=2),
+                    resource=Resource("native", "second"), deadline=61.0)
+    assert runner.submit(other)
+    assert runner.gather_milestones(work) == ()
+    assert runner.gather_milestones(other) == (("queued", 36.0),)
+
+
+def test_optional_gather_recorder_failure_does_not_replace_worker_result():
+    work = Work(Operation("epoch", pairing().key, 1, 1, 1), Phase.GATHER_ANSWER,
+                Resource("native", "resource"), monotonic() + 3)
+    class Executor:
+        def execute(self, effect, cancellation):
+            return Result(effect.operation, monotonic(), allocated=effect.resource)
+        def retire(self, resource):
+            pass
+    runner = BoundedEffectRunner(Executor())
+    runner._record_gather = lambda *args: (_ for _ in ()).throw(RuntimeError("observer failure"))
+    assert runner.submit(work)
+    assert isinstance(runner.next_completion(timeout=1), Result)
+    assert runner.gather_milestones(work)[-1][0] == "invalid"
 
 
 @pytest.mark.parametrize("preferred", [False, True])

@@ -14,7 +14,8 @@ from weakref import ref
 from uuid import UUID, uuid4, uuid5
 
 from .call_manager import CallOutcomeRequiresResync
-from .connection.model import Resource
+from .connection.diagnostics import gather_failure_at_deadline, validated_gather_failure
+from .connection.model import Phase, Resource
 from .connection.reconcile import authority_signature, connection_key
 from .errors import ContactNotApproved, NativeUnavailable, ValidationError
 from .signal_mailbox import parse_pairing
@@ -302,7 +303,8 @@ class NativePairingServiceMixin:
                        "expires_at": min(time.time() + 300, expires_at if expires_at is not None else float("inf"),
                                          imported["expires_at"] if imported else float("inf")),
                        "direct": allow_direct_ip_disclosure, "state": "reserved", "admitted": False,
-                       "physical": None, "source": None, "allocation_attempted": False}
+                       "physical": None, "source": None, "allocation_attempted": False,
+                       "gather_work": None, "gather_stages": ()}
             contexts[operation_id] = context
             intent = {"action": "native_pairing", "runtime_epoch": self._runtime_incarnation,
                       "identity_hash": profile["identity_hash"], "intent": operation_id,
@@ -384,6 +386,22 @@ class NativePairingServiceMixin:
                                       "local_device_id": context["identity_hash"]})
                 result["retirement"] = self._connection_runtime.owner.pairing_retirement_diagnostic(
                     key=key, runtime_epoch=context["runtime_epoch"], source=context["source"])
+                if "gather_failure_snapshot" not in context:
+                    try:
+                        custody = self._connection_runtime.owner.pairing_gather_deadline_diagnostic(
+                            key=key, runtime_epoch=context["runtime_epoch"], source=context["source"])
+                        if custody is not None:
+                            work, deadline = custody
+                            stages = (context["gather_stages"] if context.get("gather_work") == work else None)
+                            observed = gather_failure_at_deadline(deadline,
+                                self._connection_runtime.runner.gather_milestones(work), stages)
+                            context["gather_failure_snapshot"] = validated_gather_failure(observed)
+                        else:
+                            context["gather_failure_snapshot"] = None
+                    except Exception:
+                        context["gather_failure_snapshot"] = None
+                if context["gather_failure_snapshot"] is not None:
+                    result["gather_failure"] = dict(context["gather_failure_snapshot"])
             return result
 
     @staticmethod
@@ -434,6 +452,51 @@ class NativePairingServiceMixin:
                 raise CallOutcomeRequiresResync("Native pairing allocation cannot be replaced")
             context["source"] = resource
 
+    def _native_pairing_mark_gather_work(self, context, work):
+        """Bind the exact admitted answer work without a lock or host call."""
+        try:
+            if (work.phase is Phase.GATHER_ANSWER and context["role"] == "answer"
+                    and work.operation.key.scope == "pairing"
+                    and work.operation.key.profile_id == context["id"]
+                    and work.operation.key.local_device == context["identity_hash"]
+                    and work.operation.runtime_epoch == context["runtime_epoch"]
+                    and work.resource == context["source"]
+                    and context.get("gather_work") in (None, work)):
+                context["gather_work"] = work
+        except Exception:
+            pass
+
+    def _native_pairing_stage(self, context, label, state):
+        try:
+            if (context.get("gather_work") is not None and
+                    label in {"ice_config", "native_accept", "answer_sign", "bind_onboarding", "complete"}
+                    and state in {"entered", "completed"}):
+                history = context["gather_stages"]
+                if history is not None and len(history) < 9:
+                    context["gather_stages"] = (*history, (label, state, self._connection_runtime.now()))
+        except Exception:
+            self._native_pairing_invalidate_stage(context)
+
+    def _native_pairing_invalidate_stage(self, context):
+        try:
+            history = context["gather_stages"]
+            if history is not None and len(history) < 9:
+                try:
+                    when = self._connection_runtime.now()
+                except Exception:
+                    when = None
+                context["gather_stages"] = (*history, ("invalid", "invalid", when))
+            else:
+                context["gather_stages"] = None
+        except Exception:
+            pass
+
+    def _native_pairing_note_stage(self, context, label, state):
+        try:
+            self._native_pairing_stage(context, label, state)
+        except Exception:
+            self._native_pairing_invalidate_stage(context)
+
     def _native_pairing_allocation_reserved(self, session, physical):
         # Called immediately after registry reservation, before the native call.
         for context in getattr(self, "_native_pairing_contexts", {}).values():
@@ -465,7 +528,11 @@ class NativePairingServiceMixin:
                 raise CallOutcomeRequiresResync("Native pairing allocation outcome requires resync")
             context["allocation_attempted"] = True
             context["host"] = self._native_webrtc_host()
+        if context["role"] == "answer":
+            self._native_pairing_note_stage(context, "ice_config", "entered")
         ice = self.call_ice_servers()
+        if context["role"] == "answer":
+            self._native_pairing_note_stage(context, "ice_config", "completed")
         self._native_pairing_check(context)
         if not context["direct"]:
             ice = {**ice, "iceTransportPolicy": "relay"}
@@ -475,11 +542,18 @@ class NativePairingServiceMixin:
             document = self.webrtc_onboarding_offer(native["sdp"], native["fingerprint"])
             context["offer"] = document
         else:
+            self._native_pairing_note_stage(context, "native_accept", "entered")
             native = self.native_webrtc_accept(context["session"], context["offer"]["sdp"], ice, CHANNELS)
+            self._native_pairing_note_stage(context, "native_accept", "completed")
             self._native_pairing_check(context)
+            self._native_pairing_note_stage(context, "answer_sign", "entered")
             context["answer"] = self.webrtc_onboarding_answer(context["offer"]["document"], native["sdp"], native["fingerprint"])
+            self._native_pairing_note_stage(context, "answer_sign", "completed")
             self._native_pairing_check(context)
+            self._native_pairing_note_stage(context, "bind_onboarding", "entered")
             self.native_webrtc_bind_onboarding(context["session"], context["offer"]["document"], context["answer"]["document"])
+            self._native_pairing_note_stage(context, "bind_onboarding", "completed")
+            self._native_pairing_note_stage(context, "complete", "completed")
         return False
 
     def _native_pairing_publish(self, context):

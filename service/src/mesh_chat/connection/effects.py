@@ -5,7 +5,7 @@ from queue import Queue
 from threading import Event, RLock, Thread
 from time import monotonic
 
-from .model import Cancel, Failed, Failure, Policy, Resource, Retire, Work
+from .model import Cancel, Failed, Failure, Phase, Policy, Resource, Retire, Work
 from .ports import PhaseExecutor
 
 
@@ -13,6 +13,11 @@ from .ports import PhaseExecutor
 class CleanupResult:
     resource: Resource
     succeeded: bool
+
+
+@dataclass
+class _GatherMilestones:
+    events: tuple = ()
 
 
 class BoundedEffectRunner:
@@ -27,6 +32,8 @@ class BoundedEffectRunner:
         self._deadlines = {}
         self._cleanup = {}
         self._cleanup_deadlines = {}
+        # One fixed three-event history per admitted answer work, bounded by actors.
+        self._gather_events = {}
         # Completed work retains a reservation until the owner consumes it.
         self._completed = Queue(maxsize=policy.max_workers + policy.max_effects)
 
@@ -79,10 +86,22 @@ class BoundedEffectRunner:
             self._workers[effect.operation] = (cancelled, thread)
             self._work_bytes[effect.operation] = size
             self._deadlines[effect.operation] = effect.deadline + self._policy.disconnect_grace
+            if effect.phase is Phase.GATHER_ANSWER and effect.operation.key.scope == "pairing":
+                try:
+                    record = _GatherMilestones((("queued", self._now()),))
+                    self._gather_events[effect] = record
+                    if len(self._gather_events) > self._policy.max_actors:
+                        self._gather_events.pop(next(iter(self._gather_events)))
+                except Exception:
+                    pass  # Observation cannot prevent an admitted effect.
             thread.start()
             return True
 
     def _execute(self, work, cancelled):
+        try:
+            self._record_gather(work, "started")
+        except Exception:
+            self._invalidate_gather(work)
         try:
             if cancelled.is_set() or self._now() >= work.deadline:
                 result = Failed(work.operation, self._now(), Failure.TRANSIENT)
@@ -93,7 +112,39 @@ class BoundedEffectRunner:
         except Exception:
             # Native exceptions may contain SDP, addresses or credentials.
             result = Failed(work.operation, self._now(), Failure.INTERNAL, allocated=work.resource)
+        try:
+            self._record_gather(work, "completed")
+        except Exception:
+            self._invalidate_gather(work)
         self._completed.put(result)
+
+    def _record_gather(self, work, state):
+        try:
+            record = self._gather_events.get(work)
+            if record is not None and len(record.events) < 3:
+                record.events = (*record.events, (state, self._now()))
+        except Exception:
+            self._invalidate_gather(work)
+
+    def _invalidate_gather(self, work):
+        try:
+            record = self._gather_events.get(work)
+            if record is not None and len(record.events) < 3:
+                try:
+                    when = self._now()
+                except Exception:
+                    when = None
+                record.events = (*record.events, ("invalid", when))
+        except Exception:
+            pass  # Native result and exact cleanup retain priority.
+
+    def gather_milestones(self, work):
+        """Passive exact-work snapshot; no runner lock or native query."""
+        try:
+            record = self._gather_events.get(work)
+            return record.events if record is not None else ()
+        except Exception:
+            return ()
 
     def _retire(self, resource):
         try:

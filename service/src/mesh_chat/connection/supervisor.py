@@ -23,6 +23,8 @@ class _PairingRetirement:
     phase: Phase
     event: str
     reason: str
+    gather_work: Work | None = None
+    gather_deadline: float | None = None
 
 
 @dataclass
@@ -310,8 +312,16 @@ class ConnectionSupervisor:
             return
         event_name = {Tick: "tick", Failed: "failed", Result: "result", Adopted: "adopted",
                       ContextChanged: "context_changed"}.get(type(event), "unknown")
+        gather = trace.last_work
+        exact_deadline = bool(isinstance(event, Tick) and step.phase is Phase.GATHER_ANSWER
+            and result.reason == "phase_timeout" and gather is not None
+            and gather.phase is Phase.GATHER_ANSWER and gather.operation == operation
+            and gather.resource == step.resource == anchor.resource
+            and gather.deadline == step.deadline and event.now >= gather.deadline)
         trace.retirement = _PairingRetirement(operation, anchor.resource, step.phase,
-                                             event_name, result.reason)
+                                             event_name, result.reason,
+                                             gather if exact_deadline else None,
+                                             gather.deadline if exact_deadline else None)
 
     def pairing_retirement_diagnostic(self, *, key, runtime_epoch, source):
         """Read only the cause bound to this native intent's original source."""
@@ -330,6 +340,29 @@ class ConnectionSupervisor:
                 return unknown
             return validated_pairing_retirement({"phase": cause.phase.value, "event": cause.event,
                                                  "reason": cause.reason}) or unknown
+
+    def pairing_gather_deadline_diagnostic(self, *, key, runtime_epoch, source):
+        """Private exact-work custody for the timeout that retired this intent."""
+        with self._lock:
+            trace = self._pairing_traces.get(key)
+            if trace is None or trace.source is None or trace.retirement is None:
+                return None
+            anchor, cause = trace.source, trace.retirement
+            work = cause.gather_work
+            if (work is None or cause.gather_deadline is None
+                    or cause.phase is not Phase.GATHER_ANSWER or cause.event != "tick"
+                    or cause.reason != "phase_timeout" or key.scope != "pairing"
+                    or runtime_epoch != self.runtime_epoch or source != anchor.resource
+                    or cause.source != source or anchor.operation.key != key
+                    or anchor.operation.runtime_epoch != runtime_epoch
+                    or cause.operation != work.operation or work.operation.key != key
+                    or work.operation.runtime_epoch != runtime_epoch
+                    or work.operation.generation != anchor.operation.generation
+                    or work.operation.policy_revision != anchor.operation.policy_revision
+                    or work.resource != source or work.phase is not Phase.GATHER_ANSWER
+                    or work.deadline != cause.gather_deadline):
+                return None
+            return work, cause.gather_deadline
 
     def commit_handoff(self, operation: Operation, resource: Resource, target: ConnectionKey, now: float):
         """Atomically bind pending custody to one receiver, before publication."""
