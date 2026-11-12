@@ -1,5 +1,39 @@
 # Connection runtime qualification ledger
 
+## UDP link impairment replaces socket correlation (2026-11-12)
+
+Full run [43238956725](https://github.com/ahouchens/mesh-chat/actions/runs/43238956725)
+at `c28726949d577eaec8769ca891a2b932867dac7f` completed with **10 successful
+and three failed jobs**. Independently validated nonnative evidence includes
+5,772 policy cases, 1,979 Python UI and 12 rendered cases, scoped Windows
+packaged/public-SDK reports, 56 Android emulator cases, 83 exact JVM identities
+and 17 artifact hashes, 72 layout cases, and each platform's 25 transport,
+10 recovery and 12 setup cases. Layout pixels were not visually reviewed.
+
+Native progress markers reached both direct initiators and UDP/TCP/TLS relay
+completion, including TCP/TLS block controls. Android then failed before UDP
+impairment installation at `impaired_authenticated_receipts`, classified
+`kernel_socket_correlation/no_owned_match`. Windows subsequently exhausted its
+partner wait. These markers are progress, not separately accepted native results.
+Closure manifest SHA-256:
+`30cfd29900d746fa2858d5ba2806e4145242829f02150ae26fad67d4cce3772c`.
+
+Reviewed component `40fd902`, integrated as `347c228`, removes the UDP
+socket/DNS correlation gate. It admits a disposable emulator link through both
+families' route and policy inventories, applies independent egress and ingress
+netem, and blocks all UDP output for the exclusive app UID in IPv4 and IPv6.
+The link impairment includes control traffic; evidence names this scope.
+Selected relay/resource checks, native and kernel packet counters, no receipt
+while blocked, exact cleanup and once-only restored delivery remain required.
+Receipt, inbound record and fresh final readiness share the original 90-second
+restoration budget. There is no product API or WebRTC dependency change.
+
+Root's seven offline interop suites pass **1,443 cases, zero failures/errors/skips**.
+Full native CI remains required. The earlier direct-pairing and native-lease
+failures remain unresolved history; this change does not establish their repair.
+After full native qualification independently passes, start frozen helper
+retirement. The rest of SC12 and the broader refactoring remain open.
+
 ## Direct pairing timeout; bounded existing-read observation (2026-11-12)
 
 Full run [43231844458](https://github.com/ahouchens/mesh-chat/actions/runs/43231844458)

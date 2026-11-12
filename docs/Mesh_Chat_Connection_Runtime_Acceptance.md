@@ -1,5 +1,17 @@
 # Acceptance reconciliation: specification invariants and scenarios
 
+Full run `43238956725` at `c287269` is closed failed: Android stopped at
+the harness's UDP socket-correlation gate before impairment, and Windows then
+exhausted its partner wait. All nonnative evidence independently validates.
+Reviewed integration `347c228` replaces that extra gate with bidirectional
+disposable-link impairment and app-UID UDP blocking in IPv4 and IPv6, retaining
+selected-path, counter, blocked-receipt, cleanup and recovery requirements.
+All 1,443 offline interop cases pass. Full native qualification is pending;
+the public API and WebRTC dependency remain unchanged. Historical failures,
+remaining SC12 scenarios and the full refactoring are not declared complete.
+
+## Earlier checkpoints
+
 Latest full run `43231844458` at `a537bac` failed before network controls:
 both native peers retired during direct pairing at `checking/tick/phase_timeout`.
 All nonnative evidence independently validates. Reviewed integration `e220c96`

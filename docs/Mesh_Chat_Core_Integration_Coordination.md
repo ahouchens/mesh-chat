@@ -1,14 +1,21 @@
 # Core integration coordination — 2026-11-09
 
-Current checkpoint: full run `43231844458` at `a537bac` is closed failed at
-direct pairing on both peers (`checking/tick/phase_timeout`); all nonnative
-evidence independently validates. C's reviewed `9921d52` is integrated as
-`e220c96`, with 1,410 interop tests passing. Root now qualifies bounded
-last-preterminal-poll labels from existing controller reads; no timeout or
-success predicate changes. A's source audit cannot establish the failed gate
-from existing reports. B reviews source/evidence; D's bound tooling is reusable.
-The WebRTC fork remains abandoned. The frozen helper implementation follows
-full native acceptance; separate historical lease failure remains unresolved.
+Full run `43238956725` at `c287269` is closed failed: Android stopped at
+the harness's UDP socket-correlation gate before impairment, and Windows then
+exhausted its partner wait. All nonnative evidence independently validates.
+Reviewed integration `347c228` replaces that extra gate with bidirectional
+disposable-link impairment and app-UID UDP blocking in IPv4 and IPv6, retaining
+selected-path, counter, blocked-receipt, cleanup and recovery requirements.
+All 1,443 offline interop cases pass. Full native qualification is pending;
+the public API and WebRTC dependency remain unchanged. Historical failures,
+remaining SC12 scenarios and the full refactoring are not declared complete.
+
+Next: full native qualification of the reviewed UDP harness, followed by
+frozen helper retirement after independent acceptance. C implements; B
+reviews immutable changes and evidence; D verifies evidence bindings;
+root integrates and follows CI through disposition.
+
+## Earlier checkpoints
 
 Harness integration `b71cb05` contains C's endpoint rules, exact cleanup and
 verified bootstrap-helper overlap changes through `bd4d5c2`. Root's seven-file

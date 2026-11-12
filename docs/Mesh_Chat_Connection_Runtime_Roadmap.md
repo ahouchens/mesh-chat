@@ -1,5 +1,21 @@
 # Connection runtime implementation and qualification
 
+Full run `43238956725` at `c287269` is closed failed: Android stopped at
+the harness's UDP socket-correlation gate before impairment, and Windows then
+exhausted its partner wait. All nonnative evidence independently validates.
+Reviewed integration `347c228` replaces that extra gate with bidirectional
+disposable-link impairment and app-UID UDP blocking in IPv4 and IPv6, retaining
+selected-path, counter, blocked-receipt, cleanup and recovery requirements.
+All 1,443 offline interop cases pass. Full native qualification is pending;
+the public API and WebRTC dependency remain unchanged. Historical failures,
+remaining SC12 scenarios and the full refactoring are not declared complete.
+
+After independent full native acceptance, start the frozen helper-retirement
+implementation, then continue the remaining lifecycle and public-consumer
+matrix. The WebRTC fork remains abandoned.
+
+## Earlier checkpoints
+
 Current step: qualify `e220c96`'s reviewed controller-only pairing observation
 after 1,410 offline interop cases pass. Full run `43231844458` at `a537bac`
 failed direct pairing on both native peers (`checking/tick/phase_timeout`)
