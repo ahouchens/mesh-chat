@@ -1,5 +1,28 @@
 # Private packaged qualification control
 
+The next candidate integrates independently reviewed diagnostic component
+`67aca65`. Its failure-only `final_path_missing` field classifies the existing
+final observation as `no_resource`, `pending_adoption`, `adopted_not_true`,
+`attached_not_true`, `messaging_ready_not_true`, `nonselected`, `mixed`, or
+`unavailable`. It preserves the exact inventory/path reads and the first failed
+readiness getter, keeping at most two distinct fixed labels. The field is bound
+to the exact escaping `final_observation` / `path_missing` error and omitted for
+cleanup replacement, unrelated failures or invalid projection. It adds no probe,
+retry, wait, alternative path or relaxed acceptance rule.
+
+Retained pre-implementation evidence contains **nine expected failures**. The
+final affected controller/fault/path-setup run passes **848 cases**, preserving
+823 prior cases and adding 25. Root and the independent reviewer verified the
+committed source, artifacts and inventories. Precise classifications are tested
+at the observation level; the serialized report path is tested with `unavailable`.
+Source inspection confirms the connection, but this remains a coverage limit
+until separate exact-source native execution exercises a precise failure label.
+
+Fresh combined qualification remains pending, with expected inventories of
+**5,711 policy** and **1,918 Python UI** cases. The closed `ee1d8d1` failure and all
+earlier unresolved histories remain retained. This diagnostic is not a repair or
+native acceptance, and helper retirement remains deferred.
+
 The latest completed qualification is `ee1d8d11732bf0e749cef42217a822e2c156cce1`
 (tree `be9b17f4ace1d4dab35678d4f1529c8de5c0a924`), full run
 [43144241820](https://github.com/ahouchens/mesh-chat/actions/runs/43144241820).
