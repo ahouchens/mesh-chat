@@ -3,17 +3,24 @@ name: Android WebRTC
 on:
   workflow_call:
   workflow_dispatch:
+    inputs:
+      network_inventory:
+        description: Read-only disposable emulator network inventory (not qualification)
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: android-webrtc-${{ github.ref }}
+  group: android-webrtc-${{ github.ref }}${{ github.event_name == 'workflow_dispatch' && inputs.network_inventory && '-inventory' || '' }}
   cancel-in-progress: true
 
 jobs:
   android:
     name: Android build and optimized native Chromium interop
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.network_inventory) }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -114,4 +121,36 @@ jobs:
             plugins/tauri-plugin-mesh-runtime/android/webrtc-smoke/build/outputs/androidTest-results/**
             plugins/tauri-plugin-mesh-runtime/android/webrtc-smoke/build/outputs/mapping/**
           if-no-files-found: warn
+          retention-days: 14
+
+  network_inventory:
+    name: Read-only emulator network inventory (not qualification)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.network_inventory }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v4
+      - name: Enable KVM for the disposable diagnostic emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Install the configured native-peer system image
+        run: sdkmanager "emulator" "platform-tools" "system-images;android-35;google_apis;x86_64"
+      - name: Record read-only command and schema evidence
+        run: python -B scripts/native_interop_network_probe.py --output dist/reports/android-network-inventory.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-network-inventory-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist/reports/android-network-inventory.json
+          if-no-files-found: error
           retention-days: 14
