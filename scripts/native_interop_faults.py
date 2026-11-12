@@ -480,9 +480,17 @@ class AndroidKernelPath:
         first_error = None
         remaining = []
         for family, args, comment in reversed(self._drop_rules):
+            delete_error = None
             try:
                 with negative_control_stage(observer, "kernel_restore_delete"):
                     self.command(family, "-D", "OUTPUT", *args)
+            except Exception as error:
+                delete_error = error
+            try:
+                with negative_control_stage(observer, "kernel_restore_delete"):
+                    listing = self.command(family, "-nvx", "-L", "OUTPUT", "--line-numbers")
+                    if any(comment in line.split() for line in listing.splitlines()):
+                        raise delete_error or ValueError("Exact endpoint block rule remains installed")
             except Exception as error:
                 if first_error is None: first_error = error
                 remaining.append((family, args, comment))

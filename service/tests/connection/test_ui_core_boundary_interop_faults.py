@@ -308,6 +308,9 @@ def endpoint_rule_fixture(monkeypatch, *, addresses=("198.51.100.2", "2001:db8::
             if state.failure == "delete": raise RuntimeError("PRIVATE_DELETE")
             state.rules.pop(comment)
         elif args[1] == "-nvx":
+            if state.failure == "read_once":
+                state.failure = None
+                raise RuntimeError("PRIVATE_READ")
             if state.failure == "read": raise RuntimeError("PRIVATE_READ")
             return "\n".join(f"1 {count} {count * 20} DROP tcp -- * * PRIVATE PRIVATE /* {comment} */"
                 for comment, (family, count) in state.rules.items() if family == args[0])
@@ -338,7 +341,25 @@ def test_endpoint_insert_reply_failure_still_deletes_possible_exact_rule(monkeyp
     state.failure = "insert_reply"
     with pytest.raises(RuntimeError, match="PRIVATE_INSERT_REPLY"): value.block()
     assert state.rules == {} and value._drop_rules == [] and value._blocked is False
-    assert [args[1] for args in state.commands] == ["-I", "-D"]
+    assert [args[1] for args in state.commands] == ["-I", "-D", "-nvx"]
+
+
+def test_endpoint_rejected_insert_confirms_exact_rule_absence(monkeypatch):
+    value, state = endpoint_rule_fixture(monkeypatch, addresses=("198.51.100.2",))
+    original = value.command
+    def command(*args):
+        if args[1] == "-I":
+            state.commands.append(args)
+            raise RuntimeError("PRIVATE_INSERT_REJECTED")
+        if args[1] == "-D":
+            state.commands.append(args)
+            raise RuntimeError("PRIVATE_RULE_ABSENT")
+        return original(*args)
+    monkeypatch.setattr(value, "command", command)
+    with pytest.raises(RuntimeError, match="PRIVATE_INSERT_REJECTED"):
+        value.block()
+    assert state.rules == {} and value._drop_rules == [] and value._blocked is False
+    assert [args[1] for args in state.commands] == ["-I", "-D", "-nvx"]
 
 
 def test_endpoint_insert_check_failure_rolls_back_and_does_not_claim_rule_absence(monkeypatch):
@@ -346,7 +367,7 @@ def test_endpoint_insert_check_failure_rolls_back_and_does_not_claim_rule_absenc
     state.failure = "check"
     with pytest.raises(RuntimeError, match="PRIVATE_CHECK"):
         value.block()
-    assert [args[1] for args in state.commands] == ["-I", "-C", "-D"]
+    assert [args[1] for args in state.commands] == ["-I", "-C", "-D", "-nvx"]
     assert state.rules == {} and value._blocked is False
 
 
@@ -373,7 +394,7 @@ def test_endpoint_ambiguous_insert_and_failed_delete_retains_exact_cleanup_owner
 def test_endpoint_delete_failure_keeps_exact_rule_for_close_retry(monkeypatch):
     value, state = endpoint_rule_fixture(monkeypatch, addresses=("198.51.100.2",))
     value.block()
-    state.failure = "read"
+    state.failure = "read_once"
     original = value.command
     def command(*args):
         if args[1] == "-D":
@@ -388,6 +409,24 @@ def test_endpoint_delete_failure_keeps_exact_rule_for_close_retry(monkeypatch):
     state.failure = None
     value.close()
     assert value._blocked is False and state.rules == {}
+
+
+def test_endpoint_delete_acknowledgement_without_absence_keeps_cleanup_ownership(monkeypatch):
+    value, state = endpoint_rule_fixture(monkeypatch, addresses=("198.51.100.2",))
+    value.block()
+    original = value.command
+    def command(*args):
+        if args[1] == "-D":
+            state.commands.append(args)
+            return ""
+        return original(*args)
+    monkeypatch.setattr(value, "command", command)
+    with pytest.raises(ValueError, match="remains installed"):
+        value.unblock()
+    assert value._blocked is True and len(value._drop_rules) == 1
+    monkeypatch.setattr(value, "command", original)
+    value.close()
+    assert state.rules == {} and value._blocked is False
 
 
 def test_partial_dual_family_insert_reply_failure_rolls_back_both_exact_rules(monkeypatch):
@@ -410,7 +449,7 @@ def test_partial_dual_family_insert_reply_failure_rolls_back_both_exact_rules(mo
 def test_endpoint_counter_read_failure_preserves_stage_after_exact_dual_rule_deletion(monkeypatch):
     value, state = endpoint_rule_fixture(monkeypatch)
     value.block()
-    state.failure = "read"
+    state.failure = "read_once"
     with pytest.raises(RuntimeError, match="PRIVATE_READ") as failure:
         value.unblock()
     assert value._negative_diagnostics.failure_observation(failure.value) == {
