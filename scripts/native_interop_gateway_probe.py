@@ -146,6 +146,18 @@ class Gateway:
         self.rules.append(rule)
         self.run("iptables", "-w", "5", "-t", table, "-I", chain, "1", *args)
 
+    def prepare_dns_directory(self):
+        parent = self.dns_path.parent
+        require(not parent.is_symlink(), "dns_parent_identity_unavailable")
+        if not parent.exists():
+            self.resources.append("dns_parent")
+            self.run("mkdir", parent)
+            self.dns_parent_inode = parent.stat().st_ino
+        require(parent.is_dir(), "dns_parent_unavailable")
+        self.resources.append("dns")
+        self.run("mkdir", self.dns_path)
+        self.dns_inode = self.dns_path.stat().st_ino
+
     def delete_rule(self, rule):
         table, chain, args = rule
         listing = self.run("iptables", "-w", "5", "-t", table, "-S", chain)
@@ -195,9 +207,7 @@ class Gateway:
         self.resources.append("namespace")
         self.run("ip", "netns", "add", self.ns)
         self.netns_inode = Path("/run/netns", self.ns).stat().st_ino
-        self.resources.append("dns")
-        self.run("mkdir", self.dns_path)
-        self.dns_inode = self.dns_path.stat().st_ino
+        self.prepare_dns_directory()
         self.run("install", "-m", "644", resolver_file, self.dns_path / "resolv.conf")
         self.resources.append("veth")
         self.run("ip", "link", "add", self.host, "type", "veth", "peer", "name", self.guest)
@@ -298,16 +308,27 @@ class Gateway:
                 errors.append("namespace")
         if "dns" in self.resources:
             try:
-                require(not self.dns_path.is_symlink()
-                        and self.dns_path.stat().st_ino == getattr(self, "dns_inode", None), "dns_identity_changed")
-                resolver = self.dns_path / "resolv.conf"
-                require(not resolver.is_symlink() and (not resolver.exists() or
-                        resolver.read_text() == f"nameserver {self.resolver}\noptions timeout:2 attempts:2\n"), "resolver_identity_changed")
-                self.run("rm", "-f", self.dns_path / "resolv.conf")
-                self.run("rmdir", self.dns_path)
+                require(not self.dns_path.is_symlink(), "dns_identity_changed")
+                if self.dns_path.exists():
+                    require(self.dns_path.stat().st_ino == getattr(self, "dns_inode", None), "dns_identity_changed")
+                    resolver = self.dns_path / "resolv.conf"
+                    require(not resolver.is_symlink() and (not resolver.exists() or
+                            resolver.read_text() == f"nameserver {self.resolver}\noptions timeout:2 attempts:2\n"), "resolver_identity_changed")
+                    self.run("rm", "-f", self.dns_path / "resolv.conf")
+                    self.run("rmdir", self.dns_path)
                 self.resources.remove("dns")
             except Exception:
                 errors.append("dns")
+        if "dns_parent" in self.resources:
+            try:
+                parent = self.dns_path.parent
+                require(not parent.is_symlink(), "dns_parent_identity_changed")
+                if parent.exists():
+                    require(parent.stat().st_ino == getattr(self, "dns_parent_inode", None), "dns_parent_identity_changed")
+                    self.run("rmdir", parent)
+                self.resources.remove("dns_parent")
+            except Exception:
+                errors.append("dns_parent")
         if hasattr(self, "firewall_before"):
             try:
                 require(firewall_shape(self.run("iptables-save")) == self.firewall_before
