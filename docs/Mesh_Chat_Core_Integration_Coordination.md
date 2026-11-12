@@ -19,8 +19,12 @@ DROP rule; this does not change the socket matcher or resolve its ambiguity.
 The isolated upstream selected-socket prototype (`91c8b35`) and its Linux C++
 validation workflow (`8b2a468`) passed independent source review and are integrated
 through `c8e3bbaccd18ccedaf8859b8ec009c6b57a793b5`. The combined affected suite
-passes **869 offline cases**. The next step is one focused Linux C++ build/test
-run against pinned WebRTC source `73cb8180f7258ee292878d6edd05177f41883962`.
+passes **869 offline cases**. Focused run `43161733290` against pinned WebRTC
+source `73cb8180f7258ee292878d6edd05177f41883962` failed at `gn gen`, before C++
+compilation, because depot_tools lacked its Python bootstrap marker. The next
+step is the reviewed pinned-bootstrap fix and a fresh focused build/test run.
+Separately, worker A is preparing a socket-generation/capture-time patch;
+integration of that next native layer waits for the initial C++ prototype pass.
 The workflow requires all eight touched C++ tests to exist and execute exactly
 once, records patched source and binary hashes, and rejects skipped/unrun cases.
 No custom AAR, JNI path, application dependency replacement or full native

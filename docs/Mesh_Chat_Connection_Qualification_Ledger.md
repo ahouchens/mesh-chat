@@ -32,7 +32,23 @@ the field empty. Earlier test-scope, GN dependency and nullable-port defects
 were corrected before CI. The shutdown assertion checks stale tuple absence;
 it does not directly force a selected connection with a null port.
 
-The bounded workflow will compile `rtc_p2p_unittests` and require the eight
+The first focused run,
+[43161733290](https://github.com/ahouchens/mesh-chat/actions/runs/43161733290),
+failed before C++ compilation. Its 18 offline workflow tests passed; pinned
+checkout, dependency sync, revision inventory and patch application passed.
+`gn gen` then failed because depot_tools lacked `python3_bin_reldir.txt`.
+The pinned checkout needs explicit bootstrap while automatic updates remain
+disabled. No native C++ test verdict follows from this failure.
+
+The run's 20 artifact files and failure log are retained under
+`.test-tmp/ci-evidence-be7de74-prototype43161733290/`; its 30-file closure manifest
+has SHA-256 `1cd2b9e91e054c54c7fc3bc0dc723b2cf344abe325efe08852a39e0468097e09`.
+An initial evidence check rejected the Windows reference's CRLF hashes against
+Linux LF. Reapplying the original pinned inputs and patch with explicit LF
+produced byte-exact matches for all ten CI source files. Both references and
+the failed check are preserved; no CI data were normalized.
+
+The bounded workflow must compile `rtc_p2p_unittests` and require all eight
 touched cases to execute and pass, with source, binary and XML hashes retained.
 It has not yet built a native binary. The prototype has no private collector/JNI
 delivery, continuity token, Android AAR or application integration. It therefore
