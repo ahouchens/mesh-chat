@@ -134,6 +134,23 @@ def verify_test_target(source: Path) -> dict:
             "testLibrary": "//p2p:rtc_p2p_unittests"}
 
 
+def patched_file_inventory(source: Path, changed_paths: list[str]) -> list[dict]:
+    """Hash the on-disk source after git apply, including new untracked files."""
+    source_root = source.resolve()
+    files = []
+    for relative in dict.fromkeys(changed_paths):
+        candidate = source / relative
+        if candidate.is_symlink() or not candidate.resolve().is_relative_to(source_root):
+            raise PrototypeError(f"patched path escapes source checkout: {relative}")
+        if not candidate.is_file():
+            raise PrototypeError(f"patched source file absent after apply: {relative}")
+        files.append({"relativePath": relative, "sha256": sha256(candidate),
+                      "bytes": candidate.stat().st_size})
+    if not files:
+        raise PrototypeError("no patched source files to inventory")
+    return files
+
+
 def extract_listed_tests(output: str) -> set[str]:
     suite = ""
     found: set[str] = set()
@@ -157,18 +174,26 @@ def validate_test_xml(path: Path, required: list[str]) -> dict:
     if not path.is_file():
         raise PrototypeError("test runner produced no XML")
     root = ET.parse(path).getroot()
-    cases = {f"{case.get('classname')}.{case.get('name')}": case
-             for case in root.iter("testcase")}
+    cases: dict[str, list[ET.Element]] = {}
+    for case in root.iter("testcase"):
+        name = f"{case.get('classname')}.{case.get('name')}"
+        cases.setdefault(name, []).append(case)
     missing = sorted(set(required) - cases.keys())
     if missing:
         raise PrototypeError(f"test XML omitted selected cases: {missing}")
-    bad = [name for name in required if cases[name].find("failure") is not None
-           or cases[name].find("error") is not None
-           or cases[name].find("skipped") is not None]
+    duplicates = [name for name in required if len(cases[name]) != 1]
+    if duplicates:
+        raise PrototypeError(f"test XML duplicated selected cases: {duplicates}")
+    bad = []
+    for name in required:
+        case = cases[name][0]
+        if (case.get("status") != "run" or case.get("result") != "completed"
+                or any(case.find(tag) is not None for tag in ("failure", "error", "skipped"))):
+            bad.append(name)
     if bad:
         raise PrototypeError(f"selected test cases did not pass: {bad}")
     return {"path": str(path), "sha256": sha256(path), "bytes": path.stat().st_size,
-            "selectedCases": required, "allCaseCount": len(cases)}
+            "selectedCases": required, "allCaseCount": sum(map(len, cases.values()))}
 
 
 def verify_resolved_revisions(path: Path) -> dict:
@@ -325,6 +350,8 @@ def run_prototype(repo: Path, work_dir: Path, evidence_dir: Path) -> None:
                     env, evidence, evidence_dir)
         run_command("patch-diff-check", ["git", "diff", "--check"], source,
                     env, evidence, evidence_dir)
+        evidence["patchedFiles"] = patched_file_inventory(
+            source, evidence["patch"]["changedPaths"])
         output_dir = source / "out" / "socket_prototype"
         run_command("gn-gen", ["gn", "gen", str(output_dir), f"--args={GN_ARGS}"],
                     source, env, evidence, evidence_dir)

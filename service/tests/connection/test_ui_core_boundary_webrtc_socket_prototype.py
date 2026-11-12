@@ -58,6 +58,26 @@ class PatchInputs(unittest.TestCase):
             with self.assertRaisesRegex(prototype.PrototypeError, "SHA256 mismatch"):
                 prototype.verify_checkout_file(candidate, prototype.DEPS_SHA256, "DEPS")
 
+    def test_post_apply_inventory_includes_new_untracked_header(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            p2p = source / "p2p" / "base"
+            p2p.mkdir(parents=True)
+            existing = p2p / "turn_port.cc"
+            added = p2p / "turn_tcp_socket_tuple.h"
+            existing.write_text("patched implementation\n", encoding="utf-8")
+            added.write_text("new value header\n", encoding="utf-8")
+            inventory = prototype.patched_file_inventory(source, [
+                "p2p/base/turn_port.cc", "p2p/base/turn_tcp_socket_tuple.h"])
+            self.assertEqual([item["relativePath"] for item in inventory], [
+                "p2p/base/turn_port.cc", "p2p/base/turn_tcp_socket_tuple.h"])
+            self.assertEqual(inventory[1]["sha256"], prototype.sha256(added))
+
+    def test_post_apply_inventory_rejects_missing_source(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(prototype.PrototypeError, "absent after apply"):
+                prototype.patched_file_inventory(Path(directory), ["p2p/base/absent.h"])
+
 
 class ResolvedInputs(unittest.TestCase):
     def test_library_alone_is_not_a_runnable_test_target(self) -> None:
@@ -130,6 +150,43 @@ class TestReceipts(unittest.TestCase):
                             encoding="utf-8")
             with self.assertRaisesRegex(prototype.PrototypeError, "did not pass"):
                 prototype.validate_test_xml(path, ["TurnPortSocketTest.CapturesSelectedTcpTuple"])
+
+    def test_xml_rejects_notrun_or_suppressed_case(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "test.xml"
+            for status, result in (("notrun", "suppressed"), ("run", "suppressed"),
+                                   ("notrun", "completed")):
+                with self.subTest(status=status, result=result):
+                    path.write_text(
+                        '<testsuites><testsuite><testcase classname="TurnPortTest" '
+                        f'name="TestTurnTcpAllocate" status="{status}" result="{result}"/>'
+                        '</testsuite></testsuites>', encoding="utf-8")
+                    with self.assertRaisesRegex(prototype.PrototypeError, "did not pass"):
+                        prototype.validate_test_xml(path, ["TurnPortTest.TestTurnTcpAllocate"])
+
+    def test_xml_rejects_duplicate_selected_case(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "test.xml"
+            case = ('<testcase classname="TurnPortTest" name="TestTurnTcpAllocate" '
+                    'status="run" result="completed"/>')
+            path.write_text(f"<testsuites><testsuite>{case}{case}</testsuite></testsuites>",
+                            encoding="utf-8")
+            with self.assertRaisesRegex(prototype.PrototypeError, "duplicated selected cases"):
+                prototype.validate_test_xml(path, ["TurnPortTest.TestTurnTcpAllocate"])
+
+    def test_xml_accepts_one_realistic_completed_gtest_case(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "test.xml"
+            path.write_text(
+                '<testsuites tests="1" failures="0" disabled="0" errors="0" time="0.002">'
+                '<testsuite name="TurnPortTest" tests="1" failures="0" disabled="0" '
+                'errors="0" time="0.002">'
+                '<testcase name="TestTurnTcpAllocate" status="run" result="completed" '
+                'time="0.002" classname="TurnPortTest"/>'
+                '</testsuite></testsuites>', encoding="utf-8")
+            result = prototype.validate_test_xml(path, ["TurnPortTest.TestTurnTcpAllocate"])
+            self.assertEqual(result["allCaseCount"], 1)
+            self.assertEqual(result["sha256"], prototype.sha256(path))
 
     def test_preflight_failure_still_writes_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
