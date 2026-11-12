@@ -10,6 +10,39 @@ composer state, independent SDK distributions and upgrades, supervisor-owned
 native lifecycle/pairing, and the remaining packaged transport/fault matrix.
 The ledger records exact scope; this is not full M2–M5 completion.
 
+The next candidate integrates independently reviewed test-only component
+`6076d30`. After the existing delivery wait fails, its existing diagnostic RPC can
+inspect one unambiguous workspace-event delivery and up to four exact native
+attempts. It uses nonblocking message/callback locks, at most 64 router entries,
+object-identity correlation and fixed native/link/queue labels. Counts and output
+are capped; the last message page is reduced to counts. The original 45-second
+wait, retries, application behavior and acceptance rules remain unchanged.
+
+The focused offline module passes **20 cases**, retaining all 15 prior cases plus
+five controls. Its committed source and passing XML were independently verified.
+The author reports three expected pre-implementation failures, but retained RED
+XML is unavailable. This limits the independently archived regression evidence.
+
+One local mixed-origin diagnostic pairs this test-only source with the retained
+`75df902` CI dispatcher after all 14 tracked Rust/build-input rows and the binary
+hash match. Its first attempt fails during bootstrap admission before address-loss
+recovery. A filesystem-only call to the actual storage preflight reproduces a
+failure at 301–307-character paths on this host, where long paths are disabled,
+and succeeds at shorter paths. The original child exception was discarded, so
+the first log alone does not prove its cause.
+
+A separately reviewed and guarded second attempt uses a fresh short temporary
+directory. Both real storage preflights pass at 238 characters; the single
+`address_loss` case then passes in **156.53 seconds**, with unchanged source and
+binary hashes and the first attempt retained. The CI delivery failure is not
+reproduced and the failure-only native snapshot is not exercised. This local pass
+is diagnostic evidence, not a repair or exact-source native qualification.
+
+Fresh combined local checks and full exact-source CI remain pending. The expected
+policy inventory adds exactly five cases; the Python UI inventory is unchanged.
+The prior delivery, retirement and TCP socket findings remain open, and helper
+retirement remains deferred until its qualification prerequisites are satisfied.
+
 The latest completed qualification is `75df9027596b29bc0ee0f23675d2faa85b4c21f7`
 (tree `98e06fdb1480bd1376ee5d6cead071436bfd0776`), full diagnostic run
 [43133004290](https://github.com/ahouchens/mesh-chat/actions/runs/43133004290).
