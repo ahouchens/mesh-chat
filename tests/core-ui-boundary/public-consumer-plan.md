@@ -1,6 +1,50 @@
 # Independent public consumer qualification proposal
 
-The next candidate integrates independently reviewed test-only component
+The latest completed qualification is `ee1d8d11732bf0e749cef42217a822e2c156cce1`
+(tree `be9b17f4ace1d4dab35678d4f1529c8de5c0a924`), full run
+[43144241820](https://github.com/ahouchens/mesh-chat/actions/runs/43144241820).
+The run **failed: ten successful jobs, three failed jobs, zero cancelled or skipped
+jobs**. Fresh local SDK staging/upgrade, strict policy types, six source-carrier
+cases, **5,686 policy cases**, **1,893 Python UI + 12 rendered cases**, and nine
+Windows boundary cases pass. All 32 lifecycle composition controls pass. Policy
+and Python UI inventories exactly match CI, retaining all prior cases and adding
+only five reviewed policy diagnostics.
+
+Every nonnative CI job passes and its evidence independently validates: Windows
+packaged/public-SDK pairing and lifecycle, Android **56 emulator + 83 JVM cases
+and 17 artifact hashes**, layout **72 cases**, and both Linux and Windows direct
+**25 transport + 10 recovery + 12 setup** cases. The Windows `address_loss` case
+passes in **152.093 seconds**. This candidate changes only test observations and
+documentation; that pass does not establish repair of the prior delivery failure.
+Layout screenshots were not visually reviewed; general service evidence remains
+historical at `67a5210`.
+
+Native Android system-image installation succeeds and both peers execute the
+paired workload. Android fails later at `turn_tcp_kernel_block_negative_control`,
+with `negative_control` reporting `final_observation` / `path_missing`. The source
+ordering shows that the block/restore message checks returned before a single
+immediate final `observe()` returned `None`. That result does not identify whether
+the exact resource was absent, adoption pending, a readiness flag false, or the
+path sample nonselected. The failure report retains no branch detail or complete
+successful-case manifest, so neither a transport cause nor full path acceptance
+is established.
+
+Windows reports `turn_tcp_native_lease_retirement`, waiting at `completion_receive`
+for Android's case-completion marker, with zero retirement polls. Its retirement
+commit occurs after that marker; the retained source and reports rule out an
+early Windows retirement commit as the cause of Android's observation failure.
+The aggregate gate rejects the failed native workload before constructing a full
+manifest. Both role reports are retained, and no aggregate acceptance is claimed.
+
+The next bounded work classifies the failed observation using only its existing
+inventory/path reads, fixed labels and bounded output. It must preserve the
+one-shot final check, all receipt/path/retirement assertions and existing deadlines;
+no added polling or relaxed gate is justified by this report. The earlier local
+`97c32d5` lifecycle timeout, Windows delivery failure and TCP socket ambiguity remain
+separately retained and unresolved. Helper retirement and later roadmap promotion
+remain deferred pending full native acceptance and failure disposition.
+
+That source integrates independently reviewed test-only component
 `6076d30`. After the existing delivery wait fails, its existing diagnostic RPC can
 inspect one unambiguous workspace-event delivery and up to four exact native
 attempts. It uses nonblocking message/callback locks, at most 64 router entries,
@@ -28,12 +72,12 @@ binary hashes and the first attempt retained. The CI delivery failure is not
 reproduced and the failure-only native snapshot is not exercised. This local pass
 is diagnostic evidence, not a repair or exact-source native qualification.
 
-Fresh combined local checks and full exact-source CI remain pending. The expected
-policy inventory adds exactly five cases; the Python UI inventory is unchanged.
-The prior delivery, retirement and TCP socket findings remain open, and helper
-retirement remains deferred until its qualification prerequisites are satisfied.
+Fresh combined local checks pass as recorded above; full exact-source CI fails
+at the later Android TURN/TCP final observation. The policy inventory adds
+exactly five cases and the Python UI inventory is unchanged. Earlier failure
+histories and helper-retirement prerequisites remain open.
 
-The latest completed qualification is `75df9027596b29bc0ee0f23675d2faa85b4c21f7`
+The preceding completed qualification is `75df9027596b29bc0ee0f23675d2faa85b4c21f7`
 (tree `98e06fdb1480bd1376ee5d6cead071436bfd0776`), full diagnostic run
 [43133004290](https://github.com/ahouchens/mesh-chat/actions/runs/43133004290).
 The run **failed: nine successful jobs, four failed jobs, zero cancelled or skipped
