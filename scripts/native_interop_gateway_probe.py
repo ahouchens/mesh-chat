@@ -39,6 +39,44 @@ def namespace_inode(pid):
     return os.stat(f"/proc/{pid}/ns/net").st_ino
 
 
+def process_identity(pid):
+    root = Path(f"/proc/{pid}")
+    try:
+        fields = (root / "stat").read_text().rsplit(")", 1)[1].split()
+        if fields[0] == "Z":
+            return None
+        return {"pid": pid, "start": fields[19], "uid": root.stat().st_uid,
+                "namespace": namespace_inode(pid), "executable": str((root / "exe").resolve(strict=True))}
+    except (FileNotFoundError, ProcessLookupError):
+        return None
+
+
+def retire_exact_process(identity):
+    for kind in (signal.SIGTERM, signal.SIGKILL):
+        current = process_identity(identity["pid"])
+        if current is None:
+            return
+        require(current == identity, "helper_process_identity_changed")
+        os.kill(identity["pid"], kind)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            current = process_identity(identity["pid"])
+            if current is None:
+                return
+            require(current == identity, "helper_process_identity_changed")
+            time.sleep(0.1)
+    raise Unavailable("helper_process_remains")
+
+
+def wait_for_guest_echo(child, gateway, port, attempts):
+    for attempt in range(attempts):
+        if child.echo(gateway, port):
+            return True
+        if attempt + 1 < attempts:
+            time.sleep(5)
+    return False
+
+
 def firewall_shape(text):
     return "\n".join(re.sub(r"^(\S+\s+\S+) \[[0-9]+:[0-9]+\]$", r"\1 [counters]", line)
                      if line.startswith(":") else line
@@ -488,8 +526,16 @@ def child_main():
             value = _collect_process([str(emulator.adb), "-s", SERIAL, "shell", "sh", "-c", shlex.quote(command)],
                                      timeout=8, stdout_limit=4096, stderr_limit=2048, env=emulator.env)
             require(not value["timed_out"] and not value["stdout_truncated"] and not value["stderr_truncated"], "guest_echo_command_unavailable")
-            print(json.dumps({"status": "echo", "received": value["stdout"].strip() == nonce,
-                              "exit_code": value["exit_code"], "stderr": value["stderr"]}), flush=True)
+            reply = {"status": "echo", "received": value["stdout"].strip() == nonce,
+                     "exit_code": value["exit_code"], "stderr": value["stderr"]}
+            if not reply["received"]:
+                reply["guest_context"] = []
+                for argv in (("ip", "-4", "route", "show", "table", "all"),
+                             ("ip", "-4", "rule", "show"), ("ip", "-o", "link", "show")):
+                    context = _collect_process([str(emulator.adb), "-s", SERIAL, "shell", *argv],
+                                               timeout=1, stdout_limit=2048, stderr_limit=256, env=emulator.env)
+                    reply["guest_context"].append({"argv": argv, **context})
+            print(json.dumps(reply), flush=True)
     except Exception as error:
         print(json.dumps({"status": "failed", "reason": str(error)[:256]}), flush=True)
     finally:
@@ -532,6 +578,7 @@ class Child:
         self.pid = None
         self.results = []
         self.deadline = None
+        self.helpers = []
 
     def read(self, timeout):
         deadline = time.monotonic() + timeout
@@ -556,6 +603,31 @@ class Child:
         self.inode = started["namespace_inode"]
         self.start_time = Path(f"/proc/{self.pid}/stat").read_text().rsplit(")", 1)[1].split()[19]
         return self.read(750)
+
+    def capture_helpers(self, gateway):
+        require(self.pid is not None, "child_start_identity_unavailable")
+        sdk = Path(os.environ.get("ANDROID_SDK_ROOT") or os.environ["ANDROID_HOME"]).resolve(strict=True)
+        gateway.check_namespace()
+        pids = gateway.run("ip", "netns", "pids", gateway.ns).splitlines()
+        require(len(pids) <= 32 and all(pid.isdigit() for pid in pids), "namespace_process_inventory_unavailable")
+        known = {item["pid"]: item for item in self.helpers}
+        for value in pids:
+            pid = int(value)
+            if pid == self.pid:
+                continue
+            identity = process_identity(pid)
+            if identity is None:
+                continue
+            require(identity["namespace"] == self.inode and identity["uid"] == os.getuid()
+                    and int(identity["start"]) >= int(self.start_time)
+                    and Path(identity["executable"]).is_relative_to(sdk), "unowned_namespace_process")
+            require(pid not in known or known[pid] == identity, "helper_process_identity_changed")
+            if pid not in known:
+                self.helpers.append(identity)
+
+    def retire_helpers(self):
+        for identity in self.helpers:
+            retire_exact_process(identity)
 
     def send(self, value):
         self.process.stdin.write(json.dumps(value).encode() + b"\n")
@@ -640,12 +712,13 @@ def main():
         echo = Echo(gateway.host_ip)
         child = Child(gateway)
         ready = child.start(gateway)
+        child.capture_helpers(gateway)
         report["child"] = ready
         require(ready.get("status") == "ready" and ready["namespace_inode"] == gateway.netns_inode,
                 "child_namespace_unavailable:" + str(ready.get("reason", "unknown"))[:192])
         deadline = time.monotonic() + 120
         child.deadline = gateway.commands.deadline = deadline
-        require(any(child.echo(gateway, echo.port) for _ in range(6)), "baseline_guest_echo_failed")
+        require(wait_for_guest_echo(child, gateway, echo.port, 6), "baseline_guest_echo_failed")
         report["phase"] = "impaired_echo"
         gateway.impair()
         before = gateway.counters()
@@ -666,7 +739,7 @@ def main():
         report["blocked_packets"] = dropped
         gateway.delete_rule(gateway.block_rule)
         report["phase"] = "recovery"
-        require(any(child.echo(gateway, echo.port) for _ in range(3)), "recovery_echo_failed")
+        require(wait_for_guest_echo(child, gateway, echo.port, 3), "recovery_echo_failed")
         final = gateway.counters()
         for name in after:
             counter_delta(after[name], final[name])
@@ -676,16 +749,29 @@ def main():
         report["failure"] = str(error)[:256]
     finally:
         failures = []
+        if child is not None and gateway is not None:
+            try:
+                child.capture_helpers(gateway)
+            except Exception:
+                failures.append("helper_inventory")
         for name, resource in (("child", child), ("echo", echo), ("gateway", gateway)):
             if resource is not None:
                 try:
                     resource.close()
-                except Exception:
+                except Exception as error:
                     failures.append(name)
+                    report.setdefault("cleanup_reasons", {})[name] = str(error)[:256]
+                if name == "child":
+                    try:
+                        child.retire_helpers()
+                    except Exception as error:
+                        failures.append("helpers")
+                        report.setdefault("cleanup_reasons", {})["helpers"] = str(error)[:256]
         if gateway is not None:
             report["cleanup_commands"] = getattr(gateway, "cleanup_record", {}).get("commands", [])
         if child is not None:
             report["guest_attempts"] = child.results
+            report["owned_helpers"] = child.helpers
         if temporary is not None:
             try:
                 temporary.rmdir()
