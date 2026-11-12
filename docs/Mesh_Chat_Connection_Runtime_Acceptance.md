@@ -20,6 +20,23 @@ and scenario rows below to complete; their named remaining obligations still
 apply, including packaged cross-platform transport and unavailable physical
 qualification.
 
+The next candidate integrates three independently reviewed follow-ups:
+`488f95c` gives the policy CI job fifteen minutes, `0577f58` adds bounded test-only
+retirement failure observations, and `a686f9e` adds guarded archive-404 retries.
+Artifact metadata is checked before archive download. Only an archive-open HTTP
+404 for a valid artifact may retry; fresh inventories must retain its exact ID,
+provenance, size and digest. The existing maximum of two retries is shared with
+HTTP 503, with the same three-second cadence and original deadline. Inventory or
+blob 404s, other statuses, uploads, changed or missing identity, and invalid
+archives remain failures. Post-download digest, archive and producer checks remain
+required, and the repository token is never forwarded to signed blob storage.
+
+The archive/rendezvous focused pair passes **259 cases**, retaining all 218 prior
+cases and adding 41 controls. Retirement observations pass **22 focused cases**,
+retaining all 18 prior cases and adding four controls. Fresh combined local checks
+and full native qualification remain pending. The prior local retirement failure
+and TCP socket ambiguity are unresolved, and the remote cause of HTTP 404 is unknown.
+
 The latest completed qualification is `97c32d5951fffa9f66161b17ae01c98484e22cab`
 (tree `2ef51343ce32fe4aebd7a4950d849c2a20f524c6`), full diagnostic run
 [43124732545](https://github.com/ahouchens/mesh-chat/actions/runs/43124732545).
