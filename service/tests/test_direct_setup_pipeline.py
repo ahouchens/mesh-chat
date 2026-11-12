@@ -154,7 +154,7 @@ def _project_workspace_bootstrap_diagnostic(records, *, now):
                                           "attempts": _WORKSPACE_DIAGNOSTIC_ATTEMPTS}}
 
 
-def _workspace_bootstrap_diagnostic(store, *, now):
+def _workspace_bootstrap_diagnostic(store, *, now, native_network=None, workspace_id=None):
     records = {}
     for table in _WORKSPACE_DIAGNOSTIC_TABLES:
         limit = 9 if table == "workspace" else _WORKSPACE_DIAGNOSTIC_ROWS + 1
@@ -162,7 +162,145 @@ def _workspace_bootstrap_diagnostic(store, *, now):
             records[table] = [row for _, row in store.items(table, limit=limit)]
         except Exception:
             records[table] = None  # Unknown, never a false empty/success or error text.
-    return _project_workspace_bootstrap_diagnostic(records, now=now)
+    result = _project_workspace_bootstrap_diagnostic(records, now=now)
+    if native_network is not None:
+        try:
+            result["native_failure"] = _native_failure_diagnostic(
+                records["workspace_delivery"], native_network, workspace_id)
+        except Exception:
+            result["native_failure"] = {"selection": "unavailable", "attempts": "unavailable",
+                                        "callbacks": "unavailable"}
+    return result
+
+
+def _bounded_counter(value):
+    return (min(value, 64), value > 64) if type(value) is int and value >= 0 else (None, None)
+
+
+def _callback_failure_diagnostic(network):
+    condition = getattr(network, "_callback_condition", None)
+    if condition is None or not condition.acquire(False):
+        return "contended" if condition is not None else "unavailable"
+    try:
+        items = getattr(network, "_callback_items", None)
+        if items is None:
+            return "unavailable"
+        queue_depth, queue_capped = _bounded_counter(len(items))
+        inbound, inbound_capped = _bounded_counter(getattr(network, "_callback_dropped_inbound", None))
+        status, status_capped = _bounded_counter(getattr(network, "_callback_dropped_status", None))
+        return {"queue_depth": queue_depth, "queue_capped": queue_capped,
+            "dropped_inbound": inbound, "dropped_inbound_capped": inbound_capped,
+            "dropped_status": status, "dropped_status_capped": status_capped}
+    except Exception:
+        return "unavailable"
+    finally:
+        condition.release()
+
+
+def _native_state(message):
+    state = getattr(message, "state", None)
+    for name, label in (("OUTBOUND", "outbound"), ("SENDING", "sending"),
+                        ("SENT", "sent"), ("DELIVERED", "delivered"),
+                        ("FAILED", "failed"), ("REJECTED", "rejected"),
+                        ("CANCELLED", "cancelled")):
+        if type(state) is int and state == getattr(message, name, None):
+            return label
+    return "unknown"
+
+
+def _native_link_state(links, destination):
+    if type(links) is not dict:
+        return "unknown"
+    link = links.get(destination)
+    if link is None:
+        return "absent"
+    for name, label in (("ACTIVE", "active"), ("PENDING", "pending"),
+                        ("STALE", "stale"), ("CLOSED", "closed")):
+        if type(getattr(link, "status", None)) is int and getattr(link, "status") == getattr(link, name, None):
+            return label
+    return "unknown"
+
+
+def _native_failure_diagnostic(rows, network, workspace_id):
+    """Failure-only exact event probe; never return its private correlation keys."""
+    callbacks = _callback_failure_diagnostic(network)
+    result = {"selection": "unavailable", "attempts": "unavailable", "callbacks": callbacks}
+    if type(rows) is not list or type(workspace_id) is not str:
+        return result
+    if len(rows) > 64:
+        result["selection"] = "partial"
+        return result
+    if any(type(row) is not dict or type(row.get("workspace_id")) is not str
+           or type(row.get("kind")) is not str for row in rows):
+        result["selection"] = "partial"
+        return result
+    matching = [row for row in rows if row.get("workspace_id") == workspace_id
+                and row.get("kind") == "workspace_event"]
+    if not matching:
+        result["selection"] = "absent"
+        return result
+    if len(matching) != 1:
+        result["selection"] = "ambiguous"
+        return result
+    row = matching[0]
+    key, address = row.get("id"), row.get("recipient_destination")
+    if type(key) is not str or type(address) is not str or len(address) != 32:
+        result["selection"] = "partial"
+        return result
+    try:
+        destination = bytes.fromhex(address)
+    except ValueError:
+        result["selection"] = "partial"
+        return result
+    result["selection"] = "selected"
+    lock = getattr(network, "_message_lock", None)
+    if lock is None or not lock.acquire(False):
+        result["attempts"] = "contended" if lock is not None else "unavailable"
+        return result
+    try:
+        messages = getattr(network, "_messages", None)
+        attempts = messages.get(key) if type(messages) is dict else None
+        if attempts is None:
+            attempts = [] if type(messages) is dict else None
+        if type(attempts) is not list:
+            return result
+        count = len(attempts)
+        selected = attempts[-4:]
+    except Exception:
+        return result
+    finally:
+        lock.release()
+    router = getattr(network, "router", None)
+    pending = getattr(router, "pending_outbound", None)
+    try:
+        before = len(pending) if type(pending) is list else None
+        sampled = list(islice(pending, 64)) if before is not None else []
+        stable = before == len(pending) if before is not None else False
+    except Exception:
+        sampled, stable = [], False
+    deferred = getattr(router, "pending_deferred_stamps", None)
+    direct = getattr(router, "direct_links", None)
+    backchannel = getattr(router, "backchannel_links", None)
+    entries = []
+    for message in selected:
+        if before is None:
+            pending_state = "unknown"
+        elif any(candidate is message for candidate in sampled):
+            pending_state = "present"
+        elif not stable or before > 64:
+            pending_state = "partial"
+        else:
+            pending_state = "absent"
+        native_key = getattr(message, "message_id", None)
+        deferred_state = ("present" if deferred.get(native_key) is message else "absent") if (
+            type(deferred) is dict and type(native_key) in (bytes, str)) else "unknown"
+        delivery_attempts, _ = _bounded_counter(getattr(message, "delivery_attempts", None))
+        entries.append({"state": _native_state(message), "delivery_attempts": delivery_attempts,
+            "pending": pending_state, "deferred": deferred_state,
+            "direct_link": _native_link_state(direct, destination),
+            "backchannel_link": _native_link_state(backchannel, destination)})
+    result["attempts"] = {"count": min(count, 4), "capped": count > 4, "entries": entries}
+    return result
 
 
 def _call_traced_workspace_send(original_send, values, entry, mesh_error_type):
@@ -429,7 +567,10 @@ def _service_worker(root, incoming, outgoing, commands, replies, native_binary=N
                             "test_remote_ports":[[c["port"] for c in value.get("candidates",[])] for value in store.list("direct_relationship")],
                             "failures":[{key:value.get(key) for key in ("failure_stage","failure_type","attempts","state")}
                                         for value in store.list("direct_recovery")]}
-                        result["workspace_bootstrap"] = _workspace_bootstrap_diagnostic(store, now=time.time())
+                        result["workspace_bootstrap"] = _workspace_bootstrap_diagnostic(
+                            store, now=time.time(),
+                            native_network=service.network if payload.get("failure_native") is True else None,
+                            workspace_id=payload.get("workspace_id"))
                         result["channel_send_trace"] = list(channel_trace)
                         result["workspace_event_trace"] = list(workspace_event_trace)
                         result["workspace_event_trace_truncated"] = workspace_event_trace_truncated

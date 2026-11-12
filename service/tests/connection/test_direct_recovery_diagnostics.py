@@ -2,7 +2,9 @@
 
 import importlib.util
 import json
+from collections import deque
 from pathlib import Path
+from threading import Condition, RLock
 from types import SimpleNamespace
 
 import pytest
@@ -196,28 +198,138 @@ def test_traced_workspace_send_calls_original_once_and_preserves_result_or_excep
 def test_original_delivery_timeout_survives_failed_sender_diagnostic_and_collects_receiver(monkeypatch):
     peers = object.__new__(recovery.Peers)
     calls = []
-    original_page = {"messages": [], "high_water": 0}
+    original_page = {"messages": [{"id": "PRIVATE_ID", "text": "PRIVATE_TEXT"}], "high_water": 1}
     def command(index, name, **payload):
         calls.append(("command", index, name, payload))
         return original_page
     def diagnostic(index, operation, *, _diagnostic_timeout=None, **payload):
-        calls.append(("diagnostic", index, operation, _diagnostic_timeout))
+        calls.append(("diagnostic", index, operation, _diagnostic_timeout, payload))
         if index == 0: raise TimeoutError("PRIVATE_DIAGNOSTIC_ENDPOINT")
         return {"pending": 1, "peers": [{"state": "connected", "rns_ready": True}],
             "workspace_bootstrap": {"workspace_event_states": {"queued": 1}},
             "workspace_event_trace": [{"stage": "preflight", "outcome": "waiting",
                 "main_ratchet": False, "recipient": "PRIVATE_ADDRESS"}]}
     peers.command, peers.call = command, diagnostic
+    peers.workspace = {"id": "PRIVATE_WORKSPACE"}
     ticks = iter((0, 0, 45))
     monkeypatch.setattr(recovery, "time", SimpleNamespace(monotonic=lambda: next(ticks),
         sleep=lambda seconds: calls.append(("sleep", seconds))))
     with pytest.raises(AssertionError) as caught:
         peers.wait(1, "list_workspace_messages", lambda _: False, timeout=45, limit=50)
     index, name, last, diagnostic_result = caught.value.args[0]
-    assert (index, name, last) == (1, "list_workspace_messages", original_page)
+    assert (index, name, last) == (1, "list_workspace_messages",
+        {"available": True, "messages_count": 1, "messages_capped": False})
     assert calls == [("command", 1, "list_workspace_messages", {"limit": 50}), ("sleep", .2),
-        ("diagnostic", 0, "recovery_diagnostic", 1),
-        ("diagnostic", 1, "recovery_diagnostic", 1)]
+        ("diagnostic", 0, "recovery_diagnostic", 1,
+         {"failure_native": True, "workspace_id": "PRIVATE_WORKSPACE"}),
+        ("diagnostic", 1, "recovery_diagnostic", 1,
+         {"failure_native": True, "workspace_id": "PRIVATE_WORKSPACE"})]
     assert diagnostic_result["peers"][0] == {"available": False}
     assert diagnostic_result["peers"][1]["workspace_event_states"]["queued"] == 1
-    assert "PRIVATE" not in repr(diagnostic_result)
+    assert "PRIVATE" not in repr(caught.value)
+
+
+def test_native_failure_projection_correlates_exact_event_by_object_identity():
+    class Native:
+        OUTBOUND, SENDING, SENT, DELIVERED, FAILED = 1, 2, 4, 8, 255
+        def __init__(self):
+            self.state = self.SENDING
+            self.delivery_attempts = 7
+            self.message_id = "PRIVATE_NATIVE_ID"
+        def __eq__(self, other):
+            raise AssertionError("Native equality must never run")
+    native, equal_looking = Native(), Native()
+    address = bytes.fromhex("ab" * 16)
+    link = SimpleNamespace(status=2, PENDING=0, ACTIVE=2, CLOSED=4)
+    network = SimpleNamespace(_message_lock=RLock(), _messages={"PRIVATE_DELIVERY": [native]},
+        router=SimpleNamespace(pending_outbound=[equal_looking, native], pending_deferred_stamps={},
+            direct_links={address: link}, backchannel_links={}),
+        _callback_condition=Condition(), _callback_items=deque([("status", None, None)]),
+        _callback_dropped_inbound=99, _callback_dropped_status=2)
+    rows = [{"workspace_id": "PRIVATE_WORKSPACE", "id": "PRIVATE_DELIVERY",
+             "recipient_destination": address.hex(), "kind": "workspace_event",
+             "document": "PRIVATE_PAYLOAD"}]
+    result = setup._native_failure_diagnostic(rows, network, "PRIVATE_WORKSPACE")
+    assert result["selection"] == "selected"
+    assert result["attempts"] == {"count": 1, "capped": False, "entries": [{
+        "state": "sending", "delivery_attempts": 7, "pending": "present",
+        "deferred": "absent", "direct_link": "active", "backchannel_link": "absent"}]}
+    assert result["callbacks"] == {"queue_depth": 1, "queue_capped": False,
+        "dropped_inbound": 64, "dropped_inbound_capped": True,
+        "dropped_status": 2, "dropped_status_capped": False}
+    assert "PRIVATE" not in json.dumps(result)
+
+
+def test_native_failure_projection_preserves_partial_ambiguous_and_contended():
+    class Busy:
+        def acquire(self, blocking): return False
+    row = {"workspace_id": "PRIVATE_WORKSPACE", "id": "PRIVATE_DELIVERY",
+           "recipient_destination": "ab" * 16, "kind": "workspace_event"}
+    network = SimpleNamespace(_message_lock=Busy(), _messages={"PRIVATE_DELIVERY": []},
+        _callback_condition=Busy(), router=SimpleNamespace())
+    assert setup._native_failure_diagnostic([row, dict(row, id="PRIVATE_SECOND")], network,
+        "PRIVATE_WORKSPACE")["selection"] == "ambiguous"
+    assert setup._native_failure_diagnostic([row] * 65, network,
+        "PRIVATE_WORKSPACE")["selection"] == "partial"
+    selected = setup._native_failure_diagnostic([row], network, "PRIVATE_WORKSPACE")
+    assert selected["selection"] == "selected"
+    assert selected["attempts"] == "contended" and selected["callbacks"] == "contended"
+    assert "PRIVATE" not in json.dumps(selected)
+
+
+def test_native_router_visit_cap_and_rpc_projection_never_emit_private_values():
+    native = SimpleNamespace(state="PRIVATE_STATE", delivery_attempts=10**100,
+        message_id="PRIVATE_NATIVE", OUTBOUND=1)
+    network = SimpleNamespace(_message_lock=RLock(), _messages={"PRIVATE_DELIVERY": [native]},
+        router=SimpleNamespace(pending_outbound=[object()] * 70, pending_deferred_stamps=None,
+            direct_links={}, backchannel_links={}), _callback_condition=Condition(),
+        _callback_items=deque(), _callback_dropped_inbound=0, _callback_dropped_status=0)
+    rows = [{"workspace_id": "PRIVATE_WORKSPACE", "id": "PRIVATE_DELIVERY",
+             "recipient_destination": "ab" * 16, "kind": "workspace_event"}]
+    raw = setup._native_failure_diagnostic(rows, network, "PRIVATE_WORKSPACE")
+    assert raw["attempts"]["entries"][0]["pending"] == "partial"
+    assert raw["attempts"]["entries"][0]["state"] == "unknown"
+    selected = recovery._recovery_failure_snapshot({"workspace_bootstrap": {"native_failure": {
+        **raw, "private": "PRIVATE_PAYLOAD", "selection": "PRIVATE_SELECTION",
+        "attempts": {"count": 10**100, "capped": True,
+            "entries": [{**raw["attempts"]["entries"][0], "pending": ["PRIVATE_LIST"],
+                         "state": "PRIVATE_STATE", "payload": "PRIVATE_PAYLOAD"}] * 10}}}})
+    native_result = selected["native_failure"]
+    assert native_result["selection"] == "unknown"
+    assert len(native_result["attempts"]["entries"]) == 4
+    assert native_result["attempts"]["count"] == 4
+    assert native_result["attempts"]["entries"][0]["pending"] == "unknown"
+    assert "PRIVATE" not in json.dumps(selected)
+
+
+def test_delivery_failure_hard_cap_keeps_original_timeout(monkeypatch):
+    peers = object.__new__(recovery.Peers)
+    peers.workspace = {"id": "PRIVATE_WORKSPACE"}
+    peers.command = lambda *_args, **_kwargs: {"messages": [], "text": "PRIVATE_TEXT"}
+    peers.call = lambda *_args, **_kwargs: {"workspace_bootstrap": {}}
+    monkeypatch.setattr(recovery, "_recovery_failure_snapshot", lambda _: {"padding": "PRIVATE" * 10000})
+    ticks = iter((0, 45))
+    monkeypatch.setattr(recovery, "time", SimpleNamespace(monotonic=lambda: next(ticks), sleep=lambda _: None))
+    with pytest.raises(AssertionError) as caught:
+        peers.wait(1, "list_workspace_messages", lambda _: False, timeout=45)
+    assert caught.value.args[0] == (1, "list_workspace_messages", {"available": False},
+                                    {"observation": "size_capped"})
+    assert "PRIVATE" not in repr(caught.value)
+
+
+def test_native_observer_error_keeps_existing_bounded_workspace_projection(monkeypatch):
+    class Store:
+        def items(self, table, limit):
+            if table == "workspace_delivery":
+                return iter([("PRIVATE_KEY", {"workspace_id": "PRIVATE_WORKSPACE",
+                    "id": "PRIVATE_DELIVERY", "kind": "workspace_event", "state": "sending"})])
+            return iter([])
+    def broken(*_args):
+        raise RuntimeError("PRIVATE_EXCEPTION")
+    monkeypatch.setattr(setup, "_native_failure_diagnostic", broken)
+    result = setup._workspace_bootstrap_diagnostic(Store(), now=1,
+        native_network=object(), workspace_id="PRIVATE_WORKSPACE")
+    assert result["workspace_event_states"]["sending"] == 1
+    assert result["native_failure"] == {"selection": "unavailable",
+        "attempts": "unavailable", "callbacks": "unavailable"}
+    assert "PRIVATE" not in json.dumps(result)

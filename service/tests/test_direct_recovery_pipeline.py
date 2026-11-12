@@ -3,6 +3,7 @@
 Synthetic candidates resolve only to loopback in AppHostNative. No physical
 router, Internet traversal or Android lifecycle result is inferred.
 """
+import json
 import multiprocessing
 import os
 import time
@@ -28,10 +29,17 @@ _EVENT_TRACE_OUTCOMES = {
 _EVENT_READINESS = ("bootstrap_ready", "bootstrap_handles", "main_identity", "main_ratchet", "main_path")
 _EVENT_SCHEDULES = frozenset({"due", "future", "terminal", "unknown"})
 _EVENT_FAILURES = frozenset({"none", "identity_binding_invalid", "transport_unavailable", "transport_error", "unknown"})
+_NATIVE_STATES = frozenset({"outbound", "sending", "sent", "delivered", "failed", "rejected", "cancelled", "unknown"})
+_NATIVE_MEMBERSHIP = frozenset({"present", "absent", "partial", "unknown"})
+_NATIVE_LINKS = frozenset({"active", "pending", "stale", "closed", "absent", "unknown"})
 
 
 def _fixed_count(value, limit):
     return min(value, limit) if type(value) is int and value >= 0 else None
+
+
+def _fixed_label(value, allowed):
+    return value if type(value) is str and value in allowed else "unknown"
 
 
 def _event_trace_snapshot(value, *, source_truncated=False):
@@ -94,6 +102,41 @@ def _event_delivery_snapshot(value):
     return {"entries": entries, "truncated": truncated, "malformed": malformed}
 
 
+def _native_failure_snapshot(value):
+    if type(value) is not dict:
+        return {"selection": "unknown", "attempts": "unavailable", "callbacks": "unavailable"}
+    selection = _fixed_label(value.get("selection"), {"selected", "absent", "ambiguous", "partial", "unavailable"})
+    raw_attempts = value.get("attempts")
+    if type(raw_attempts) is dict:
+        entries = raw_attempts.get("entries")
+        entries = entries[:4] if type(entries) is list else []
+        attempts = {"count": _fixed_count(raw_attempts.get("count"), 4),
+            "capped": raw_attempts.get("capped") if type(raw_attempts.get("capped")) is bool else None,
+            "entries": []}
+        for row in entries:
+            row = row if type(row) is dict else {}
+            attempts["entries"].append({
+                "state": _fixed_label(row.get("state"), _NATIVE_STATES),
+                "delivery_attempts": _fixed_count(row.get("delivery_attempts"), 64),
+                "pending": _fixed_label(row.get("pending"), _NATIVE_MEMBERSHIP),
+                "deferred": _fixed_label(row.get("deferred"), _NATIVE_MEMBERSHIP),
+                "direct_link": _fixed_label(row.get("direct_link"), _NATIVE_LINKS),
+                "backchannel_link": _fixed_label(row.get("backchannel_link"), _NATIVE_LINKS)})
+    else:
+        attempts = _fixed_label(raw_attempts, {"contended", "unavailable"})
+    raw_callbacks = value.get("callbacks")
+    if type(raw_callbacks) is dict:
+        callbacks = {}
+        for name in ("queue_depth", "dropped_inbound", "dropped_status"):
+            callbacks[name] = _fixed_count(raw_callbacks.get(name), 64)
+            capped = raw_callbacks.get(name + "_capped") if name != "queue_depth" else raw_callbacks.get("queue_capped")
+            callbacks[name + "_capped" if name != "queue_depth" else "queue_capped"] = (
+                capped if type(capped) is bool else None)
+    else:
+        callbacks = _fixed_label(raw_callbacks, {"contended", "unavailable"})
+    return {"selection": selection, "attempts": attempts, "callbacks": callbacks}
+
+
 def _recovery_failure_snapshot(value):
     """Bounded test-only failure context; never copy source identifiers or text."""
     if type(value) is not dict: return {"available": False}
@@ -126,7 +169,7 @@ def _recovery_failure_snapshot(value):
     workspaces = workspace.get("workspaces")
     first = workspaces[0] if type(workspaces) is list and workspaces and type(workspaces[0]) is dict else {}
     discovery = first.get("channel_discovery")
-    return {"available": True, "peer_states": peer_states, "peer_states_truncated": len(rows) > 2,
+    result = {"available": True, "peer_states": peer_states, "peer_states_truncated": len(rows) > 2,
         "pending": _fixed_count(value.get("pending"), 32),
         "pending_capped": type(value.get("pending")) is int and value["pending"] > 32,
         "channel_discovery": discovery if type(discovery) is str and discovery in {"converged", "incomplete"} else "unknown",
@@ -135,6 +178,16 @@ def _recovery_failure_snapshot(value):
         "workspace_event_deliveries": _event_delivery_snapshot(workspace.get("deliveries")),
         "workspace_event_trace": _event_trace_snapshot(value.get("workspace_event_trace"),
             source_truncated=value.get("workspace_event_trace_truncated", False))}
+    if "native_failure" in workspace:
+        result["native_failure"] = _native_failure_snapshot(workspace["native_failure"])
+    return result
+
+
+def _failure_last_page(value):
+    if type(value) is not dict or type(value.get("messages")) is not list:
+        return {"available": False}
+    count = len(value["messages"])
+    return {"available": True, "messages_count": min(count, 64), "messages_capped": count > 64}
 
 
 class Peers:
@@ -177,11 +230,23 @@ class Peers:
         # The original timeout remains authoritative. Optional test-only
         # snapshots use at most one second per queue operation on each peer.
         diagnostics=[]
+        workspace = getattr(self, "workspace", None)
+        native_request = ({"failure_native": True, "workspace_id": workspace["id"]}
+                          if name == "list_workspace_messages" and type(workspace) is dict
+                          and type(workspace.get("id")) is str else {})
         for peer in range(2):
             try: diagnostics.append(_recovery_failure_snapshot(
-                self.call(peer,"recovery_diagnostic",_diagnostic_timeout=1)))
+                self.call(peer,"recovery_diagnostic",_diagnostic_timeout=1,**native_request)))
             except Exception: diagnostics.append({"available":False})
-        raise AssertionError((index,name,last,{"peers":diagnostics}))
+        failure = (index,name,_failure_last_page(last) if name == "list_workspace_messages" else last,
+                   {"peers":diagnostics})
+        if name == "list_workspace_messages":
+            try:
+                if len(json.dumps(failure)) > 12000:
+                    failure = (index,name,{"available":False},{"observation":"size_capped"})
+            except Exception:
+                failure = (index,name,{"available":False},{"observation":"unavailable"})
+        raise AssertionError(failure)
 
     def connected(self, index, previous_certificate=None):
         # One total bound includes the configured native attempt and retry window.
