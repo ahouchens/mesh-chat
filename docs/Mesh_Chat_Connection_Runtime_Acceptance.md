@@ -20,7 +20,47 @@ and scenario rows below to complete; their named remaining obligations still
 apply, including packaged cross-platform transport and unavailable physical
 qualification.
 
-The next candidate integrates reviewed diagnostic-only component `d6abde0`.
+The latest completed qualification is `97c32d5951fffa9f66161b17ae01c98484e22cab`
+(tree `2ef51343ce32fe4aebd7a4950d849c2a20f524c6`), full diagnostic run
+[43124732545](https://github.com/ahouchens/mesh-chat/actions/runs/43124732545).
+GitHub records the run as **cancelled: eight successful jobs, four failed jobs,
+one cancelled job, zero skipped jobs**. The policy job exceeded its ten-minute
+limit during artifact upload and cleanup, after all **5,636 tests** and required
+evidence validation passed. Its required gate correctly failed. The retained
+annotation explicitly reports the ten-minute execution limit.
+
+Independent artifact checks verify exact local/CI policy and Python UI inventories,
+**1,852 Python UI + 12 rendered cases**, Windows packaged/public-SDK pairing and
+lifecycle, Android **56 emulator + 83 JVM cases and 17 artifact hashes**, layout
+**72 cases**, and Linux and Windows direct **25 transport + 10 recovery + 12 setup**
+cases. These passing reports do not override the cancelled policy job or establish
+full native acceptance. General service evidence remains historical at `67a5210`.
+
+The first local policy attempt on this source failed one retirement-composition
+case and its teardown (`native_webrtc_cleanup_pending`). The exact case then passed
+in isolation; one unchanged full policy retry passed all 5,636 cases. The first
+failure, both passing attempts and their hashes remain retained. Its cause is
+unresolved; this is not clean local qualification or a demonstrated repair.
+
+Native Windows failed at `turn_udp_native_lease_retirement/completion_receive`:
+the GitHub archive endpoint returned **HTTP 404** before retirement commit. The
+report also retains `cleanup_failed=true`. Android subsequently exhausted its wait
+for the Windows TURN/TCP offer. The remote reason for HTTP 404 is unknown; eventual
+consistency is not established. This run never reached TCP kernel correlation,
+so the earlier ambiguous socket selection remains unresolved and the new labels
+have not yet supplied the needed evidence.
+
+Two follow-ups are independently reviewed: `488f95c` raises only the policy CI
+job limit from ten to fifteen minutes; `0577f58` adds test-only, failure-only
+retirement observations with fixed labels, nonblocking lock attempts, a bounded
+loop responsiveness probe and a capped note. Its **22 focused cases** retain all
+18 prior cases plus four diagnostic controls. Neither change repairs or explains
+the original retirement failure. A separate bounded archive-404 correction is
+being prepared with strict metadata preflight and unchanged post-download checks.
+Helper retirement and later roadmap promotion remain on hold pending full native
+acceptance and disposition of unresolved failures.
+
+That source integrated reviewed diagnostic-only component `d6abde0`.
 Ambiguous TURN/TCP or TURN/TLS own-process socket matches now carry two private,
 fixed-enum labels: `tcp_state_summary` distinguishes one established plus other
 states, multiple established, no established, or unclassifiable states;
@@ -34,10 +74,10 @@ select a socket, alter a deadline, drive a retry or change fault injection. The
 focused two-module run passes **89 cases**, retaining all **75 prior cases** and
 adding **14 diagnostic controls**. Five focused pre-change regressions fail on
 the absent labels while preserving the expected socket rejection. Independent
-review approves diagnostic integration only. Fresh combined local qualification
-and full native evidence remain pending; no socket-selection repair is claimed.
+review approves diagnostic integration only. The diagnostic run above does not
+provide socket-selection acceptance or establish a repair.
 
-The latest completed qualification is `f0c06c82dbf4003a732d8301f9d1d3facc955fb2`
+The preceding completed qualification is `f0c06c82dbf4003a732d8301f9d1d3facc955fb2`
 (tree `7b5fec7599cfda3fd44884ffbc9ee88b1d063a31`), full manual run
 [43115277007](https://github.com/ahouchens/mesh-chat/actions/runs/43115277007).
 The reviewed bounded HTTP 503 read retry is integrated. Fresh local checks pass:
