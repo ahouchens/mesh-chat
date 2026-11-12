@@ -1,5 +1,21 @@
 # Connection runtime qualification ledger
 
+## Design correction: network path evidence, not internal socket identity (2026-11-12)
+
+Specification §9.3 and SC12 do not require a unique internal WebRTC socket. The
+harness imposed that constraint and the resulting native-fork investigation
+exceeded what the network negative control needs to prove. The replacement
+will use isolated app-UID and TURN-destination scope with selected relay stats,
+packet drops, no blocked receipt, exact cleanup and restored once-only delivery.
+It must report that scope explicitly. No new native acceptance is claimed.
+
+The experimental patch, workflow and its helper/tests are removed from active
+source but retained in Git and local evidence. No application AAR was replaced.
+Bootstrap fix `abe1eaf`, integrated/pushed as `8ab6abb`, passed 21 focused offline
+tests; its run `43217449532` was canceled during design review, as was automatic
+full run `43217458228`. Earlier run `43161733290` remains a closed bootstrap
+failure. The component descriptions below are historical, not the current plan.
+
 ## Integration revalidation (2026-11-09)
 
 ### Exact native firewall cleanup component (2026-11-12)

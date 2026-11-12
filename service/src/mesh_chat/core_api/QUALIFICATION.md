@@ -1,5 +1,13 @@
 # Private packaged qualification control
 
+Current direction (2026-11-12): TCP/TLS network negative controls are being
+revised to use isolated app-UID/TURN-destination scope, without a WebRTC fork
+or public Core API change. Runtime specification §9.3/SC12 does not require a
+unique internal socket. Keep selected ICE, application counters, authenticated
+receipts, exact cleanup, recovery and resource ownership checks; report the
+network scope rather than an individual-socket claim. This revision is pending
+qualification. Historical prototype and failure records below are retained.
+
 The latest completed qualification is `8fd57a445eec2ab12a86de51f3e0f4342f372d9c`
 (tree `d2c69a224cd348ef316b623004d52fe7e16092ea`), full run
 [43152914113](https://github.com/ahouchens/mesh-chat/actions/runs/43152914113).

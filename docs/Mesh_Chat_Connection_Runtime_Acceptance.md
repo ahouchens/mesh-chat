@@ -1,5 +1,27 @@
 # Acceptance reconciliation: specification invariants and scenarios
 
+## Current direction: controlled network qualification (2026-11-12)
+
+Runtime specification §9.3 and SC12 require selected-path evidence, packet
+counters, an effective network blocking control, and prevention of alternate
+path bypass. They do not require identifying one internal WebRTC socket. The
+harness's unique-socket admission was an additional implementation constraint;
+its failure does not by itself establish a product defect or require a fork.
+
+TCP/TLS qualification is being revised to isolate one app UID and active native
+resource, block its validated TURN destination set, and retain selected relay
+statistics, counted drops, no authenticated receipt while blocked, exact cleanup,
+and restored exactly-once delivery. Evidence must name this network scope,
+without claiming individual socket identity. Existing UDP flow/netem controls
+and native resource ownership checks remain separate. The change is not yet
+qualified and does not complete the remaining UDP-denial/NAT-rebinding matrix.
+
+The isolated WebRTC patch and prototype workflow are removed from the active
+feature; their commits and evidence remain in history. The application AAR was
+never replaced. Prototype run `43161733290` failed before compilation; bootstrap
+follow-up `43217449532` and automatic full run `43217458228` were canceled after
+this design correction. Historical results below retain their original scope.
+
 Executed automated evidence for the current commit is recorded in the
 [qualification ledger](Mesh_Chat_Connection_Qualification_Ledger.md);
 it separates automated runs from physical and packaged limits.

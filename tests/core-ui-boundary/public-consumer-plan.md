@@ -1,5 +1,13 @@
 # Independent public consumer qualification proposal
 
+Current direction (2026-11-12): the network qualification harness is replacing
+its extra unique-TCP-socket assumption with isolated app-UID/TURN-destination
+blocking, as allowed by runtime specification §9.3/SC12. This needs no WebRTC
+fork or public consumer API change. Selected-path statistics, positive packet
+counters, blocked-receipt rejection, exact cleanup and restored delivery remain
+required. The new harness is not yet qualified; prior results below retain
+their original scope and do not establish completion of the scenario matrix.
+
 The latest completed qualification is `8fd57a445eec2ab12a86de51f3e0f4342f372d9c`
 (tree `d2c69a224cd348ef316b623004d52fe7e16092ea`), full run
 [43152914113](https://github.com/ahouchens/mesh-chat/actions/runs/43152914113).

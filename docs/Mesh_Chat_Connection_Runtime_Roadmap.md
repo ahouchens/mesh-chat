@@ -1,5 +1,20 @@
 # Connection runtime implementation and qualification
 
+## Current direction: controlled network qualification (2026-11-12)
+
+The next step is a test-harness correction, without a WebRTC fork. Specification
+§9.3 and SC12 permit controlled network-level blocking with selected ICE and
+packet-counter evidence; the harness added an unnecessary unique-socket gate.
+Implement an isolated app-UID/TURN-destination TCP/TLS control with truthful
+scope evidence, unchanged receipt/recovery requirements and exact cleanup.
+Preserve UDP impairment and independent resource-ownership tests. Then run full
+native qualification and continue the lifecycle roadmap; this design change
+alone neither qualifies SC12 nor disposes of earlier lifecycle failures.
+
+The isolated prototype source/workflow is removed from the active feature.
+Its source and failed/canceled runs remain retained; the shipped WebRTC
+dependency is unchanged. Native continuity and collector/JNI patches are held.
+
 Feature branch: `codex/mesh-chat-core-refactor`.
 
 ## Current integration checkpoint (2026-11-09)

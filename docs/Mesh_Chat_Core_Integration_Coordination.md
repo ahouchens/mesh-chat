@@ -1,5 +1,15 @@
 # Core integration coordination — 2026-11-09
 
+Current assignment correction (2026-11-12): use controlled network-level
+qualification as specified in §9.3/SC12, without modifying WebRTC. C implements
+isolated UID/TURN-destination TCP/TLS rules and truthful evidence; B reviews
+scope and immutable changes; D verifies emulator/control-network boundaries.
+A's unpushed continuity prototype is held. Root removes the experimental fork
+workflow/source, integrates reviewed harness changes, and resumes full native
+qualification. The unique-socket gate was an extra harness assumption, not an
+original product requirement. No passing native result or roadmap completion
+is claimed by this correction; historical checkpoints follow.
+
 Baseline: `435b497150e5f0d12cb1c5dc7b4602da7a66ec4c`.
 Lead branch: `codex/mesh-core-integration-lead`.
 This file records assignments and integration decisions, not passing evidence.
