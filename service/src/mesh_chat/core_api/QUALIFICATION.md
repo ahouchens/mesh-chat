@@ -1,5 +1,11 @@
 # Private packaged qualification control
 
+Full run `43223611381` at `98a5d9e` is closed failed on one false final TLS
+supervisor-readiness sample after restored delivery. All nonnative checks
+validate. Integration `a88674b` keeps the private final-path checks within the
+existing 90-second restoration window and passes 1,400 offline interop cases.
+The public API and WebRTC dependency remain unchanged; native CI is pending.
+
 The controlled TCP/TLS harness is integrated through `b71cb05`; all 1,386 offline
 interop cases pass. Private negative-control evidence now names a UID and TURN
 destination scope, while UDP retains its socket/flow scope. No public Core API
@@ -13,7 +19,7 @@ receipts, exact cleanup, recovery and resource ownership checks; report the
 network scope rather than an individual-socket claim. This revision is pending
 qualification. Historical prototype and failure records below are retained.
 
-The latest completed qualification is `8fd57a445eec2ab12a86de51f3e0f4342f372d9c`
+The earlier qualification recorded below is `8fd57a445eec2ab12a86de51f3e0f4342f372d9c`
 (tree `d2c69a224cd348ef316b623004d52fe7e16092ea`), full run
 [43152914113](https://github.com/ahouchens/mesh-chat/actions/runs/43152914113).
 It **failed: ten successful jobs, three failed jobs, zero cancelled or skipped

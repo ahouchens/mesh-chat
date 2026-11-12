@@ -1,5 +1,41 @@
 # Connection runtime qualification ledger
 
+## Full network-control run closed; bounded readiness correction (2026-11-12)
+
+Source `98a5d9e7bbb4b0fe5e09f633d3a923e71aaaf6a4`, full run
+[43223611381](https://github.com/ahouchens/mesh-chat/actions/runs/43223611381),
+finished with **10 successful and three failed jobs**. All nonnative evidence
+independently validates: 5,748 policy cases; 1,955 Python UI and 12 rendered
+cases; Windows packaged/public-SDK checks; Android 56 emulator cases, 83 exact
+JVM identities and 17 artifact hashes; 72 layout cases; and both platforms'
+25 transport, 10 recovery and 12 setup cases. Layout pixels were not reviewed.
+
+Both native peers published TCP completion markers under the new endpoint
+block. Android then failed in `turn_tls_kernel_block_negative_control` at
+`final_observation/path_missing`, classified `messaging_ready_not_true`.
+Restored receipt, recovered records, cleanup and current endpoint/resource
+checks returned before that read. The sample was filtered before native pair
+and counter consumption, so their final state is not established. Windows
+subsequently exhausted its partner wait at retirement `completion_receive`;
+its retirement commit had not run. No full native acceptance is claimed.
+
+The inspector reads supervisor readiness separately from native statistics.
+A delayed supervisor inspection is a plausible explanation, not a proven
+root cause. The specification requires bounded recovery and fresh final path
+evidence, not an immediately ready first snapshot. Reviewed component
+`f96075b`, integrated as `a88674b`, shares the existing absolute 90-second
+restored-delivery window among TCP/TLS receipt, inbound and final readiness
+checks. The inbound wait loses its former separate allowance. No new deadline
+is added. Persistent unreadiness, late samples, scope changes and inspection
+errors still fail; resource/epoch/pair and positive counter checks remain.
+
+Eight test-first cases failed on the old implementation. The component passes
+899 affected cases and integration passes all **1,400** interop cases with no
+skips. A fresh full native run is required. The failed run's closure is retained
+at `.test-tmp/ci-evidence-98a5d9e-run43223611381-attempt1/closure/manifest.json`,
+SHA256 `be7ddb953eff2d28e3ea48f9afeb239396be6b750aa8faf94b59f5a183eb7ca2`.
+Earlier unresolved lifecycle and delivery failures remain separate.
+
 ## Controlled network harness integrated (2026-11-12)
 
 TCP/TLS component `bd4d5c2` (including `8de0a3c` and `4b38a9c`) is integrated

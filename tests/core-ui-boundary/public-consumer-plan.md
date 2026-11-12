@@ -1,5 +1,11 @@
 # Independent public consumer qualification proposal
 
+Run `43223611381` at `98a5d9e` failed native TLS final supervisor readiness
+after restored delivery; its nonnative evidence validates. The reviewed
+shared recovery-window correction is integrated as `a88674b` and passes 1,400
+offline interop cases. Fresh native qualification and the remaining public
+consumer matrix are required; this is not full refactoring completion.
+
 Integration `b71cb05` passes all 1,386 offline interop cases with the controlled
 TCP/TLS endpoint negative control. This changes private qualification evidence,
 not the consumer API or WebRTC dependency. Full native CI and the remaining
@@ -13,7 +19,7 @@ counters, blocked-receipt rejection, exact cleanup and restored delivery remain
 required. The new harness is not yet qualified; prior results below retain
 their original scope and do not establish completion of the scenario matrix.
 
-The latest completed qualification is `8fd57a445eec2ab12a86de51f3e0f4342f372d9c`
+The earlier qualification recorded below is `8fd57a445eec2ab12a86de51f3e0f4342f372d9c`
 (tree `d2c69a224cd348ef316b623004d52fe7e16092ea`), full run
 [43152914113](https://github.com/ahouchens/mesh-chat/actions/runs/43152914113).
 It **failed: ten successful jobs, three failed jobs, zero cancelled or skipped

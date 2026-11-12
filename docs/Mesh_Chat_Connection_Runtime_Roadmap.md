@@ -1,5 +1,13 @@
 # Connection runtime implementation and qualification
 
+Full run `43223611381` at `98a5d9e` is closed failed: all nonnative jobs pass,
+but Android's final TLS sample reports supervisor `messaging_ready=false` after
+restored delivery, and Windows then times out waiting for its completion.
+Reviewed correction `f96075b`, integrated as `a88674b`, shares the existing
+90-second restoration budget with fresh final readiness. All 1,400 offline
+interop cases pass. Next is full native qualification of this correction;
+the broader lifecycle roadmap and historical failure disposition remain open.
+
 The controlled TCP/TLS network harness is now integrated through `b71cb05` and
 passes all 1,386 offline interop cases. Run the full packaged Windows/Android
 qualification next. No WebRTC dependency change is needed. This is progress on
@@ -30,7 +38,7 @@ composer state, independent SDK distributions and upgrades, supervisor-owned
 native lifecycle/pairing, and the remaining packaged transport/fault matrix.
 The ledger records exact scope; this is not full M2–M5 completion.
 
-The latest completed qualification is `8fd57a445eec2ab12a86de51f3e0f4342f372d9c`
+The earlier qualification recorded below is `8fd57a445eec2ab12a86de51f3e0f4342f372d9c`
 (tree `d2c69a224cd348ef316b623004d52fe7e16092ea`), full run
 [43152914113](https://github.com/ahouchens/mesh-chat/actions/runs/43152914113).
 It **failed: ten successful jobs, three failed jobs, zero cancelled or skipped

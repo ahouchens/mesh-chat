@@ -1,5 +1,12 @@
 # Acceptance reconciliation: specification invariants and scenarios
 
+Run `43223611381` at `98a5d9e` failed native TLS final readiness; all nonnative
+evidence validates. The failure is one false supervisor-ready snapshot after
+restored receipts, not proof of persistent loss or a need to modify WebRTC.
+Correction `a88674b` waits for fresh readiness within the original TCP/TLS
+90-second restoration budget and passes 1,400 offline interop cases. Native
+acceptance, the remaining scenario matrix and full refactoring remain pending.
+
 Integration `b71cb05` contains the controlled TCP/TLS destination-block harness
 and passes 1,386 offline interop cases with no skips. This establishes harness
 regressions only. Packaged native CI, the rest of SC12, and unresolved lifecycle
