@@ -13,7 +13,7 @@ import json
 import os
 from pathlib import Path
 import sys
-from threading import Event, Thread, current_thread
+from threading import Event, RLock, Thread, current_thread
 from time import monotonic
 from types import SimpleNamespace
 from uuid import uuid4
@@ -262,10 +262,185 @@ def correlated_retired(state, role, payload):
         request_id=payload["request_id"], expected_service=service, expected_profile=profile)
 
 
+def retirement_task_stage(host, lease):
+    """Inspect only this lease's retirement coroutine on its owning loop."""
+    if host._loop.is_closed() or not host._thread.is_alive():
+        return "loop_stopped"
+    done, result = Event(), {"stage": "no_retirement_task"}
+    def inspect():
+        try:
+            tasks = asyncio.all_tasks()
+            if len(tasks) > 64:
+                result["stage"] = "task_scan_capped"
+                return
+            for task in tasks:
+                coroutine = task.get_coro()
+                frame = getattr(coroutine, "cr_frame", None)
+                if (getattr(getattr(coroutine, "cr_code", None), "co_name", None) != "_retire_lease"
+                        or frame is None or frame.f_locals.get("lease") is not lease):
+                    continue
+                stages = []
+                current = coroutine
+                for _ in range(8):
+                    stages.append(getattr(getattr(current, "cr_code", None), "co_name", type(current).__name__))
+                    current = getattr(current, "cr_await", None)
+                    if current is None:
+                        break
+                result["stage"] = stages
+                break
+        except Exception:
+            result["stage"] = "loop_probe_unavailable"
+        finally:
+            done.set()
+    try:
+        host._loop.call_soon_threadsafe(inspect)
+    except RuntimeError:
+        return "loop_stopped"
+    return result["stage"] if done.wait(0.05) else "loop_probe_pending"
+
+
+def retirement_failure_snapshot(state, requests):
+    """Bounded, identifier-free evidence sampled only after the existing timeout."""
+    evidence = {}
+    for role in ("windows", "android"):
+        payload = requests[role]
+        record = state.peers[role].contexts[payload["operation_id"]]["carrier_retirement"]
+        ticket = record.ticket
+        runtime_lock = record.runtime._lock
+        if runtime_lock.acquire(False):
+            try:
+                ticket_state = {name: bool(getattr(ticket, name)) for name in (
+                    "committed", "close_started", "native_acknowledged",
+                    "cleanup_acknowledged", "acknowledged", "invalidated")}
+            finally:
+                runtime_lock.release()
+        else:
+            ticket_state = "runtime_lock_busy"
+        service = state.services[role]
+        registry = service._native_resources
+        if registry._lock.acquire(False):
+            try:
+                local_state = {
+                    "logical_maps_to_requested_physical": registry._logical.get(
+                        payload["logical_session"]) == payload["expected_physical"],
+                    "physical_maps_to_requested_logical": registry._physical.get(
+                        payload["expected_physical"]) == payload["logical_session"]}
+            finally:
+                registry._lock.release()
+        else:
+            local_state = "registry_lock_busy"
+        if service._native_webrtc_lock.acquire(False):
+            try:
+                local_state = {**local_state,
+                    "logical_live": payload["logical_session"] in service._native_webrtc_live,
+                    "logical_creating": payload["logical_session"] in service._native_webrtc_creating,
+                    "profile_session_present": payload["logical_session"] in
+                        service._native_webrtc_profile_sessions.values()} if isinstance(local_state, dict) else local_state
+            finally:
+                service._native_webrtc_lock.release()
+        elif isinstance(local_state, dict):
+            local_state["service_native_lock_busy"] = True
+        host = state.hosts[role]
+        if host._lock.acquire(False):
+            try:
+                lease = host._leases.get(payload["expected_physical"])
+                pending = host._retire_futures.get(payload["expected_physical"])
+                future = pending[1] if pending is not None and pending[0] is lease else None
+                host_state = {"lease_count": min(len(host._leases), 16),
+                              "lease_count_capped": len(host._leases) > 16,
+                              "requested_lease_present": lease is not None}
+                if lease is not None:
+                    host_state.update(creating=bool(lease.creating), cancelled=bool(lease.cancelled),
+                                      created=lease.created.is_set(), session_present=lease.session is not None,
+                                      creation_task_present=lease.task is not None,
+                                      creation_task_done=lease.task.done() if lease.task is not None else None,
+                                      retire_future_present=future is not None,
+                                      retire_future_done=future.done() if future is not None else None,
+                                      retire_future_cancelled=future.cancelled() if future is not None else None)
+                    if future is not None and future.done() and not future.cancelled():
+                        try:
+                            failure = future.exception(timeout=0)
+                            host_state["retire_future_outcome"] = (
+                                type(failure).__name__ if failure is not None else "completed")
+                        except Exception:
+                            host_state["retire_future_outcome"] = "unavailable"
+            finally:
+                host._lock.release()
+            if lease is not None and future is not None and not future.done():
+                host_state["retirement_task_stage"] = retirement_task_stage(host, lease)
+        else:
+            host_state = "host_lock_busy"
+        evidence[role] = {"request_matches": record.request == (
+            payload["request_id"], payload["logical_session"], payload["expected_physical"],
+            payload["expected_service_incarnation"], payload["expected_adapter_epoch"]),
+            "ticket": ticket_state, "local": local_state, "host": host_state}
+    return evidence
+
+
 def await_retirement(state, requests):
     def acknowledged_and_empty():
         return all(correlated_retired(state, role, payload) is not None for role, payload in requests.items())
-    state.drive(acknowledged_and_empty)
+    try:
+        state.drive(acknowledged_and_empty)
+    except AssertionError as error:
+        try:
+            error.add_note("retirement failure snapshot: " + json.dumps(
+                retirement_failure_snapshot(state, requests), sort_keys=True))
+        except Exception:
+            pass  # The observer must never replace the original failure.
+        raise
+
+
+def test_retirement_timeout_note_is_bounded_and_does_not_replace_failure(monkeypatch):
+    original = AssertionError("controlled retirement deadline")
+    ticket = SimpleNamespace(**dict.fromkeys(("committed", "close_started", "native_acknowledged",
+        "cleanup_acknowledged", "acknowledged", "invalidated"), False))
+    ticket.committed = ticket.close_started = True
+    record = SimpleNamespace(ticket=ticket, runtime=SimpleNamespace(_lock=RLock()),
+        request=("secret-request", "secret-logical", "secret-physical", "secret-service", "secret-epoch"))
+    lease = SimpleNamespace(creating=False, cancelled=True, created=Event(), session=object(),
+        task=None)
+    lease.created.set()
+    future = SimpleNamespace(done=lambda: False, cancelled=lambda: False)
+    def role_state():
+        host = SimpleNamespace(_lock=RLock(), _leases={"secret-physical": lease},
+            _retire_futures={"secret-physical": (lease, future)})
+        peer = SimpleNamespace(contexts={"secret-operation": {"carrier_retirement": record}})
+        payload = {"operation_id": "secret-operation", "request_id": "secret-request",
+            "logical_session": "secret-logical", "expected_physical": "secret-physical",
+            "expected_service_incarnation": "secret-service", "expected_adapter_epoch": "secret-epoch"}
+        return host, peer, payload
+    states = {role: role_state() for role in ("windows", "android")}
+    service = SimpleNamespace(_native_resources=SimpleNamespace(_lock=RLock(),
+        _logical={"secret-logical": "secret-physical"},
+        _physical={"secret-physical": "secret-logical"}),
+        _native_webrtc_lock=RLock(), _native_webrtc_live={"secret-logical"},
+        _native_webrtc_creating=set(), _native_webrtc_profile_sessions={"profile": "secret-logical"})
+    state = SimpleNamespace(hosts={role: item[0] for role, item in states.items()},
+        peers={role: item[1] for role, item in states.items()},
+        services={role: service for role in states},
+        drive=lambda _: (_ for _ in ()).throw(original))
+    monkeypatch.setattr(sys.modules[__name__], "retirement_task_stage", lambda *_: ["_retire_lease", "close"])
+    with pytest.raises(AssertionError) as caught:
+        await_retirement(state, {role: item[2] for role, item in states.items()})
+    assert caught.value is original
+    note = original.__notes__[0]
+    assert all(secret not in note for secret in ("secret-request", "secret-logical", "secret-physical",
+        "secret-service", "secret-epoch", "secret-operation"))
+    assert len(note) < 2500
+    snapshot = json.loads(note.removeprefix("retirement failure snapshot: "))
+    assert all(snapshot[role]["ticket"]["close_started"] and
+               snapshot[role]["local"]["logical_maps_to_requested_physical"] and
+               snapshot[role]["host"]["retirement_task_stage"] == ["_retire_lease", "close"]
+               for role in ("windows", "android"))
+
+
+def test_retirement_failure_observer_never_masks_original_error():
+    original = AssertionError("controlled retirement deadline")
+    state = SimpleNamespace(drive=lambda _: (_ for _ in ()).throw(original), peers={})
+    with pytest.raises(AssertionError) as caught:
+        await_retirement(state, {"windows": {"operation_id": "missing"}})
+    assert caught.value is original
 
 
 @contextmanager
