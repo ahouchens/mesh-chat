@@ -1,5 +1,52 @@
 # Connection runtime qualification ledger
 
+## Impaired-case pairing failed before network controls (2026-11-12)
+
+Full run [43265844092](https://github.com/ahouchens/mesh-chat/actions/runs/43265844092)
+at `110833ccb18500f173af1124912f4d4ea032a067` completed with **10 successful
+and three failed jobs**. All nonnative evidence independently validates:
+5,824 policy cases, 2,014 Python UI and 12 rendered cases, scoped Windows host
+reports, 56 Android emulator cases and 83 exact JVM identities with 17 artifact
+hashes, 72 layout cases, and each platform's 25 transport, 10 recovery and
+12 setup cases. Layout pixels were not visually reviewed. The redundant
+automatic run was confirmed canceled after the manual full run became active.
+
+Both peers published completion markers for the two direct initiators and
+UDP/TCP/TLS relay cases. Those markers are progress metadata, not independently
+accepted full native evidence. The subsequent
+`impaired_supervisor_owned_pairing_windows` failed before network controls.
+Android retired at `gather_answer/failed/invalid_document`, last observed as
+`reserved/unread/unread/unread`; Windows retired at
+`wait_answer/tick/phase_timeout`, last observed as
+`offer_ready/one/new/connecting`. The new timeout-only diagnostic was correctly
+absent on this different Failed event. Unread does not mean absent.
+Closure manifest SHA-256:
+`954fbad7494a244e58b3ca7fea7b4b4b029b6c9e6673302379dde44fba53103f`.
+
+The source audit confirms that `NativeUnavailable` inherits `ValidationError`.
+The pairing adapter maps that family and `IdentityMismatch` to
+`INVALID_DOCUMENT`, so the label does not prove a malformed signed document.
+The retained reports and generic job logs do not identify the raising call.
+Earlier gather timeout, checking and lease failures remain unresolved history.
+
+Reviewed component `422c150`, integrated as `e2b8aaa`, reuses the
+existing exact-Work milestones for an accepted gather Failed/invalid_document
+event. Its cutoff is the accepted Failed timestamp strictly before the original
+deadline. Existing Tick/deadline behavior is preserved. The private failure DTO
+adds a fixed exception family and an exact whitelist of existing native codes;
+unknown values remain unknown and raw error text is never projected. Both host
+and controller enforce retirement-event/DTO affinity and coherent category/code
+pairs. Later worker completion or cleanup cannot rewrite the frozen observation.
+The primary failure, cleanup, public API, Kotlin, WebRTC dependency, deadlines
+and success predicates are unchanged. Generic `answer_failed` does not identify
+an internal WebRTC operation.
+
+Root's 15 affected offline suites pass **1,675 cases, zero failures/errors/skips**.
+Fresh full CI is required. This diagnostic is not a causal repair or native
+acceptance. The UDP-link correction and remaining SC12 scenarios remain
+unqualified. Frozen helper retirement follows independently accepted full native
+qualification; the broader refactoring is not complete.
+
 ## Initial answer gathering failed before network controls (2026-11-12)
 
 Full run [43252465356](https://github.com/ahouchens/mesh-chat/actions/runs/43252465356)

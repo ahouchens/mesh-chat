@@ -1,18 +1,21 @@
 # Connection runtime implementation and qualification
 
-Full run `43252465356` at `1a545b8` failed initial direct pairing before
-network controls: Android exceeded its `gather_answer` phase budget and Windows
-timed out in `wait_answer`. All nonnative evidence independently validates.
-The retained observations do not identify Android's blocked suboperation.
-Reviewed integration `dbc3ab5` adds private exact-Work gather observations
-selected at the original deadline; late completion cannot overwrite that evidence.
-All 1,642 cases in 15 affected offline suites pass. Full native CI is pending.
+Full run `43265844092` at `110833c` failed impaired-case pairing before
+network controls. Android returned `gather_answer/failed/invalid_document` and
+Windows later timed out in `wait_answer`. All nonnative evidence validates.
+Prior direct/relay completion markers do not establish full native acceptance.
+`NativeUnavailable` is a `ValidationError` subclass, so the failure label alone
+does not identify a bad document or native cause.
+Reviewed integration `e2b8aaa` adds fixed exception/code observations and
+existing application milestones selected at the exact accepted Failed timestamp,
+while preserving the earlier Tick/deadline diagnostic and primary behavior.
+All 1,675 cases in 15 affected offline suites pass. Full native CI is pending.
 There is no WebRTC, Kotlin, public API, deadline or success-predicate change.
 The UDP-link correction, remaining SC12 work and full refactoring remain unqualified.
 
-Next: qualify the diagnostic and the existing UDP-link correction in full
+Next: qualify the failed-gather observation and existing UDP-link test in full
 native CI, then begin frozen helper retirement after independent acceptance.
-Preserve the separate historical lease failure as unresolved history.
+Preserve separate historical failures as unresolved history.
 
 ## Earlier checkpoints
 
