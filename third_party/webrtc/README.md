@@ -15,15 +15,17 @@ tuple. The patch declares the new header and its dependencies in `p2p/BUILD.gn`.
 
 `P2PTransportChannel::GetStatsForQualification` is the explicit network-thread
 entry point. It copies the tuple only onto the currently selected connection's
-`ConnectionInfo`. Ordinary `GetStats` calls the same collection loop with
-capture disabled, leaving the new field empty for every connection. No
+`ConnectionInfo` when that connection still has a port. A retired port yields
+no tuple. Ordinary `GetStats` calls the same collection loop with capture
+disabled, leaving the new field empty for every connection. No
 `RTCStats`, JSON, log, JNI, or application API is added.
 
 The C++ test diff covers live TURN/TCP value equality with the underlying
 socket, UDP and pre-allocation absence, closure and allocation replacement,
 and a three-connection channel snapshot. The channel test selects the TCP
 connection, checks the opt-in tuple and ordinary stats absence, then selects
-another connection and checks the tuple disappears from the snapshot.
+another connection and checks the tuple disappears from the snapshot. It also
+checks a snapshot after the selected TCP connection shuts down.
 
 To inspect against the pinned source checkout:
 

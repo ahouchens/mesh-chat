@@ -52,7 +52,7 @@ index 4356050..5195742 100644
    bool receiving;               // Has this connection received anything?
    bool timeout;                 // Has this connection timed out?
 diff --git a/p2p/base/p2p_transport_channel.cc b/p2p/base/p2p_transport_channel.cc
-index 4edd58d..3034294 100644
+index 4edd58d..f3e575b 100644
 --- a/p2p/base/p2p_transport_channel.cc
 +++ b/p2p/base/p2p_transport_channel.cc
 @@ -1658,6 +1658,17 @@ int P2PTransportChannel::SendPacket(const char* data,
@@ -73,13 +73,15 @@ index 4edd58d..3034294 100644
    RTC_DCHECK_RUN_ON(&network_thread_);
    // Gather candidate and candidate pair stats.
    ice_transport_stats->candidate_stats_list.clear();
-@@ -1674,6 +1685,10 @@ bool P2PTransportChannel::GetStats(IceTransportStats* ice_transport_stats) {
+@@ -1674,6 +1685,12 @@ bool P2PTransportChannel::GetStats(IceTransportStats* ice_transport_stats) {
      stats.local_candidate = SanitizeLocalCandidate(stats.local_candidate);
      stats.remote_candidate = SanitizeRemoteCandidate(stats.remote_candidate);
      stats.best_connection = (selected_connection_ == connection);
 +    if (include_selected_turn_tcp_socket && stats.best_connection) {
-+      stats.outer_turn_tcp_socket =
-+          connection->port()->GetTurnTcpSocketTuple();
++      // Shutdown may retire the port while the ConnectionInfo still exists.
++      if (const PortInterface* port = connection->port()) {
++        stats.outer_turn_tcp_socket = port->GetTurnTcpSocketTuple();
++      }
 +    }
      ice_transport_stats->connection_infos.push_back(std::move(stats));
    }
@@ -108,7 +110,7 @@ index 92f8dfe..497d08f 100644
      CandidateAndResolver(const Candidate& candidate,
                           std::unique_ptr<AsyncDnsResolverInterface>&& resolver);
 diff --git a/p2p/base/p2p_transport_channel_unittest.cc b/p2p/base/p2p_transport_channel_unittest.cc
-index 1df544f..ddfa0da 100644
+index 1df544f..6f2bef6 100644
 --- a/p2p/base/p2p_transport_channel_unittest.cc
 +++ b/p2p/base/p2p_transport_channel_unittest.cc
 @@ -1375,6 +1375,14 @@ TEST_F(P2PTransportChannelTest, GetStats) {
@@ -140,7 +142,7 @@ index 1df544f..ddfa0da 100644
    ASSERT_GE(ice_transport_stats.candidate_stats_list.size(), 2u);
    EXPECT_EQ(ice_transport_stats.selected_candidate_pair_changes, 1u);
  
-@@ -5393,6 +5408,51 @@ TEST_F(P2PTransportChannelMostLikelyToWorkFirstTest, TestTcpTurn) {
+@@ -5393,6 +5408,61 @@ TEST_F(P2PTransportChannelMostLikelyToWorkFirstTest, TestTcpTurn) {
    // Finally, Local/Relay will be pinged.
    VerifyNextPingableConnection(IceCandidateType::kHost,
                                 IceCandidateType::kRelay);
@@ -185,6 +187,16 @@ index 1df544f..ddfa0da 100644
 +
 +  ch.SwitchSelectedConnection(other_connection,
 +                              IceSwitchReason::NEW_CONNECTION_FROM_LOCAL_CANDIDATE);
++  ASSERT_TRUE(ch.GetStatsForQualification(&qualified));
++  for (const ConnectionInfo& info : qualified.connection_infos) {
++    EXPECT_FALSE(info.outer_turn_tcp_socket.has_value());
++  }
++
++  // A selected connection may then be shut down. The channel removes it
++  // before the weak port is reset; the next snapshot must carry no old tuple.
++  ch.SwitchSelectedConnection(tcp_connection,
++                              IceSwitchReason::NEW_CONNECTION_FROM_LOCAL_CANDIDATE);
++  ASSERT_TRUE(tcp_connection->Shutdown());
 +  ASSERT_TRUE(ch.GetStatsForQualification(&qualified));
 +  for (const ConnectionInfo& info : qualified.connection_infos) {
 +    EXPECT_FALSE(info.outer_turn_tcp_socket.has_value());
