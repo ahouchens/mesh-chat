@@ -227,6 +227,33 @@ class QualificationControl:
         if command == "qualification.inventory":
             if not payload:
                 return service.native_webrtc_inspection_resources()
+            if set(payload) == {"carrier_observation"}:
+                request = payload["carrier_observation"]
+                fields = {"operation_id", "logical_session", "expected_physical",
+                          "expected_service_incarnation", "expected_profile_incarnation"}
+                if type(request) is not dict or set(request) != fields:
+                    raise ValidationError("Qualification carrier observation is invalid")
+                for name in fields - {"operation_id"}:
+                    value = request[name]
+                    if name.startswith("expected_") and name.endswith("_incarnation"):
+                        valid = type(value) is str and len(value) == 32 and all(char in "0123456789abcdef" for char in value)
+                    else:
+                        valid = (type(value) is str and 1 <= len(value) <= 128
+                                 and all(char.isascii() and (char.isalnum() or char in "_-") for char in value))
+                    if not valid:
+                        raise ValidationError("Qualification carrier observation is invalid")
+                with service._dispatch_lock:
+                    if self._pairing_service() is not service:
+                        raise ContactNotApproved("Qualification service changed")
+                    operation = self._operation_id(service, request["operation_id"])
+                    observation = service.native_pairing_carrier_observation(
+                        operation, request["logical_session"], request["expected_physical"],
+                        request["expected_service_incarnation"], request["expected_profile_incarnation"])
+                    result = service.native_webrtc_inspection_resources()
+                    if self._pairing_service() is not service:
+                        raise ContactNotApproved("Qualification service changed")
+                    result["carrier_observation"] = observation
+                    return result
             operation = self._retirement_operation(service, payload, {"operation_id", "request_id"})
             with service._dispatch_lock:
                 retirement = service.native_pairing_retirement_observation(operation, payload["request_id"])

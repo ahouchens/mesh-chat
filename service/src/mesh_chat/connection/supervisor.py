@@ -6,6 +6,7 @@ from math import isfinite
 from threading import RLock
 
 from .diagnostics import Diagnostics, validated_pairing_retirement
+from .carrier_observation import carrier_fact, carrier_projection
 from .model import (
     Adopted, Bridge, Cancel, ConnectionKey, ConnectionState, ContextChanged, Desired, Event,
     Execution, Failed, Failure, Health, HandoffLease, Operation, Phase, Policy, Resource, Result, Retire, Tick, Work,
@@ -47,6 +48,20 @@ class _CarrierRetirementAdmission:
     invalidated: bool = False
 
 
+@dataclass
+class _CarrierObservation:
+    key: ConnectionKey
+    resource: Resource
+    runtime_epoch: str
+    generation: int | None = None
+    suspect: dict | None = None
+    owner_loss: dict | None = None
+    local_close: bool = False
+    callback_close: bool = False
+    callback_after_request: bool = False
+    order: str = "not_observed"
+
+
 class ConnectionSupervisor:
     def __init__(self, runtime_epoch: str, policy: Policy = Policy()):
         self.runtime_epoch = runtime_epoch
@@ -65,6 +80,7 @@ class ConnectionSupervisor:
         # Bindings stay private; the shared payload-free Record ring is unchanged.
         self._pairing_traces: dict[ConnectionKey, _PairingTrace] = {}
         self._carrier_retirements: dict[ConnectionKey, _CarrierRetirementAdmission] = {}
+        self._carrier_observations: OrderedDict[tuple[ConnectionKey, Resource], _CarrierObservation] = OrderedDict()
         self._committing_retirement: _CarrierRetirementAdmission | None = None
         self.diagnostics = Diagnostics(policy.max_diagnostics)
 
@@ -81,6 +97,87 @@ class ConnectionSupervisor:
     def snapshot(self, key: ConnectionKey):
         with self._lock:
             return self._states[key]
+
+    def watch_carrier_observation(self, key: ConnectionKey, resource: Resource):
+        """Admit one exact transferred resource to bounded, private observation."""
+        with self._lock:
+            state = self._states.get(key)
+            if (state is None or key.scope != "contact" or state.runtime_epoch != self.runtime_epoch
+                    or resource.adapter_epoch != state.adapter_epoch
+                    or not ((state.carrier is not None and state.carrier.resource == resource)
+                            or any(lease.target == key and lease.resource == resource
+                                   for lease in self._handoffs.values()))):
+                return None
+            identity = (key, resource)
+            if identity in self._carrier_observations:
+                # A new trusted handoff begins a new tenure. Old anchors lose
+                # their witness instead of inheriting its first-loss record.
+                del self._carrier_observations[identity]
+            generation = state.generation if state.carrier is not None and state.carrier.resource == resource else None
+            trace = _CarrierObservation(key, resource, self.runtime_epoch, generation)
+            self._carrier_observations[identity] = trace
+            if len(self._carrier_observations) > self.policy.max_diagnostics:
+                self._carrier_observations.popitem(last=False)
+            return trace
+
+    def native_carrier_observation(self, trace, kind: str):
+        with self._lock:
+            if (kind not in {"local_request", "callback"}
+                    or trace.runtime_epoch != self.runtime_epoch
+                    or self._carrier_observations.get((trace.key, trace.resource)) is not trace):
+                return
+            if trace.order == "not_observed":
+                trace.order = "owner_first" if trace.owner_loss is not None else "native_first"
+            if kind == "local_request":
+                trace.local_close = True
+            elif not trace.callback_close:
+                trace.callback_close = True
+                trace.callback_after_request = trace.local_close
+
+    def carrier_observation(self, trace):
+        with self._lock:
+            if (trace is None or trace.runtime_epoch != self.runtime_epoch
+                    or self._carrier_observations.get((trace.key, trace.resource)) is not trace):
+                return carrier_projection(None)
+            state = self._states.get(trace.key)
+            if (state is None or (state.carrier is not None
+                    and state.carrier.resource == trace.resource
+                    and trace.generation != state.generation)):
+                self._carrier_observations.pop((trace.key, trace.resource), None)
+                return carrier_projection(None)
+            return carrier_projection(trace)
+
+    def _observe_exact_carrier(self, state, event, result):
+        carrier, current = state.carrier, result.state.carrier
+        resource = carrier.resource if carrier is not None else current.resource if current is not None else None
+        if resource is None:
+            return
+        trace = self._carrier_observations.get((state.key, resource))
+        if trace is None:
+            return
+        if (state.runtime_epoch != trace.runtime_epoch
+                or result.state.runtime_epoch != trace.runtime_epoch):
+            return
+        if (carrier is None and current is not None and current.resource == resource
+                and trace.generation is None):
+            trace.generation = result.state.generation
+        if (carrier is None and current is not None and current.resource == resource
+                and trace.generation != result.state.generation):
+            self._carrier_observations.pop((state.key, resource), None)
+            return
+        if carrier is not None and carrier.resource == resource and trace.generation != state.generation:
+            self._carrier_observations.pop((state.key, resource), None)
+            return
+        if carrier is None:
+            return
+        if (trace.suspect is None and carrier.health is Health.OPEN and current is not None
+                and current.resource == carrier.resource and current.health is Health.SUSPECT):
+            trace.suspect = carrier_fact(state, event, result, precursor=True)
+        if (trace.owner_loss is None and current is None
+                and Retire(carrier.resource) in result.effects):
+            trace.owner_loss = carrier_fact(state, event, result, precursor=False)
+            if trace.order == "not_observed":
+                trace.order = "native_first" if trace.local_close or trace.callback_close else "owner_first"
 
     def retire_current_carrier(self, key, resource, generation, revision, now):
         """Compare the current owner and submit its normal retirement atomically."""
@@ -240,6 +337,12 @@ class ConnectionSupervisor:
             result = self._observe_carrier_retirement(state, event, transition(state, event))
             result = replace(result, state=replace(result.state, sequence=max(
                 state.sequence + 1, result.state.sequence)))
+            try:
+                self._observe_exact_carrier(state, event, result)
+            except Exception:
+                # Optional evidence cannot change reducer or cleanup behavior.
+                if state.carrier is not None:
+                    self._carrier_observations.pop((state.key, state.carrier.resource), None)
             self._trace_pairing_retirement(state, event, result)
             self._states[key] = result.state
             if (isinstance(event, Result) and event.handoff and event.allocated

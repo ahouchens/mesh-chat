@@ -263,6 +263,11 @@ class NativeWebRTCServiceMixin(NativePairingServiceMixin, NativeWebRTCControlMix
             session_id = self._native_resources.resolve(session_id)
             if session_id is None or (session_id not in self._native_webrtc_live and event != "closed"):
                 return
+            if event == "closed":
+                with self._native_webrtc_lock:
+                    physical = self._native_resources.physical(session_id)
+                    if physical is not None:
+                        self._native_pairing_carrier_edge(session_id, physical, "callback")
             managed = self._shared_native_session(session_id)
             if event == "ice" or event in {"open", "closed"}:
                 connection_diagnostics.record(self, "transport_state", {
@@ -631,6 +636,7 @@ class NativeWebRTCServiceMixin(NativePairingServiceMixin, NativeWebRTCControlMix
                 return {"state": "closed"}
             was_live = session_id in self._native_webrtc_live
             if physical is not None and was_live:
+                self._native_pairing_carrier_edge(session_id, physical, "local_request")
                 self._native_pairing_retirement_edge(physical)
             self._native_webrtc_live.discard(session_id)
             self._native_startup_packets.discard(physical)

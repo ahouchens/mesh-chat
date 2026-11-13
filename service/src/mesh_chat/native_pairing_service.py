@@ -183,6 +183,74 @@ class NativePairingServiceMixin:
             except ValueError as error:
                 raise NativeUnavailable("Carrier retirement request is unavailable") from error
 
+    def native_pairing_carrier_observation(self, operation_id, logical_session, expected_physical,
+                                           expected_service_incarnation, expected_profile_incarnation):
+        """Read one exact transferred resource after its live registry may be gone."""
+        from .connection.carrier_observation import carrier_projection
+        unavailable = carrier_projection(None)
+        try:
+            with self._dispatch_lock, self._native_webrtc_lock:
+                context = getattr(self, "_native_pairing_contexts", {}).get(operation_id)
+                matches = [item for item in getattr(self, "_native_pairing_contexts", {}).values()
+                           if item.get("state") == "transferred"
+                           and item.get("session") == logical_session
+                           and item.get("physical") == expected_physical]
+                if (context is None or len(matches) != 1 or matches[0] is not context
+                        or context.get("state") != "transferred" or not context.get("admitted")
+                        or context.get("session") != logical_session
+                        or context.get("physical") != expected_physical
+                        or context.get("runtime_epoch") != expected_service_incarnation
+                        or self._runtime_incarnation != expected_service_incarnation
+                        or context["identity"]() is not self._identity
+                        or context.get("host") is not self._native_webrtc_host()
+                        or context["authorized"]() is not True):
+                    return unavailable
+                identity = self._identity
+                profile_incarnation = sha256((self._runtime_incarnation + identity.hash.hex()).encode("ascii")).hexdigest()[:32]
+                if profile_incarnation != expected_profile_incarnation:
+                    return unavailable
+                anchor = context.get("carrier_observation_anchor")
+                if anchor is None:
+                    return unavailable
+                target, resource, runtime, owner, trace = anchor
+                if (resource != Resource("native", expected_physical)
+                        or runtime is not self._connection_runtime
+                        or owner is not runtime.owner
+                        or target.scope != "contact" or target.profile_id == context["id"]
+                        or trace is None or trace.key != target or trace.resource != resource
+                        or trace.runtime_epoch != expected_service_incarnation):
+                    return unavailable
+                return owner.carrier_observation(trace)
+        except Exception:
+            return unavailable
+
+    def _native_pairing_carrier_edge(self, logical_session, physical, kind):
+        """Called under service dispatch/native locks before exact registry release."""
+        try:
+            contexts = tuple(getattr(self, "_native_pairing_contexts", {}).values())
+        except Exception:
+            return
+        for context in contexts:
+            try:
+                anchor = context.get("carrier_observation_anchor")
+                if (anchor is None or context.get("state") != "transferred"
+                        or context.get("session") != logical_session
+                        or context.get("physical") != physical
+                        or context.get("runtime_epoch") != self._runtime_incarnation
+                        or context["identity"]() is not self._identity
+                        or context.get("host") is not self._native_webrtc_host()):
+                    continue
+                target, resource, runtime, owner, trace = anchor
+                if (resource == Resource("native", physical)
+                        and runtime is self._connection_runtime and owner is runtime.owner):
+                    owner.native_carrier_observation(trace, kind)
+            except Exception:
+                # An optional observer must not affect native disposal.
+                try:
+                    context["carrier_observation_anchor"] = None
+                except Exception:
+                    pass
+
     def native_pairing_retirement_pending(self):
         with self._dispatch_lock:
             return any(record is not None and not record.ticket.acknowledged
@@ -659,6 +727,14 @@ class NativePairingServiceMixin:
             # owns pending physical custody until the exact target adopts it.
             context["state"] = "transferred"
             context["code"] = None
+            try:
+                runtime = self._connection_runtime
+                owner = runtime.owner
+                resource = Resource("native", context["physical"])
+                trace = owner.watch_carrier_observation(target, resource)
+                context["carrier_observation_anchor"] = (target, resource, runtime, owner, trace)
+            except Exception:
+                context["carrier_observation_anchor"] = None
             self._native_pairing_notify_terminal(context)
 
     def _native_pairing_retire(self, context, resource):
