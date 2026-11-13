@@ -1,5 +1,46 @@
 # Independent public consumer qualification proposal
 
+Full run [43457917143](https://github.com/ahouchens/mesh-chat/actions/runs/43457917143)
+at `c7e1704` is **failed**: nine jobs passed, Windows direct recovery and both
+native peers failed, and the aggregate rejected the incomplete qualification.
+Policy passed 6,421 cases, UI boundary 2,309 Python and 12 rendered cases, Android
+56 emulator and 83 exact JVM cases, Linux direct 25/10/12 cases, and layout 72
+cases with no overflow. Eight Windows desktop/native reports and nine pipe cases
+passed. These exact-run component results do not establish full acceptance.
+
+All six direct/TURN/impaired path cases have reciprocal completion markers.
+Both peers reached `cold_complete_10` and `cold_started_10`. Android failed at
+iteration 12, with 11 completed cycles, in `exact_path` after its receipt; that
+iteration did not restart the process. Its `ValueError` has no retained skip
+reason or observation substage. Source inspection strongly points to the exact
+path no longer being ready, but cannot distinguish missing ownership from an
+attachment/readiness/selection change. Windows completed 12 cycles and timed out
+in iteration 13 exchange. Android gateway operation and cleanup failures were
+absent. The cold loop and checkpoints were reached; the full 100-cycle gate failed.
+
+Separately, Windows `address_loss` recovery passed its authenticated reconnection
+checks but failed queued-message delivery: nine recovery cases passed and one
+failed. Five sends had no usable main path, no native message ID, and a future
+retry scheduled. The unchanged local case passed in 143.24 seconds using the
+dispatcher from this exact run. A controlled-clock demonstration through the
+actual workspace due-work methods shows the fifth failure schedules an 80-second
+delay: after path restoration at time 90, the next send occurs at time 155, beyond
+a fresh 45-second test wait. CI lacks the timestamps needed to prove that ordering
+was its cause; this is a demonstrated fixture timing hazard, not a confirmed
+explanation of the runner failure.
+
+The successor retains fixed final-observation and traffic failure labels during
+cold cycles, using the same samples and checks without an extra observation or
+retry. Its Direct fixture correction scopes one 225-second recovery/receipt
+budget to `address_loss`, starting after both signed updates are imported and
+retaining each connected check's 180-second ceiling. Queued and bidirectional
+receipt checks share the remaining budget; no late result can pass. This is a
+composition of existing test windows, not a Direct product SLA or SC04 claim.
+Production retry policy and WebRTC remain unchanged. It does not establish a
+prompt-outbox-wake guarantee for legacy QUIC recovery. Exact native failure
+causes, full native/aggregate acceptance, helper retirement and later roadmap
+gates remain open.
+
 Full run [43448951902](https://github.com/ahouchens/mesh-chat/actions/runs/43448951902)
 at `9483e3d` is **failed**: ten component jobs passed; both native peers and the
 aggregate failed. Policy passed 6,404 cases, UI boundary 2,292 Python and 12

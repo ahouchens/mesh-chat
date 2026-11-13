@@ -270,7 +270,7 @@ class Peers:
         last=None
         while time.monotonic()<stop:
             last=self.command(index,name,**payload)
-            if time.monotonic()>=stop: break
+            if deadline is not None and time.monotonic()>=stop: break
             result=predicate(last)
             if result: return result
             time.sleep(.2)
@@ -308,9 +308,8 @@ class Peers:
     def connected(self, index, previous_certificate=None, *, route_before=None, deadline=None):
         # One total bound includes the configured native attempt and retry window.
         # A usable old Phase 2/path is not evidence that recovery has completed.
-        # The specification allows 240 seconds for post-partition recovery.
-        # Windows CI can be heavily loaded; 180 seconds stays inside that bound
-        # while avoiding a false product failure when recovery is merely slow.
+        # Retain the existing 180-second per-call ceiling. A shared scenario
+        # deadline can shorten it; neither value establishes a product SLA.
         stop=time.monotonic()+180
         if deadline is not None: stop=min(stop,deadline)
         if deadline is not None and time.monotonic()>=deadline:
@@ -318,9 +317,9 @@ class Peers:
         evidence=None
         while time.monotonic()<stop:
             rows=self.command(index,"direct_recovery_status")
-            if time.monotonic()>=stop: break
+            if deadline is not None and time.monotonic()>=stop: break
             evidence=self.call(index,"recovery_diagnostic")
-            if time.monotonic()>=stop: break
+            if deadline is not None and time.monotonic()>=stop: break
             if (rows and all(r["state"]=="connected" and r["authenticated_peer_live"] and r["rns_ready"] for r in rows)
                     and evidence["pending"]==0 and len(evidence["paths"])==1
                     and evidence["paths"][0]["recovery"]
@@ -428,8 +427,9 @@ def test_production_durable_recovery(tmp_path,scenario):
                     identifier=peers.command(i,"direct_recovery_status")[0]["relationship_id"]
                     documents.append(peers.wait(i,"export_recovery_update",lambda value:value.get("text"),identifier=identifier))
                 for i in range(2): peers.command(i,"import_recovery_update",document=documents[1-i],workspace_id=peers.workspace["id"])
-                # One compound fixture ceiling covers recovery and all receipts
-                # after the explicit restoration action. It is not a product SLA.
+                # Compose the existing 180-second recovery and 45-second delivery
+                # windows once for all peers/receipts after explicit restoration.
+                # Ordinary outbox backoff remains authoritative; this is no SLA.
                 delivery_deadline=time.monotonic()+225
         else:
             for i in range(2): peers.call(i,"force_recovery")

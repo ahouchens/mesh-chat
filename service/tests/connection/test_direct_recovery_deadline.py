@@ -1,4 +1,4 @@
-"""Deterministic deadline controls for the shipping Direct recovery fixture."""
+"""Required deterministic deadline controls for the shipping Direct recovery fixture."""
 
 import base64
 
@@ -108,6 +108,29 @@ def test_shared_deadline_rejects_late_positive_connected_diagnostic(clock):
     with pytest.raises(AssertionError):
         peers.connected(0, deadline=225)
     assert requests == ["direct_recovery_status", "recovery_diagnostic"]
+
+
+def test_connected_keeps_existing_180_second_ceiling_inside_shared_budget(clock):
+    def command(*_args, **_kwargs):
+        clock.now = 181
+        return [{"state": "connected", "authenticated_peer_live": True, "rns_ready": True}]
+    peers = peer(command)
+    with pytest.raises(AssertionError):
+        peers.connected(0, deadline=225)
+    assert clock.now == 181
+
+
+def test_sender_receipt_cannot_reset_budget_after_receiver_message(clock):
+    requests = []
+    def command(index, name, **kwargs):
+        requests.append(index)
+        clock.now = 224 if index == 1 else 226
+        return {"messages": [{"id": "event", "delivery_summary": {"devices_reached": 1}}]}
+    peers = peer(command)
+    clock.now = 223
+    with pytest.raises(AssertionError):
+        peers.delivered(0, {"id": "event"}, deadline=225)
+    assert requests == [1, 0]
 
 
 def test_queued_delivery_after_eighty_second_backoff_fits_shared_budget(clock):
