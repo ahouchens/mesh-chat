@@ -1,5 +1,36 @@
 # Connection runtime implementation and qualification
 
+Full run [43406689324](https://github.com/ahouchens/mesh-chat/actions/runs/43406689324)
+at `d1cbcc4` is **failed**: nine component jobs passed; layout, both native peers
+and the aggregate gate failed. Policy passed 6,213 cases, UI boundary 2,220 Python
+and 12 rendered cases, Android 56 emulator and 83 exact JVM cases. Both direct
+platforms passed 25 transport, 10 recovery and 12 setup cases. These component
+results do not grant native or aggregate acceptance.
+
+Layout failed before browser execution: `ubuntu-latest` selected Ubuntu 26.04,
+which the pinned Playwright 1.55 rejects. The preceding passing run used Ubuntu
+24.04. Commit `6fab11e` pins only this job to `ubuntu-24.04`; browser commands,
+the Playwright version and acceptance checks are unchanged. This is a confirmed
+infrastructure cause with a source fix; successor CI verification remains open.
+
+The native receipt observations now distinguish the failing exchanges. Android
+completed its own delivery at impaired index 17 (10 polls, queued to delivered),
+then received control-socket EOF (`peer_closed`) during its first inbound snapshot
+read. No snapshot returned; `records: null` is unknown, not an empty inbound set.
+Windows completed index 17 and timed out at index 18 with its own message queued
+(357 polls, two state transitions). The reports therefore do not show a failed
+same-message exchange. Android also reported cleanup failure; the gateway itself
+reported no operation or cleanup error. Instrumentation, emulator, forwarded
+socket and outer frame/serialization termination remain indistinguishable.
+
+The controlled Core/Binder limits return explicit errors rather than socket EOF;
+source inspection does not establish a deterministic payload-size defect. The
+next diagnostic retains only bounded facts from existing socket reads, owned
+process handles and the already-running instrumentation output reader, plus the
+cleanup boundary that failed. It adds no RPC, retry or wait and does not modify
+Kotlin, WebRTC, message policy or deadlines. Full native and aggregate acceptance,
+cold-start validation, helper retirement and the remaining roadmap remain open.
+
 Full run [43398691571](https://github.com/ahouchens/mesh-chat/actions/runs/43398691571)
 at `9cc1e51` is **failed**: ten component jobs passed; both native peers and
 the aggregate gate failed. Policy passed 6,185 cases, UI boundary 2,220 Python
