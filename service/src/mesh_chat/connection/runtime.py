@@ -265,6 +265,19 @@ class ConnectionRuntime:
                 return False
             return self.owner.pending_handoff_adoption(key, resource, self.now())
 
+    def pending_native_negotiation(self, profile_id, logical, physical):
+        """Private inventory hint for an exact current pre-carrier attempt."""
+        with self._lock:
+            keys = self._profile_keys.get(profile_id, ())
+            if self._stop.is_set() or self._quarantined or len(keys) != 1:
+                return False
+            key = next(iter(keys))
+            profile = self._profile_values.get(key)
+            if (profile is None or profile.get("id") != profile_id or key.profile_id != profile_id
+                    or self._is_fenced(key, profile)):
+                return False
+            return self.owner.pending_native_negotiation(key, logical, physical, self.now())
+
     def permits_native_work(self):
         """Private adapter admission, including work before a profile exists."""
         with self._lock:

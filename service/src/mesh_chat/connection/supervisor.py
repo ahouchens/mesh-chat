@@ -559,6 +559,49 @@ class ConnectionSupervisor:
                         and now < lease.deadline
                         and resource not in self._retiring and lease.source not in self._retiring)
 
+    def pending_native_negotiation(self, key: ConnectionKey, logical: Resource,
+                                   physical: Resource, now: float) -> bool:
+        """Observe one current pre-carrier reconnect; never grant a carrier lease."""
+        phases = {Phase.GATHER_OFFER, Phase.GATHER_ANSWER, Phase.PUBLISH_OFFER,
+                  Phase.PUBLISH_ANSWER, Phase.WAIT_ANSWER, Phase.APPLY_ANSWER, Phase.CHECKING}
+        with self._lock:
+            state = self._states.get(key)
+            if (state is None or state.key != key or key.scope not in {"contact", "workspace"}
+                    or key in self._retired
+                    or key in self._carrier_retirements or state.runtime_epoch != self.runtime_epoch
+                    or state.carrier is not None or state.retirement_prepared or state.blocked
+                    or not state.authority.authorized or state.desired is not Desired.ENABLED
+                    or state.execution is not Execution.AVAILABLE or not state.network_available
+                    or state.generation < 1 or not isfinite(now)
+                    or logical == physical or logical.adapter_epoch != state.adapter_epoch
+                    or physical.adapter_epoch != state.adapter_epoch
+                    or logical in self._retiring or physical in self._retiring
+                    or self._owned_elsewhere(key, logical) or self._owned_elsewhere(key, physical)
+                    or any(resource in {logical, physical} for values in self._surrendered.values()
+                           for resource in values)
+                    or any(lease.resource in {logical, physical} or lease.source in {logical, physical}
+                           for lease in self._handoffs.values())):
+                return False
+            step = state.negotiation
+            if (step is None or step.phase not in phases or step.resource != logical
+                    or not isfinite(step.deadline) or not now < step.deadline):
+                return False
+            operation = step.operation
+            if operation is None:
+                return (step.phase in {Phase.WAIT_ANSWER, Phase.CHECKING}
+                        and isfinite(step.poll_at)
+                        and not any(work.operation.key == key for work in self._running.values())
+                        and key not in self._pending)
+            if (operation.key != key or operation.runtime_epoch != self.runtime_epoch
+                    or operation.generation != state.generation
+                    or operation.policy_revision != state.authority.revision):
+                return False
+            expected = Work(operation, step.phase, logical, step.deadline)
+            same_key = [work for work in self._running.values() if work.operation.key == key]
+            if key in self._pending:
+                same_key.append(self._pending[key])
+            return len(same_key) == 1 and same_key[0] == expected
+
     def reject_handoff(self, operation: Operation):
         with self._lock:
             lease = self._handoffs.pop(operation, None)

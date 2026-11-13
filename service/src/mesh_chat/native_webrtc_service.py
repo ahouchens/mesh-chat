@@ -781,8 +781,15 @@ class NativeWebRTCServiceMixin(NativePairingServiceMixin, NativeWebRTCControlMix
             return "authorized"
         from .connection.model import Resource
         physical = self._native_resources.require(session_id)
-        return ("pending_adoption" if runtime.pending_handoff_adoption(profiles[0], Resource("native", physical))
-                else "unavailable")
+        physical_resource = Resource("native", physical)
+        if runtime.pending_handoff_adoption(profiles[0], physical_resource):
+            return "pending_adoption"
+        if (session_id in self._native_webrtc_live and session_id not in self._native_recovered_bindings
+                and physical != session_id and self._native_resources.current(session_id, physical)
+                and runtime.pending_native_negotiation(profiles[0], Resource("native", session_id),
+                                                       physical_resource)):
+            return "pending_negotiation"
+        return "unavailable"
 
     def _native_host_accounting(self):
         """Private bounded counts, including explicit unsupported observations."""
