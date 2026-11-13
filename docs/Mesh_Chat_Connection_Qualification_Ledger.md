@@ -1,5 +1,35 @@
 # Connection runtime qualification ledger
 
+Full run [43484445188](https://github.com/ahouchens/mesh-chat/actions/runs/43484445188)
+at `24494b3` is **failed**: eight jobs passed, both Direct jobs, both native
+interop jobs and the aggregate failed; two optional jobs were skipped. Policy
+passed 6,532 cases without failures or skips; UI passed 2,309 Python and 12
+rendered cases; Android passed 56 emulator and 83 exact JVM cases. Desktop
+public SDK pairing and eight reports, nine pipe cases and 72 layout cases passed.
+
+Linux Direct passed nine recovery cases and failed replacement's immediate
+signed-control receive-counter assertion after fresh authenticated recovery.
+The report lacks counter values and event ordering. Windows Direct passed eight
+and failed two initial admission calls at the existing 20-second worker reply
+limit, before recovery perturbation. Neither Direct job produced complete
+fabric/setup acceptance. The replacement fixture now waits for both original
+predicates within the same 180-second ceiling; the original final assertion
+remains. Worker timeout observations are test-only and preserve the original
+queue exception and deadlines.
+
+Both native peers reached all six reciprocal direct/TURN/impaired completion
+markers, then failed the first cold restart with zero receipt cycles complete.
+Android retained `forward_remove` / `CalledProcessError` / exit 1, instrumentation
+exited 255 with reader EOF, and an emulator still running. That does not establish
+a missing forward, unexpected instrumentation crash or emulator disconnection.
+Cleanup can mask an earlier stop error. Windows retained
+`windows_shutdown_failed`; the report cannot distinguish taskkill failure, wait
+timeout or failure while rolling back a new startup. `restarted=true` records the
+scheduled cold iteration, not successful startup. Exact native acceptance is
+still open. The next failure observations classify these lifecycle operations
+without accepting incomplete cleanup, changing WebRTC or widening deadlines.
+Helper retirement and later roadmap gates remain held behind full acceptance.
+
 Full run [43477424970](https://github.com/ahouchens/mesh-chat/actions/runs/43477424970)
 at `16eb381` is **failed**: nine jobs passed, Windows desktop public pairing and
 the aggregate gate failed, and native interop was skipped after the desktop

@@ -217,6 +217,7 @@ def android_lifecycle_failure(peer, emulator, error):
             return {}
         return {"android_lifecycle_failure": {
             "site": observed["site"], "exit_status": observed["exit_status"],
+            **{key: observed[key] for key in ("stderr_category", "prior_failure", "stop_origin", "masked_start_kind") if key in observed},
             "instrumentation_process": observed["instrumentation_process"],
             "instrumentation": observed["instrumentation"],
             "emulator_process": process_observation(getattr(emulator, "process", None)),

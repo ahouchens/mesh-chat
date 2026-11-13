@@ -25,7 +25,7 @@ from native_interop_core_observation import core_failure_observation
 from native_interop_carrier_observation import carrier_target
 from native_interop_android_observation import (
     BYTE_CAP, READ_CAP, InstrumentationStatus, android_lifecycle_snapshot,
-    android_transport_snapshot, process_observation,
+    android_transport_snapshot, process_observation, adb_stderr_category, stop_failure,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -369,12 +369,14 @@ class AndroidPeer:
         self.processes_started, self.clean_exits, self.forced_exits = 0, 0, 0
 
     def _adb(self, *args):
+        try: site = self._adb_lifecycle_site(args)
+        except Exception: site = None
         try:
-            return subprocess.check_output([self.adb, *args], stderr=subprocess.DEVNULL, timeout=30).decode().strip()
+            return subprocess.check_output([self.adb, *args],
+                stderr=subprocess.PIPE if site is not None else subprocess.DEVNULL, timeout=30).decode().strip()
         except subprocess.CalledProcessError as error:
             if type(error) is subprocess.CalledProcessError:
                 try:
-                    site = self._adb_lifecycle_site(args)
                     if site is not None:
                         status = self._instrumentation_status.snapshot() if self._instrumentation_status is not None else None
                         code = error.returncode
@@ -383,6 +385,7 @@ class AndroidPeer:
                             "exit_status": code if type(code) is int and -64 <= code <= 255 and code != 0 else None,
                             "instrumentation_process": process_observation(self.process),
                             "instrumentation": status,
+                            "stderr_category": adb_stderr_category(error.stderr, args),
                         })
                         if observed is not None:
                             self._lifecycle_failure = (error, observed)
@@ -448,8 +451,10 @@ class AndroidPeer:
             inventory = self.inventory()
             self._qualification_binding = self._initial_binding(inventory)
             return inventory
-        except Exception:
-            self.stop(crash=True)
+        except Exception as error:
+            try: kind = stop_failure("finish", error)["exception_kind"]
+            except Exception: kind = "other"
+            self.stop(crash=True, _origin="start_rollback", _masked_start_kind=kind)
             raise PeerFailure("android_host_start_failed") from None
 
     def _request(self, action, payload=None, *, timeout=60):
@@ -537,6 +542,16 @@ class AndroidPeer:
         except Exception:
             return None
 
+    def _observe_stop_failure(self, error, origin, masked_start_kind, prior_failure=None):
+        try:
+            observed = self._lifecycle_failure
+            if observed is not None and observed[0] is error:
+                detail = android_lifecycle_snapshot({**observed[1], "stop_origin": origin,
+                    **({"prior_failure": prior_failure} if prior_failure is not None else {}),
+                    **({"masked_start_kind": masked_start_kind} if origin == "start_rollback" else {})})
+                if detail is not None: self._lifecycle_failure = (error, detail)
+        except Exception: pass  # Keep the exact escaping lifecycle failure.
+
     def network_diagnostic(self, *, timeout):
         binding = self._qualification_binding
         if binding is None: return None
@@ -583,7 +598,7 @@ class AndroidPeer:
     def pairing_cancel(self, operation_id):
         return self._request("inspect", {"command": "qualification.pairing_cancel", "payload": {"operation_id": operation_id}})
 
-    def stop(self, *, crash=False, delete_profile=False):
+    def stop(self, *, crash=False, delete_profile=False, _origin="other_stop", _masked_start_kind="none"):
         self._lifecycle_failure = None
         self._core_failure = None
         self._qualification_binding = None
@@ -592,6 +607,8 @@ class AndroidPeer:
         if process is None:
             return
         finished = False
+        prior_failure = None
+        stage = "force_stop" if crash else "finish"
         try:
             if crash:
                 self._adb("shell", "am", "force-stop", self.APP)
@@ -602,26 +619,40 @@ class AndroidPeer:
                         or result.get("resources_retired") is not True or result.get("store_retired") is not True):
                     raise PeerFailure("android_retirement_unverified")
                 finished = True
+            stage = "process_wait"
             code = process.wait(timeout=30)
+            stage = "reader_join"
             self._reader.join(5)
             if not crash:
+                stage = "exit_check"
                 if code != 0 or self._reader.is_alive():
                     raise PeerFailure("unclean_android_exit")
                 self.clean_exits += 1
+        except Exception as error:
+            try: prior_failure = stop_failure(stage, error)
+            except Exception: pass  # Observation cannot replace the original stop failure.
+            try: self._observe_stop_failure(error, _origin, _masked_start_kind)
+            except Exception: pass
+            raise
         finally:
-            if self.socket is not None:
-                self.socket.close()
-                self.socket = None
-            if not crash and not finished:
-                self._adb("shell", "am", "force-stop", self.APP)
-            if self.forward is not None:
-                self._adb("forward", "--remove", "tcp:" + self.forward)
-                self.forward = None
-            if process.poll() is None:
-                process.kill()
-                process.wait(timeout=10)
-            process.stdout.close()
-            self.process = None
+            try:
+                if self.socket is not None:
+                    self.socket.close()
+                    self.socket = None
+                if not crash and not finished:
+                    self._adb("shell", "am", "force-stop", self.APP)
+                if self.forward is not None:
+                    self._adb("forward", "--remove", "tcp:" + self.forward)
+                    self.forward = None
+                if process.poll() is None:
+                    process.kill()
+                    process.wait(timeout=10)
+                process.stdout.close()
+                self.process = None
+            except Exception as error:
+                try: self._observe_stop_failure(error, _origin, _masked_start_kind, prior_failure)
+                except Exception: pass
+                raise
 
 
 class AndroidEmulator:

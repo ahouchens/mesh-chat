@@ -38,9 +38,9 @@ def test_lifecycle_adb_failure_records_exact_site_without_changing_command(
     with pytest.raises(subprocess.CalledProcessError) as caught:
         peer._adb(*arguments)
     assert caught.value is error
-    assert calls == [([peer.adb, *arguments], {"stderr": subprocess.DEVNULL, "timeout": 30})]
+    assert calls == [([peer.adb, *arguments], {"stderr": subprocess.PIPE, "timeout": 30})]
     observation = peer.failure_lifecycle_observation(error)
-    assert observation == {"v": 1, "site": site, "exit_status": 17,
+    assert observation == {"v": 1, "site": site, "exit_status": 17, "stderr_category": "other",
         "instrumentation_process": {"state": "running", "exit_status": None},
         "instrumentation": {"reader_eof": False, "code": None, "marker": "process_crash"}}
     process.code = 0
@@ -110,7 +110,7 @@ def test_lifecycle_report_uses_precleanup_emulator_state_and_no_private_text(mon
         peer._adb("shell", "am", "force-stop", peer.APP)
     projected = controller.android_lifecycle_failure(peer, emulator, error)
     assert projected == {"android_lifecycle_failure": {
-        "site": "force_stop", "exit_status": 7,
+        "site": "force_stop", "exit_status": 7, "stderr_category": "other",
         "instrumentation_process": {"state": "exited", "exit_status": -9},
         "instrumentation": {"reader_eof": False, "code": None, "marker": None},
         "emulator_process": {"state": "running", "exit_status": None},
@@ -234,6 +234,8 @@ def test_start_cleanup_failure_attributes_only_final_force_stop_error(monkeypatc
                      ["shell", "am", "force-stop", peer.APP]]
     assert peer.failure_lifecycle_observation(forward) is None
     assert peer.failure_lifecycle_observation(cleanup)["site"] == "force_stop"
+    assert peer.failure_lifecycle_observation(cleanup)["stop_origin"] == "start_rollback"
+    assert peer.failure_lifecycle_observation(cleanup)["masked_start_kind"] == "called_process_error"
     assert peer.process is None
 
 
