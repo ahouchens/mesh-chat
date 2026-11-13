@@ -165,7 +165,7 @@ NEGATIVE_CONTROL_REASONS = {
 FINAL_PATH_MISSING_REASONS = frozenset({"no_resource", "pending_adoption", "pending_negotiation", "adopted_not_true",
     "attached_not_true", "messaging_ready_not_true", "nonselected", "mixed", "unavailable"})
 FINAL_PATH_SKIP_REASONS = FINAL_PATH_MISSING_REASONS - {"mixed", "unavailable"}
-FINAL_EVIDENCE_SCENARIOS = frozenset({"direct", "turn_udp", "turn_tcp", "turn_tls", "impaired"})
+FINAL_EVIDENCE_SCENARIOS = frozenset({"direct", "turn_udp", "turn_tcp", "turn_tls", "impaired", "cold_start_receipts"})
 FINAL_TRAFFIC_IDENTITY_FIELDS = frozenset({"service_incarnation", "profile_incarnation", "logical_session",
     "resource", "adapter_epoch"})
 FINAL_TRAFFIC_COUNTER_FIELDS = frozenset({"enqueued_packets", "enqueued_controls", "enqueued_bytes",

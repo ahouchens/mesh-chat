@@ -516,7 +516,7 @@ class Controller:
             selected = final_evidence_failure_observation(record[3])
             if selected is not None:
                 scenario = selected["scenario"]
-                phases = {scenario + "_authenticated_receipts"}
+                phases = {scenario if scenario == "cold_start_receipts" else scenario + "_authenticated_receipts"}
                 if scenario in {"turn_tcp", "turn_tls", "impaired"}:
                     phases.add(scenario + "_kernel_block_negative_control")
                 if self.phase not in phases:
@@ -608,6 +608,8 @@ class Controller:
 
     def final_traffic(self, before, after, scenario):
         try:
+            if scenario == "cold_start_receipts":
+                return traffic(before, after)
             return self.negative_traffic(before, after)
         except Exception as error:
             try: details = traffic_failure_details(before, after)
@@ -1448,6 +1450,7 @@ class Controller:
         warm_host = None
         for index in range(self.workload["iterations"]):
             restarted = index % self.workload["cold_start_every"] == 0
+            self._final_evidence_failure = None
             self._cold_recheck = "unread"
             self._cold_retired_reads = 0
             self._cold_retired_reads_capped = False
@@ -1475,8 +1478,15 @@ class Controller:
             with self._cold_step(index, restarted, "exchange"):
                 message, previous_message = self.exchange("cold_start_receipts", index)
             with self._cold_step(index, restarted, "exact_path"):
-                after = self.observe(before["logical_session"], ready=True)
-                if after is None: raise ValueError("Cold-start receipt lost its exact native resource")
+                missing_reasons = set()
+                after = self.observe(before["logical_session"], ready=True, missing_reasons=missing_reasons)
+                if after is None:
+                    error = ValueError("Cold-start receipt lost its exact native resource")
+                    try: reason = final_path_missing_reason(missing_reasons)
+                    except Exception: reason = "unavailable"
+                    self._record_final_evidence_failure(error, "cold_start_receipts", "final_observation",
+                        {"reason": "path_missing", "skip_reason": reason})
+                    raise error
             with self._cold_step(index, restarted, "accounting"):
                 resources = len(self.peer.inventory()["resources"])
                 host_counts = self.wait(self.warm_counts, timeout=30)
@@ -1491,7 +1501,8 @@ class Controller:
                     "warm_baseline_resources": warm_resources, "previous_service": digest(previous),
                     "host_accounting": host_counts, "warm_baseline_host_accounting": warm_host,
                     "current_service": digest(current["service_incarnation"]), "identity": self.identity,
-                    "before": selection(before), "after": selection(after), "native_delta": traffic(before, after), "message": message})
+                    "before": selection(before), "after": selection(after),
+                    "native_delta": self.final_traffic(before, after, "cold_start_receipts"), "message": message})
             completed = index + 1
             if completed % self.workload["cold_start_every"] == 0 or completed == self.workload["iterations"]:
                 with self._cold_step(index, restarted, "complete_barrier"):
