@@ -49,6 +49,33 @@ PAIRING_OPEN_LABELS = {
     "ice": frozenset({"unread", "new", "checking", "connected", "completed", "disconnected", "failed", "closed", "unknown"}),
     "channel": frozenset({"unread", "connecting", "open", "closing", "closed", "unknown"}),
 }
+READINESS_STAGES = frozenset({"adopted_observation", "post_cancel_observation"})
+READINESS_OWNER_STATES = frozenset({"authorized", "pending_adoption", "unadopted", "unavailable"})
+READINESS_SKIPS = frozenset({"none", "no_resource", "pending_adoption", "adopted_not_true",
+    "attached_not_true", "messaging_ready_not_true", "nonselected"})
+
+
+def readiness_failure_snapshot(value):
+    """Validate a failure-only exact-resource projection before publishing it."""
+    fields = {"scenario", "stage", "polls", "polls_capped", "resource_count",
+        "resources_capped", "owner_state", "adopted", "skip_reason"}
+    if (type(value) is not dict or set(value) != fields
+            or type(value["scenario"]) is not str or value["scenario"] not in SCENARIOS[:5]
+            or type(value["stage"]) is not str or value["stage"] not in READINESS_STAGES
+            or type(value["polls"]) is not int or not 0 <= value["polls"] <= 128
+            or type(value["polls_capped"]) is not bool
+            or (value["polls_capped"] and value["polls"] != 128)
+            or (value["resource_count"] is not None and (
+                type(value["resource_count"]) is not int or not 0 <= value["resource_count"] <= 16))
+            or type(value["resources_capped"]) is not bool
+            or (value["resources_capped"] and value["resource_count"] != 16)
+            or type(value["owner_state"]) is not str or value["owner_state"] not in READINESS_OWNER_STATES | {"unknown"}
+            or (value["adopted"] is not None and type(value["adopted"]) is not bool)
+            or type(value["skip_reason"]) is not str or value["skip_reason"] not in READINESS_SKIPS):
+        return None
+    if (value["resource_count"] != 1 and (value["owner_state"] != "unknown" or value["adopted"] is not None)):
+        return None
+    return dict(value)
 
 
 def pairing_open_observation(value):
@@ -169,6 +196,7 @@ class Controller:
         self._pairing_open_last = None
         self._pairing_open_failure = None
         self._substage_failure: tuple[Exception, str] | None = None
+        self._readiness_active = self._readiness_failure = None
         self._retirement_context = self._retirement_failure = None
         self._path_diagnostics = None
         self._final_path_failure = None
@@ -224,6 +252,76 @@ class Controller:
             if type(reason) is str and reason in SAMPLE_REJECTION_REASONS:
                 selected["sample_rejection_reason"] = reason
         return selected
+
+    @contextmanager
+    def _readiness_scope(self, stage, scenario, logical):
+        self._readiness_failure = None
+        if (stage not in READINESS_STAGES or scenario not in SCENARIOS[:5]
+                or type(logical) is not str or not logical
+                or self.phase not in {scenario + "_supervisor_owned_pairing_windows",
+                                      scenario + "_supervisor_owned_pairing_android"}):
+            self._readiness_active = None
+        else:
+            observation = {"scenario": scenario, "stage": stage, "polls": 0, "polls_capped": False,
+                "resource_count": None, "resources_capped": False, "owner_state": "unknown",
+                "adopted": None, "skip_reason": "none"}
+            self._readiness_active = (self.phase, self.pairing, logical, observation)
+        try:
+            yield
+        except Exception as error:
+            active = self._readiness_active
+            if active is not None:
+                try: selected = readiness_failure_snapshot(active[3])
+                except Exception: selected = None
+                if selected is not None:
+                    self._readiness_failure = error, active[0], active[1], selected
+            raise
+        finally:
+            self._readiness_active = None
+
+    def _readiness_poll(self, logical, scenario):
+        active = self._readiness_active
+        if active is None:
+            return None
+        value = active[3]
+        if (active[0] != self.phase or active[1] != self.pairing or active[2] != logical
+                or value["scenario"] != scenario):
+            self._readiness_active = None
+            return None
+        if value["polls"] == 128:
+            value["polls_capped"] = True
+        else:
+            value["polls"] += 1
+        value.update(resource_count=None, resources_capped=False, owner_state="unknown",
+                     adopted=None, skip_reason="none")
+        return value
+
+    @staticmethod
+    def _readiness_inventory(observation, resources):
+        if observation is None:
+            return
+        count = len(resources)
+        observation["resource_count"] = min(count, 16)
+        observation["resources_capped"] = count > 16
+        if count == 1 and type(resources[0]) is dict:
+            state = resources[0].get("owner_state")
+            observation["owner_state"] = state if type(state) is str and state in READINESS_OWNER_STATES else "unknown"
+            adopted = resources[0].get("adopted")
+            observation["adopted"] = adopted if type(adopted) is bool else None
+
+    @staticmethod
+    def _readiness_skip(observation, reason):
+        if observation is not None and reason in READINESS_SKIPS:
+            observation["skip_reason"] = reason
+
+    def failure_readiness(self, error):
+        observed = self._readiness_failure
+        if (observed is None or observed[0] is not error or observed[1] != self.phase
+                or observed[2] != self.pairing):
+            return {}
+        try: selected = readiness_failure_snapshot(observed[3])
+        except Exception: selected = None
+        return {"readiness_observation": selected} if selected is not None else {}
 
     def failure_site(self, error):
         observed = self._operation_failure
@@ -613,11 +711,14 @@ class Controller:
             elif self.receive("approved") != {"approved": True}: raise ValueError("Peer approval was not explicit")
 
     def observe(self, logical=None, *, ready=True, scenario=None, missing_reasons=None):
+        observation = self._readiness_poll(logical, scenario)
         with self._substage("path_inventory"):
             inventory = self.peer.inventory()
             resources = [item for item in inventory["resources"] if logical is None or item["logical_session"] == logical]
+            self._readiness_inventory(observation, resources)
             if not resources:
                 record_final_path_skip(missing_reasons, "no_resource")
+                self._readiness_skip(observation, "no_resource")
                 return None
             if ready and len(resources) == 1:
                 owner_state = resources[0].get("owner_state")
@@ -627,6 +728,7 @@ class Controller:
                     return None
                 if type(owner_state) is str and owner_state == "pending_adoption":
                     record_final_path_skip(missing_reasons, "pending_adoption")
+                    self._readiness_skip(observation, "pending_adoption")
                     return None
         for resource in resources:
             with self._substage("path_read"):
@@ -644,9 +746,11 @@ class Controller:
                             break
                 if first_unready is not None:
                     record_final_path_skip(missing_reasons, first_unready)
+                    self._readiness_skip(observation, first_unready)
                     continue
                 if value.get("status") != "selected":
                     record_final_path_skip(missing_reasons, "nonselected")
+                    self._readiness_skip(observation, "nonselected")
                     continue
                 return self.samples.consume(value, inventory, requested, sample_request=sample_request, ready=ready, scenario=scenario)
         return None
@@ -815,15 +919,17 @@ class Controller:
         if self.contact is None: self.pair(session, initiator)
         with self._substage("transferred_status_wait"):
             self.wait(lambda: self.pairing_status().get("state") == "transferred", timeout=120)
-        with self._substage("adopted_observation"):
-            adopted = self.wait(lambda: self.observe(session, ready=True, scenario=scenario), timeout=120)
+        with self._readiness_scope("adopted_observation", scenario, session):
+            with self._substage("adopted_observation"):
+                adopted = self.wait(lambda: self.observe(session, ready=True, scenario=scenario), timeout=120)
         with self._substage("transferred_cancel"):
             cancelled = self.peer.pairing_cancel(self.pairing)
         with self._substage("transferred_cancel_check"):
             if cancelled.get("operation_id") != self.pairing or cancelled.get("state") != "transferred":
                 raise ValueError("Retired pairing intent tried to reclaim its transferred carrier")
-        with self._substage("post_cancel_observation"):
-            before = self.wait(lambda: self.observe(session, ready=True, scenario=scenario), timeout=120)
+        with self._readiness_scope("post_cancel_observation", scenario, session):
+            with self._substage("post_cancel_observation"):
+                before = self.wait(lambda: self.observe(session, ready=True, scenario=scenario), timeout=120)
         with self._substage("carrier_identity_check"):
             if any(adopted[name] != before[name] for name in
                    ("resource", "logical_session", "adapter_epoch", "service_incarnation")):
@@ -1089,6 +1195,7 @@ def main(*, gateway=None):
             result.update(controller.failure_pairing(error))
             result.update(controller.failure_pairing_open(error))
             result.update(controller.failure_observation(error))
+            result.update(controller.failure_readiness(error))
             result.update(controller.failure_rendezvous(error))
             result.update(controller.failure_retirement(error))
             result.update(controller.failure_negative_control(error))

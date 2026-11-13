@@ -1769,6 +1769,161 @@ def test_pending_then_revoked_is_not_cached_or_swallowed(path_observer):
     assert state.sleeps == [0.25] and state.controller.samples.previous == {}
 
 
+def readiness_case(state, *, scenario="turn_tls", initiator="windows"):
+    instance = state.controller
+    state.value["pair"]["relay_protocol"] = "tls"
+    instance.contact = {"id": "PRIVATE_CONTACT"}
+    instance.pairing = "PRIVATE_PAIRING"
+    def negotiate(*_):
+        instance.phase = scenario + "_supervisor_owned_pairing_" + initiator
+        return "logical", None
+    instance.negotiate = negotiate
+    instance.peer.pairing_status = lambda operation: {"operation_id": operation, "state": "transferred"}
+    return instance
+
+
+def test_readiness_denial_keeps_original_error_and_exact_adopted_stage(path_observer):
+    state = path_observer
+    instance = readiness_case(state)
+    state.inventory["resources"][0]["owner_state"] = "unavailable"
+    state.error = controller.PeerFailure("contact_not_approved")
+    with pytest.raises(controller.PeerFailure) as caught:
+        instance.path_case("turn_tls", "windows")
+    assert caught.value is state.error
+    assert instance.failure_observation(caught.value) == {"failure_substage": "path_read"}
+    assert instance.failure_readiness(caught.value) == {"readiness_observation": {
+        "scenario": "turn_tls", "stage": "adopted_observation", "polls": 1,
+        "polls_capped": False, "resource_count": 1, "resources_capped": False,
+        "owner_state": "unavailable", "adopted": True, "skip_reason": "none"}}
+    assert state.events == ["inventory", ("path", "logical", "physical")]
+    assert instance.failure_readiness(controller.PeerFailure("contact_not_approved")) == {}
+    instance.phase = "turn_udp_supervisor_owned_pairing_windows"
+    assert instance.failure_readiness(caught.value) == {}
+
+
+def test_readiness_denial_retains_exact_unadopted_inventory_without_changing_call(path_observer):
+    state = path_observer
+    instance = readiness_case(state)
+    state.inventory["resources"][0].update(owner_state="unadopted", adopted=False)
+    state.error = controller.PeerFailure("contact_not_approved")
+    with pytest.raises(controller.PeerFailure) as caught:
+        instance.path_case("turn_tls", "windows")
+    assert caught.value is state.error
+    value = instance.failure_readiness(caught.value)["readiness_observation"]
+    assert value["owner_state"] == "unadopted" and value["adopted"] is False
+    assert value["skip_reason"] == "none" and value["polls"] == 1
+    assert state.events == ["inventory", ("path", "logical", "physical")]
+
+
+def test_readiness_denial_after_cancel_has_distinct_outer_stage(path_observer):
+    state = path_observer
+    instance = readiness_case(state)
+    def cancel(operation):
+        state.error = controller.PeerFailure("contact_not_approved")
+        return {"operation_id": operation, "state": "transferred"}
+    instance.peer.pairing_cancel = cancel
+    with pytest.raises(controller.PeerFailure) as caught:
+        instance.path_case("turn_tls", "windows")
+    assert caught.value is state.error
+    assert instance.failure_readiness(caught.value)["readiness_observation"]["stage"] == "post_cancel_observation"
+    assert instance.failure_observation(caught.value) == {"failure_substage": "path_read"}
+    assert state.events == ["inventory", ("path", "logical", "physical"),
+                            "inventory", ("path", "logical", "physical")]
+
+
+def test_readiness_pending_deadline_caps_polls_without_extra_path_rpc(path_observer):
+    state = path_observer
+    instance = readiness_case(state)
+    state.inventory["resources"][0]["owner_state"] = "pending_adoption"
+    with pytest.raises(controller.PeerFailure) as caught:
+        instance.path_case("turn_tls", "windows")
+    assert caught.value.code == "scenario_deadline"
+    assert instance.failure_readiness(caught.value) == {"readiness_observation": {
+        "scenario": "turn_tls", "stage": "adopted_observation", "polls": 128,
+        "polls_capped": True, "resource_count": 1, "resources_capped": False,
+        "owner_state": "pending_adoption", "adopted": True, "skip_reason": "pending_adoption"}}
+    assert state.now == 130 and state.sleeps == [0.25] * 480
+    assert state.events == ["inventory"] * 480
+
+
+@pytest.mark.parametrize("kind,skip,reads", [
+    ("missing", "no_resource", 0), ("unready", "adopted_not_true", 2),
+])
+def test_readiness_failure_distinguishes_missing_resource_from_unready_path(
+        path_observer, kind, skip, reads):
+    state = path_observer
+    instance = readiness_case(state)
+    instance.negotiate("turn_tls", "windows")
+    if kind == "missing":
+        state.inventory["resources"] = []
+    else:
+        state.value["adopted"] = False
+    with pytest.raises(controller.PeerFailure) as caught:
+        with instance._readiness_scope("adopted_observation", "turn_tls", "logical"):
+            with instance._substage("adopted_observation"):
+                instance.wait(lambda: instance.observe("logical", scenario="turn_tls"), timeout=.5)
+    assert caught.value.code == "scenario_deadline"
+    value = instance.failure_readiness(caught.value)["readiness_observation"]
+    assert value["resource_count"] == (0 if kind == "missing" else 1)
+    assert value["skip_reason"] == skip and value["polls"] == 2
+    assert len(state.challenges) == reads and len(state.sleeps) == 2
+
+
+def test_broken_readiness_projection_cannot_replace_original_denial(path_observer, monkeypatch):
+    state = path_observer
+    instance = readiness_case(state)
+    state.error = controller.PeerFailure("contact_not_approved")
+    monkeypatch.setattr(controller, "readiness_failure_snapshot", lambda _: (_ for _ in ()).throw(
+        RuntimeError("PRIVATE_OBSERVER_ERROR")))
+    with pytest.raises(controller.PeerFailure) as caught:
+        instance.path_case("turn_tls", "windows")
+    assert caught.value is state.error and instance.failure_readiness(caught.value) == {}
+    assert state.events == ["inventory", ("path", "logical", "physical")]
+
+
+@pytest.mark.parametrize("mismatch", ["logical", "scenario"])
+def test_foreign_observe_inside_same_wait_cannot_inherit_prior_readiness_evidence(path_observer, mismatch):
+    state = path_observer
+    instance = readiness_case(state)
+    instance.negotiate("turn_tls", "windows")
+    state.inventory["resources"][0]["owner_state"] = "pending_adoption"
+    state.error = controller.PeerFailure("contact_not_approved")
+    with pytest.raises(controller.PeerFailure) as caught:
+        with instance._readiness_scope("adopted_observation", "turn_tls", "logical"):
+            assert instance.observe("logical", scenario="turn_tls") is None
+            state.inventory["resources"][0]["owner_state"] = "unavailable"
+            if mismatch == "logical":
+                state.inventory["resources"][0]["logical_session"] = "PRIVATE_FOREIGN"
+            instance.observe("PRIVATE_FOREIGN" if mismatch == "logical" else "logical",
+                             scenario="turn_udp" if mismatch == "scenario" else "turn_tls")
+    assert caught.value is state.error
+    assert instance.failure_readiness(caught.value) == {}
+    assert state.events == ["inventory", "inventory", ("path", "PRIVATE_FOREIGN" if mismatch == "logical" else "logical", "physical")]
+
+
+@pytest.mark.parametrize("resources,owner,adopted", [
+    (2, "unknown", None), (1, "unknown", None),
+])
+def test_readiness_denial_fails_closed_for_ambiguous_or_malformed_inventory(
+        path_observer, resources, owner, adopted):
+    state = path_observer
+    instance = readiness_case(state)
+    if resources == 2:
+        state.inventory["resources"].append(dict(state.inventory["resources"][0],
+            physical_resource="PRIVATE_OTHER"))
+    else:
+        state.inventory["resources"][0].update(owner_state={"PRIVATE": "STATE"},
+                                                adopted="PRIVATE_ADOPTION")
+    state.error = controller.PeerFailure("contact_not_approved")
+    with pytest.raises(controller.PeerFailure) as caught:
+        instance.path_case("turn_tls", "windows")
+    assert caught.value is state.error
+    value = instance.failure_readiness(caught.value)["readiness_observation"]
+    assert value["resource_count"] == resources and value["owner_state"] == owner
+    assert value["adopted"] is adopted and "PRIVATE" not in json.dumps(value)
+    assert state.events[:2] == ["inventory", ("path", "logical", "physical")]
+
+
 @pytest.mark.parametrize("field", ["adopted", "attached", "messaging_ready", "status"])
 def test_authorized_inventory_does_not_replace_actual_selected_path_readiness(path_observer, field):
     state = path_observer
@@ -1923,8 +2078,9 @@ def run_approval_report(tmp_path, monkeypatch, capsys, path_observer, role, faul
     def discover():
         value = inventory()
         if fault == "path_inventory": raise state.approval_error
-        pending = fault == "approval_ready_observation" or (fault == "adopted_observation" and state.challenges) or (
-            fault == "post_cancel_observation" and state.cancelled)
+        pending = (fault in {"approval_ready_observation", "adopted_report"}
+            or (fault == "adopted_observation" and state.challenges)
+            or (fault in {"post_cancel_observation", "post_cancel_report"} and state.cancelled))
         if pending: value["resources"][0]["owner_state"] = "pending_adoption"
         return value
     def sample(logical, physical, sample_request):
@@ -1989,6 +2145,13 @@ def run_approval_report(tmp_path, monkeypatch, capsys, path_observer, role, faul
             raise caught.value if fault == "stale_then_same" else state.approval_error
         if fault in {"transferred_status_wait", "adopted_observation", "transferred_cancel", "transferred_cancel_check", "post_cancel_observation", "carrier_identity_check"}:
             instance.negotiate = lambda *_: ("logical", None)
+            return instance.path_case("direct", "windows")
+        if fault in {"adopted_report", "post_cancel_report"}:
+            instance.contact = contact
+            def negotiate(*_):
+                instance.phase = "direct_supervisor_owned_pairing_windows"
+                return "logical", None
+            instance.negotiate = negotiate
             return instance.path_case("direct", "windows")
         instance.pair("logical", "windows")
         return {}  # Incomplete synthetic execution, never native evidence.
@@ -2164,6 +2327,22 @@ def test_actual_approval_report_retains_precise_substage_and_nested_site(tmp_pat
     assert controller.FAILURE_SUBSTAGES == frozenset({case[2] for case in APPROVAL_CASES} | {"path_validation"})
 
 
+@pytest.mark.parametrize("fault,stage", [("adopted_report", "adopted_observation"),
+                                        ("post_cancel_report", "post_cancel_observation")])
+def test_actual_failure_report_adds_only_bounded_exact_readiness_context(
+        tmp_path, monkeypatch, capsys, path_observer, fault, stage):
+    run = run_approval_report(tmp_path, monkeypatch, capsys, path_observer, "windows", fault)
+    assert run.code == 1 and run.record["error_code"] == "scenario_deadline"
+    assert run.record["phase"] == "direct_supervisor_owned_pairing_windows"
+    assert run.record["failure_substage"] == stage
+    assert run.record["readiness_observation"] == {
+        "scenario": "direct", "stage": stage, "polls": 128, "polls_capped": True,
+        "resource_count": 1, "resources_capped": False, "owner_state": "pending_adoption",
+        "adopted": True, "skip_reason": "pending_adoption"}
+    assert len(run.state.sleeps) == 480
+    assert "PRIVATE_" not in run.output and "logical" not in json.dumps(run.record["readiness_observation"])
+
+
 @pytest.mark.parametrize("reason", ["sample_request", "sample_timestamp", "selected_transport", "application_counters", "selected_pair_identity"])
 def test_actual_sample_rejection_report_contains_only_same_exception_reason(tmp_path, monkeypatch, capsys, path_observer, reason):
     run = run_approval_report(tmp_path, monkeypatch, capsys, path_observer, "android", reason)
@@ -2182,7 +2361,8 @@ def test_failure_metadata_never_attaches_to_foreign_stale_unknown_or_success(tmp
     else: assert "failure_substage" not in run.record
     if fault in {"success", "stale_then_success"}:
         assert run.code == 0 and run.record["passed"] is True
-        assert not {"failure_site", "pairing_state", "pairing_retirement", "failure_substage", "sample_rejection_reason"} & set(run.record)
+        assert not {"failure_site", "pairing_state", "pairing_retirement", "failure_substage", "sample_rejection_reason",
+                    "readiness_observation"} & set(run.record)
         with pytest.raises(ValueError): evidence.verify_report(run.record, "a" * 40, "b" * 40, "android")
     else: assert run.code == 1
     assert "PRIVATE_" not in run.output
