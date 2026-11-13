@@ -227,6 +227,19 @@ def android_lifecycle_failure(peer, emulator, error):
         return {}
 
 
+def windows_lifecycle_failure(peer, error):
+    """Project only the exact wrapped Windows shutdown failure."""
+    if type(error) is not PeerFailure:
+        return {}
+    try:
+        from native_interop_windows_observation import windows_lifecycle_snapshot
+        provider = getattr(peer, "failure_lifecycle_observation", None)
+        observed = windows_lifecycle_snapshot(provider(error)) if callable(provider) else None
+        return {"windows_lifecycle_failure": observed} if observed is not None else {}
+    except Exception:
+        return {}
+
+
 class Controller:
     def __init__(self, role, peer, transport, rendezvous, context, *, workload="full", coverage_factory=None):
         self.role, self.peer, self.transport, self.rendezvous, self.context = role, peer, transport, rendezvous, context
@@ -1480,7 +1493,7 @@ class Controller:
             with self._cold_step(index, restarted, "restart"):
                 previous = self.peer.inventory()["service_incarnation"]
                 if restarted:
-                    self.peer.stop(crash=True)
+                    self.peer.stop(crash=True, **({"_origin": "old_stop"} if self.role == "windows" else {}))
                     current = self.peer.start()
                     if current["service_incarnation"] == previous:
                         raise ValueError("Cold start reused the previous service incarnation")
@@ -1613,6 +1626,8 @@ def main(*, gateway=None):
                   "phase": controller.phase if controller is not None else phase, "failure_type": type(error).__name__}
         if isinstance(error, PeerFailure): result["error_code"] = error.code
         elif isinstance(getattr(error, "code", None), str): result["error_code"] = PeerFailure(error.code).code
+        if args.role == "windows":
+            result.update(windows_lifecycle_failure(peer, error))
         if args.role == "android":
             result.update(android_control_failure(peer, emulator, error))
             try: result.update(android_lifecycle_failure(peer, emulator, error))

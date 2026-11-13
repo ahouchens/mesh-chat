@@ -153,6 +153,7 @@ class WindowsPeer:
         self._exchange_lock = threading.Lock()
         self._pending_worker = None
         self._poisoned = False
+        self._lifecycle_failure = None
 
     def start(self):
         if self.process is not None:
@@ -193,8 +194,14 @@ class WindowsPeer:
                 raise PeerFailure("windows_core_pipe_unavailable") from None
             self.client = CoreClient.open(connection.readline, connection.write, connection.close)
             return self.inventory()
-        except Exception:
-            self.stop(crash=True)
+        except Exception as start_error:
+            try:
+                from native_interop_windows_observation import exception_kind
+                masked_kind = exception_kind(start_error)
+            except Exception:
+                masked_kind = "other"
+            self.stop(crash=True, _origin="start_rollback",
+                      _masked_start_kind=masked_kind)
             raise
 
     def private(self, command, payload=None):
@@ -279,30 +286,57 @@ class WindowsPeer:
     def pairing_cancel(self, operation_id):
         return self.private("qualification.pairing_cancel", {"operation_id": operation_id})
 
-    def stop(self, *, crash=False):
+    def failure_lifecycle_observation(self, error):
+        record = getattr(self, "_lifecycle_failure", None)
+        return dict(record[1]) if (type(record) is tuple and len(record) == 2
+                                  and record[0] is error) else None
+
+    def stop(self, *, crash=False, _origin="other_stop", _masked_start_kind="none"):
         process = self.process
         if process is None:
             return
+        self._lifecycle_failure = None
         failure, code = None, None
+        stage = "poll"
         try:
             if crash:
                 if process.poll() is None:
+                    stage = "kill_tree"
                     self._kill_tree(process)
                     self.forced_exits += 1
             elif self._poisoned:
+                stage = "shutdown"
                 raise PeerFailure("peer_poisoned")
             else:
+                stage = "shutdown"
                 self.private("shutdown")
+            stage = "wait"
             code = process.wait(timeout=30)
         except Exception as error:
             failure = error if isinstance(error, PeerFailure) else PeerFailure("windows_shutdown_failed")
+            try:
+                from native_interop_windows_observation import lifecycle_row
+                self._lifecycle_failure = (failure, lifecycle_row(
+                    _origin, stage, error, process, _masked_start_kind))
+            except Exception:
+                pass  # Optional attribution cannot replace the shutdown error.
         finally:
+            cleanup_stage = "poll"
             try:
                 if process.poll() is None:
+                    cleanup_stage = "kill_tree"
                     self._kill_tree(process)
+                    cleanup_stage = "wait"
                     process.wait(timeout=15)
-            except Exception:
-                if failure is None: failure = PeerFailure("windows_retirement_failed")
+            except Exception as error:
+                if failure is None:
+                    failure = PeerFailure("windows_retirement_failed")
+                    try:
+                        from native_interop_windows_observation import lifecycle_row
+                        self._lifecycle_failure = (failure, lifecycle_row(
+                            _origin, cleanup_stage, error, process, _masked_start_kind))
+                    except Exception:
+                        pass
             workers = [thread for thread in (self._pending_worker, self._reader, self._stderr) if thread is not None]
             for thread in workers:
                 thread.join(5)

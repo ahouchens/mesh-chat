@@ -112,6 +112,17 @@ def test_live_stale_command_record_is_not_reused():
     observer.close()
 
 
+def test_command_phase_change_during_site_read_cannot_publish_old_site(monkeypatch):
+    rows = iter(((1, probe._COMMAND["workspace_snapshot"],
+                  probe._PHASE["waiting_dispatch"], 2),
+                 (1, 2, 3, 42, 0, 0, 0),
+                 (1, probe._COMMAND["workspace_snapshot"],
+                  probe._PHASE["executing"], 3)))
+    monkeypatch.setattr(probe, "_read_row", lambda *_: next(rows))
+    note = probe.timeout_note(object(), 1, "workspace_snapshot", "alive")
+    assert note["phase"] == "unknown" and note["site"] == "unknown"
+
+
 def test_throwing_timeout_observer_preserves_original_empty(monkeypatch):
     shared = probe.new_probe()
     peers = _peers(shared)

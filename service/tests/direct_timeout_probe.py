@@ -22,7 +22,7 @@ _SRC = os.path.normcase(os.path.abspath(os.path.join(_TESTS, "..", "src", "mesh_
 _FILES = {
     os.path.join(_TESTS, "test_direct_setup_pipeline.py"): (1, "test_direct_setup_pipeline"),
     os.path.join(_TESTS, "test_direct_recovery_pipeline.py"): (2, "test_direct_recovery_pipeline"),
-    os.path.join(_TESTS, "test_direct_timeout_probe.py"): (3, "test_direct_timeout_probe"),
+    os.path.join(_TESTS, "connection", "test_direct_timeout_probe.py"): (3, "test_direct_timeout_probe"),
     os.path.join(_TESTS, "direct_app_host_fixture.py"): (4, "direct_app_host_fixture"),
     os.path.join(_SRC, "direct_setup.py"): (5, "direct_setup"),
     os.path.join(_SRC, "direct_candidates.py"): (6, "direct_candidates"),
@@ -174,9 +174,11 @@ def timeout_note(shared, expected_sequence, expected_label, liveness):
     if (command is None or command[0] != expected_sequence
             or _COMMAND_NAME.get(command[1]) != result["command"]):
         return result
-    result["phase"] = _PHASE_NAME.get(command[2], "unknown")
     site = _read_row(shared, _SG, (_SITE_SEQ, _SITE_REV, _SITE_FILE, _SITE_LINE,
                                     _OTHER_FILE, _OTHER_LINE, _TRUNCATED))
+    if _read_row(shared, _CG, (_SEQ, _LABEL, _PHASE_CODE, _REV)) != command:
+        return result
+    result["phase"] = _PHASE_NAME.get(command[2], "unknown")
     if (site is not None and site[0] == expected_sequence and site[1] == command[3]
             and result["phase"] in {"waiting_dispatch", "executing"}):
         result["site"] = _site(site[2], site[3])
