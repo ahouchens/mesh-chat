@@ -17,6 +17,9 @@ from .call_manager import CallOutcomeRequiresResync
 from .connection.diagnostics import (
     gather_failure_at_deadline, gather_failure_at_result, validated_gather_for_retirement,
 )
+from .connection.pairing_ice_diagnostics import (
+    ice_diagnostic, ufrag_pair, unavailable_ice_diagnostic, validated_pairing_ice_diagnostic,
+)
 from .connection.model import Phase, Resource
 from .connection.reconcile import authority_signature, connection_key
 from .errors import ContactNotApproved, NativeUnavailable, ValidationError
@@ -456,6 +459,20 @@ class NativePairingServiceMixin:
                                       "local_device_id": context["identity_hash"]})
                 result["retirement"] = self._connection_runtime.owner.pairing_retirement_diagnostic(
                     key=key, runtime_epoch=context["runtime_epoch"], source=context["source"])
+                if result["retirement"] == {"phase": "checking", "event": "tick", "reason": "phase_timeout"}:
+                    if "ice_diagnostic_snapshot" not in context:
+                        try:
+                            context["ice_diagnostic_snapshot"] = self._native_pairing_ice_diagnostic(
+                                operation_id, context)
+                        except Exception:
+                            context["ice_diagnostic_snapshot"] = unavailable_ice_diagnostic()
+                    try:
+                        selected = validated_pairing_ice_diagnostic(context["ice_diagnostic_snapshot"])
+                        result["ice_diagnostic"] = (selected if selected is not None
+                            and not self._native_pairing_ice_conflict(context, selected)
+                            else unavailable_ice_diagnostic())
+                    except Exception:
+                        result["ice_diagnostic"] = unavailable_ice_diagnostic()
                 if "gather_failure_snapshot" not in context:
                     try:
                         custody = self._connection_runtime.owner.pairing_gather_deadline_diagnostic(
@@ -485,6 +502,74 @@ class NativePairingServiceMixin:
                 if context["gather_failure_snapshot"] is not None:
                     result["gather_failure"] = dict(context["gather_failure_snapshot"])
             return result
+
+    def _native_pairing_ice_diagnostic(self, operation_id, context):
+        """One retained-SDP snapshot for the exact admitted terminal pairing."""
+        unavailable = unavailable_ice_diagnostic()
+        contexts = getattr(self, "_native_pairing_contexts", {})
+        if (type(contexts) is not dict or len(contexts) > 32 or contexts.get(operation_id) is not context
+                or context.get("id") != operation_id or context.get("state") not in {"retiring", "retired"}
+                or not context.get("admitted") or context.get("runtime_epoch") != self._runtime_incarnation
+                or context["identity"]() is not self._identity
+                or context.get("host") is not self._native_webrtc_host()
+                or context["authorized"]() is not True
+                or getattr(getattr(self, "_connection_runtime", None), "owner", None) is None
+                or self._connection_runtime.owner.runtime_epoch != context["runtime_epoch"]
+                or not isinstance(context.get("source"), Resource)
+                or type(context.get("physical")) is not str
+                or type(context.get("session")) is not str):
+            return unavailable
+        physical = self._native_resources.physical(context["session"])
+        if physical is not None and physical != context["physical"]:
+            return unavailable
+        pair = self._native_pairing_retained_sdp_pair(context)
+        if pair is None or context.get("role") not in {"offer", "answer"}:
+            return unavailable
+        local, remote = (pair if context["role"] == "offer" else pair[::-1])
+        selected = ice_diagnostic(local, remote)
+        if selected["availability"] != "selected":
+            return unavailable
+        return unavailable if self._native_pairing_ice_conflict(context, selected) else selected
+
+    def _native_pairing_retained_sdp_pair(self, context):
+        """Verify both retained signed documents without consulting native state."""
+        offer, answer = context.get("offer"), context.get("answer")
+        if type(offer) is not dict or type(answer) is not dict:
+            return None
+        offer_doc, answer_doc = offer.get("document"), answer.get("document")
+        if type(offer_doc) is not str or type(answer_doc) is not str:
+            return None
+        try:
+            verified_offer = self.verify_webrtc_onboarding_offer(offer_doc)
+            verified_answer = self.verify_webrtc_onboarding_answer(offer_doc, answer_doc)
+        except Exception:
+            return None
+        offer_sdp, answer_sdp = verified_offer.get("sdp"), verified_answer.get("sdp")
+        if (type(offer_sdp) is not str or type(answer_sdp) is not str
+                or ("sdp" in offer and offer["sdp"] != offer_sdp)
+                or ("sdp" in answer and answer["sdp"] != answer_sdp)):
+            return None
+        return offer_sdp, answer_sdp
+
+    def _native_pairing_ice_conflict(self, context, selected):
+        if selected["availability"] != "selected":
+            return False
+        contexts = getattr(self, "_native_pairing_contexts", {})
+        if type(contexts) is not dict or len(contexts) > 32:
+            return True
+        target_pair = frozenset(selected["correlation"].values())
+        if len(target_pair) != 2:
+            return True
+        for other in contexts.values():
+            if other is context or type(other) is not dict or not other.get("admitted"):
+                continue
+            if type(other.get("offer")) is not dict or type(other.get("answer")) is not dict:
+                continue
+            other_sdp = self._native_pairing_retained_sdp_pair(other)
+            other_pair = ufrag_pair(*other_sdp) if other_sdp is not None else None
+            if other_pair is None or other_pair == target_pair:
+                return True
+        return False
 
     @staticmethod
     def _native_pairing_projection(context):

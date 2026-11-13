@@ -17,6 +17,7 @@ from uuid import UUID
 
 from ..errors import ContactNotApproved, ValidationError
 from ..connection.diagnostics import validated_gather_for_retirement, validated_pairing_retirement
+from ..connection.pairing_ice_diagnostics import unavailable_ice_diagnostic, validated_pairing_ice_diagnostic
 from ..native_path_evidence import validate_sample_request
 
 PAIRING_COMMANDS = frozenset({"qualification.pairing_begin", "qualification.pairing_status", "qualification.pairing_cancel"})
@@ -383,6 +384,11 @@ class QualificationControl:
             gather = validated_gather_for_retirement(retirement, result.get("gather_failure"))
             if gather is not None:
                 projected["gather_failure"] = gather
+            if retirement == {"phase": "checking", "event": "tick", "reason": "phase_timeout"}:
+                if self._pairing_service() is not service:
+                    raise ContactNotApproved("Qualification service changed")
+                projected["ice_diagnostic"] = (validated_pairing_ice_diagnostic(
+                    result.get("ice_diagnostic")) or unavailable_ice_diagnostic())
         return projected
 
 
