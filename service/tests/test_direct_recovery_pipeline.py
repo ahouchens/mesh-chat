@@ -8,9 +8,11 @@ import multiprocessing
 import os
 import time
 import uuid
+from queue import Empty
 
 import pytest
 
+import direct_timeout_probe as timeout_probe
 from test_direct_setup_pipeline import _service_worker
 
 
@@ -241,20 +243,43 @@ class Peers:
         self.commands, self.replies, self.processes = [None]*2, [None]*2, [None]*2
         self.channels = list(self.pipes)
         self.keys = [os.urandom(32) for _ in range(2)]  # Python-only test custodian.
+        self._timeout_probes = [None, None]
+        self._command_sequences = [0, 0]
 
     def start(self, index):
         self.commands[index], self.replies[index] = [self.context.Queue(maxsize=2) for _ in range(2)]
         self.channels.extend((self.commands[index], self.replies[index]))
+        try:
+            self._timeout_probes[index] = timeout_probe.new_probe()
+        except Exception:
+            self._timeout_probes[index] = None
+        self._command_sequences[index] = 0
         process = self.context.Process(target=_service_worker,args=(str(self.root/str(index)),
             self.pipes[index],self.pipes[1-index],self.commands[index],self.replies[index],
-            self.binary,False,self.unhosted and index==1,self.keys[index]))
+            self.binary,False,self.unhosted and index==1,self.keys[index],self._timeout_probes[index]))
         process.start()
         self.processes[index] = process
         assert self.replies[index].get(timeout=20)["ok"]
 
     def call(self, index, operation, *, _diagnostic_timeout=None, **payload):
+        sequence = self._command_sequences[index] + 1
         self.commands[index].put((operation,payload),timeout=2 if _diagnostic_timeout is None else _diagnostic_timeout)
-        response = self.replies[index].get(timeout=20 if _diagnostic_timeout is None else _diagnostic_timeout)
+        self._command_sequences[index] = sequence
+        try:
+            response = self.replies[index].get(timeout=20 if _diagnostic_timeout is None else _diagnostic_timeout)
+        except Empty as error:
+            try:
+                process = self.processes[index]
+                liveness = ("alive" if process.is_alive() else "exited") if process is not None else "unknown"
+                note = {"peer": index, **timeout_probe.timeout_note(
+                    self._timeout_probes[index], sequence,
+                    timeout_probe.command_label(operation, payload), liveness)}
+                encoded = json.dumps(note, separators=(",", ":"))
+                if len(encoded) <= 320:
+                    error.add_note("direct_command_timeout:" + encoded)
+            except Exception:
+                pass  # Timeout attribution cannot replace the original Empty.
+            raise
         assert response["ok"], response
         return response.get("result")
 

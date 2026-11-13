@@ -521,7 +521,8 @@ class PipeNative:
     retire = close
 
 
-def _service_worker(root, incoming, outgoing, commands, replies, native_binary=None, delay_admission=False, unhosted=False, vault_key=None):
+def _service_worker(root, incoming, outgoing, commands, replies, native_binary=None, delay_admission=False,
+                    unhosted=False, vault_key=None, timeout_probe=None):
     import RNS
     from mesh_chat import connectivity as c
     from mesh_chat.errors import MeshChatError
@@ -697,6 +698,19 @@ def _service_worker(root, incoming, outgoing, commands, replies, native_binary=N
             raise
     service._direct_recovery._send=tracked_send
     service._direct_recovery.receive=tracked_receive
+    observer = None
+    if timeout_probe is not None:
+        try:
+            from direct_timeout_probe import WorkerProbe
+            observer = WorkerProbe(timeout_probe)
+        except Exception:
+            pass
+    def observe(method, *args):
+        if observer is not None:
+            try:
+                getattr(observer, method)(*args)
+            except Exception:
+                pass
     try:
         service.create_profile("Controlled peer")
         original_payload_ready = service.network.recipient_ready_for_fields
@@ -720,8 +734,16 @@ def _service_worker(root, incoming, outgoing, commands, replies, native_binary=N
                 break
             if operation == "crash":
                 os._exit(91)
+            if observer is not None:
+                try:
+                    from direct_timeout_probe import command_label
+                    observe("begin", command_label(operation, payload))
+                except Exception:
+                    pass
             try:
+                observe("waiting_dispatch")
                 with service._dispatch_lock:
+                    observe("executing")
                     if operation == "command":
                         result, _ = service.dispatch({"v":1,"id":str(uuid.uuid4()),**payload})
                         result = result["result"]
@@ -801,9 +823,12 @@ def _service_worker(root, incoming, outgoing, commands, replies, native_binary=N
                             "command":names[operation],"payload":payload})
                         result = result["result"]
                 replies.put({"ok":True,"result":result})
+                observe("reply_queued")
             except Exception as exc:
                 replies.put({"ok":False,"error":type(exc).__name__+":"+str(exc)})
+                observe("reply_queued")
     finally:
+        observe("close")
         service.close()
         native.close()
 
