@@ -257,6 +257,7 @@ def test_facade_application_snapshot_returns_ui_state(host):
 
 @pytest.mark.parametrize("message_count", [30, 256])
 def test_client_accepts_real_message_history_above_request_token_budget(host, message_count):
+    from mesh_chat.core_api.wire_codec import decode_frame, encode_frame
     service = host()
     owner = HostedClient(service, frozenset({"observe", "read", "send", "approve"}))
     try:
@@ -268,7 +269,10 @@ def test_client_accepts_real_message_history_above_request_token_budget(host, me
             assert client.enqueue(profile, peer, text, f"history-receipt-{index:04d}")["accepted"]
         snapshot = client.application_snapshot()
         assert {item["text"] for item in snapshot["messages"]} == texts
-        assert len(json.dumps(snapshot).encode()) < 4 * 1024 * 1024
+        wire = encode_frame({"api_version": 1, "request_id": "history:1", "ok": True, "result": snapshot})
+        assert len(wire) < 4 * 1024 * 1024
+        with pytest.raises(ValueError, match="structural budget"):
+            decode_frame(wire)
         assert client.request("runtime.capabilities")["api_major"] == 1
     finally:
         owner.close()
