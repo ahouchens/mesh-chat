@@ -8,6 +8,7 @@ import { launchRuntime, launchRefusedRuntime } from "./runtime.mjs";
 import { freshRelaySettings } from "./relay-settings.mjs";
 import { ERROR_CODES, invitationWaitObserver, pairingDiagnostics, probePairingFailure } from "./pairing-diagnostics.mjs";
 import { connectionMessagingReady } from "./connection-readiness.mjs";
+import { collectOwnerPairingDiagnostics, readOwnerPairingDiagnostic } from "./owner-pairing-diagnostic.mjs";
 
 let phase = "arguments";
 const diagnostics = pairingDiagnostics();
@@ -65,13 +66,26 @@ async function retire(peer) {
   let detachFailed = false;
   const facts = peer.cleanup;
   facts.attempts++;
+  let stopping;
+  if (primaryFailure && peer.incarnation === 1 && peer.pairing && ["offerer", "answerer"].includes(peer.role)) {
+    facts.budget_ms = Math.max(0, Math.min(30000, deadline - Date.now()));
+    // Capture before SDK detach can revoke the intent. This is the same one-shot stop attempt.
+    stopping = peer.runtime.stop(facts.budget_ms).then(value => ({ok:true,value}), error => ({ok:false,error}));
+    try { peer.ownerDiagnostic = await readOwnerPairingDiagnostic(peer); }
+    catch { peer.ownerDiagnostic = {outcome:"not_received"}; }
+  }
   for (const endpoint of [...peer.clients, ...peer.transports]) {
     try { endpoint.close(); } catch { detachFailed = true; }
   }
   facts.detach = detachFailed ? "failed" : "ok";
-  facts.budget_ms = Math.max(0, Math.min(30000, deadline - Date.now()));
+  if (!stopping) facts.budget_ms = Math.max(0, Math.min(30000, deadline - Date.now()));
   try {
-    const completion = await peer.runtime.stop(facts.budget_ms);
+    let completion;
+    if (stopping) {
+      const result = await stopping;
+      if (!result.ok) throw result.error;
+      completion = result.value;
+    } else completion = await peer.runtime.stop(facts.budget_ms);
     if (completion?.stopped !== true || completion.exit_code !== (peer.rejected ? 2 : 0)
         || (peer.rejected && (completion.refused !== true || completion.error !== "unavailable"))) throw new Error("retirement_incomplete");
     facts.stop = "completed";
@@ -113,7 +127,7 @@ async function create(executable, directory, name, role, owned) {
   const peer = { runtime: null, client: null, role, directory, clients: new Set(), transports: new Set() };
   own(owned, peer); // Retain lifetime even if startup or SDK negotiation fails.
   retainRuntime(peer, await launchRuntime(executable, directory,
-    { timeoutMs: budget(), onOwned: runtime => { retainRuntime(peer, runtime); } }));
+    { timeoutMs: budget(), pairingDiagnostics: true, onOwned: runtime => { retainRuntime(peer, runtime); } }));
   peer.client = await attach(peer);
   const client = peer.client;
   if (client.capabilities.profiles.length !== 1 || client.capabilities.operations.includes("native.command")) throw new Error();
@@ -396,8 +410,12 @@ async function check(executable, directory) {
         diagnostics.enter("retirement");
         const error = new Error("retirement_incomplete");
         freezeFailure(error, "cleanup_failure");
+        try { diagnostics.ownerProbe(collectOwnerPairingDiagnostics(owned)); } catch { /* Observation only. */ }
         throw error;
       }
+    }
+    if (primaryFailure) {
+      try { diagnostics.ownerProbe(collectOwnerPairingDiagnostics(owned)); } catch { /* Observation only. */ }
     }
     phase = primaryFailure?.phase ?? previous;
   }

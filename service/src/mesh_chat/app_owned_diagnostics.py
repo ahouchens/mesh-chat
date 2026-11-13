@@ -35,8 +35,8 @@ class PairingProvenance:
 def capture_public_pairing(service, record_id, row, context):
     """Retain admission proof under the existing dispatch/store snapshot.
 
-    The caller has already committed or loaded the exact durable row. This
-    one-row read verifies the committed value before storing private proof;
+    The caller has already committed or loaded the exact durable row under
+    the store snapshot. Capture verifies its index without rereading it;
     observation at EOF performs no vault or database operations.
     """
     try:
@@ -56,7 +56,6 @@ def _capture_public_pairing(service, record_id, row, context):
             return
     store = service.store
     if (record_id != store.opaque_id("core-pairing-intent:v1", APP_CALLER, "local", row["pairing"])
-            or store.get("api_pairing_intent", record_id) != row
             or service._native_pairing_contexts.get(row["native_id"]) is not context
             or context.get("id") != row["native_id"]
             or context.get("runtime_epoch") != row["runtime_epoch"]

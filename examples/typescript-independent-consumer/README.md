@@ -72,6 +72,16 @@ The public pairing disclosure option governs gathering; it does not grant
 persistent per-contact direct-IP messaging consent. This check uses the supported
 relay-only route and never injects that separate consent through a private API.
 
+The qualification pairing check opts into a one-shot owner diagnostic with
+`MESH_CHAT_APP_PAIRING_DIAGNOSTICS=1`; ordinary launches leave it disabled.
+After a public failure, the owner sends EOF and observes the exact child's
+bounded terminal pairing cause before SDK detachment and service cleanup.
+The additional observation window is at most two seconds, shared concurrently
+by the original two hosts. A missed window remains unavailable even if a frame
+arrives later. Only fixed phase/event/reason labels are retained, with no
+documents or identifiers. This private lifetime observation grants no Core
+capability and never satisfies pairing, receipt, or shutdown acceptance.
+
 Input and output are bounded newline-delimited JSON on dedicated inherited
 streams. Each input contains `id`, `operation`, `params`, and, for a keyed
 mutation, the caller's explicit `idempotency_key`. The operation allowlist covers

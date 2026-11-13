@@ -214,6 +214,53 @@ def invitation_observation_details(value):
                 raise ValueError("Invitation actor failure contains extra fields")
 
 
+def owner_retirement_details(value):
+    if (type(value) is not dict or set(value) != {"scope", "budget_ms", "peers"}
+            or value["scope"] != "trusted_owner_before_cleanup" or type(value["budget_ms"]) is not int
+            or value["budget_ms"] != 2000 or type(value["peers"]) is not dict
+            or set(value["peers"]) - {"offerer", "answerer"}):
+        raise ValueError("Owner diagnostic envelope is invalid")
+    phases = {"discover", "wait_offer", "gather_offer", "gather_answer", "publish_offer", "publish_answer",
+              "wait_answer", "apply_answer", "checking", "unknown"}
+    events = {"tick", "failed", "result", "adopted", "context_changed", "handoff_rejected", "unknown"}
+    reasons = {"transient", "rate_limited", "configuration", "invalid_document", "revoked", "unsupported",
+               "internal", "phase_timeout", "ineligible", "context_changed", "network_unavailable", "wrong_resource",
+               "invalid_adoption", "invalid_handoff", "invalid_pending", "unverified_resource", "missing_handoff",
+               "handoff_rejected", "unknown"}
+    for role, result in value["peers"].items():
+        if type(result) is not dict or type(result.get("outcome")) is not str:
+            raise ValueError("Owner diagnostic outcome is invalid")
+        if result["outcome"] in {"not_received", "invalid_result"}:
+            if set(result) != {"outcome"}:
+                raise ValueError("Owner diagnostic failure contains extra fields")
+            continue
+        if result["outcome"] != "received" or set(result) != {"outcome", "observation"}:
+            raise ValueError("Owner diagnostic outcome is invalid")
+        observed = result["observation"]
+        if (type(observed) is not dict or set(observed) != {"status", "total_intents", "intents"}
+                or type(observed["status"]) is not str or observed["status"] not in {"observed", "unavailable"}
+                or type(observed["total_intents"]) is not int or not 0 <= observed["total_intents"] <= 32
+                or type(observed["intents"]) is not list):
+            raise ValueError("Owner diagnostic observation is invalid")
+        if observed["status"] == "unavailable":
+            if observed["intents"]:
+                raise ValueError("Unavailable owner diagnostic contains an intent")
+            continue
+        if observed["total_intents"] != 1 or len(observed["intents"]) != 1:
+            raise ValueError("Owner diagnostic intent attribution is ambiguous")
+        intent = observed["intents"][0]
+        if (type(intent) is not dict or set(intent) != {"role", "state", "retirement"}
+                or intent["role"] != ("offer" if role == "offerer" else "answer")
+                or type(intent["state"]) is not str or intent["state"] not in PAIRING_STATES - {"unknown"}):
+            raise ValueError("Owner diagnostic intent is invalid")
+        cause = intent["retirement"]
+        if cause is not None and (intent["state"] not in {"retiring", "retired"} or type(cause) is not dict
+                or set(cause) != {"phase", "event", "reason"}
+                or any(type(cause[key]) is not str or cause[key] not in choices
+                       for key, choices in (("phase", phases), ("event", events), ("reason", reasons)))):
+            raise ValueError("Owner diagnostic retirement is invalid")
+
+
 def failure_details(value):
     if (not isinstance(value, dict) or set(value) != {"passed", "phase", "error_code", "diagnostics"}
             or value["passed"] is not False or value["phase"] not in PHASES
@@ -222,7 +269,7 @@ def failure_details(value):
     diagnostics = value["diagnostics"]
     if (not isinstance(diagnostics, dict) or set(diagnostics) - {
                 "subphase", "deadline_exhausted", "peers", "failure_probe", "stage_timing", "post_accept_reads",
-                "failure_origin", "cleanup", "public_diagnostics", "invitation_observation"}
+                "failure_origin", "cleanup", "public_diagnostics", "invitation_observation", "owner_retirement"}
             or not {"subphase", "deadline_exhausted", "peers", "failure_origin", "cleanup"} <= set(diagnostics)
             or diagnostics["subphase"] not in SUBPHASES[value["phase"]]
             or type(diagnostics["deadline_exhausted"]) is not bool
@@ -232,6 +279,8 @@ def failure_details(value):
             or (diagnostics["failure_origin"] == "cleanup_failure" and value["phase"] != "retirement")):
         raise ValueError("Pairing failure origin is invalid")
     cleanup_details(diagnostics["cleanup"])
+    if "owner_retirement" in diagnostics:
+        owner_retirement_details(diagnostics["owner_retirement"])
     if "public_diagnostics" in diagnostics:
         public_diagnostic_details(diagnostics["public_diagnostics"])
     if "invitation_observation" in diagnostics:

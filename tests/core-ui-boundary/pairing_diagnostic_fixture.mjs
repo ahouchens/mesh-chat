@@ -48,7 +48,17 @@ function launch(_executable, directory, options = {}, rejected = false) {
   const owner = {role,incarnation,alive:true,sessions:0,opened:0,store:storeFor(role),rejected};
   if (!rejected) owners.set(role, owner);
   log({event:rejected ? "contender_start" : "start",role,incarnation,timeout:options.timeoutMs});
-  const runtime = {pipe:owner,stop:async remaining => {
+  let stopRequested = false;
+  const runtime = {pipe:owner,pairingDiagnostic:async timeout => {
+    log({event:"owner_diagnostic",role,incarnation,timeout,stopRequested,enabled:options.pairingDiagnostics === true});
+    if (!stopRequested || !options.pairingDiagnostics) throw new Error("PRIVATE_INVALID_PROBE");
+    const observed = {status:"observed",total_intents:1,intents:[{role:role === "offerer" ? "offer" : "answer",
+      state:"retired",retirement:{phase:role === "offerer" ? "apply_answer" : "checking",event:"failed",reason:"invalid_document"}}]};
+    if (process.env.PAIRING_OWNER_DIAGNOSTIC === "wrong_role") observed.intents[0].role = "answer";
+    if (process.env.PAIRING_OWNER_DIAGNOSTIC === "extra") observed.intents[0].raw = "PRIVATE_PAYLOAD";
+    return {outcome:"received",observation:observed};
+  },stop:async remaining => {
+    stopRequested = true;
     log({event:"stop",role:rejected ? "contender" : role,incarnation,remaining});
     if (probeMode === "retirement_failure" || (fault === "refused_alive" && rejected)
         || (probeMode === "zero_budget_failure" && remaining === 0)

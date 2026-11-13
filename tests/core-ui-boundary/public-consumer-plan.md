@@ -1,5 +1,22 @@
 # Independent public consumer qualification proposal
 
+Full run [43349556210](https://github.com/ahouchens/mesh-chat/actions/runs/43349556210)
+at `3094405` is **failed**: nine jobs passed, the packaged Windows public-pairing
+job and aggregate gate failed, and native interop was skipped. Policy passed
+5,950 cases; UI boundary passed 2,071 Python and 12 rendered cases; Android passed
+83 JVM and 56 emulator cases; each direct platform passed 25 fabric, 10 recovery
+and 12 setup cases. These results do not establish cross-platform acceptance.
+
+Windows failed at `explicit_approval/invitation_wait`. The offerer was waiting
+for an answer at five seconds and retired by twenty seconds; its first cause
+was not retained. The current `ineligible` observation is not that cause, and
+no response-parser error was reported. A default-off trusted-owner diagnostic
+now captures the exact public intent's bounded terminal phase/event/reason
+before client detach and host cleanup. It adds no public operation or authority,
+changes no work deadline or success criterion, and cannot turn missing cleanup
+acknowledgment into success. Full native qualification and helper retirement
+remain open; the WebRTC dependency is unchanged.
+
 Native run [43342460513](https://github.com/ahouchens/mesh-chat/actions/runs/43342460513)
 at `10365b3` passed all ten non-native jobs but remains **failed**. Android
 published `impaired_ready`; Windows then failed at receipt-inbound polling with

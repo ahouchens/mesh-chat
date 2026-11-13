@@ -3,6 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { observeRuntime, observeRuntimeRefusal } from "../../examples/typescript-independent-consumer/runtime.mjs";
+import { ownerPairingObservation, collectOwnerPairingDiagnostics } from "../../examples/typescript-independent-consumer/owner-pairing-diagnostic.mjs";
 
 const pipe = "\\\\.\\pipe\\mesh-chat-independent-component";
 const prelude = `
@@ -15,11 +16,11 @@ function frame(value) {
 function send(type, fields={}) { process.stdout.write(frame({v:1,type,...fields})); }
 process.stdin.resume();
 `;
-function run(script, timeout = 5000) {
+function run(script, timeout = 5000, options = {}) {
   const child = spawn(process.execPath, ["--input-type=module", "-e", prelude + script], {
     stdio: ["pipe", "pipe", "pipe"], windowsHide: true,
   });
-  return observeRuntime(child, pipe, timeout);
+  return observeRuntime(child, pipe, timeout, options);
 }
 
 test("fragmented startup and deferred retirement require the final process acknowledgement", async () => {
@@ -141,4 +142,90 @@ test("exhausted retirement budget still sends EOF and cannot accept a later exit
     if (child.exitCode === null) child.kill();
     await closed;
   }
+});
+
+test("opted-in owner diagnostic survives an exhausted cleanup observation without proving retirement", async () => {
+  const observation = {status:"observed",total_intents:1,intents:[{role:"offer",state:"retired",
+    retirement:{phase:"apply_answer",event:"failed",reason:"invalid_document"}}]};
+  const child = spawn(process.execPath, ["--input-type=module", "-e", prelude + `
+    send('runtime_started',{pipe});
+    process.stdin.on('end',()=>setTimeout(()=>{
+      send('runtime_pairing_diagnostics',{observation:${JSON.stringify(observation)}});
+      send('runtime_stopped'); process.exitCode=0;
+    },40));`], {stdio:["pipe","pipe","pipe"],windowsHide:true});
+  const closed = new Promise(resolve => child.once("close", resolve));
+  const runtime = observeRuntime(child, pipe, 5000, {pairingDiagnostics:true});
+  try {
+    await runtime.ready;
+    await assert.rejects(runtime.stop(0), /app_owned_runtime_retirement_pending/);
+    assert.deepEqual(await runtime.pairingDiagnostic(2000), {outcome:"received",observation});
+  } finally {
+    await closed;
+  }
+});
+
+const observedRetirement = {status:"observed",total_intents:1,intents:[{role:"offer",state:"retired",
+  retirement:{phase:"apply_answer",event:"failed",reason:"invalid_document"}}]};
+
+for (const [name, mutate] of [
+  ["extra raw field", value => { value.intents[0].sdp = "DO_NOT_RETAIN"; }],
+  ["multiple intents", value => { value.total_intents = 2; value.intents.push(value.intents[0]); }],
+  ["unsafe cause", value => { value.intents[0].retirement.reason = "DO_NOT_RETAIN"; }],
+  ["cause on a nonterminal intent", value => { value.intents[0].state = "offer_ready"; }],
+  ["unavailable with an intent", value => { value.status = "unavailable"; }],
+  ["oversized count", value => { value.total_intents = 33; }],
+  ["boolean count", value => { value.total_intents = true; }],
+]) {
+  test(`owner diagnostic rejects ${name} without retaining payload`, async () => {
+    const invalid = structuredClone(observedRetirement);
+    mutate(invalid);
+    assert.throws(() => ownerPairingObservation(invalid), /invalid_owner_diagnostic/);
+    const runtime = run(`send('runtime_started',{pipe});process.stdin.on('end',()=>{
+      send('runtime_pairing_diagnostics',{observation:${JSON.stringify(invalid)}});
+      send('runtime_stopped');process.exitCode=0;});`, 5000, {pairingDiagnostics:true});
+    await runtime.ready;
+    assert.deepEqual(await runtime.stop(), {stopped:true,exit_code:0});
+    assert.deepEqual(await runtime.pairingDiagnostic(), {outcome:"invalid_result"});
+  });
+}
+
+test("default lifetime observer rejects an unsolicited diagnostic frame", async () => {
+  const runtime = run(`send('runtime_started',{pipe});process.stdin.on('end',()=>{
+    send('runtime_pairing_diagnostics',{observation:${JSON.stringify(observedRetirement)}});
+    send('runtime_stopped');process.exitCode=0;});`);
+  await runtime.ready;
+  await assert.rejects(runtime.stop(), /app_owned_runtime_unavailable/);
+});
+
+test("duplicate diagnostic is unavailable and cannot replace its original cause", async () => {
+  const runtime = run(`send('runtime_started',{pipe});process.stdin.on('end',()=>{
+    send('runtime_pairing_diagnostics',{observation:${JSON.stringify(observedRetirement)}});
+    send('runtime_pairing_diagnostics',{observation:{status:'unavailable',total_intents:0,intents:[]}});
+    send('runtime_stopped');process.exitCode=0;});`, 5000, {pairingDiagnostics:true});
+  await runtime.ready;
+  await runtime.stop();
+  assert.deepEqual(await runtime.pairingDiagnostic(), {outcome:"invalid_result"});
+});
+
+test("diagnostic absence does not change valid lifecycle completion", async () => {
+  const runtime = run("send('runtime_started',{pipe});process.stdin.on('end',()=>send('runtime_stopped'));",
+    5000, {pairingDiagnostics:true});
+  await runtime.ready;
+  assert.deepEqual(await runtime.pairingDiagnostic(0), {outcome:"not_received"});
+  await runtime.stop();
+  assert.deepEqual(await runtime.pairingDiagnostic(), {outcome:"not_received"});
+});
+
+test("a frame arriving after the pre-detach observation window cannot become failure evidence", async () => {
+  const runtime = run(`send('runtime_started',{pipe});process.stdin.on('end',()=>setTimeout(()=>{
+    send('runtime_pairing_diagnostics',{observation:${JSON.stringify(observedRetirement)}});
+    send('runtime_stopped');process.exitCode=0;},100));`, 5000, {pairingDiagnostics:true});
+  await runtime.ready;
+  const completion = runtime.stop();
+  const peer = {role:"offerer",incarnation:1,pairing:"local-only",runtime,
+    ownerDiagnostic:await runtime.pairingDiagnostic(10)};
+  assert.deepEqual(peer.ownerDiagnostic, {outcome:"not_received"});
+  await completion;
+  assert.equal((await runtime.pairingDiagnostic()).outcome, "received");
+  assert.deepEqual(collectOwnerPairingDiagnostics([peer]).peers.offerer, {outcome:"not_received"});
 });

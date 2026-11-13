@@ -149,6 +149,7 @@ export function pairingDiagnostics(monotonicNow = () => performance.now()) {
   let subphase = "arguments";
   let failureProbe;
   let publicDiagnostics;
+  let ownerDiagnostics;
   let failureOrigin = "unknown";
   let startedAt;
   let failureFrozen = false;
@@ -245,6 +246,7 @@ export function pairingDiagnostics(monotonicNow = () => performance.now()) {
     },
     probe(value) { failureProbe = value; },
     publicProbe(value) { publicDiagnostics = value; },
+    ownerProbe(value) { ownerDiagnostics = value; },
     owned(role, incarnation) {
       if (!["offerer", "answerer", "contender"].includes(role) || !Number.isInteger(incarnation)
           || incarnation < 1 || incarnation > (role === "offerer" ? 2 : 1) || cleanup.length >= 4
@@ -260,6 +262,7 @@ export function pairingDiagnostics(monotonicNow = () => performance.now()) {
         ...(postAcceptReads ? { post_accept_reads: structuredClone(postAcceptReads) } : {}),
         ...(invitationObservation ? { invitation_observation: structuredClone(invitationObservation) } : {}),
         ...(failureProbe !== undefined ? { failure_probe: structuredClone(failureProbe) } : {}),
+        ...(ownerDiagnostics !== undefined ? { owner_retirement: structuredClone(ownerDiagnostics) } : {}),
         ...(publicDiagnostics !== undefined ? { public_diagnostics: structuredClone(publicDiagnostics) } : {}) };
     },
   };

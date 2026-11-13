@@ -211,11 +211,12 @@ def test_diagnostic_error_cannot_suppress_cleanup(tmp_path, monkeypatch):
 
 
 def test_eof_observation_never_reads_the_vault(tmp_path, monkeypatch):
-    service, _, _, _ = service_with_one_public_intent()
+    service, context, row, _ = service_with_one_public_intent(capture=False)
     def forbidden(*_args, **_kwargs):
-        pytest.fail("EOF diagnostic read the vault")
+        pytest.fail("Diagnostic reread the vault")
     service.store.get = forbidden
     service.store.items = forbidden
+    diagnostics.capture_public_pairing(service, "secret-row-id", row, context)
     service.store.opaque_id = forbidden
     status, messages, _ = launch(tmp_path, monkeypatch, service, "1")
     assert status == 0

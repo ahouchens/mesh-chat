@@ -29,6 +29,64 @@ import verify_android_independent_consumer as android_distribution
 import stage_android_independent_consumer as android_staging
 
 
+@pytest.mark.parametrize("fault", [None, "extra", "wrong_role"])
+def test_owner_diagnostic_is_failure_only_and_does_not_replace_public_pairing_outcome(tmp_path, fault):
+    node, _ = staging.tools()
+    log = tmp_path / "owner-diagnostic.jsonl"
+    completed = subprocess.run([node, "--import", (staging.ROOT /
+        "tests/core-ui-boundary/pairing_diagnostic_fixture.mjs").as_uri(),
+        str(staging.APPLICATION / "pairing-check.mjs"), "--runtime", "unused", "--data-directory", "unused"],
+        cwd=staging.ROOT, env={**os.environ, "PAIRING_DIAGNOSTIC_FAULT": "invitation_wait",
+            "PAIRING_DIAGNOSTIC_LOG": str(log), "PAIRING_OWNER_DIAGNOSTIC": fault or "valid"},
+        capture_output=True, text=True, timeout=15)
+    assert completed.returncode == 1
+    details = pairing.failure_details(json.loads(completed.stdout))
+    assert details["application_phase"] == "explicit_approval"
+    assert details["diagnostics"]["subphase"] == "invitation_wait"
+    assert details["diagnostics"]["failure_origin"] == "wait_deadline"
+    owner = details["diagnostics"]["owner_retirement"]
+    assert owner["scope"] == "trusted_owner_before_cleanup" and owner["budget_ms"] == 2000
+    offerer = owner["peers"]["offerer"]
+    if fault is None:
+        assert offerer["observation"]["intents"][0]["retirement"] == {
+            "phase": "apply_answer", "event": "failed", "reason": "invalid_document"}
+    else:
+        assert offerer == {"outcome": "invalid_result"}
+    events = [json.loads(line) for line in log.read_text().splitlines()]
+    probes = [event for event in events if event["event"] == "owner_diagnostic"]
+    assert len(probes) == 2 and {event["role"] for event in probes} == {"offerer", "answerer"}
+    assert all(event["stopRequested"] and event["enabled"] and event["incarnation"] == 1
+               and event["timeout"] == 2000 for event in probes)
+    for role in ("offerer", "answerer"):
+        sequence = [event["event"] for event in events if event.get("role") == role]
+        assert sequence.index("stop") < sequence.index("owner_diagnostic") < sequence.index("close")
+        assert sequence.count("stop") == 1
+    assert "private" not in (completed.stdout + completed.stderr).lower()
+
+
+@pytest.mark.parametrize("fault", ["scope", "budget", "role", "extra", "total", "count_bool",
+    "ambiguous", "unavailable_intent", "state", "cause_on_live", "phase", "event", "reason", "cause_extra"])
+def test_owner_diagnostic_report_rejects_unsafe_or_ambiguous_evidence(fault):
+    observation = {"status": "observed", "total_intents": 1, "intents": [{"role": "offer", "state": "retired",
+        "retirement": {"phase": "apply_answer", "event": "failed", "reason": "invalid_document"}}]}
+    value = {"scope": "trusted_owner_before_cleanup", "budget_ms": 2000,
+        "peers": {"offerer": {"outcome": "received", "observation": observation}}}
+    pairing.owner_retirement_details(copy.deepcopy(value))
+    intent = observation["intents"][0]
+    if fault in {"scope", "budget"}: value["scope" if fault == "scope" else "budget_ms"] = "unsafe"
+    elif fault == "role": intent["role"] = "answer"
+    elif fault == "extra": intent["raw"] = "unsafe"
+    elif fault == "total": observation["total_intents"] = 33
+    elif fault == "count_bool": observation["total_intents"] = True
+    elif fault == "ambiguous": observation["intents"].append(copy.deepcopy(intent))
+    elif fault == "unavailable_intent": observation["status"] = "unavailable"
+    elif fault == "state": intent["state"] = "unknown"
+    elif fault == "cause_on_live": intent["state"] = "offer_ready"
+    elif fault == "cause_extra": intent["retirement"]["message"] = "unsafe"
+    else: intent["retirement"][fault] = "unsafe"
+    with pytest.raises(ValueError): pairing.owner_retirement_details(value)
+
+
 def test_installed_node_sdk_readiness_reaches_actual_framed_connection_projection(tmp_path):
     from mesh_chat.connection.projection import snapshot
     from tools.connection_harness.simulation import Simulation
@@ -915,9 +973,9 @@ def test_application_owned_runtime_framing_and_retirement_use_real_subprocesses(
     result = subprocess.run([node, "--test", "--test-reporter=tap",
                              str(staging.ROOT / "tests/core-ui-boundary/app_owned_runtime.test.mjs")],
                             cwd=staging.ROOT, capture_output=True, text=True, timeout=45)
-    assert result.returncode == 0, result.stdout[-4000:] + result.stderr[-1000:]
-    assert "# tests 26" in result.stdout
-    assert "# pass 26" in result.stdout and "# fail 0" in result.stdout and "# skipped 0" in result.stdout
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "# tests 38" in result.stdout
+    assert "# pass 38" in result.stdout and "# fail 0" in result.stdout and "# skipped 0" in result.stdout
 
 
 def lifetime_fixture(tmp_path, fault="", *, probe=""):

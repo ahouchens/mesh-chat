@@ -3,27 +3,31 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { isAbsolute, resolve } from "node:path";
 import { TextDecoder } from "node:util";
+import { ownerPairingObservation } from "./owner-pairing-diagnostic.mjs";
 
 const STATUS_LIMIT = 4096;
 const decoder = new TextDecoder("utf-8", { fatal: true });
 
 // Exported for subprocess protocol checks; no host command or grant interface.
-export function observeRuntime(child, pipe, timeoutMs = 30000) {
-  return observe(child, pipe, timeoutMs, false);
+export function observeRuntime(child, pipe, timeoutMs = 30000, {pairingDiagnostics = false} = {}) {
+  return observe(child, pipe, timeoutMs, false, pairingDiagnostics);
 }
 
 export function observeRuntimeRefusal(child, pipe, timeoutMs = 30000) {
   return observe(child, pipe, timeoutMs, true);
 }
 
-function observe(child, pipe, timeoutMs, refusal) {
+function observe(child, pipe, timeoutMs, refusal, pairingDiagnostics = false) {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30000) throw new Error("invalid_runtime_budget");
+  if (typeof pairingDiagnostics !== "boolean") throw new Error("invalid_runtime_diagnostic_option");
   const observationDeadline = performance.now() + timeoutMs;
   let pending = Buffer.alloc(0), started = false, stopped = false, failed = false;
   let closing = false, exited = false, retiring = false, protocolError;
   let accept, reject, complete;
   const ready = new Promise((yes, no) => { accept = yes; reject = no; });
   const closed = new Promise(yes => { complete = yes; });
+  let diagnostic, diagnosticSeen = false, diagnosticComplete;
+  const diagnosticReady = new Promise(resolve => { diagnosticComplete = resolve; });
   function fail() {
     protocolError = new Error("app_owned_runtime_unavailable");
     reject(protocolError);
@@ -58,6 +62,15 @@ function observe(child, pipe, timeoutMs, refusal) {
           if (performance.now() > observationDeadline) throw new Error();
           started = true;
           accept();
+        } else if (value.type === "runtime_pairing_diagnostics" && pairingDiagnostics && !refusal) {
+          // Malformed optional diagnostics cannot grant authority or change lifecycle success.
+          try {
+            if (!started || !closing || retiring || diagnosticSeen
+                || Object.keys(value).sort().join() !== "observation,type,v") throw new Error();
+            diagnostic = {outcome:"received",observation:ownerPairingObservation(value.observation)};
+          } catch { diagnostic = {outcome:"invalid_result"}; }
+          diagnosticSeen = true;
+          diagnosticComplete();
         } else if (value.type === "runtime_failed" && !failed && (!refusal || (!started && value.error === "unavailable"))
             && typeof value.error === "string" && /^[a-z_]{1,64}$/.test(value.error)
             && Object.keys(value).sort().join() === "error,type,v") {
@@ -84,9 +97,19 @@ function observe(child, pipe, timeoutMs, refusal) {
       else accept();
     }
     complete();
+    diagnosticComplete();
   });
   return {
     ready,
+    async pairingDiagnostic(timeoutMs = 2000) {
+      if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > 2000) throw new Error("invalid_diagnostic_budget");
+      if (!pairingDiagnostics || !closing) return {outcome:"not_received"};
+      let timer;
+      try {
+        await Promise.race([diagnosticReady, new Promise(resolve => { timer = setTimeout(resolve, timeoutMs); })]);
+      } finally { clearTimeout(timer); }
+      return diagnostic ? structuredClone(diagnostic) : {outcome:"not_received"};
+    },
     async stop(remainingMs = timeoutMs) {
       if (!Number.isSafeInteger(remainingMs) || remainingMs < 0 || remainingMs > 30000) throw new Error("invalid_runtime_budget");
       const alreadyExited = exited, retirementDeadline = performance.now() + remainingMs;
@@ -104,8 +127,9 @@ function observe(child, pipe, timeoutMs, refusal) {
   };
 }
 
-function spawnRuntime(executable, dataDirectory, { timeoutMs = 30000, onOwned = () => {} } = {}, refusal = false) {
+function spawnRuntime(executable, dataDirectory, { timeoutMs = 30000, onOwned = () => {}, pairingDiagnostics = false } = {}, refusal = false) {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30000) throw new Error("invalid_runtime_budget");
+  if (typeof pairingDiagnostics !== "boolean" || (refusal && pairingDiagnostics)) throw new Error("invalid_runtime_diagnostic_option");
   if (process.platform !== "win32" || !isAbsolute(executable) || !isAbsolute(dataDirectory)) {
     throw new Error("explicit_windows_runtime_and_data_required");
   }
@@ -118,10 +142,11 @@ function spawnRuntime(executable, dataDirectory, { timeoutMs = 30000, onOwned = 
     MESH_CHAT_CORE_API_CLIENT_IMAGE: process.execPath,
     MESH_CHAT_APP_PARENT_PID: String(process.pid),
   });
+  if (pairingDiagnostics) environment.MESH_CHAT_APP_PAIRING_DIAGNOSTICS = "1";
   const child = spawn(resolve(executable), ["--app-owned-native"], {
     env: environment, stdio: ["pipe", "pipe", "pipe"], windowsHide: true,
   });
-  const runtime = { pipe, ...observe(child, pipe, timeoutMs, refusal) };
+  const runtime = { pipe, ...observe(child, pipe, timeoutMs, refusal, pairingDiagnostics) };
   onOwned(runtime); // The launcher retains the exact child even if startup observation fails.
   return runtime;
 }
