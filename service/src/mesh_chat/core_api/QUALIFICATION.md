@@ -8,7 +8,7 @@ passed 83 exact JVM identities and 56 emulator cases. Both direct platforms
 passed 25 transport, 10 recovery and 12 setup cases.
 
 The native peers reached `impaired_kernel_block_negative_control/restored_delivery`
-and both exceeded the unchanged 90-second restored-delivery window. Source
+and both failed within the unchanged restored-delivery window of up to 90 seconds. Source
 sequencing requires 20 impaired authenticated exchanges before that stage.
 The Android controller had verified dropped packets and removed its exact block
 rules; its failure report records no gateway operation or cleanup failure.
