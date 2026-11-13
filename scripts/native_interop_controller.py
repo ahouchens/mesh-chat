@@ -28,6 +28,7 @@ from native_interop_core_observation import core_failure_observation
 from native_interop_carrier_observation import FinalCarrierObservation, carrier_target, final_carrier_snapshot
 from native_interop_pairing_ice import PairingIceObservation
 from native_interop_exchange_observation import ReceiptExchangeObservation
+from native_interop_cold_start import inventory_relation, failure_snapshot as cold_failure_snapshot
 from native_interop_recovery_context import (
     KernelBlockWindow, capture_recovery_context, mark_window, recovery_context_snapshot,
 )
@@ -232,6 +233,10 @@ class Controller:
         self._fault_cleanup_failure = None
         self._recovery_diagnostics = self._recovery_failure = None
         self._exchange_observation = None
+        self._cold_failure = None
+        self._cold_recheck = "unread"
+        self._cold_retired_reads = 0
+        self._cold_retired_reads_capped = False
         try: self._negative_diagnostics = NegativeControlDiagnostics()
         except Exception: self._negative_diagnostics = None
         self.workload = required_workload(workload)
@@ -866,7 +871,7 @@ class Controller:
             if self.role == "android": self.publish("approved", {"approved": True})
             elif self.receive("approved") != {"approved": True}: raise ValueError("Peer approval was not explicit")
 
-    def observe(self, logical=None, *, ready=True, scenario=None, missing_reasons=None):
+    def observe(self, logical=None, *, ready=True, scenario=None, missing_reasons=None, retirement_deadline=None):
         observation = self._readiness_poll(logical, scenario)
         with self._substage("path_inventory"):
             carrier = self._final_carrier_poll(logical, scenario)
@@ -900,7 +905,15 @@ class Controller:
             with self._substage("path_read"):
                 sample_request = os.urandom(16).hex()
                 requested = time.monotonic()
-                value = self.peer.path(resource["logical_session"], resource["physical_resource"], sample_request)
+                try:
+                    value = self.peer.path(resource["logical_session"], resource["physical_resource"], sample_request)
+                except PeerFailure as error:
+                    if (error.code == "native_unavailable" and self.phase == "cold_start_receipts"
+                            and logical is None and ready is True and scenario is None
+                            and type(retirement_deadline) is float and math.isfinite(retirement_deadline)
+                            and self._cold_resource_retired(inventory, resource, retirement_deadline)):
+                        return None
+                    raise
             with self._substage("path_validation"):
                 self.samples.check_request(value, sample_request)
                 first_unready = None
@@ -1299,6 +1312,65 @@ class Controller:
         finally:
             self._retirement_context = None
 
+    def cold_ready_observation(self):
+        deadline = float(min(self.deadline, time.monotonic() + 120))
+        while time.monotonic() < deadline:
+            value = self.observe(ready=True, retirement_deadline=deadline)
+            if value is not None and time.monotonic() <= deadline:
+                return value
+            remaining = deadline - time.monotonic()
+            if remaining > 0:
+                time.sleep(min(0.25, remaining))
+        raise PeerFailure("scenario_deadline")
+
+    def _cold_resource_retired(self, inventory, resource, deadline):
+        if time.monotonic() >= min(deadline, self.deadline):
+            self._cold_recheck = "deadline"
+            return False
+        try:
+            current = self.peer.inventory()
+            self._cold_recheck = inventory_relation(inventory, resource, current)
+        except Exception:
+            self._cold_recheck = "unavailable"
+            return False  # A secondary read never replaces the original path error.
+        if time.monotonic() >= min(deadline, self.deadline):
+            self._cold_recheck = "deadline"
+            return False
+        if self._cold_recheck != "retired":
+            return False
+        if self._cold_retired_reads < 512:
+            self._cold_retired_reads += 1
+        else:
+            self._cold_retired_reads_capped = True
+        return True
+
+    @contextmanager
+    def _cold_step(self, index, restarted, stage):
+        self._cold_failure = None
+        try:
+            yield
+        except Exception as error:
+            try:
+                self._cold_failure = error, cold_failure_snapshot({"iteration": index + 1,
+                    "completed": len(self.cycles), "stage": stage, "restarted": restarted,
+                    "path_recheck": self._cold_recheck, "retired_reads": self._cold_retired_reads,
+                    "retired_reads_capped": self._cold_retired_reads_capped})
+            except Exception:
+                self._cold_failure = None
+            raise
+
+    def failure_cold_start(self, error):
+        try:
+            record = self._cold_failure
+            if (self.phase == "cold_start_receipts" and type(record) is tuple
+                    and len(record) == 2 and record[0] is error):
+                value = cold_failure_snapshot(record[1])
+                if value is not None:
+                    return {"cold_start_failure": value}
+        except Exception:
+            pass
+        return {}
+
     def cold_starts(self):
         self.phase = "cold_start_receipts"
         self.core("call.settings_update", {"profile": self.profile, "settings": self.default_call_settings})
@@ -1318,38 +1390,48 @@ class Controller:
         warm_resources = None
         warm_host = None
         for index in range(self.workload["iterations"]):
-            previous = self.peer.inventory()["service_incarnation"]
             restarted = index % self.workload["cold_start_every"] == 0
-            if restarted:
-                self.peer.stop(crash=True)
-                current = self.peer.start()
-                if current["service_incarnation"] == previous:
-                    raise ValueError("Cold start reused the previous service incarnation")
-                self.profile = self.core("runtime.capabilities")["profiles"][0]
-                self.contact = self.wait(self.approved_contact)
-            else:
-                current = self.peer.inventory()
-            if digest(self.snapshot()["profile"]["destination_hash"]) != self.identity:
-                raise ValueError("Cold start replaced the durable profile identity")
-            if previous_message is not None and not self.delivered(previous_message):
-                raise ValueError("Authenticated receipt did not survive the real process restart")
-            before = self.wait(lambda: self.observe(ready=True), timeout=120)
-            message, previous_message = self.exchange("cold_start_receipts", index)
-            after = self.observe(before["logical_session"], ready=True)
-            if after is None: raise ValueError("Cold-start receipt lost its exact native resource")
-            resources = len(self.peer.inventory()["resources"])
-            host_counts = self.wait(self.warm_counts, timeout=30)
-            if warm_host is None: warm_host = host_counts
-            if host_counts != warm_host:
-                raise ValueError("Native retained allocation leases departed from the warm baseline")
-            if warm_resources is None: warm_resources = resources
-            if resources != warm_resources or resources <= 0:
-                raise ValueError("Native resource accounting departed from the warm baseline")
-            self.cycles.append({"iteration": index + 1, "cold_start": restarted, "native_resources": resources,
-                "warm_baseline_resources": warm_resources, "previous_service": digest(previous),
-                "host_accounting": host_counts, "warm_baseline_host_accounting": warm_host,
-                "current_service": digest(current["service_incarnation"]), "identity": self.identity,
-                "before": selection(before), "after": selection(after), "native_delta": traffic(before, after), "message": message})
+            self._cold_recheck = "unread"
+            self._cold_retired_reads = 0
+            self._cold_retired_reads_capped = False
+            with self._cold_step(index, restarted, "restart"):
+                previous = self.peer.inventory()["service_incarnation"]
+                if restarted:
+                    self.peer.stop(crash=True)
+                    current = self.peer.start()
+                    if current["service_incarnation"] == previous:
+                        raise ValueError("Cold start reused the previous service incarnation")
+                    self.profile = self.core("runtime.capabilities")["profiles"][0]
+                    self.contact = self.wait(self.approved_contact)
+                else:
+                    current = self.peer.inventory()
+            with self._cold_step(index, restarted, "identity_receipt"):
+                if digest(self.snapshot()["profile"]["destination_hash"]) != self.identity:
+                    raise ValueError("Cold start replaced the durable profile identity")
+                if previous_message is not None and not self.delivered(previous_message):
+                    raise ValueError("Authenticated receipt did not survive the real process restart")
+            with self._cold_step(index, restarted, "readiness"):
+                before = self.cold_ready_observation()
+            with self._cold_step(index, restarted, "exchange"):
+                message, previous_message = self.exchange("cold_start_receipts", index)
+            with self._cold_step(index, restarted, "exact_path"):
+                after = self.observe(before["logical_session"], ready=True)
+                if after is None: raise ValueError("Cold-start receipt lost its exact native resource")
+            with self._cold_step(index, restarted, "accounting"):
+                resources = len(self.peer.inventory()["resources"])
+                host_counts = self.wait(self.warm_counts, timeout=30)
+                if warm_host is None: warm_host = host_counts
+                if host_counts != warm_host:
+                    raise ValueError("Native retained allocation leases departed from the warm baseline")
+                if warm_resources is None: warm_resources = resources
+                if resources != warm_resources or resources <= 0:
+                    raise ValueError("Native resource accounting departed from the warm baseline")
+            with self._cold_step(index, restarted, "evidence"):
+                self.cycles.append({"iteration": index + 1, "cold_start": restarted, "native_resources": resources,
+                    "warm_baseline_resources": warm_resources, "previous_service": digest(previous),
+                    "host_accounting": host_counts, "warm_baseline_host_accounting": warm_host,
+                    "current_service": digest(current["service_incarnation"]), "identity": self.identity,
+                    "before": selection(before), "after": selection(after), "native_delta": traffic(before, after), "message": message})
 
     def run(self):
         self.initialize()
@@ -1458,6 +1540,8 @@ def main(*, gateway=None):
             result.update(controller.failure_final_path(error))
             result.update(controller.failure_final_carrier(error))
             result.update(controller.failure_native_path(error))
+            try: result.update(controller.failure_cold_start(error))
+            except Exception: pass  # Optional progress cannot replace the primary failure.
             try: result.update(controller.failure_kernel_cleanup(error))
             except Exception: pass  # Optional cleanup metadata cannot replace the primary report.
             try:

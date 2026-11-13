@@ -223,7 +223,7 @@ def test_cold_setup_keeps_actual_loop_schedule_receipt_checks_and_native_deltas(
     monkeypatch.setattr(instance, "approved_contact", lambda: instance.contact)
     monkeypatch.setattr(instance, "snapshot", lambda: {"profile": {"destination_hash": "PRIVATE_DURABLE_IDENTITY"}})
     instance.identity = evidence.digest("PRIVATE_DURABLE_IDENTITY")
-    def observe(logical=None, ready=False):
+    def observe(logical=None, ready=False, retirement_deadline=None):
         assert ready is True
         state.observations += 1
         value = copy.deepcopy(sample[0])

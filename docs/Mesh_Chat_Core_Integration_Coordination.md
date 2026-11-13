@@ -1,5 +1,41 @@
 # Core integration coordination — 2026-11-09
 
+Full run [43436650996](https://github.com/ahouchens/mesh-chat/actions/runs/43436650996)
+at `31ac1c3` is **failed**: ten component jobs passed; both native peers and the
+aggregate failed. Policy passed 6,319 cases, UI boundary 2,246 Python and 12
+rendered cases, Android 56 emulator and 83 exact JVM cases. Both direct platforms
+passed 25 transport, 10 recovery and 12 setup cases; layout passed 72 cases with
+zero overflow. Windows reports and nine pipe cases passed.
+
+Both controllers completed all direct, TURN UDP/TCP/TLS and impaired cases and
+reached `cold_start_receipts`. Android then failed `path_read` with
+`native_unavailable`; Windows reached `scenario_deadline`. Android gateway
+operation failure was null and cleanup failures were empty. This attempt moved
+past the earlier impaired recovery failure. The retained report does not identify
+the cold-start iteration, completed cycle count, exact native unavailability cause,
+or whether the failed read preceded or followed its receipt exchange. Windows'
+timeout is not proven to have the same cause. Full native/aggregate acceptance
+remains open.
+
+A deterministic service/private-port regression reproduces authorized inventory
+followed by exact resource retirement: the old path read raises
+`native_unavailable`, while fresh inventory has unchanged service/profile
+incarnations and no old resource. Still-current native inspection failures and
+changed incarnations produce the same error code. This uses a real Windows
+native host fixture, not packaged Android JNI, and does not prove this CI cause.
+
+The candidate corrects only pre-receipt cold-start readiness: after that error,
+a fresh validated inventory must positively show the failed physical resource
+absent with both incarnations unchanged before discovery may continue. Every
+later poll takes fresh inventory and a fresh sample. Still-current resources,
+changed identities, malformed or unavailable inventory, other errors and the
+post-receipt exact-resource read remain failures. The original 120-second readiness
+and 3,000-second global budgets remain; late results cannot qualify. Fixed,
+bounded cycle/stage and recheck diagnostics retain no private resource identifiers.
+No WebRTC, product service, policy, consent or dependency change is selected.
+This correction is not yet qualified; helper retirement and later roadmap gates
+remain held pending full native/aggregate acceptance.
+
 Full run [43427814301](https://github.com/ahouchens/mesh-chat/actions/runs/43427814301)
 at `522d2c5` is **failed**: ten component jobs passed; both native peers and the
 aggregate failed. Policy passed 6,257 cases, UI boundary 2,228 Python and 12
