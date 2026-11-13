@@ -26,6 +26,9 @@ from native_interop_core_observation import core_failure_observation
 from native_interop_carrier_observation import FinalCarrierObservation, carrier_target, final_carrier_snapshot
 from native_interop_pairing_ice import PairingIceObservation
 from native_interop_exchange_observation import ReceiptExchangeObservation
+from native_interop_recovery_context import (
+    KernelBlockWindow, capture_recovery_context, mark_window, recovery_context_snapshot,
+)
 from native_interop_ice_packets import validated_snapshot as validated_ice_packets, unavailable as ice_packets_unavailable
 from native_interop_preflight import (DEFAULT_SIGNAL_MAILBOX_URL, android_environment,
     android_network_diagnostic, outbound_services)
@@ -223,6 +226,7 @@ class Controller:
         self._path_diagnostics = None
         self._final_path_failure = None
         self._final_carrier_observation = self._final_carrier_failure = None
+        self._recovery_context_target = self._recovery_context_failure = None
         self._fault_cleanup_failure = None
         self._recovery_diagnostics = self._recovery_failure = None
         self._exchange_observation = None
@@ -423,6 +427,39 @@ class Controller:
             value = observer.failure(error, self.phase, self.pairing,
                 self.failure_native_path(error).get("native_path_failure"))
             return {"receipt_exchange": value} if value is not None else {}
+        except Exception:
+            return {}
+
+    def _begin_recovery_context(self, before, scenario):
+        self._recovery_context_target = self._recovery_context_failure = None
+        try:
+            target = carrier_target({"operation_id": self.pairing, "logical_session": before["logical_session"],
+                "expected_physical": before["resource"], "expected_service_incarnation": before["service_incarnation"],
+                "expected_profile_incarnation": before["profile_incarnation"]})
+            if target is not None and scenario in {"turn_tcp", "turn_tls", "impaired"}:
+                self._recovery_context_target = scenario, self.pairing, target
+        except Exception:
+            pass
+
+    def _capture_recovery_context(self, error, target, scenario, window):
+        try:
+            if (type(error) is PeerFailure and error.code == "scenario_deadline"
+                    and target is not None and self.failure_recovery(error)):
+                value = capture_recovery_context(self.peer, target, scenario, window,
+                                                 self.deadline - time.monotonic())
+                if value is not None:
+                    self._recovery_context_failure = error, self.phase, self.pairing, value
+        except Exception:
+            pass
+
+    def failure_recovery_context(self, error):
+        try:
+            record = self._recovery_context_failure
+            if (type(record) is not tuple or len(record) != 4 or record[0] is not error
+                    or record[1] != self.phase or record[2] != self.pairing or not self.failure_recovery(error)):
+                return {}
+            value = recovery_context_snapshot(record[3])
+            return {"recovery_context": value} if value is not None else {}
         except Exception:
             return {}
 
@@ -967,9 +1004,21 @@ class Controller:
         self.phase = scenario + "_kernel_block_negative_control"
         self._negative_diagnostics = reset_negative_control(self._negative_diagnostics, scenario)
         self._recovery_diagnostics = self._recovery_failure = None
+        self._recovery_context_failure = None
+        target, window = None, None
+        try:
+            scope = self._recovery_context_target
+            if type(scope) is tuple and len(scope) == 3 and scope[:2] == (scenario, self.pairing):
+                target = carrier_target(scope[2])
+                if target is not None and fault is not None: window = KernelBlockWindow()
+        except Exception:
+            pass
+        self._recovery_context_target = None
         observer = self._negative_diagnostics
         if fault is not None:
+            window = mark_window(window, "block_call", time.monotonic)
             with negative_control_stage(observer, "kernel_block"): fault.block()
+            window = mark_window(window, "block_return", time.monotonic)
             with negative_control_stage(observer, "ready_publish"):
                 self.publish("negative_ready_" + scenario, {"approved": True})
         else:
@@ -997,7 +1046,9 @@ class Controller:
                 if self.receive("negative_checked_" + scenario) != {"approved": True}:
                     raise negative_control_error(observer, "checked_receive",
                         ValueError("Remote blocked-path observation is missing"), "not_acknowledged")
+            window = mark_window(window, "unblock_call", time.monotonic)
             with negative_control_stage(observer, "kernel_unblock"): packets = fault.unblock()
+            window = mark_window(window, "unblock_return", time.monotonic, packets)
             with negative_control_stage(observer, "dropped_count"):
                 if packets <= 0:
                     raise negative_control_error(observer, "dropped_count",
@@ -1028,6 +1079,7 @@ class Controller:
                     self._recovery_failure = error, scenario, handle, observed
             except Exception:
                 self._recovery_failure = None
+            self._capture_recovery_context(error, target, scenario, window)
             raise
         with negative_control_stage(observer, "recovered_inbound"):
             if restoration_deadline is not None:
@@ -1103,6 +1155,7 @@ class Controller:
             messages = [self.exchange(scenario + ":" + initiator, index, padded=scenario == "impaired",
                                       path_diagnostics=self._path_diagnostics)[0]
                         for index in range(20 if scenario == "impaired" else 1)]
+            self._begin_recovery_context(before, scenario)
             negative, restoration_deadline = (self.negative(fault, scenario)
                 if scenario in {"turn_tcp", "turn_tls", "impaired"} else (None, None))
             with negative_control_stage(self._negative_diagnostics, "final_observation"):
@@ -1355,6 +1408,7 @@ def main(*, gateway=None):
             result.update(controller.failure_retirement(error))
             result.update(controller.failure_negative_control(error))
             result.update(controller.failure_recovery(error))
+            result.update(controller.failure_recovery_context(error))
             result.update(controller.failure_exchange(error))
             result.update(controller.failure_final_path(error))
             result.update(controller.failure_final_carrier(error))

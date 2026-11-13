@@ -1,5 +1,41 @@
 # Independent public consumer qualification proposal
 
+Full run [43419926345](https://github.com/ahouchens/mesh-chat/actions/runs/43419926345)
+at `c17cdf1` is **failed**: all ten component jobs passed; both native peers and
+the aggregate gate failed. Policy passed 6,232 cases, UI boundary 2,220 Python
+and 12 rendered cases, Android 56 emulator and 83 exact JVM cases. Both direct
+platforms passed 25 transport, 10 recovery and 12 setup cases; layout passed 72
+browser cases with zero overflow cases. The rebuilt Windows host includes the
+final-SDP candidate guard. These results do not grant full native acceptance.
+
+The paired run completed both direct initiators, TURN UDP/TCP/TLS and all twenty
+impaired baseline exchanges, then both peers timed out at the impaired negative
+control's `restored_delivery` stage. Each changed from sending to queued once
+within the original 90-second recovery window. Android observed 295 restored
+polls ending at 89,824ms; Windows observed 358 ending at 89,971ms. Android reached
+this stage after positive drop counts and verified removal of its exact rules.
+The gateway reported no operation or cleanup failure. No control EOF or empty
+TURN candidate offer was reported; cold starts were not reached.
+
+These reports do not retain transition timing or carrier ownership after the
+block. Sending is emitted before the native handoff, so it does not prove packet
+transmission. Queued can follow a native failure callback or handoff exception;
+source review found no deterministic retry defect. A lost manual carrier could
+remain without a replacement because automatic reconnect is not enabled in this
+scenario. The block also spans artifact coordination and ADB work beyond its
+two-second receipt check. Neither carrier loss nor its cause is established.
+
+The bounded diagnostic retains transition times from existing query polls and
+bounds around existing kernel block/unblock calls. On an attributed recovery
+timeout only, one existing private inventory read captures the exact carrier's
+current ownership and retained loss witness before cleanup. It uses existing
+exchange bounds and is skipped near the global deadline. It adds no success-path
+poll, retry or public/native API; the original timeout and cleanup remain in
+force. Unavailable or mismatched observations are not evidence of a cause.
+WebRTC dependencies, policy, deadlines and acceptance remain unchanged. Full
+native/aggregate acceptance, cold starts, helper retirement and later roadmap
+items remain open.
+
 Full run [43414231985](https://github.com/ahouchens/mesh-chat/actions/runs/43414231985)
 at `25396ef` is **failed**: all ten component jobs passed; both native peers and
 the aggregate gate failed. Policy passed 6,231 cases, UI boundary 2,220 Python
