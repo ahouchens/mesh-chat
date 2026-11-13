@@ -1,5 +1,37 @@
 # Core integration coordination — 2026-11-09
 
+Full run [43448951902](https://github.com/ahouchens/mesh-chat/actions/runs/43448951902)
+at `9483e3d` is **failed**: ten component jobs passed; both native peers and the
+aggregate failed. Policy passed 6,404 cases, UI boundary 2,292 Python and 12
+rendered cases, Android 56 emulator and 83 exact JVM cases. Both direct platforms
+passed 25 transport, 10 recovery and 12 setup cases; layout passed 72 cases with
+zero overflow. Windows reports and nine pipe cases passed. All component
+artifacts were checked against this exact source/run; they do not establish
+full native acceptance.
+
+Both direct initiator cases have reciprocal completion markers. Android then
+failed during `turn_udp_authenticated_receipts` with a bare `ValueError`, without
+a retained substage, native-path reason or error code. Gateway operation failure
+was null and cleanup failures were empty. Windows completed its own TURN UDP
+evidence, published its marker and timed out at `completion_receive`, before
+committing carrier retirement. No cold-start checkpoint was reached, so this
+attempt did not exercise or qualify the cold readiness/checkpoint corrections.
+
+The source audit identifies two strong unlabelled candidates: the final
+observation returned no selected path, or the before/after traffic comparison
+rejected resource/service identity, selected-pair identity, sequence or native
+packet deltas. The report does not establish which happened. An earlier peer
+message included in the baseline is insufficient to explain a zero inbound
+delta: a later own authenticated receipt also contributes native Reticulum
+packets when that channel carries it. No timing-only cause is established.
+
+The next candidate adds bounded content-free attribution to the existing final
+observation and traffic checks for every path scenario, including direct and
+TURN UDP. It preserves the same RPCs, samples, polling, acceptance rules,
+deadlines and primary failures; it adds no retry or product/WebRTC change.
+Actual failure cause, cold-start qualification, full native/aggregate acceptance,
+helper retirement and later roadmap gates remain open.
+
 Full run [43436650996](https://github.com/ahouchens/mesh-chat/actions/runs/43436650996)
 at `31ac1c3` is **failed**: ten component jobs passed; both native peers and the
 aggregate failed. Policy passed 6,319 cases, UI boundary 2,246 Python and 12
