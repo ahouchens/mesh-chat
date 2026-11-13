@@ -75,6 +75,8 @@ def test_restored_failure_records_existing_query_states_and_preserves_deadline(
     assert blocked["first_elapsed_ms"] == 0
     assert restored["polls"] > 0 and restored["first_state"] == restored["last_state"] == last_state
     assert restored["transitions"] == 0
+    assert restored["first_transition_elapsed_ms"] is None
+    assert restored["last_transition_elapsed_ms"] is None
     assert 0 <= restored["first_elapsed_ms"] <= restored["last_elapsed_ms"] <= 90000
     assert sum(name == "message.enqueue" for name, _ in calls) == 1
     assert all(name in {"message.enqueue", "message.query"} for name, _ in calls)
@@ -174,14 +176,59 @@ def test_recovery_observer_caps_counts_and_projects_no_private_fields():
     restored = value["restored_delivery"]
     assert restored["polls"] == diagnostics.RECOVERY_POLL_CAP and restored["polls_capped"]
     assert restored["transitions"] == diagnostics.RECOVERY_POLL_CAP and restored["transitions_capped"]
+    assert restored["first_transition_elapsed_ms"] == 1000
+    assert restored["last_transition_elapsed_ms"] == diagnostics.RECOVERY_ELAPSED_MS_CAP
     assert restored["last_elapsed_ms"] == diagnostics.RECOVERY_ELAPSED_MS_CAP
     assert restored["elapsed_capped"]
     assert "PRIVATE" not in str(value)
 
 
+def test_recovery_observer_records_first_and_last_transition_from_existing_polls():
+    observer = diagnostics.RecoveryDeliveryDiagnostics("impaired", "PRIVATE_HANDLE")
+    observer.start("blocked_receipt", 0.0)
+    observer.observe("PRIVATE_HANDLE", "queued", 0.0)
+    observer.observe("FOREIGN_HANDLE", "sending", 0.5)
+    observer.observe("PRIVATE_HANDLE", "sending", 1.0)
+    observer.observe("PRIVATE_HANDLE", "queued", 2.0)
+    observer.start("restored_delivery", 3.0)
+    observer.observe("PRIVATE_HANDLE", "sending", 3.0)
+    observer.observe("PRIVATE_HANDLE", "queued", 4.0)
+    observer.observe("PRIVATE_HANDLE", "sending", 5.0)
+    error = controller.PeerFailure("scenario_deadline")
+    observer.failed(error)
+    value = observer.failure_observation(error, "impaired", "PRIVATE_HANDLE")
+    for phase in ("blocked_receipt", "restored_delivery"):
+        item = value[phase]
+        assert item["transitions"] == 2
+        assert item["first_transition_elapsed_ms"] == 1000
+        assert item["last_transition_elapsed_ms"] == 2000
+    assert "PRIVATE" not in str(value)
+
+
+def test_one_sending_to_queued_transition_keeps_its_time_after_later_polls():
+    observer = diagnostics.RecoveryDeliveryDiagnostics("impaired", "PRIVATE_HANDLE")
+    observer.start("blocked_receipt", 0.0)
+    observer.observe("PRIVATE_HANDLE", "sending", 0.0)
+    observer.start("restored_delivery", 2.0)
+    observer.observe("PRIVATE_HANDLE", "sending", 2.0)
+    observer.observe("PRIVATE_HANDLE", "queued", 20.0)
+    observer.observe("PRIVATE_HANDLE", "queued", 90.0)
+    error = controller.PeerFailure("scenario_deadline")
+    observer.failed(error)
+    value = observer.failure_observation(error, "impaired", "PRIVATE_HANDLE")
+    restored = value["restored_delivery"]
+    assert restored["transitions"] == 1
+    assert restored["first_transition_elapsed_ms"] == 18000
+    assert restored["last_transition_elapsed_ms"] == 18000
+    assert restored["last_elapsed_ms"] == 88000
+    restored["last_transition_elapsed_ms"] = 19000
+    assert diagnostics.recovery_delivery_observation(value) is None
+
+
 @pytest.mark.parametrize("damage", [
     "foreign_state", "state_subclass", "impossible_transition", "state_changed_without_transition",
     "one_poll_mismatched_times", "elapsed_flag_without_cap", "extra_private_field",
+    "transition_time_without_transition", "noninteger_transition_time",
 ])
 def test_malformed_recovery_summary_is_rejected(damage):
     observer = diagnostics.RecoveryDeliveryDiagnostics("impaired", "PRIVATE_HANDLE")
@@ -205,8 +252,36 @@ def test_malformed_recovery_summary_is_rejected(damage):
         restored["last_elapsed_ms"] = 1
     elif damage == "elapsed_flag_without_cap":
         restored["elapsed_capped"] = True
+    elif damage == "transition_time_without_transition":
+        restored["first_transition_elapsed_ms"] = 0
+    elif damage == "noninteger_transition_time":
+        restored["last_transition_elapsed_ms"] = True
     else:
         restored["private_handle"] = "PRIVATE_HANDLE"
+    assert diagnostics.recovery_delivery_observation(value) is None
+
+
+@pytest.mark.parametrize("damage", ["missing_first", "missing_last", "reverse_order", "after_last_poll"])
+def test_malformed_transition_timing_is_rejected(damage):
+    observer = diagnostics.RecoveryDeliveryDiagnostics("impaired", "PRIVATE_HANDLE")
+    observer.start("blocked_receipt", 0.0)
+    observer.observe("PRIVATE_HANDLE", "sending", 0.0)
+    observer.start("restored_delivery", 2.0)
+    observer.observe("PRIVATE_HANDLE", "sending", 2.0)
+    observer.observe("PRIVATE_HANDLE", "queued", 3.0)
+    observer.observe("PRIVATE_HANDLE", "sending", 4.0)
+    error = controller.PeerFailure("scenario_deadline")
+    observer.failed(error)
+    value = copy.deepcopy(observer.failure_observation(error, "impaired", "PRIVATE_HANDLE"))
+    restored = value["restored_delivery"]
+    if damage == "missing_first":
+        restored["first_transition_elapsed_ms"] = None
+    elif damage == "missing_last":
+        restored["last_transition_elapsed_ms"] = None
+    elif damage == "reverse_order":
+        restored["first_transition_elapsed_ms"] = 3000
+    else:
+        restored["last_transition_elapsed_ms"] = 3000
     assert diagnostics.recovery_delivery_observation(value) is None
 
 

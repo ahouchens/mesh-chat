@@ -23,7 +23,7 @@ def recovery_delivery_observation(value):
     result = {"scenario": value["scenario"]}
     fields = {"polls", "polls_capped", "first_state", "last_state",
               "transitions", "transitions_capped", "first_elapsed_ms", "last_elapsed_ms",
-              "elapsed_capped"}
+              "first_transition_elapsed_ms", "last_transition_elapsed_ms", "elapsed_capped"}
     for phase in RECOVERY_PHASES:
         item = value[phase]
         if type(item) is not dict or set(item) != fields:
@@ -41,8 +41,11 @@ def recovery_delivery_observation(value):
             return None
         first, last = item["first_state"], item["last_state"]
         first_ms, last_ms = item["first_elapsed_ms"], item["last_elapsed_ms"]
+        first_transition = item["first_transition_elapsed_ms"]
+        last_transition = item["last_transition_elapsed_ms"]
         if polls == 0:
-            if (any(part is not None for part in (first, last, first_ms, last_ms))
+            if (any(part is not None for part in (
+                    first, last, first_ms, last_ms, first_transition, last_transition))
                     or transitions or item["elapsed_capped"]):
                 return None
         elif (type(first) is not str or type(last) is not str
@@ -52,6 +55,13 @@ def recovery_delivery_observation(value):
                 or (item["elapsed_capped"] and last_ms != RECOVERY_ELAPSED_MS_CAP)
                 or (transitions == 0 and first != last)
                 or (polls == 1 and (transitions != 0 or first != last or first_ms != last_ms))):
+            return None
+        if transitions == 0:
+            if first_transition is not None or last_transition is not None:
+                return None
+        elif (type(first_transition) is not int or type(last_transition) is not int
+              or not first_ms <= first_transition <= last_transition <= last_ms
+              or (transitions == 1 and (first_transition != last_transition or first == last))):
             return None
         result[phase] = dict(item)
     return result
@@ -80,6 +90,7 @@ class RecoveryDeliveryDiagnostics:
         self._phases[phase] = {"polls": 0, "polls_capped": False,
             "first_state": None, "last_state": None, "transitions": 0,
             "transitions_capped": False, "first_elapsed_ms": None, "last_elapsed_ms": None,
+            "first_transition_elapsed_ms": None, "last_transition_elapsed_ms": None,
             "elapsed_capped": False}
 
     def observe(self, handle, state, now):
@@ -98,6 +109,9 @@ class RecoveryDeliveryDiagnostics:
         if item["polls"] == 0:
             item["first_state"], item["first_elapsed_ms"] = state, elapsed
         elif item["last_state"] != state:
+            if item["first_transition_elapsed_ms"] is None:
+                item["first_transition_elapsed_ms"] = elapsed
+            item["last_transition_elapsed_ms"] = elapsed
             if item["transitions"] < RECOVERY_POLL_CAP:
                 item["transitions"] += 1
             else:
