@@ -25,6 +25,47 @@ setup = load("test_direct_setup_pipeline")
 recovery = load("test_direct_recovery_pipeline")
 
 
+def _connected_evidence(*, attempts=1, migrations=0, certificate="original", pending=0):
+    return {"pending": pending, "migration_attempts": attempts, "migrations": migrations,
+            "paths": [{"recovery": True, "certificate": certificate}]}
+
+
+@pytest.mark.parametrize("outcome", ["migration", "replacement"])
+def test_route_change_waits_past_old_connected_path_until_completed(monkeypatch, outcome):
+    peers = object.__new__(recovery.Peers)
+    before = _connected_evidence(attempts=0)
+    completed = _connected_evidence(migrations=int(outcome == "migration"),
+        certificate="original" if outcome == "migration" else "replacement")
+    samples = iter([before, _connected_evidence(),
+                    {**completed, "pending": 1}, completed])
+    observed = []
+    peers.command = lambda *_: [{"state": "connected", "authenticated_peer_live": True, "rns_ready": True}]
+    def diagnostic(*_):
+        value = next(samples)
+        observed.append(value)
+        return value
+    peers.call = diagnostic
+    ticks = iter((0, 0, 6, 7, 8))
+    monkeypatch.setattr(recovery, "time", SimpleNamespace(monotonic=lambda: next(ticks), sleep=lambda _: None))
+    assert peers.connected(0, route_before=before) is completed
+    assert len(observed) == 4
+
+
+@pytest.mark.parametrize("stalled", [
+    _connected_evidence(),
+    _connected_evidence(attempts=0, certificate="unrelated-replacement"),
+    _connected_evidence(migrations=1, pending=1),
+])
+def test_route_change_without_completed_evidence_keeps_original_deadline(monkeypatch, stalled):
+    peers = object.__new__(recovery.Peers)
+    peers.command = lambda *_: [{"state": "connected", "authenticated_peer_live": True, "rns_ready": True}]
+    peers.call = lambda *_: stalled
+    ticks = iter((0, 0, 179, 180))
+    monkeypatch.setattr(recovery, "time", SimpleNamespace(monotonic=lambda: next(ticks), sleep=lambda _: None))
+    with pytest.raises(AssertionError, match="failed_peer"):
+        peers.connected(0, route_before=_connected_evidence(attempts=0))
+
+
 def test_workspace_event_delivery_has_its_own_bounded_outbox_state_without_values():
     source = {table: [] for table in setup._WORKSPACE_DIAGNOSTIC_TABLES}
     source["workspace_delivery"] = [{"workspace_id": "PRIVATE_WORKSPACE", "id": "PRIVATE_DELIVERY",

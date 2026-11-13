@@ -248,7 +248,7 @@ class Peers:
                 failure = (index,name,{"available":False},{"observation":"unavailable"})
         raise AssertionError(failure)
 
-    def connected(self, index, previous_certificate=None):
+    def connected(self, index, previous_certificate=None, *, route_before=None):
         # One total bound includes the configured native attempt and retry window.
         # A usable old Phase 2/path is not evidence that recovery has completed.
         # The specification allows 240 seconds for post-partition recovery.
@@ -263,6 +263,14 @@ class Peers:
                     and evidence["pending"]==0 and len(evidence["paths"])==1
                     and evidence["paths"][0]["recovery"]
                     and evidence["paths"][0]["certificate"]!=previous_certificate):
+                # An attempted migration can leave the old path live while
+                # asynchronous replacement is still due. Require its outcome.
+                if route_before is not None and not (
+                        evidence["migration_attempts"] > route_before["migration_attempts"]
+                        and (evidence["migrations"] > route_before["migrations"]
+                             or evidence["paths"][0]["certificate"] != route_before["paths"][0]["certificate"])):
+                    time.sleep(.2)
+                    continue
                 return evidence
             time.sleep(.2)
         raise AssertionError({"failed_peer":index,"peers":[self.call(i,"recovery_diagnostic") for i in range(2)]})
@@ -324,6 +332,7 @@ def test_production_durable_recovery(tmp_path,scenario):
         memberships=[[(w["id"],w["local_member_id"],w["local_device_id"]) for w in s["workspaces"]] for s in snapshots]
         client=1 if scenario=="unhosted_restart" else 0 if identities[0]<identities[1] else 1
         changed=[0,1]
+        changed_peer=None
         if scenario.endswith("restart"):
             changed=[client] if scenario in {"client_restart","unhosted_restart"} else [1-client] if scenario=="server_restart" else [0,1]
             for i in changed: peers.crash(i)
@@ -339,7 +348,6 @@ def test_production_durable_recovery(tmp_path,scenario):
         elif scenario in {"route_change","server_route_change"}:
             changed_peer=client if scenario=="route_change" else 1-client
             peers.call(changed_peer,"route_change")
-            time.sleep(6)
             changed=[]  # Successful client migration keeps its authenticated key.
         elif scenario in {"blocked","address_loss"}:
             for i in range(2): peers.call(i,"force_recovery",retire=True,blocked=scenario=="blocked",lose_addresses=scenario=="address_loss")
@@ -358,7 +366,8 @@ def test_production_durable_recovery(tmp_path,scenario):
         else:
             for i in range(2): peers.call(i,"force_recovery")
         if scenario=="replacement": time.sleep(2)
-        after=[peers.connected(i,before[i]["paths"][0]["certificate"] if i in changed else None) for i in range(2)]
+        after=[peers.connected(i,before[i]["paths"][0]["certificate"] if i in changed else None,
+                              route_before=before[i] if i==changed_peer else None) for i in range(2)]
         if scenario=="replacement":
             assert all(after[i]["controls"]["received"]>before[i]["controls"]["received"] for i in range(2))
         if scenario in {"route_change","server_route_change"}:
