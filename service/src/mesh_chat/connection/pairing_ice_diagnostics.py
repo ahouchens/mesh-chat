@@ -26,7 +26,9 @@ def _lines(sdp):
     except UnicodeError:
         return None
     lines = sdp.replace("\r\n", "\n").split("\n")
-    if (len(lines) > MAX_SDP_LINES or not any(line.startswith("m=application ") for line in lines)
+    if (len(lines) > MAX_SDP_LINES
+            or len([line for line in lines if line.startswith("m=")]) != 1
+            or not any(line.startswith("m=application ") for line in lines)
             or any(any(ord(char) < 32 or ord(char) == 127 for char in line) for line in lines)):
         return None
     return lines

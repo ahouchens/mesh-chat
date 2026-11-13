@@ -455,6 +455,8 @@ class NativePairingServiceMixin:
             result = self.native_pairing_status(operation_id)
             if result["state"] in {"retiring", "retired"}:
                 context = self._native_pairing_contexts[operation_id]
+                if not self._native_pairing_ice_bound_source(context):
+                    context["ice_diagnostic_snapshot"] = unavailable_ice_diagnostic()
                 key = connection_key({"id": context["id"], "scope_kind": "pairing",
                                       "local_device_id": context["identity_hash"]})
                 result["retirement"] = self._connection_runtime.owner.pairing_retirement_diagnostic(
@@ -468,10 +470,13 @@ class NativePairingServiceMixin:
                             context["ice_diagnostic_snapshot"] = unavailable_ice_diagnostic()
                     try:
                         selected = validated_pairing_ice_diagnostic(context["ice_diagnostic_snapshot"])
-                        result["ice_diagnostic"] = (selected if selected is not None
-                            and not self._native_pairing_ice_conflict(context, selected)
-                            else unavailable_ice_diagnostic())
+                        if (selected is None or not self._native_pairing_ice_bound_source(context)
+                                or self._native_pairing_ice_conflict(context, selected)):
+                            context["ice_diagnostic_snapshot"] = unavailable_ice_diagnostic()
+                            selected = unavailable_ice_diagnostic()
+                        result["ice_diagnostic"] = selected
                     except Exception:
+                        context["ice_diagnostic_snapshot"] = unavailable_ice_diagnostic()
                         result["ice_diagnostic"] = unavailable_ice_diagnostic()
                 if "gather_failure_snapshot" not in context:
                     try:
@@ -515,8 +520,7 @@ class NativePairingServiceMixin:
                 or context["authorized"]() is not True
                 or getattr(getattr(self, "_connection_runtime", None), "owner", None) is None
                 or self._connection_runtime.owner.runtime_epoch != context["runtime_epoch"]
-                or not isinstance(context.get("source"), Resource)
-                or type(context.get("physical")) is not str
+                or not self._native_pairing_ice_bound_source(context)
                 or type(context.get("session")) is not str):
             return unavailable
         physical = self._native_resources.physical(context["session"])
@@ -530,6 +534,15 @@ class NativePairingServiceMixin:
         if selected["availability"] != "selected":
             return unavailable
         return unavailable if self._native_pairing_ice_conflict(context, selected) else selected
+
+    @staticmethod
+    def _native_pairing_ice_bound_source(context):
+        physical = context.get("physical")
+        source = context.get("source")
+        return (type(physical) is str and type(source) is Resource
+                and source.adapter_epoch == "native"
+                and context.get("ice_source_binding") == (context.get("id"), context.get("runtime_epoch"),
+                    source, context.get("session"), physical))
 
     def _native_pairing_retained_sdp_pair(self, context):
         """Verify both retained signed documents without consulting native state."""
@@ -681,6 +694,9 @@ class NativePairingServiceMixin:
         for context in getattr(self, "_native_pairing_contexts", {}).values():
             if context["session"] == session:
                 context["physical"] = physical
+                if "ice_source_binding" not in context:
+                    context["ice_source_binding"] = (context["id"], context["runtime_epoch"],
+                        context["source"], session, physical)
                 return
 
     def _native_pairing_owned(self, session):

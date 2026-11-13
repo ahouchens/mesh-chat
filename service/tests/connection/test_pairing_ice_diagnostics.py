@@ -8,7 +8,7 @@ from uuid import uuid4
 
 import pytest
 
-from mesh_chat.connection.model import Phase
+from mesh_chat.connection.model import Phase, Resource
 
 from mesh_chat.connection.pairing_ice_diagnostics import (
     ice_diagnostic, unavailable_ice_diagnostic, validated_pairing_ice_diagnostic,
@@ -55,6 +55,9 @@ def test_missing_malformed_and_overbound_sdp_is_unavailable():
     assert ice_diagnostic(LOCAL.replace("a=ice-ufrag:local1234", "a=ice-ufrag:one\r\na=ice-ufrag:two"), REMOTE) == unavailable
     assert ice_diagnostic(LOCAL.replace("local1234", "local-1234"), REMOTE) == unavailable
     assert ice_diagnostic(LOCAL.replace("v=0\r\n", "v=0junk\r\n", 1), REMOTE) == unavailable
+    extra_media = "m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=candidate:5 1 udp 119 203.0.113.5 5003 typ host\r\n"
+    assert ice_diagnostic(LOCAL + extra_media, REMOTE) == unavailable
+    assert ice_diagnostic(LOCAL, REMOTE + extra_media) == unavailable
     assert ice_diagnostic(LOCAL, REMOTE + "a=candidate:bad\r\n") == unavailable
     assert ice_diagnostic(LOCAL + ("a=candidate:1 1 udp 1 192.0.2.1 5 typ host\r\n" * 257), REMOTE) == unavailable
     assert ice_diagnostic(LOCAL, sdp("local1234")) == unavailable
@@ -97,30 +100,57 @@ def test_real_pairing_terminal_checking_timeout_retains_exact_sdp_once(native_pa
         service._connection_runtime.now = lambda: monotonic() + 100
         run_until(service, lambda: service.native_pairing_status(operation)["state"] == "retired")
         observed = service.native_pairing_qualification_status(operation)
+        context = service._native_pairing_contexts[operation]
+        assert context["ice_source_binding"] == (context["id"], context["runtime_epoch"],
+                                                  context["source"], context["session"], context["physical"])
+        assert service._native_resources.physical(context["session"]) is None
         assert observed["retirement"] == {"phase": "checking", "event": "tick", "reason": "phase_timeout"}
         assert observed["ice_diagnostic"]["availability"] == "selected"
         assert observed["ice_diagnostic"]["local"]["total"] == 1
         assert observed["ice_diagnostic"]["remote"]["total"] == 1
         observed["ice_diagnostic"]["local"]["types"]["host"] = 99
         assert service.native_pairing_qualification_status(operation)["ice_diagnostic"]["local"]["total"] == 1
-        context = service._native_pairing_contexts[operation]
         assert "ice_diagnostic_snapshot" in context
         assert all(raw not in str(observed["ice_diagnostic"]) for raw in ("192.0.2.1", "198.51.100.2", "local1234"))
-        other = {**context, "id": str(uuid4())}
-        service._native_pairing_contexts[other["id"]] = other
+        if service is first:
+            other = {**context, "id": str(uuid4())}
+            service._native_pairing_contexts[other["id"]] = other
+            assert service.native_pairing_qualification_status(operation)["ice_diagnostic"] == unavailable_ice_diagnostic()
+            del service._native_pairing_contexts[other["id"]]
+        else:
+            original_physical = context["physical"]
+            context["physical"] = "other-physical"
+            assert service.native_pairing_qualification_status(operation)["ice_diagnostic"] == unavailable_ice_diagnostic()
+            context["physical"] = original_physical
         assert service.native_pairing_qualification_status(operation)["ice_diagnostic"] == unavailable_ice_diagnostic()
-        del service._native_pairing_contexts[other["id"]]
-        assert service.native_pairing_qualification_status(operation)["ice_diagnostic"]["availability"] == "selected"
         for field, replacement in (("runtime_epoch", "stale"), ("identity", lambda: None),
                                    ("host", object())):
             original = context[field]
             context[field] = replacement
             assert service._native_pairing_ice_diagnostic(operation, context) == unavailable_ice_diagnostic()
             context[field] = original
+        original_source = context["source"]
+        context["source"] = Resource("native", "other-physical")
+        assert service._native_pairing_ice_diagnostic(operation, context) == unavailable_ice_diagnostic()
+        context["source"] = original_source
+        original_physical = context["physical"]
+        context["physical"] = "other-physical"
+        assert service._native_pairing_ice_diagnostic(operation, context) == unavailable_ice_diagnostic()
+        context["physical"] = original_physical
         original_doc = context["offer"]["document"]
         context["offer"]["document"] = "malformed"
         assert service._native_pairing_ice_diagnostic(operation, context) == unavailable_ice_diagnostic()
         context["offer"]["document"] = original_doc
+        # Recreate a first projection to check the entry guard through status.
+        del context["ice_diagnostic_snapshot"]
+        field = "source" if service is first else "physical"
+        original = context[field]
+        context[field] = Resource("native", "other-source") if field == "source" else "other-physical"
+        first_projection = service.native_pairing_qualification_status(operation)
+        assert first_projection.get("ice_diagnostic", unavailable_ice_diagnostic()) == unavailable_ice_diagnostic()
+        assert context["ice_diagnostic_snapshot"] == unavailable_ice_diagnostic()
+        context[field] = original
+        assert service.native_pairing_qualification_status(operation)["ice_diagnostic"] == unavailable_ice_diagnostic()
 
 
 def test_private_status_projects_only_valid_exact_timeout_summary():
