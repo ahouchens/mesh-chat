@@ -4,6 +4,8 @@ Source pipes qualify orchestration; the CI-only shipping dispatcher adds real
 QUIC. Neither qualifies physical router reachability or Android devices.
 """
 import multiprocessing
+import hashlib
+import json
 import os
 from pathlib import Path
 import queue
@@ -154,6 +156,130 @@ def _project_workspace_bootstrap_diagnostic(records, *, now):
                                           "attempts": _WORKSPACE_DIAGNOSTIC_ATTEMPTS}}
 
 
+def _admission_control_document(row, workspace_id, channel_id=None):
+    try:
+        document = row["document"]
+        if type(document) is not str or len(document) > 16384:
+            return False
+        raw = json.loads(document)
+        return (type(raw) is dict and raw.get("workspace_id") == workspace_id
+                and raw.get("name") == "general"
+                and (channel_id is None or raw.get("channel_id") == channel_id))
+    except Exception:
+        return False
+
+
+def _admission_channel_diagnostic(store, workspace_id, workspace_record_id,
+                                  channel_record_id, delivery_ids, pending_ids, *,
+                                  now, native_network=None, expected_channel_id=None):
+    """Read only exact IDs retained by this test worker; project no identifiers."""
+    unavailable = {"available": False}
+    if (type(workspace_id) is not str or not workspace_id
+            or type(workspace_record_id) is not str or not workspace_record_id
+            or type(delivery_ids) not in (list, tuple) or len(delivery_ids) > 2
+            or type(pending_ids) not in (list, tuple) or len(pending_ids) > 2
+            or any(type(key) is not str or not key for key in (*delivery_ids, *pending_ids))):
+        return unavailable
+    try:
+        workspace = store.get("workspace", workspace_record_id)
+    except Exception:
+        return unavailable
+    if type(workspace) is not dict or workspace.get("id") != workspace_id:
+        return unavailable
+    general = workspace.get("general_channel_id")
+    reference = type(general) is str and bool(general)
+    channel_record = None
+    if type(channel_record_id) is str and channel_record_id:
+        try: channel_record = store.get("workspace_channel", channel_record_id)
+        except Exception: channel_record = False
+
+    def exact(kind, identifiers):
+        rows = []
+        for identifier in identifiers:
+            try: rows.append(store.get(kind, identifier))
+            except Exception: rows.append(False)
+        return rows
+
+    deliveries = exact("workspace_delivery", delivery_ids)
+    pending = exact("workspace_pending_control", pending_ids)
+    result = {"available": True,
+        "workspace_state": _workspace_diagnostic_enum(workspace.get("state"),
+            ("joining", "active", "incomplete_sync", "forked", "closed", "removed", "left")),
+        "channel_discovery": _workspace_diagnostic_enum(workspace.get("channel_discovery"),
+            ("incomplete", "converged")),
+        "general_reference": "present" if reference else "absent",
+        "general_channel_record": (
+            "unknown" if not channel_record_id else
+            "unavailable" if channel_record is False else
+            "present" if type(channel_record) is dict and channel_record.get("name") == "general" and (
+                channel_record.get("id") == general if reference else
+                type(expected_channel_id) is str and channel_record.get("id") == expected_channel_id
+            ) and channel_record.get("workspace_id") == workspace_id else
+            "absent" if channel_record is None else "unavailable")}
+    selected = None
+    if not delivery_ids:
+        control = {"selection": "not_observed"}
+    elif any(row is False or (row is not None and (
+            type(row) is not dict or row.get("workspace_id") != workspace_id
+            or row.get("kind") != "workspace_channel_record"
+            or not _admission_control_document(row, workspace_id, general if reference else None)))
+            for row in deliveries):
+        control = {"selection": "unavailable"}
+    else:
+        selected_rows = [row for row in deliveries if row is not None]
+        if len(selected_rows) != 1:
+            control = {"selection": "absent" if not selected_rows else "ambiguous"}
+        else:
+            selected = selected_rows[0]
+            state = _workspace_diagnostic_enum(selected.get("state"), _WORKSPACE_DIAGNOSTIC_STATES)
+            attempts = selected.get("attempt_count")
+            valid_attempts = type(attempts) is int and attempts >= 0
+            due = selected.get("next_attempt_at")
+            schedule = "unknown"
+            if state in ("received_by_endpoint", "delivered", "failed", "expired", "cancelled"):
+                schedule = "terminal"
+            elif state != "unknown" and _workspace_diagnostic_time(now) and _workspace_diagnostic_time(due):
+                schedule = "due" if due <= now else "future"
+            control = {"selection": "selected", "state": state,
+                "attempts": min(attempts, _WORKSPACE_DIAGNOSTIC_ATTEMPTS) if valid_attempts else None,
+                "attempts_capped": valid_attempts and attempts > _WORKSPACE_DIAGNOSTIC_ATTEMPTS,
+                "schedule": schedule,
+                "native_message_id_present": type(selected.get("native_message_id")) is str
+                                             and bool(selected["native_message_id"]),
+                "failure": "none" if selected.get("failure_code") is None else
+                    _workspace_diagnostic_enum(selected.get("failure_code"),
+                        ("identity_binding_invalid", "transport_unavailable", "transport_error"))}
+    result["channel_control"] = control
+    if not pending_ids:
+        result["pending_control"] = {"selection": "not_observed"}
+    elif any(row is False or (row is not None and (
+            type(row) is not dict or row.get("workspace_id") != workspace_id
+            or row.get("kind") != "workspace_channel_record"
+            or not _admission_control_document(row, workspace_id)))
+            for row in pending):
+        result["pending_control"] = {"selection": "unavailable"}
+    else:
+        present = [row for row in pending if row is not None]
+        result["pending_control"] = (
+            {"selection": "absent"} if not present else
+            {"selection": "ambiguous"} if len(present) != 1 else
+            {"selection": "present", "reason": _workspace_diagnostic_enum(
+                present[0].get("reason"), ("missing_manifest", "missing_channel_predecessor"))})
+    if native_network is not None and selected is not None:
+        try:
+            result["native_failure"] = _native_failure_diagnostic(
+                [selected], native_network, workspace_id, kind="workspace_channel_record")
+        except Exception:
+            result["native_failure"] = {"selection": "unavailable", "attempts": "unavailable",
+                                        "callbacks": "unavailable"}
+    return result
+
+
+def _admission_pending_id(store, wire):
+    digest = hashlib.sha256(wire.document.encode("utf-8")).hexdigest()
+    return store.opaque_id("workspace-pending-control", wire.workspace_id, wire.kind, digest)
+
+
 def _workspace_bootstrap_diagnostic(store, *, now, native_network=None, workspace_id=None):
     records = {}
     for table in _WORKSPACE_DIAGNOSTIC_TABLES:
@@ -221,7 +347,7 @@ def _native_link_state(links, destination):
     return "unknown"
 
 
-def _native_failure_diagnostic(rows, network, workspace_id):
+def _native_failure_diagnostic(rows, network, workspace_id, *, kind="workspace_event"):
     """Failure-only exact event probe; never return its private correlation keys."""
     callbacks = _callback_failure_diagnostic(network)
     result = {"selection": "unavailable", "attempts": "unavailable", "callbacks": callbacks}
@@ -235,7 +361,7 @@ def _native_failure_diagnostic(rows, network, workspace_id):
         result["selection"] = "partial"
         return result
     matching = [row for row in rows if row.get("workspace_id") == workspace_id
-                and row.get("kind") == "workspace_event"]
+                and row.get("kind") == kind]
     if not matching:
         result["selection"] = "absent"
         return result
@@ -414,6 +540,52 @@ def _service_worker(root, incoming, outgoing, commands, replies, native_binary=N
     channel_trace = []
     workspace_event_trace = deque(maxlen=16)
     workspace_event_trace_truncated = False
+    admission_deliveries = {}
+    admission_pending = {}
+    admission_channels = {}
+    admission_tracking_failed = False
+    def retain_admission_id(table, workspace_id, identifier):
+        nonlocal admission_tracking_failed
+        if type(workspace_id) is not str or type(identifier) is not str:
+            return
+        if workspace_id not in table and len(table) >= 8:
+            admission_tracking_failed = True
+            return
+        tracked = table.setdefault(workspace_id, [])
+        if identifier not in tracked and len(tracked) < 2:
+            tracked.append(identifier)
+        elif identifier not in tracked:
+            admission_tracking_failed = True
+    def retain_admission_channel(workspace_id, document):
+        if type(document) is not str or len(document) > 16384:
+            return
+        raw = json.loads(document)
+        if (type(raw) is dict and raw.get("workspace_id") == workspace_id
+                and raw.get("name") == "general"):
+            retain_admission_id(admission_channels, workspace_id, raw.get("channel_id"))
+    def traced_delivery_record(**values):
+        nonlocal admission_tracking_failed
+        row = original_delivery_record(**values)
+        try:
+            if (values.get("kind") == "workspace_channel_record"
+                    and _admission_control_document(row, values.get("workspace_id"))):
+                retain_admission_id(admission_deliveries, values["workspace_id"], row["id"])
+                retain_admission_channel(values["workspace_id"], values["document"])
+        except Exception:
+            admission_tracking_failed = True
+        return row
+    def traced_pending_control(wire, reason):
+        nonlocal admission_tracking_failed
+        result = original_pending_control(wire, reason)
+        try:
+            if (wire.kind == "workspace_channel_record"
+                    and _admission_control_document({"document": wire.document}, wire.workspace_id)):
+                identifier = _admission_pending_id(store, wire)
+                retain_admission_id(admission_pending, wire.workspace_id, identifier)
+                retain_admission_channel(wire.workspace_id, wire.document)
+        except Exception:
+            admission_tracking_failed = True
+        return result
     def channel_entry(destination, fields, content):
         bootstrap = getattr(service.network, "_direct_bootstrap", None)
         return {"bootstrap_ready": bool(bootstrap is not None and bootstrap.ready and bootstrap.peer == destination),
@@ -533,6 +705,10 @@ def _service_worker(root, incoming, outgoing, commands, replies, native_binary=N
         service._receive_workspace_payload = traced_workspace_ingress
         original_workspace_accept = service._accept_workspace_event
         service._accept_workspace_event = traced_workspace_accept
+        original_delivery_record = service._workspace_delivery_record
+        service._workspace_delivery_record = traced_delivery_record
+        original_pending_control = service._store_pending_workspace_control
+        service._store_pending_workspace_control = traced_pending_control
         replies.put({"ok":True})
         while True:
             operation, payload = commands.get()
@@ -549,8 +725,24 @@ def _service_worker(root, incoming, outgoing, commands, replies, native_binary=N
                         import RNS
                         result = {"native_count":len(service._direct_native.owned),
                                   "interfaces":len(RNS.Transport.interfaces)}
+                    elif operation == "admission_diagnostic":
+                        workspace_id = payload.get("workspace_id")
+                        if admission_tracking_failed or type(workspace_id) is not str or not workspace_id:
+                            result = {"available": False}
+                        else:
+                            record_id = service._workspace_record_id(workspace_id)
+                            workspace = store.get("workspace", record_id)
+                            general = workspace.get("general_channel_id") if type(workspace) is dict else None
+                            observed = admission_channels.get(workspace_id, ())
+                            channel = (general if type(general) is str and general else
+                                       observed[0] if len(observed) == 1 else None)
+                            channel_id = (service._workspace_channel_record_id(channel)
+                                          if type(channel) is str and channel else None)
+                            result = _admission_channel_diagnostic(store, workspace_id,
+                                record_id, channel_id, admission_deliveries.get(workspace_id, ()),
+                                admission_pending.get(workspace_id, ()), now=time.time(),
+                                native_network=service.network, expected_channel_id=channel)
                     elif operation == "recovery_diagnostic":
-                        import hashlib
                         from mesh_chat.invitations import canonical_bytes
                         result = {"peers":service._direct_recovery.status(),
                             "identity":service.network.destination_hash.hex(),"controls":dict(controls),

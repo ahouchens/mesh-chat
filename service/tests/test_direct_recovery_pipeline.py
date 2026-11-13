@@ -183,6 +183,48 @@ def _recovery_failure_snapshot(value):
     return result
 
 
+def _admission_failure_snapshot(value):
+    """Whitelist bounded admission evidence; never echo source identifiers."""
+    if type(value) is not dict or value.get("available") is not True:
+        return {"available": False}
+    control = value.get("channel_control")
+    control = control if type(control) is dict else {}
+    pending = value.get("pending_control")
+    pending = pending if type(pending) is dict else {}
+    selection = _fixed_label(control.get("selection"),
+        {"selected", "not_observed", "absent", "ambiguous", "unavailable"})
+    control_result = {"selection": selection}
+    if selection == "selected":
+        attempts = control.get("attempts")
+        control_result.update({
+            "state": _fixed_label(control.get("state"), _EVENT_STATES),
+            "attempts": _fixed_count(attempts, 32),
+            "attempts_capped": (control.get("attempts_capped")
+                                if type(control.get("attempts_capped")) is bool else None),
+            "schedule": _fixed_label(control.get("schedule"), _EVENT_SCHEDULES),
+            "native_message_id_present": (control.get("native_message_id_present")
+                                          if type(control.get("native_message_id_present")) is bool else None),
+            "failure": _fixed_label(control.get("failure"), _EVENT_FAILURES)})
+    pending_selection = _fixed_label(pending.get("selection"),
+        {"present", "not_observed", "absent", "ambiguous", "unavailable"})
+    pending_result = {"selection": pending_selection}
+    if pending_selection == "present":
+        pending_result["reason"] = _fixed_label(pending.get("reason"),
+            {"missing_manifest", "missing_channel_predecessor"})
+    result = {"available": True,
+        "workspace_state": _fixed_label(value.get("workspace_state"),
+            {"joining", "active", "incomplete_sync", "forked", "closed", "removed", "left"}),
+        "channel_discovery": _fixed_label(value.get("channel_discovery"),
+            {"incomplete", "converged"}),
+        "general_reference": _fixed_label(value.get("general_reference"), {"present", "absent"}),
+        "general_channel_record": _fixed_label(value.get("general_channel_record"),
+            {"present", "absent", "unknown", "unavailable"}),
+        "channel_control": control_result, "pending_control": pending_result}
+    if "native_failure" in value:
+        result["native_failure"] = _native_failure_snapshot(value["native_failure"])
+    return result
+
+
 def _failure_last_page(value):
     if type(value) is not dict or type(value.get("messages")) is not list:
         return {"available": False}
@@ -231,12 +273,20 @@ class Peers:
         # snapshots use at most one second per queue operation on each peer.
         diagnostics=[]
         workspace = getattr(self, "workspace", None)
+        admission_request = ({"workspace_id": workspace["id"]}
+                             if name == "workspace_snapshot" and type(workspace) is dict
+                             and type(workspace.get("id")) is str else None)
         native_request = ({"failure_native": True, "workspace_id": workspace["id"]}
                           if name == "list_workspace_messages" and type(workspace) is dict
                           and type(workspace.get("id")) is str else {})
         for peer in range(2):
-            try: diagnostics.append(_recovery_failure_snapshot(
-                self.call(peer,"recovery_diagnostic",_diagnostic_timeout=1,**native_request)))
+            try:
+                if admission_request is not None:
+                    diagnostics.append(_admission_failure_snapshot(self.call(
+                        peer, "admission_diagnostic", _diagnostic_timeout=1, **admission_request)))
+                else:
+                    diagnostics.append(_recovery_failure_snapshot(self.call(
+                        peer, "recovery_diagnostic", _diagnostic_timeout=1, **native_request)))
             except Exception: diagnostics.append({"available":False})
         failure = (index,name,_failure_last_page(last) if name == "list_workspace_messages" else last,
                    {"peers":diagnostics})
