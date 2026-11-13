@@ -33,6 +33,11 @@ HEADER = struct.Struct(">I")
 SAFE_ERROR = re.compile(r"[a-z][a-z0-9_]{0,63}\Z")
 
 
+def _instrumentation_status():
+    try: return InstrumentationStatus()
+    except Exception: return None  # Optional evidence cannot prevent peer startup.
+
+
 class PeerFailure(RuntimeError):
     def __init__(self, code="peer_unavailable"):
         self.code = code if isinstance(code, str) and SAFE_ERROR.fullmatch(code) else "peer_unavailable"
@@ -358,7 +363,7 @@ class AndroidPeer:
         self._core_failure = None
         self._qualification_binding = None
         self._transport_failure = None
-        self._instrumentation_status = InstrumentationStatus()
+        self._instrumentation_status = _instrumentation_status()
         self.processes_started, self.clean_exits, self.forced_exits = 0, 0, 0
 
     def _adb(self, *args):
@@ -369,7 +374,7 @@ class AndroidPeer:
             raise PeerFailure("peer_already_started")
         self._qualification_binding = None
         self._transport_failure = None
-        self._instrumentation_status = InstrumentationStatus()
+        self._instrumentation_status = _instrumentation_status()
         nonce = os.urandom(32).hex()
         self.process = subprocess.Popen([self.adb, "shell", "am", "instrument", "-w", "-r",
             "-e", "class", self.TEST, "-e", "mesh_interop_nonce", nonce, self.RUNNER],
@@ -381,8 +386,9 @@ class AndroidPeer:
         def reader():
             try:
                 while line := process.stdout.readline(8193):
-                    try: status.observe(line)
-                    except Exception: pass  # Status observation cannot affect port admission.
+                    if status is not None:
+                        try: status.observe(line)
+                        except Exception: pass  # Status observation cannot affect port admission.
                     if len(line) > 8192:
                         continue
                     match = re.fullmatch(rb"INSTRUMENTATION_STATUS: mesh_interop_port=([0-9]{1,5})\r?\n", line)
@@ -390,8 +396,9 @@ class AndroidPeer:
                         try: ports.put_nowait(int(match[1]))
                         except queue.Full: pass
             finally:
-                try: status.ended()
-                except Exception: pass
+                if status is not None:
+                    try: status.ended()
+                    except Exception: pass
         self._reader = threading.Thread(target=reader, daemon=True)
         self._reader.start()
         try:

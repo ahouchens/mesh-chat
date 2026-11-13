@@ -122,6 +122,11 @@ def test_transport_projection_rejects_extra_or_malformed_fields():
     assert valid is not None
     for mutation in ({"secret": "PRIVATE"}, {"eof_stage": ["header"]},
                      {"received_bytes": True}, {"process": {"state": "exited", "exit_status": "PRIVATE"}},
+                     {"process": {"state": "running", "exit_status": "PRIVATE_RAW"}},
+                     {"process": {"state": "unknown", "exit_status": True}},
+                     {"process": {"state": "absent", "exit_status": 0}},
+                     {"received_bytes": 4}, {"read_calls": 5}, {"received_bytes_capped": True},
+                     {"read_calls_capped": True},
                      {"instrumentation": {"reader_eof": False, "code": "PRIVATE", "marker": None}}):
         assert android_transport_snapshot({**valid, **mutation}) is None
 
@@ -137,3 +142,28 @@ def test_existing_request_timeout_does_not_become_eof_evidence():
     assert peer.failure_transport_observation(caught.value) is None
     assert peer.socket.requests == 1
     assert peer.socket.timeouts and all(0 < value <= 60 for value in peer.socket.timeouts)
+
+
+def test_optional_status_constructor_failure_keeps_android_port_and_requests(monkeypatch):
+    def unavailable_status():
+        raise RuntimeError("PRIVATE")
+    monkeypatch.setattr(peers, "InstrumentationStatus", unavailable_status)
+    peer = peers.AndroidPeer(b"k" * 32)
+    assert peer._instrumentation_status is None
+    class Process:
+        stdout = BytesIO(b"INSTRUMENTATION_STATUS: mesh_interop_port=12345\n")
+        def poll(self): return None
+    process = Process()
+    monkeypatch.setattr(peers.subprocess, "Popen", lambda *args, **kwargs: process)
+    monkeypatch.setattr(peer, "_adb", lambda *args: "45678")
+    response = b"".join(peers.encode({"id": f"qualification:{index}", "ok": True,
+                                      "result": {}}) for index in range(1, 4))
+    class StartSocket(Socket):
+        def sendall(self, value):
+            self.requests += 1
+            assert peers.receive(BytesIO(value).read)["action"] in {"authenticate", "initialize", "inspect"}
+    connection = StartSocket(response)
+    monkeypatch.setattr(peers.socket, "create_connection", lambda *args, **kwargs: connection)
+    assert peer.start() == {}
+    assert connection.requests == 3
+    assert peer._instrumentation_status is None
