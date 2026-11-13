@@ -29,7 +29,7 @@ import verify_android_independent_consumer as android_distribution
 import stage_android_independent_consumer as android_staging
 
 
-@pytest.mark.parametrize("fault", [None, "extra", "wrong_role"])
+@pytest.mark.parametrize("fault", [None, "extra", "wrong_role", "offer_gather", "offer_gather_extra"])
 def test_owner_diagnostic_is_failure_only_and_does_not_replace_public_pairing_outcome(tmp_path, fault):
     node, _ = staging.tools()
     log = tmp_path / "owner-diagnostic.jsonl"
@@ -47,7 +47,12 @@ def test_owner_diagnostic_is_failure_only_and_does_not_replace_public_pairing_ou
     owner = details["diagnostics"]["owner_retirement"]
     assert owner["scope"] == "trusted_owner_before_cleanup" and owner["budget_ms"] == 2000
     offerer = owner["peers"]["offerer"]
-    if fault is None:
+    if fault == "offer_gather":
+        intent = offerer["observation"]["intents"][0]
+        assert intent["retirement"] == {"phase": "gather_offer", "event": "failed", "reason": "invalid_document"}
+        assert intent["gather_failure"]["native_code"] == "no_candidates"
+        assert intent["gather_failure"]["stage"] == "native_offer"
+    elif fault is None:
         assert offerer["observation"]["intents"][0]["retirement"] == {
             "phase": "apply_answer", "event": "failed", "reason": "invalid_document"}
     else:

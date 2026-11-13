@@ -214,6 +214,39 @@ def invitation_observation_details(value):
                 raise ValueError("Invitation actor failure contains extra fields")
 
 
+def owner_offer_gather_details(intent, cause):
+    if (intent["role"] != "offer" or intent["state"] not in {"retiring", "retired"}
+            or cause is None or cause["phase"] != "gather_offer"):
+        raise ValueError("Owner gather attribution is invalid")
+    failed = (cause["event"], cause["reason"]) == ("failed", "invalid_document")
+    deadline = (cause["event"], cause["reason"]) == ("tick", "phase_timeout")
+    value = intent["gather_failure"]
+    fields = {"as_of", "worker", "stage", "stage_state", "last_completed", "queue_age", "stage_age"}
+    if failed:
+        fields |= {"exception_kind", "native_code"}
+    if (not (failed or deadline) or type(value) is not dict or set(value) != fields
+            or any(type(item) is not str for item in value.values())):
+        raise ValueError("Owner gather fields are invalid")
+    ages = {"lt1s", "1to5s", "5to20s", "20to25s", "gte25s", "unknown"}
+    choices = {
+        "as_of": {"failed_result" if failed else "phase_deadline"},
+        "worker": {"queued", "started", "completed", "unknown"},
+        "stage": {"not_started", "ice_config", "native_offer", "offer_sign", "complete", "unknown"},
+        "stage_state": {"entered", "completed", "unknown"},
+        "last_completed": {"none", "ice_config", "native_offer", "offer_sign", "unknown"},
+        "queue_age": ages, "stage_age": ages,
+    }
+    if any(value[key] not in allowed for key, allowed in choices.items()):
+        raise ValueError("Owner gather labels are invalid")
+    if failed:
+        codes = {"answer_failed", "network_monitor_failed", "session_closed", "disposal_timeout",
+                 "no_candidates", "missing_data_channel", "sdp_failed", "unknown"}
+        allowed_codes = {"native_unavailable": codes, "identity_mismatch": {"not_applicable"},
+                         "validation_error": {"not_applicable"}, "unknown": {"unknown"}}
+        if value["native_code"] not in allowed_codes.get(value["exception_kind"], set()):
+            raise ValueError("Owner gather exception labels are invalid")
+
+
 def owner_retirement_details(value):
     if (type(value) is not dict or set(value) != {"scope", "budget_ms", "peers"}
             or value["scope"] != "trusted_owner_before_cleanup" or type(value["budget_ms"]) is not int
@@ -249,7 +282,8 @@ def owner_retirement_details(value):
         if observed["total_intents"] != 1 or len(observed["intents"]) != 1:
             raise ValueError("Owner diagnostic intent attribution is ambiguous")
         intent = observed["intents"][0]
-        if (type(intent) is not dict or set(intent) != {"role", "state", "retirement"}
+        if (type(intent) is not dict or set(intent) not in (
+                {"role", "state", "retirement"}, {"role", "state", "retirement", "gather_failure"})
                 or intent["role"] != ("offer" if role == "offerer" else "answer")
                 or type(intent["state"]) is not str or intent["state"] not in PAIRING_STATES - {"unknown"}):
             raise ValueError("Owner diagnostic intent is invalid")
@@ -259,6 +293,8 @@ def owner_retirement_details(value):
                 or any(type(cause[key]) is not str or cause[key] not in choices
                        for key, choices in (("phase", phases), ("event", events), ("reason", reasons)))):
             raise ValueError("Owner diagnostic retirement is invalid")
+        if "gather_failure" in intent:
+            owner_offer_gather_details(intent, cause)
 
 
 def failure_details(value):

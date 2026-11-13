@@ -56,6 +56,15 @@ function launch(_executable, directory, options = {}, rejected = false) {
       state:"retired",retirement:{phase:role === "offerer" ? "apply_answer" : "checking",event:"failed",reason:"invalid_document"}}]};
     if (process.env.PAIRING_OWNER_DIAGNOSTIC === "wrong_role") observed.intents[0].role = "answer";
     if (process.env.PAIRING_OWNER_DIAGNOSTIC === "extra") observed.intents[0].raw = "PRIVATE_PAYLOAD";
+    if (["offer_gather", "offer_gather_extra"].includes(process.env.PAIRING_OWNER_DIAGNOSTIC) && role === "offerer") {
+      observed.intents[0].retirement.phase = "gather_offer";
+      observed.intents[0].gather_failure = {as_of:"failed_result",worker:"started",stage:"native_offer",
+        stage_state:"entered",last_completed:"ice_config",queue_age:"lt1s",stage_age:"1to5s",
+        exception_kind:"native_unavailable",native_code:"no_candidates"};
+      if (process.env.PAIRING_OWNER_DIAGNOSTIC === "offer_gather_extra") {
+        observed.intents[0].gather_failure.raw = "PRIVATE_PAYLOAD";
+      }
+    }
     return {outcome:"received",observation:observed};
   },stop:async remaining => {
     stopRequested = true;

@@ -1,5 +1,33 @@
 # Independent public consumer qualification proposal
 
+Full run [43477424970](https://github.com/ahouchens/mesh-chat/actions/runs/43477424970)
+at `16eb381` is **failed**: nine jobs passed, Windows desktop public pairing and
+the aggregate gate failed, and native interop was skipped after the desktop
+prerequisite failed. Policy passed 6,468 cases without failures or skips; UI
+boundary passed 2,309 Python and 12 rendered cases; Android passed 56 emulator
+and 83 exact JVM cases. Both Direct platforms passed 25 fabric, 10 recovery and
+12 setup cases. All 72 layout cases and nine Windows pipe cases passed. These
+component results do not establish full native acceptance.
+
+Windows public SDK bootstrap passed with DPAPI/EFS. Public pairing then failed
+before an offer code became available. The trusted owner retained one offer
+intent retired at `gather_offer/failed/invalid_document`. `NativeUnavailable`
+inherits `ValidationError`, so this classification also covers native failures;
+it does not identify a malformed document, a native code, or the failed stage.
+The later `network_interface_unavailable` snapshot is not causal evidence. The
+sidecar bytes match the preceding desktop pass. No specific network, TURN,
+candidate, signing, or SDP cause is established by this attempt.
+
+The next diagnostic slice extends existing private gather observation to offers
+and projects an optional, strictly validated field through the trusted owner's
+existing failure frame. It records fixed stage and exception labels at the
+accepted failed-result time or original phase deadline, with exact source/work
+custody and bounded lock acquisition. It adds no raw error/SDP fields, RPC, retry,
+public SDK operation, deadline, native acceptance, or WebRTC change. The Android
+lifecycle diagnostic from `16eb381` remains in place but was not exercised by
+native interop in this run. Full native/aggregate acceptance, helper retirement
+and later roadmap gates remain open.
+
 Full run [43468072180](https://github.com/ahouchens/mesh-chat/actions/runs/43468072180)
 at `4cf7e0b` is **failed**: ten jobs passed, both native peers failed, and the
 aggregate rejected incomplete qualification. Policy passed 6,445 cases with no
