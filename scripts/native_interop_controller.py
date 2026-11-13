@@ -24,6 +24,8 @@ from native_interop_diagnostics import (NegativeControlDiagnostics, PreflightDia
 from native_interop_peers import AndroidEmulator, AndroidPeer, PeerFailure, WindowsPeer
 from native_interop_core_observation import core_failure_observation
 from native_interop_carrier_observation import FinalCarrierObservation, carrier_target, final_carrier_snapshot
+from native_interop_pairing_ice import PairingIceObservation
+from native_interop_ice_packets import validated_snapshot as validated_ice_packets, unavailable as ice_packets_unavailable
 from native_interop_preflight import (DEFAULT_SIGNAL_MAILBOX_URL, android_environment,
     android_network_diagnostic, outbound_services)
 from native_interop_rendezvous import Rendezvous, checked_payload
@@ -196,6 +198,7 @@ class Controller:
         self._pairing_open_active = False
         self._pairing_open_last = None
         self._pairing_open_failure = None
+        self._pairing_ice = None
         self._substage_failure: tuple[Exception, str] | None = None
         self._readiness_active = self._readiness_failure = None
         self._retirement_context = self._retirement_failure = None
@@ -535,6 +538,20 @@ class Controller:
             selected["gather_failure"] = dict(observed[3])
         return selected
 
+    def failure_pairing_ice(self, error, *, private=False):
+        try:
+            observed = self._pairing_ice
+            operation = self._operation_failure
+            if (observed is None or operation is None or operation[0] is not error
+                    or operation[1] != "pairing_status"
+                    or not observed.matches(error, self.pairing, self.phase)):
+                return None if private else {}
+            if private and self.phase not in {"direct_supervisor_owned_pairing_windows", "direct_supervisor_owned_pairing_android"}:
+                return None
+            return observed.private_correlation() if private else observed.public()
+        except Exception:
+            return None if private else {}
+
     def _observe_pairing_open(self, record):
         try:
             if self._pairing_open_active and self._pairing_open_context is not None:
@@ -633,6 +650,10 @@ class Controller:
                 retirement = validated_pairing_retirement(value.get("retirement"))
                 gather = validated_gather_for_retirement(retirement, value.get("gather_failure"))
                 self._pairing_failure = error, value["state"], retirement, gather
+                try:
+                    if self._pairing_ice is not None:
+                        self._pairing_ice.bind_failure(error, value, retirement)
+                except Exception: pass
                 self._bind_pairing_open_failure(error)
                 raise error
             return value
@@ -641,6 +662,7 @@ class Controller:
         self._pairing_open_context = self._pairing_open_last = self._pairing_open_failure = None
         self._pairing_open_active = False
         self.phase = scenario + "_supervisor_owned_pairing_" + initiator
+        self._pairing_ice = None
         ice, turn_url = selected_ice(self.broker_ice, scenario)
         server = ice["iceServers"][0]
         settings = {**self.default_call_settings, "turn_broker_url": None, "turn_broker_consent": False,
@@ -650,6 +672,7 @@ class Controller:
         with self._failure_scope("negotiate_settings_update"):
             self.core("call.settings_update", {"profile": self.profile, "settings": settings})
         self.pairing = str(uuid4())
+        self._pairing_ice = PairingIceObservation(self.pairing, self.phase)
         self._pairing_open_context = (self.pairing, scenario, self.phase)
         if self.role == initiator:
             with self._failure_scope("pairing_offer_begin"):
@@ -670,7 +693,8 @@ class Controller:
             if type(status.get("state")) is str and status["state"] == "reserved":
                 return None
             with self._failure_scope("negotiate_inventory"):
-                resources = self.peer.inventory()["resources"]
+                inventory = self.peer.inventory()
+                resources = inventory["resources"]
                 count = len(resources)
                 record["resources"] = "zero" if count == 0 else "one" if count == 1 else "multiple"
                 self._observe_pairing_open(record)
@@ -678,6 +702,8 @@ class Controller:
                 logical = resources[0]["logical_session"]
             with self._failure_scope("negotiate_native_stats"):
                 stats = self.native("native_webrtc_stats", session_id=logical)
+                try: self._pairing_ice.observe_stats(inventory, resources[0], stats)
+                except Exception: pass
                 channel = stats.get("data_channel_state")
                 try:
                     record["ice"] = pairing_open_label(stats.get("ice_connection_state"), PAIRING_OPEN_LABELS["ice"])
@@ -1202,6 +1228,7 @@ def main(*, gateway=None):
     plan = required_workload(args.workload)
     result = {"v": 1, "passed": False, "evidence_level": plan["level"], "role": args.role, "scope": plan["scope"], "workload": args.workload}
     peer = transport = rendezvous = controller = emulator = None
+    ice_correlation = None
     preflight_diagnostics = PreflightDiagnostics()
     phase = "source_artifact_binding"
     try:
@@ -1252,6 +1279,9 @@ def main(*, gateway=None):
             site = controller.failure_site(error)
             if site is not None: result["failure_site"] = site
             result.update(controller.failure_pairing(error))
+            result.update(controller.failure_pairing_ice(error))
+            if args.role == "android":
+                ice_correlation = controller.failure_pairing_ice(error, private=True)
             result.update(controller.failure_pairing_open(error))
             result.update(controller.failure_observation(error))
             result.update(controller.failure_readiness(error))
@@ -1277,7 +1307,12 @@ def main(*, gateway=None):
         if transport is not None: transport.close()
         if emulator is not None:
             if gateway is not None:
-                try: gateway.before_cleanup()
+                try:
+                    if ice_correlation is None:
+                        gateway.before_cleanup()
+                    else:
+                        observed = gateway.before_cleanup(ice_correlation=ice_correlation)
+                        result["pairing_ice_packets"] = validated_ice_packets(observed) or ice_packets_unavailable()
                 except Exception: result.update(passed=False, cleanup_failed=True)
             try: emulator.close()
             except Exception:

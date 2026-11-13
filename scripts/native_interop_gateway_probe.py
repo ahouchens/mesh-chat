@@ -831,6 +831,8 @@ def main():
         temporary = Path(tempfile.mkdtemp(prefix="mesh-gateway-", dir=os.environ["RUNNER_TEMP"]))
         gateway = Gateway(Commands(report))
         gateway.create(temporary)
+        from native_interop_ice_probe import check as check_ice_capture
+        report["ice_capture_capability"] = check_ice_capture(gateway)
         report["topology"] = {"namespace_inode": gateway.netns_inode, "host": gateway.host,
                               "guest": gateway.guest, "identities": gateway.identities,
                               "subnet": gateway.subnet, "resolver": gateway.resolver, "ipv6": "disabled"}

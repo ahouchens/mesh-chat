@@ -1,5 +1,36 @@
 # Private packaged qualification control
 
+Full run [43379098108](https://github.com/ahouchens/mesh-chat/actions/runs/43379098108)
+at `2af0009` is **failed**: ten component jobs passed; both native peers and
+the aggregate gate failed. Policy passed 6,126 cases, UI boundary 2,176 Python
+and 12 rendered cases, Android 56 emulator and 83 exact JVM cases. Both direct
+platforms passed 25 transport, 10 recovery and 12 setup cases. Layout passed
+72 cases with zero overflow. These component scopes do not grant native acceptance.
+
+Both peers retired the first Windows-initiated direct pairing at
+`checking/tick/phase_timeout`. Android's last existing stats poll reported ICE
+failed; Windows reported checking. Neither a channel nor handoff was reached,
+so the new carrier-loss witness and prior TURN/recovery failures were not tested.
+The gateway reported no operation or cleanup failure. The underlying ICE cause
+is unknown: this run contains no candidate inventory or connectivity-check trace.
+
+The successor adds an exact authorized terminal retained-SDP candidate summary
+and gathering labels from existing stats calls. Private ufrag digests correlate
+bounded passive IPv4/UDP STUN observations at the owned Android gateway veth;
+only fixed counts leave the observer. Missing correlation, socket drops, bounds,
+ambiguous transactions or changed interface identity yield unavailable. Responses
+are packet observations, not authenticated ICE success, and no observed return
+at this veth cannot locate an upstream or Windows failure. Raw SDP, addresses,
+ports, credentials and correlation digests are excluded from final reports.
+
+A one-shot scoped socket broker transfers its descriptor to the existing gateway
+parent and exits. The existing cleanup inventory request carries correlation;
+no native RPC, poll, traffic, timeout, WebRTC library or acceptance change is added.
+The manual gateway capability probe checks synthetic request/response capture
+on its disposable veth separately; it cannot satisfy native qualification.
+Full native and aggregate acceptance, helper retirement and the remaining
+lifecycle/distribution roadmap remain open.
+
 Full run [43370860477](https://github.com/ahouchens/mesh-chat/actions/runs/43370860477)
 at `62c232d` is **failed**: all ten non-native jobs passed; both native peers
 and the aggregate gate failed. Policy passed 6,072 cases; UI boundary passed

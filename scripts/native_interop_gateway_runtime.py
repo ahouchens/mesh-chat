@@ -18,6 +18,8 @@ import time
 
 from native_interop_gateway_probe import (Child, Commands, Gateway, Unavailable,
     counter_delta, namespace_inode, process_identity, require, same_process, stop_process)
+from native_interop_ice_capture import IceCapture
+from native_interop_ice_packets import correlation, unavailable, validated_snapshot
 
 MAX_MESSAGE = 16384
 
@@ -48,7 +50,10 @@ class GatewayClient:
                 and namespace_inode(self.server.pid) == inode, "native_emulator_namespace_mismatch")
         self.call("ready", emulator=emulator.process.pid, adb=self.server.pid)
 
-    def before_cleanup(self): self.call("inventory")
+    def before_cleanup(self, *, ice_correlation=None):
+        if ice_correlation is None:
+            return self.call("inventory")
+        return self.call("inventory", ice_correlation=ice_correlation)
     def coverage(self, _fault): return GatewayCoverage(self)
 
 
@@ -119,6 +124,7 @@ class NativeChild(Child):
         self.failed_operation = None
         self.requests = 0
         self.result = None
+        self.ice_capture = None
 
     def begin(self):
         started = self.read(15)
@@ -142,7 +148,10 @@ class NativeChild(Child):
         require(self.requests <= 128, "native_gateway_request_limit")
         operation = request.get("op")
         require(type(operation) is str, "native_gateway_operation_type")
-        require(set(request) == ({"op", "emulator", "adb"} if operation == "ready" else {"op"}),
+        shape = {"op", "emulator", "adb"} if operation == "ready" else {"op"}
+        if operation == "inventory" and "ice_correlation" in request:
+            shape = {"op", "ice_correlation"}
+        require(set(request) == shape,
                 "native_gateway_request_shape")
         self.gateway.commands = Commands({"commands": []})
         self.gateway.commands.deadline = time.monotonic() + 30
@@ -155,10 +164,18 @@ class NativeChild(Child):
                         and identity["uid"] == os.getuid(), "native_gateway_process_identity")
             self.capture_helpers(self.gateway)
             self.gateway.check_links()
+            try: self.ice_capture = IceCapture.start(self.gateway)
+            except Exception: self.ice_capture = None
             self.ready = True
             return None
         if operation == "inventory":
             self.capture_helpers(self.gateway)
+            if "ice_correlation" in request:
+                try:
+                    if correlation(request["ice_correlation"]) is None: return unavailable()
+                    return validated_snapshot(self.ice_capture.snapshot(request["ice_correlation"])) or unavailable()
+                except Exception:
+                    return unavailable()
             return None
         require(self.ready, "native_gateway_not_ready")
         operations = {"install": self.profile.install, "current": self.profile.current,
@@ -169,6 +186,12 @@ class NativeChild(Child):
 
     def receive_until_closed(self, deadline):
         while not self.closed and time.monotonic() < deadline:
+            try:
+                if self.ice_capture is not None: self.ice_capture.drain()
+            except Exception:
+                # Optional capture cannot replace or reclassify a controller failure.
+                try: self.ice_capture.disable("unavailable")
+                except Exception: pass
             try:
                 request = self.read(min(1, deadline - time.monotonic()))
             except Unavailable as error:
@@ -213,9 +236,15 @@ class NativeChild(Child):
                     "native_gateway_child_cleanup")
             require(self.process.returncode == self.result["code"], "native_gateway_child_exit")
         finally:
-            self.selector.close()
-            self.process.stdin.close()
-            self.process.stdout.close()
+            try:
+                capture = getattr(self, "ice_capture", None)
+                if capture is not None:
+                    capture.close()
+                    require(not capture.cleanup_failed, "packet_broker_cleanup_unproven")
+            finally:
+                self.selector.close()
+                self.process.stdin.close()
+                self.process.stdout.close()
 
 
 def namespace_child(arguments):
