@@ -1,5 +1,6 @@
 """Normal, empty, independently installed Windows application runtime host."""
 from dataclasses import dataclass
+import json
 import os
 from pathlib import Path
 from threading import Event
@@ -106,6 +107,30 @@ def _require_windows():
         raise NativeUnavailable("App-owned runtime requires Windows")
 
 
+def _pairing_diagnostics_enabled(environment):
+    key = "MESH_CHAT_APP_PAIRING_DIAGNOSTICS"
+    if key not in environment:
+        return False
+    value = environment[key]
+    if value not in ("0", "1") or type(value) is not str:
+        raise ValidationError("App-owned pairing diagnostics flag is invalid")
+    return value == "1"
+
+
+def _pairing_diagnostics_status(runtime):
+    try:
+        from .app_owned_diagnostics import observe_pairing
+
+        message = {"v": 1, "type": "runtime_pairing_diagnostics",
+                   "observation": observe_pairing(runtime.service)}
+        if len(json.dumps(message, separators=(",", ":")).encode("utf-8")) > 4000:
+            message["observation"] = {"status": "unavailable", "total_intents": 0, "intents": []}
+        return message
+    except BaseException:
+        return {"v": 1, "type": "runtime_pairing_diagnostics",
+                "observation": {"status": "unavailable", "total_intents": 0, "intents": []}}
+
+
 def run(reader, writer, *, watch_parent, environment=None, runtime_factory=AppOwnedRuntime):
     """Inherited stdin controls lifetime by EOF only; SDK traffic uses the pipe."""
     runtime, status = None, 0
@@ -116,12 +141,19 @@ def run(reader, writer, *, watch_parent, environment=None, runtime_factory=AppOw
             pass  # A lost status pipe cannot surrender native/store custody.
     try:
         _require_windows()
-        config = AppOwnedConfig.from_environment(os.environ if environment is None else environment)
+        selected_environment = os.environ if environment is None else environment
+        pairing_diagnostics = _pairing_diagnostics_enabled(selected_environment)
+        config = AppOwnedConfig.from_environment(selected_environment)
         watch_parent(config.parent_pid)
         runtime = runtime_factory(config)
         publish({"v": 1, "type": "runtime_started", "pipe": config.pipe})
         if reader.read(1):
             raise ValidationError("App-owned lifetime stream accepts only EOF")
+        if pairing_diagnostics:
+            try:
+                publish(_pairing_diagnostics_status(runtime))
+            except BaseException:
+                pass  # Diagnostic transport cannot change runtime retirement.
     except AppOwnedStartupIncomplete as error:
         runtime, status = error.runtime, 2
         publish({"v": 1, "type": "runtime_failed", "error": "unavailable"})
