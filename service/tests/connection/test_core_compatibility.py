@@ -1,0 +1,189 @@
+"""Declared compatibility rules and the packaged CLI entry point."""
+
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tomllib
+import types
+
+import mesh_chat
+import pytest
+
+from mesh_chat.core_api import cli
+from mesh_chat.core_api.client import CoreClient, CoreClientError
+from mesh_chat.core_api.compatibility import check_capabilities
+from mesh_chat.core_api.wire_codec import encode_frame
+from test_core_client import Scripted, reply
+
+
+ROOT = Path(__file__).resolve().parents[3]
+CAPABILITIES = {"api_major": 1, "api_minor": 0, "stability": "experimental",
+                "operations": ["runtime.capabilities"], "profiles": ["p" * 64],
+                "limits": {"frame_bytes": 4194304}}
+
+
+def test_declared_compatibility_matches_the_contract_inventory():
+    declaration = json.loads((ROOT / "contracts/core-api/compatibility-v1.json").read_text())
+    manifest = json.loads((ROOT / "contracts/core-api/operations-v1.json").read_text())
+    assert declaration["public_api"]["major"] == manifest["api_major"]
+    assert declaration["public_api"]["minor"] == manifest["api_minor"]
+    assert declaration["status"] == "experimental_unfrozen"
+    assert declaration["peer_wire"]["changed"] is False
+    service = tomllib.loads((ROOT / "service/pyproject.toml").read_text())
+    assert declaration["python_service"]["version"] == service["project"]["version"]
+    assert declaration["python_service"]["packaged"] is True
+    assert declaration["python_service"]["published"] is False
+    package = json.loads((ROOT / "sdk/typescript/package.json").read_text())
+    assert declaration["typescript_client"]["version"] == package["version"]
+    kotlin = (ROOT / "sdk/kotlin/build.gradle.kts").read_text()
+    assert f'version = "{declaration["kotlin_client"]["version"]}"' in kotlin
+    assert declaration["kotlin_client"] == {"exists": True,
+        "status": "experimental_component", "version": "0.3.0-experimental",
+        "packaged": True, "published": False,
+        "artifact": "com.meshchat:core-client:0.3.0-experimental"}
+    assert declaration["incompatible_combination"] == "reject_before_side_effects"
+
+
+@pytest.mark.parametrize("major,minor", [(1, 0), (1, 7), (1, 99)])
+def test_supported_major_accepts_additive_minors(major, minor):
+    assert check_capabilities({"api_major": major, "api_minor": minor}) == (major, minor)
+
+
+@pytest.mark.parametrize("value", [
+    {"api_major": 2, "api_minor": 0}, {"api_major": 0, "api_minor": 0},
+    {"api_major": True, "api_minor": 0}, {"api_major": 1, "api_minor": -1},
+    {"api_major": 1}, {"api_major": "1", "api_minor": 0}, None, [],
+])
+def test_incompatible_or_malformed_capabilities_are_rejected(value):
+    with pytest.raises(ValueError):
+        check_capabilities(value)
+
+
+def test_client_refuses_an_unsupported_public_api_major_before_any_command():
+    transport = Scripted(reply({**CAPABILITIES, "api_major": 2}))
+    with pytest.raises(CoreClientError) as raised:
+        CoreClient.open(transport.readline, transport.write)
+    assert raised.value.code == "incompatible_version"
+    assert len(transport.written) == 1
+
+
+def test_python_module_entry_point_prints_usage_without_opening_a_pipe():
+    source = Path(mesh_chat.__file__).resolve().parents[1]
+    environment = {**os.environ, "PYTHONPATH": str(source)}
+    result = subprocess.run([sys.executable, "-m", "mesh_chat.core_api", "--help"],
+                            capture_output=True, text=True, env=environment, timeout=60)
+    assert result.returncode == 0
+    assert "mesh-chat-core" in result.stdout
+    assert "--pipe" in result.stdout
+
+
+def test_packaging_declares_the_console_entry_point():
+    project = tomllib.loads((ROOT / "service/pyproject.toml").read_text())
+    assert project["project"]["scripts"]["mesh-chat-core"] == "mesh_chat.core_api.cli:main"
+
+
+def test_cli_maps_a_platform_or_transport_failure_to_a_typed_exit(monkeypatch, capsys):
+    fake = types.ModuleType("mesh_chat.core_api.pipe_client")
+    fake.connect = lambda _name: (_ for _ in ()).throw(RuntimeError("unsupported"))
+    monkeypatch.setitem(sys.modules, "mesh_chat.core_api.pipe_client", fake)
+    assert cli.main(["--pipe", r"\\.\pipe\mesh-chat-test", "capabilities"]) == 2
+    assert json.loads(capsys.readouterr().err)["error"] == "unsupported_platform"
+
+
+def test_component_versions_match_the_compatibility_declaration():
+    from mesh_chat.core_api import __version__
+
+    declaration = json.loads((ROOT / "contracts/core-api/compatibility-v1.json").read_text())
+    package = json.loads((ROOT / "sdk/typescript/package.json").read_text())
+    kotlin = (ROOT / "sdk/kotlin/src/main/java/com/meshchat/runtime/core/CoreClient.kt").read_text()
+    assert declaration["service_carried_python_client"]["version"] == __version__
+    python_package = tomllib.loads((ROOT / "sdk/python/pyproject.toml").read_text())
+    assert declaration["python_client"]["version"] == python_package["project"]["version"]
+    assert declaration["python_client"]["first_standalone_distribution"] is True
+    assert declaration["typescript_client"]["version"] == package["version"]
+    assert f'const val VERSION = "{declaration["kotlin_client"]["version"]}"' in kotlin
+    distribution = (ROOT / "sdk/kotlin/build.gradle.kts").read_text()
+    assert f'version = "{declaration["kotlin_client"]["version"]}"' in distribution
+    assert declaration["typescript_client"]["version"] == declaration["service_carried_python_client"]["version"]
+
+
+def test_standalone_and_service_carried_python_protocol_methods_do_not_drift():
+    import ast
+    import re
+    from mesh_chat.core_api.requests import KEYED_OPERATIONS, OPTIONAL_KEY_OPERATIONS, KEYED_ACTIONS
+    from mesh_chat.core_api.client_keys import REQUIRED_KEYS, KEYED_ACTIONS as CLIENT_ACTIONS
+
+    expected = KEYED_OPERATIONS - OPTIONAL_KEY_OPERATIONS
+    assert REQUIRED_KEYS == expected
+    assert {key: set(value) for key, value in CLIENT_ACTIONS.items()} == {key: set(value) for key, value in KEYED_ACTIONS.items()}
+    sources = [ROOT / "service/src/mesh_chat/core_api/client.py", ROOT / "sdk/python/src/mesh_chat_core_client/client.py"]
+    methods = []
+    for path in sources:
+        client = next(item for item in ast.parse(path.read_text()).body if isinstance(item, ast.ClassDef) and item.name == "CoreClient")
+        methods.append({item.name: ast.dump(item, include_attributes=False) for item in client.body if isinstance(item, ast.FunctionDef) and item.name != "native_command"})
+    assert methods[0] == methods[1]
+    for path in [ROOT / "sdk/typescript/src/client.ts", ROOT / "sdk/kotlin/src/main/java/com/meshchat/runtime/core/CoreClient.kt"]:
+        source = path.read_text()
+        inventory = re.search(r"REQUIRED_KEYS\s*=\s*(?:new Set\(\[|setOf\()(.*?)(?:\]\)|\))", source, re.S).group(1)
+        assert set(re.findall(r'"([a-z_.]+)"', inventory)) == expected
+
+
+def test_component_clients_cover_every_advertised_operation():
+    import json
+    from mesh_chat.core_api.requests import COMPONENT_OPERATIONS
+
+    root = Path(__file__).resolve().parents[3]
+    manifest = json.loads((root / "contracts/core-api/operations-v1.json").read_text())
+    private = set(manifest["private_host_operations"])
+    advertised = set(manifest["experimental_component_operations"])
+    assert private == {item["operation"] for item in manifest["operations"]
+                       if item.get("visibility") == "private_host"}
+    assert advertised == set(COMPONENT_OPERATIONS) - private
+    clients = {
+        "python": root / "service" / "src" / "mesh_chat" / "core_api" / "client.py",
+        "typescript": root / "sdk" / "typescript" / "src" / "client.ts",
+        "kotlin": (root / "sdk" / "kotlin" / "src"
+                   / "main" / "java" / "com" / "meshchat" / "runtime" / "core"
+                   / "CoreClient.kt"),
+    }
+    for name, path in clients.items():
+        source = path.read_text(encoding="utf-8")
+        missing = [operation for operation in advertised
+                   if f'"{operation}"' not in source]
+        assert not missing, f"{name} client is missing {missing}"
+
+
+def test_session_permissions_match_the_operation_contract():
+    import json
+
+    from mesh_chat.core_api.requests import COMPONENT_OPERATIONS
+    from mesh_chat.core_api.session import PERMISSION_BY_OPERATION
+
+    root = Path(__file__).resolve().parents[3]
+    manifest = json.loads((root / "contracts" / "core-api" /
+                           "operations-v1.json").read_text(encoding="utf-8"))
+    declared = {item["operation"]: item["permission"] for item in manifest["operations"]
+                if item["operation"] in COMPONENT_OPERATIONS}
+    assert set(declared) == set(COMPONENT_OPERATIONS)
+    assert declared == PERMISSION_BY_OPERATION
+
+
+def test_consent_action_permissions_match_the_public_contract():
+    import json
+    from mesh_chat.core_api.session import ADDITIONAL_PERMISSION_BY_ACTION
+    manifest = json.loads((ROOT / "contracts/core-api/operations-v1.json").read_text())
+    assert manifest["action_permissions"] == ADDITIONAL_PERMISSION_BY_ACTION
+
+
+def test_application_allowlist_matches_the_desktop_renderer_allowlist():
+    import re
+    from mesh_chat.core_api.native_commands import NATIVE_COMMANDS
+
+    root = Path(__file__).resolve().parents[3]
+    source = (root / "src-tauri" / "src" / "lib.rs").read_text(encoding="utf-8")
+    body = re.search(r"fn allowed_renderer_command\(command: &str\) -> bool \{(.*?)\n\}",
+                     source, re.S).group(1)
+    expected = frozenset(re.findall(r'"([a-z0-9_]+)"', body))
+    assert NATIVE_COMMANDS == expected

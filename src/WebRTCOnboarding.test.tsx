@@ -14,11 +14,27 @@ const mocks = vi.hoisted(() => ({
   desktopServiceHealth: vi.fn(),
 }));
 
-vi.mock("./api", () => ({
+vi.mock("./api", async () => {
+  const { admittedApiFixture } = await import("./test/admitted-api");
+  return admittedApiFixture(({
   serviceCommand: mocks.serviceCommand,
+  coreApiCallControl: async (action: string, params: Record<string, unknown>) =>
+    mocks.serviceCommand(action, action === "signal_fetch"
+      ? { session_id: params.session, role: params.role }
+      : params),
+  loadCallIceServers: async () => mocks.serviceCommand("call_ice_servers"),
+  loadCallSettings: async () => mocks.serviceCommand("call_settings"),
+  saveCallSettings: async (settings: Record<string, unknown>) => mocks.serviceCommand("update_call_settings", settings),
+  coreApiCreateInvitation: async (options: Record<string, unknown>) => mocks.serviceCommand("create_invitation", options),
+  coreApiContactInvitation: async (action: string, params: Record<string, unknown>) =>
+    mocks.serviceCommand(action === "decide" ? "decide_contact_invitation" : "receive_contact_invitation",
+      action === "decide" ? { invitation_id: params.invitation, accept: params.accept }
+        : { document: params.document, peer_destination: params.peer,
+            ...(params.workspace_document ? { workspace_document: params.workspace_document } : {}) }),
   onServiceEvent: mocks.onServiceEvent,
   desktopServiceHealth: mocks.desktopServiceHealth,
 }));
+});
 vi.mock("./webrtc-onboarding", async (importOriginal) => ({
   ...await importOriginal<typeof import("./webrtc-onboarding")>(),
   attachWebRTCBridge: mocks.attachWebRTCBridge,
@@ -506,6 +522,31 @@ describe("manual WebRTC answer exchange", () => {
     fireEvent.change(screen.getByLabelText("Paste the signed WebRTC offer or mailbox code"), { target: { value: offerDocument } });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Review and create answer" })); });
     expect(onConnected).toHaveBeenCalledWith("unknown");
+    view.unmount();
+    expect(mocks.serviceCommand).not.toHaveBeenCalledWith("native_webrtc_close", expect.anything());
+  });
+
+  it.each(["Android", "Windows"])("keeps the %s service transport open while contact approval is pending", async (platform) => {
+    vi.stubGlobal("navigator", { userAgent: platform });
+    if (platform === "Windows") vi.stubGlobal("__MESH_SERVICE_TRANSPORT__", true);
+    const runCommand = mocks.serviceCommand.getMockImplementation()!;
+    mocks.serviceCommand.mockImplementation(async (command: string, payload: unknown) => command === "native_webrtc_stats"
+      ? { data_channel_state: "open", attached: false } : runCommand(command, payload));
+    const onConnected = vi.fn();
+    const onClose = vi.fn();
+    const view = render(<WebRTCOnboardingDialog onClose={onClose} onChanged={async () => undefined} onConnected={onConnected} />);
+    await act(async () => undefined);
+    fireEvent.click(screen.getByRole("button", { name: "Join with WebRTC" }));
+    fireEvent.change(screen.getByLabelText("Paste the signed WebRTC offer or mailbox code"), { target: { value: offerDocument } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Review and create answer" })); });
+    expect(mocks.serviceCommand).toHaveBeenCalledWith("native_webrtc_accept", expect.anything());
+    expect(FakePeer.instances).toHaveLength(0);
+    expect(onConnected).toHaveBeenCalledWith("unknown");
+    expect(screen.getByText("WebRTC path connected")).toBeTruthy();
+    await advance(30_000);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(mocks.attachWebRTCBridge).not.toHaveBeenCalled();
+    expect(mocks.serviceCommand).not.toHaveBeenCalledWith("decide_contact_invitation", expect.anything());
     view.unmount();
     expect(mocks.serviceCommand).not.toHaveBeenCalledWith("native_webrtc_close", expect.anything());
   });

@@ -25,7 +25,12 @@ const { attachMock, commandMock } = vi.hoisted(() => {
   };
 });
 
-vi.mock("./api", () => ({ serviceCommand: commandMock }));
+vi.mock("./api", () => ({
+  coreApiPeerForDestination: async () => { throw new Error("core_api_unavailable"); },
+  coreApiRequest: async () => { throw new Error("core_api_unavailable"); },
+  serviceCommand: commandMock,
+  loadCallIceServers: async () => commandMock("call_ice_servers"),
+}));
 
 vi.mock("./webrtc-onboarding", () => ({
   attachWebRTCBridge: attachMock,

@@ -1,0 +1,32 @@
+[
+  {
+    "name": "crlf",
+    "sdp": "v=0\r\na=ice-ufrag:fixture\r\na=end-of-candidates\r\n",
+    "sha256": "7c8bdbffbd4df77ca4f05a775b6593e8c0cc7d03f9d120dbec2e68f25c8ee34e"
+  },
+  {
+    "name": "lf",
+    "sdp": "v=0\na=ice-ufrag:fixture\n",
+    "sha256": "7c8bdbffbd4df77ca4f05a775b6593e8c0cc7d03f9d120dbec2e68f25c8ee34e"
+  },
+  {
+    "name": "credential-change",
+    "sdp": "v=0\na=ice-ufrag:different\n",
+    "sha256": "01269df64f03358cae2e41b4e6bf4af3ed3cc99d20bb3579073ec56dc42e3b60"
+  },
+  {
+    "name": "literal-whitespace",
+    "sdp": "\nv=0\n a=end-of-candidates\n",
+    "sha256": "2e246439d06a3fc4b9cf24d0d2564d175a7f8edc6c512262dcbcaf952ebcdc3d"
+  },
+  {
+    "name": "unicode-line-separators",
+    "sdp": "v=0\u0085s=fixture\u2028a=ice-ufrag:fixture\u2029",
+    "sha256": "78bd9cc45413a04196469920244bcecf72dc1449207899ebdacda3d443b97911"
+  },
+  {
+    "name": "unicode-no-normalization",
+    "sdp": "v=0\ns=caf\u00e9\n",
+    "sha256": "f69de741bd1d1588931a2f248bc177f660bd4e1e11c2e27103fdd22597592834"
+  }
+]

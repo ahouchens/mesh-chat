@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mesh-chat:core-api:workspace-device-links-result:1",
+  "title": "Experimental pending device-link approvals v1",
+  "description": "Caller-scoped pending device-link requests; no device identities.",
+  "type": "object", "additionalProperties": false,
+  "required": ["api_version", "request_id", "ok", "result"],
+  "properties": {
+    "api_version": {"const": 1},
+    "request_id": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,80}$"},
+    "ok": {"const": true},
+    "result": {"$ref": "#/$defs/links"}
+  },
+  "$defs": {
+    "handle": {"type": "string", "pattern": "^[A-Za-z0-9_-]{16,128}$"},
+    "links": {
+      "type": "object", "additionalProperties": false,
+      "required": ["profile", "workspace", "links"],
+      "properties": {
+        "profile": {"$ref": "#/$defs/handle"},
+        "workspace": {"$ref": "#/$defs/handle"},
+        "links": {"type": "array", "maxItems": 24, "uniqueItems": true,
+          "items": {"type": "object", "additionalProperties": false,
+            "required": ["request", "state"],
+            "properties": {
+              "request": {"$ref": "#/$defs/handle"},
+              "state": {"const": "pending"}
+            }}}
+      }
+    }
+  }
+}

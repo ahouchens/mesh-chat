@@ -1,10 +1,7 @@
 name: CI
 
 on:
-  push:
-    branches:
-      - main
-  pull_request:
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -23,6 +20,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Set up pnpm and Node.js
         uses: pnpm/setup@v3
@@ -47,6 +46,22 @@ jobs:
       - name: Install Python dependencies
         run: python -m pip install --disable-pip-version-check -r service/requirements-dev.lock
 
+      - name: Prove UI serialization and uncertain enqueue through the production Core
+        run: python scripts/check_core_ui_boundary.py --expected-source "${{ github.sha }}"
+
+      - name: Build and test the experimental core client
+        run: |
+          node node_modules/typescript/bin/tsc -p sdk/typescript
+          node --test "sdk/typescript/dist/**/*.test.js"
+
+      - name: Stage standalone artifacts before broad installed-consumer collection
+        run: python scripts/stage_core_sdk.py --expected-source "${{ github.sha }}"
+
+      - name: Prove the TypeScript client against the Python facade
+        run: |
+          node --version
+          python -m pytest service/tests/test_sdk_conformance.py -q
+
       - name: Validate and test
         run: python scripts/release.py verify
 
@@ -57,6 +72,17 @@ jobs:
           name: mesh-chat-verification
           path: dist/reports/**
           if-no-files-found: warn
+          retention-days: 14
+      - name: Retain candidate public SDK staging inputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-sdk-verification-${{ github.sha }}
+          path: |
+            dist/sdk/**
+            dist/sdk-upgrade/**
+            dist/reports/core-sdk-distribution-staging.json
+          if-no-files-found: error
           retention-days: 14
 
   desktop-host:
@@ -92,6 +118,75 @@ jobs:
           key: ci-pyinstaller-${{ runner.os }}-${{ hashFiles('service/src/**/*.py', 'service/entrypoint.py', 'service/mesh-chat-service.spec', 'service/requirements*.lock', 'service/pyproject.toml', 'scripts/build_sidecar.py') }}
       - run: pnpm install --frozen-lockfile
       - run: python -m pip install --disable-pip-version-check -r service/requirements-dev.lock
+      - name: Prove settings and call mutations through the actual Windows app pipe
+        run: python scripts/check_core_windows_boundary.py --expected-source "${{ github.sha }}"
       - run: pnpm build
       - run: python scripts/build_sidecar.py
+      - name: Verify notices and native materials inside the frozen runtime archive
+        run: python scripts/native_runtime_materials.py --expected-source "${{ github.sha }}"
+      - name: Qualify independently installed SDK and normal Windows runtime with EFS
+        run: python scripts/check_independent_core_consumers.py --expected-source "${{ github.sha }}"
+      - name: Qualify public SDK pairing and receipts between normal Windows application hosts
+        run: python scripts/check_independent_core_pairing.py --expected-source "${{ github.sha }}"
+      - name: Qualify packaged native WebRTC messaging
+        run: python scripts/check_native_windows_messaging.py --expected-source "${{ github.sha }}"
+      - name: Soak packaged native WebRTC messaging
+        run: python scripts/check_native_windows_messaging_soak.py --expected-source "${{ github.sha }}"
+      - name: Qualify initialized packaged service shutdown and process recovery
+        run: python scripts/test_packaged_lifecycle.py --expected-source "${{ github.sha }}"
       - run: cargo test --locked --manifest-path src-tauri/Cargo.toml --lib
+      - name: Qualify the private core API pipe endpoint
+        run: python -m pytest service/tests/test_core_pipe_windows.py -q
+
+      - name: Qualify the packaged wheel over the private pipe endpoint
+        run: python scripts/check_packaged_pipe_consumer.py
+
+      - name: Qualify the packaged wheel with owner-scoped grants
+        env:
+          MESH_CHAT_PIPE_SCOPE: owner
+        run: python scripts/check_packaged_pipe_consumer.py
+
+      - name: Qualify a packaged consumer message after host restart
+        run: python scripts/check_packaged_pipe_restart.py
+
+      - name: Check experimental shared WebView host
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml --lib --features experimental-shared-webview
+      - name: Build isolated WebView2 qualification executable
+        run: cargo build --locked --manifest-path src-tauri/Cargo.toml --bin mesh-transport-qualification --features transport-qualification
+      - name: Exercise real WebView2 through the private host pipe
+        run: python scripts/test_desktop_transport.py --expected-source "${{ github.sha }}"
+      - name: Qualify frozen peers and receipts across a service crash
+        run: python scripts/test_packaged_transport.py --expected-source "${{ github.sha }}"
+      - name: Qualify explicit first-time approval and paired messaging
+        run: python scripts/test_packaged_transport.py --pairing --expected-source "${{ github.sha }}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: desktop-transport-${{ github.sha }}
+          path: |
+            dist/reports/desktop-transport.json
+            dist/reports/packaged-lifecycle.json
+            dist/reports/packaged-transport.json
+            dist/reports/packaged-pairing.json
+            dist/reports/core-windows-boundary.*
+            dist/reports/native-windows-control.json
+            dist/reports/native-windows-lifecycle.json
+            dist/reports/native-runtime-materials.json
+            dist/reports/windows-independent-bootstrap.json
+            dist/reports/windows-independent-pairing.json
+            dist/reports/windows-independent-sdk/**
+          if-no-files-found: error
+      - name: Retain the exact tested native Windows sidecar and build inputs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-windows-tested-${{ github.sha }}
+          path: |
+            src-tauri/binaries/mesh-chat-service-x86_64-pc-windows-msvc.exe
+            src-tauri/binaries/.mesh-chat-service-x86_64-pc-windows-msvc.build.json
+            dist/reports/native-windows-control.json
+            dist/reports/native-windows-lifecycle.json
+            dist/reports/native-runtime-materials.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14

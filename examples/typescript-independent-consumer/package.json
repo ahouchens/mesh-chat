@@ -1,0 +1,9 @@
+{
+  "name": "mesh-independent-core-application",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": { "start": "node consumer.mjs" },
+  "dependencies": { "@mesh-chat/core-client": "0.3.0-experimental" }
+}

@@ -63,6 +63,9 @@ class NoRouteNetwork:
         self.route_attempts += 1
         return False
 
+    def recipient_ready_for_fields(self, destination: bytes, _fields: dict[int, Any], _text: str = "") -> bool:
+        return self.recipient_ready(destination)
+
     def path_known(self, _destination: bytes) -> bool:
         self.route_attempts += 1
         return False

@@ -23,6 +23,21 @@ def test_native_callback_enqueues_without_taking_dispatch_lock() -> None:
         service._dispatch_lock.release()
 
 
+def test_true_raw_closed_edge_is_offered_before_released_logical_lookup():
+    service = object.__new__(MeshChatService)
+    service._dispatch_lock = threading.RLock()
+    service._native_webrtc_lock = threading.RLock()
+    seen = []
+    class Registry:
+        def resolve(self, physical):
+            seen.append(("resolve", physical))
+            return None
+    service._native_resources = Registry()
+    service._native_pairing_retirement_edge = lambda physical, **kw: seen.append(("receipt", physical, kw))
+    service._handle_native_webrtc_event("closed", "original-physical")
+    assert seen == [("receipt", "original-physical", {"closed": True}), ("resolve", "original-physical")]
+
+
 def test_native_event_worker_drains_in_order() -> None:
     class Host(object):
         def __init__(self) -> None:

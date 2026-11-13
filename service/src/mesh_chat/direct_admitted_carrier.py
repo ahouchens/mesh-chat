@@ -40,6 +40,9 @@ class AdmittedCarrier:
         self.expected = expected
         self.binding, self.certificate = raw, certificate
         self.recovery = runtime_lease is not None
+        # After one side confirms first, keep announcing for the other side's
+        # bounded handoff window. Its main RNS context may still need our ratchet.
+        self._announce_until = getattr(bootstrap_authority, "transition_deadline", 0) or 0
         self.peer_seen_at = 0.0
         self.native_seen_at = 0.0
         self._peer = _destination_for(_identity_from_public_key(expected.issuer_public_identity))
@@ -75,6 +78,21 @@ class AdmittedCarrier:
     def refresh_path(self):
         RNS.Transport.request_path(self._peer,on_interface=self._interface)
 
+    def main_rns_ready(self, *, require_selected_path=True):
+        """Require main keys and, for first handoff, the selected admitted path."""
+        if self._stop.is_set() or not self.peer_seen.is_set():
+            return False
+        try:
+            if not self.service.network._main_recipient_ready(self._peer):
+                return False
+            return (RNS.Transport.next_hop_interface(self._peer) is self._interface
+                    if require_selected_path else self.service.network.path_known(self._peer))
+        except Exception:
+            return False
+
+    def _announce_active(self, now):
+        return self.recovery or now < self._announce_until
+
     def _observe(self, data):
         packet = RNS.Packet(None,data)
         if (packet.unpack() and packet.packet_type == RNS.Packet.ANNOUNCE
@@ -87,9 +105,10 @@ class AdmittedCarrier:
         next_announce = time.monotonic()+3
         try:
             while not self._stop.is_set():
-                if self.recovery and time.monotonic() >= next_announce:
+                now = time.monotonic()
+                if self._announce_active(now) and now >= next_announce:
                     self.service.network.router.announce(self.service.network.destination_hash)
-                    next_announce = time.monotonic()+5
+                    next_announce = now+5
                 result = self.service._direct_native.request("poll", id=self.prepared.handle)
                 if (not isinstance(result,dict) or set(result) not in ({"state","packets"}, {"state","packets","statistics"})
                         or type(result["state"]) is not int or result["state"] not in (0,1,2)

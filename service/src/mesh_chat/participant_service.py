@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import platform
+from copy import deepcopy
 import secrets
 import socket
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +40,17 @@ MAX_ACTIVE_HOST_SESSIONS = 8
 HOST_EXPIRY_MARGIN_SECONDS = 60
 MANUAL_SETUP_LIFETIME_SECONDS = 30 * 60
 RENEWAL_FRACTION = 0.5
+MAX_PARTICIPANT_INTENTS = 256
+
+
+class ParticipantReservationUnavailable(ValidationError):
+    """A keyed live resource cannot safely be reconstructed or replayed."""
+    code = "resync_required"
+
+
+class ParticipantReservationCapacity(ValidationError):
+    """The bounded intent or live resource capacity is exhausted."""
+    code = "resource_exhausted"
 
 
 class ParticipantAccessServiceMixin:
@@ -49,11 +62,312 @@ class ParticipantAccessServiceMixin:
     def _participant_access_records(self) -> list[dict[str, Any]]:
         return self.store.list("participant_access")
 
+    def _participant_runtime_epoch(self) -> str:
+        if not hasattr(self, "_participant_reservation_epoch"):
+            self._participant_reservation_epoch = secrets.token_hex(16)
+        return self._participant_reservation_epoch
+
+    def _participant_retirements(self) -> dict[str, dict[str, Any]]:
+        if not hasattr(self, "_participant_retired_intents"):
+            self._participant_retired_intents = {}
+        return self._participant_retired_intents
+
+    def _reclaim_participant_intents(self, now: float) -> None:
+        """Discard private history only after every possible lease has expired."""
+        deletions = []
+        reclaimed = []
+        for intent in self.store.list("participant_host_intent"):
+            operation = intent["id"]
+            expiry = float(intent["maximum_expires_at"])
+            safe_after = expiry if intent["state"] == "reserved" else expiry + DEFAULT_MAPPING_LIFETIME
+            local = self._participant_retirements().get(operation, {})
+            if (now <= max(safe_after, float(intent.get("uncertain_lease_until", 0)))
+                    or self.store.get("participant_host", intent["host_session_id"]) is not None
+                    or intent.get("cleanup") or local.get("cleanup")
+                    or intent.get("retirement_pending") or local.get("retirement_pending")
+                    or intent["host_session_id"] in getattr(self, "_participant_pending_resources", {})):
+                continue
+            if self.store.operation_result(operation, intent["input_digest"]) != self._participant_intent_receipt(operation):
+                continue
+            deletions.extend([("participant_host_intent", operation), ("participant_host_completion", operation)])
+            reclaimed.append(operation)
+        if deletions:
+            self.store.put_and_delete([], deletions)
+            for operation in reclaimed:
+                self._participant_retirements().pop(operation, None)
+
+    def _participant_intent_holds_capacity(self, intent: dict[str, Any], now: float) -> bool:
+        if float(intent.get("uncertain_lease_until", 0)) > now:
+            return True
+        if (intent.get("state") in {"allocating", "allocated", "committed"}
+                and self.store.get("participant_host", intent["host_session_id"]) is None):
+            # Retirement can lose its cleanup handle after deleting the host,
+            # even when the last durable state says allocation completed.
+            return float(intent["maximum_expires_at"]) + DEFAULT_MAPPING_LIFETIME > now
+        if float(intent.get("maximum_expires_at", 0)) <= now:
+            return False
+        if intent.get("state") == "reserved":
+            return intent.get("runtime_epoch") == self._participant_runtime_epoch()
+        return False
+
+    def reserve_participant_host_intent(
+        self, operation_id, input_digest, *, purpose, scope_id, maximum_expires_at,
+        relationship_scope, peer_destination, generation_id, base_generation,
+        access_mode="participant_callback", preferred_external_port=None,
+    ):
+        """Commit a bounded resource intent before any allocation is admitted."""
+        with self._dispatch_lock:
+            try:
+                if (str(uuid.UUID(operation_id)) != operation_id or not isinstance(input_digest, str)
+                        or len(input_digest) != 64 or input_digest != input_digest.lower()
+                        or len(bytes.fromhex(input_digest)) != 32):
+                    raise ValueError
+            except (ValueError, TypeError, AttributeError) as error:
+                raise ValidationError("Participant operation is invalid") from error
+            if (not isinstance(relationship_scope, dict) or set(relationship_scope) != {"kind", "id"}
+                    or purpose not in {"personal", "workspace"}
+                    or access_mode not in {"participant_direct", "participant_callback"}
+                    or type(base_generation) is not int or base_generation < 0
+                    or type(maximum_expires_at) is not int or maximum_expires_at <= time.time()
+                    or maximum_expires_at > time.time() + 24 * 60 * 60 + 1
+                    or (preferred_external_port is not None and (type(preferred_external_port) is not int
+                        or not 1 <= preferred_external_port <= 65535))):
+                raise ValidationError("Participant reservation is invalid")
+            if self._identity is None or self._shutdown.is_set():
+                raise ValidationError("Local profile is unavailable")
+            canonical, audience, _, _ = self._route_update_binding(
+                relationship_scope["kind"], relationship_scope["id"], peer_destination)
+            expected_purpose = "personal" if relationship_scope["kind"] == "contact" else "workspace"
+            if (canonical != scope_id or audience.hex() != peer_destination or purpose != expected_purpose
+                    or generation_id != f"out:{relationship_scope['kind']}:{canonical}:{peer_destination}"):
+                raise ValidationError("Participant reservation scope does not match its peer")
+            previous = self.store.get("participant_host_intent", operation_id)
+            if previous is not None:
+                if previous.get("input_digest") != input_digest:
+                    raise ValidationError("Operation ID was already used with different input")
+                for key, value in {"purpose": purpose, "scope_id": scope_id,
+                        "relationship_scope": relationship_scope, "peer_destination": peer_destination,
+                        "generation_id": generation_id, "access_mode": access_mode,
+                        "preferred_external_port": preferred_external_port}.items():
+                    if previous.get(key) != value:
+                        raise ValidationError("Operation ID was already used with different input")
+                return deepcopy(self._require_participant_host_intent(operation_id, input_digest))
+            if self.store.operation_result(operation_id, input_digest) is not None:
+                raise ParticipantReservationUnavailable("Participant operation has no reservation")
+            self._reclaim_participant_intents(time.time())
+            intents = self.store.list("participant_host_intent")
+            if len(intents) >= MAX_PARTICIPANT_INTENTS:
+                raise ParticipantReservationCapacity("Too many participant operation intents")
+            generation = self.store.get("route_generation", generation_id) or {}
+            if int(generation.get("generation", 0)) != base_generation:
+                raise ParticipantReservationUnavailable("Route generation changed")
+            now = time.time()
+            pending = sum(self._participant_intent_holds_capacity(item, now) for item in intents)
+            if self._active_host_count() + pending >= MAX_ACTIVE_HOST_SESSIONS:
+                raise ParticipantReservationCapacity("Too many participant host reservations")
+            intent = {"id": operation_id, "input_digest": input_digest, "state": "reserved",
+                "host_session_id": secrets.token_hex(32), "runtime_epoch": self._participant_runtime_epoch(),
+                "purpose": purpose, "scope_id": scope_id, "relationship_scope": dict(relationship_scope),
+                "peer_destination": peer_destination, "maximum_expires_at": maximum_expires_at,
+                "generation_id": generation_id, "base_generation": base_generation, "generation": base_generation + 1,
+                "access_mode": access_mode, "preferred_external_port": preferred_external_port,
+                "local_destination": self._require_profile()["destination_hash"],
+                "created_at": time.time()}
+            self.store.commit_operation(operation_id, input_digest,
+                self._participant_intent_receipt(operation_id),
+                [("participant_host_intent", operation_id, intent)])
+            return deepcopy(intent)
+
+    @staticmethod
+    def _participant_intent_receipt(operation_id: str) -> dict[str, str]:
+        return {"action": "participant_host", "intent_id": operation_id}
+
+    def _require_participant_host_intent(self, operation_id, input_digest):
+        intent = self.store.get("participant_host_intent", operation_id)
+        if intent is None:
+            raise ParticipantReservationUnavailable("Participant reservation is missing")
+        if intent.get("input_digest") != input_digest:
+            raise ValidationError("Operation ID was already used with different input")
+        if operation_id in self._participant_retirements():
+            raise ParticipantReservationUnavailable("Participant reservation is retired in this runtime")
+        if self._identity is None or self._shutdown.is_set():
+            self._retire_participant_intent(intent)
+            raise ParticipantReservationUnavailable("Local profile is unavailable")
+        try:
+            if self.store.operation_result(operation_id, input_digest) != self._participant_intent_receipt(operation_id):
+                raise ParticipantReservationUnavailable("Participant operation reservation is missing")
+            relationship = intent["relationship_scope"]
+            canonical, audience, _, _ = self._route_update_binding(
+                relationship["kind"], relationship["id"], intent["peer_destination"])
+            current = self.store.get("route_generation", intent["generation_id"]) or {}
+            expected = intent["generation"] if intent["state"] == "committed" else intent["base_generation"]
+            if (intent["runtime_epoch"] != self._participant_runtime_epoch()
+                    or float(intent["maximum_expires_at"]) <= time.time()
+                    or intent["state"] == "retired" or canonical != intent["scope_id"]
+                    or intent.get("local_destination") != self._require_profile()["destination_hash"]
+                    or audience.hex() != intent["peer_destination"]
+                    or int(current.get("generation", 0)) != expected
+                    or (intent["state"] == "committed"
+                        and current.get("host_session_id") != intent["host_session_id"])):
+                raise ParticipantReservationUnavailable("Participant reservation needs resynchronization")
+        except Exception:
+            self._retire_participant_intent(intent)
+            raise
+        return intent
+
+    def _retire_participant_intent(self, intent):
+        session = intent["host_session_id"]
+        host = self.store.get("participant_host", session)
+        memory = getattr(self, "_participant_pending_resources", {}).get(session)
+        local = self._participant_retirements().get(intent["id"])
+        resource = local.get("cleanup") if local is not None else memory or host or intent.get("cleanup")
+        def matches(item):
+            return (item is not None and item.get("reservation_operation_id") == intent["id"]
+                    and item.get("reservation_epoch") == intent["runtime_epoch"])
+        retired = {**intent, "state": "retired", "retirement_pending": True}
+        unknown_allocation = (intent.get("state") == "allocating"
+                              and (resource is None or not resource.get("access")))
+        lost_cleanup_handle = (intent.get("state") in {"allocated", "committed"}
+                               and resource is None and local is None)
+        if unknown_allocation or lost_cleanup_handle:
+            # The router lease can outlive the signed access document. An
+            # unknown allocation reply must hold capacity for the whole lease.
+            lease_bound = float(intent["maximum_expires_at"]) + DEFAULT_MAPPING_LIFETIME
+            if unknown_allocation:
+                lease_bound = max(lease_bound, time.time() + DEFAULT_MAPPING_LIFETIME)
+            retired["uncertain_lease_until"] = max(
+                float(intent.get("uncertain_lease_until", 0)), lease_bound)
+        if matches(resource):
+            retired["cleanup"] = deepcopy(resource)
+        else:
+            retired.pop("cleanup", None)
+        # Fence before the first fallible write. Restore and replay must deny
+        # this listener even while durable retirement is unavailable.
+        self._participant_retirements()[intent["id"]] = retired
+        errors = []
+        try:
+            self.store.put("participant_host_intent", intent["id"], retired)
+        except Exception as error:
+            errors.append(error)
+        if matches(host):
+            try:
+                self.store.delete("participant_host", session)
+            except Exception as error:
+                errors.append(error)
+        if matches(resource) or matches(host) or local is not None or intent.get("retirement_pending"):
+            try:
+                self._apply_participant_interfaces()
+            except Exception as error:
+                errors.append(error)
+        if matches(resource):
+            for key, cleanup in (("mapping", remove_port_mapping), ("pinhole", remove_port_mapping),
+                                 ("firewall", remove_temporary_windows_rule)):
+                if not isinstance(retired["cleanup"].get(key), dict):
+                    continue
+                try:
+                    cleanup(retired["cleanup"][key])
+                    retired["cleanup"].pop(key)
+                except Exception as error:
+                    errors.append(error)
+            getattr(self, "_participant_pending_resources", {}).pop(session, None)
+            if not any(isinstance(retired["cleanup"].get(key), dict) for key in ("mapping", "pinhole", "firewall")):
+                retired.pop("cleanup", None)
+        if not errors:
+            retired.pop("retirement_pending", None)
+        try:
+            self.store.put("participant_host_intent", intent["id"], retired)
+        except Exception as error:
+            retired["retirement_pending"] = True
+            errors.append(error)
+        if errors:
+            raise errors[0]
+
+    def retire_participant_host_intent(self, operation_id, input_digest):
+        with self._dispatch_lock:
+            intent = self.store.get("participant_host_intent", operation_id)
+            if intent is None:
+                return
+            if intent.get("input_digest") != input_digest:
+                raise ValidationError("Operation ID was already used with different input")
+            self._retire_participant_intent(intent)
+
+    def _reconcile_participant_retirements(self) -> None:
+        """Retry bounded cleanup intents independently of deleted host rows."""
+        with self._dispatch_lock:
+            pending = {intent["id"]: intent for intent in self.store.list("participant_host_intent")
+                       if intent.get("state") == "retired"
+                       and (intent.get("retirement_pending") or intent.get("cleanup"))}
+            pending.update({operation: intent for operation, intent in self._participant_retirements().items()
+                            if intent.get("retirement_pending") or intent.get("cleanup")
+                            or self.store.get("participant_host", intent["host_session_id"]) is not None})
+            for intent in pending.values():
+                try:
+                    self._retire_participant_intent(intent)
+                except Exception:
+                    pass
+
+    def _participant_reserved_access(self, intent):
+        record = self.store.get("participant_host", intent["host_session_id"])
+        if (record is None or record.get("reservation_operation_id") != intent["id"]
+                or record.get("reservation_epoch") != self._participant_runtime_epoch()
+                or record.get("state") == "unavailable" or float(record.get("expires_at", 0)) <= time.time()
+                or not record.get("access")
+                or not self._listener_ready(record["id"], len(record.get("listeners", [])))):
+            self._retire_participant_intent(intent)
+            raise ParticipantReservationUnavailable("Participant resource is no longer live")
+        access = validate_access_document(record["access"])
+        return {**access, "host_session_id": record["id"]}
+
+    def materialize_participant_host_intent(self, operation_id, input_digest):
+        with self._dispatch_lock:
+            intent = self._require_participant_host_intent(operation_id, input_digest)
+            if intent["state"] in {"allocating", "allocated", "committed"}:
+                return self._participant_reserved_access(intent)
+            intent["state"] = "allocating"
+            self.store.put("participant_host_intent", operation_id, intent)
+            try:
+                result = self.create_participant_host_access(
+                    purpose=intent["purpose"], scope_id=intent["scope_id"],
+                    maximum_expires_at=intent["maximum_expires_at"], access_mode=intent["access_mode"],
+                    preferred_external_port=intent["preferred_external_port"], _reservation=intent)
+                self._require_participant_host_intent(operation_id, input_digest)
+            except Exception:
+                self._retire_participant_intent(intent)
+                raise
+            getattr(self, "_participant_pending_resources", {}).pop(intent["host_session_id"], None)
+            intent["state"] = "allocated"
+            # A failed reply here still leaves a complete owned host record.
+            self.store.put("participant_host_intent", operation_id, intent)
+            return result
+
+    def _prepare_participant_host_completion(self, operation_id, input_digest, *, result: dict[str, Any]):
+        if not isinstance(result, dict):
+            raise ValidationError("Participant completion must be an object")
+        intent = self._require_participant_host_intent(operation_id, input_digest)
+        self._participant_reserved_access(intent)
+        existing = self.store.get("participant_host_completion", operation_id)
+        completion = {"id": operation_id, "input_digest": input_digest, "result": deepcopy(result)}
+        if existing is not None and existing != completion:
+            raise ValidationError("Participant completion cannot change")
+        return [("participant_host_intent", operation_id, {**intent, "state": "committed"}),
+                ("participant_host_completion", operation_id, completion)]
+
     def _restore_participant_interfaces(self) -> None:
         now = time.time()
         listeners: list[dict[str, Any]] = []
         clients: list[dict[str, Any]] = []
         for record_id, record in self.store.items("participant_host"):
+            if record.get("reservation_operation_id"):
+                if record["reservation_operation_id"] in self._participant_retirements():
+                    continue
+                intent = self.store.get("participant_host_intent", record["reservation_operation_id"])
+                if (intent is None or intent.get("state") == "retired"
+                        or record.get("reservation_epoch") != self._participant_runtime_epoch()):
+                    if intent is not None:
+                        self._retire_participant_intent(intent)
+                    else:
+                        self.stop_participant_host(record_id)
+                    continue
             if float(record.get("expires_at", 0)) <= now:
                 mapping = record.get("mapping")
                 if isinstance(mapping, dict):
@@ -73,6 +387,25 @@ class ParticipantAccessServiceMixin:
             if float(access.get("expires_at", 0)) <= now:
                 self.store.delete("participant_access", record_id)
                 continue
+            if record.get("prepared_replacement"):
+                scopes = []
+                for scope in record.get("scopes", []):
+                    if scope not in record.get("prepared_scope_checks", []):
+                        scopes.append(scope)
+                        continue
+                    try:
+                        _, audience, _, _ = self._route_update_binding(
+                            scope["kind"], scope["id"], access.get("operator_destination"))
+                        if audience.hex() == access.get("operator_destination"):
+                            scopes.append(scope)
+                    except Exception:
+                        continue
+                if not scopes:
+                    self.store.delete("participant_access", record_id)
+                    continue
+                if scopes != record.get("scopes"):
+                    record["scopes"] = scopes
+                    self.store.put("participant_access", record_id, record)
             endpoints = record.get("resolved_endpoints")
             if not record.get("resolution_attempted"):
                 # Import commits the exact credential and replay state before
@@ -133,8 +466,9 @@ class ParticipantAccessServiceMixin:
         expires_at: int,
         ipv6: bool,
         include_ipv4: bool,
+        reservation=None,
     ) -> dict[str, Any]:
-        session_id = secrets.token_hex(32)
+        session_id = reservation["host_session_id"] if reservation else secrets.token_hex(32)
         network_name = secrets.token_urlsafe(18)
         passphrase = secrets.token_urlsafe(32)
         last_error: Exception | None = None
@@ -167,6 +501,13 @@ class ParticipantAccessServiceMixin:
                 "expires_at": float(expires_at), "state": "preparing",
                 "network_name": network_name, "passphrase": passphrase,
             }
+            if reservation:
+                record.update(reservation_operation_id=reservation["id"], reservation_epoch=reservation["runtime_epoch"],
+                    relationship_scope=reservation["relationship_scope"], peer_destination=reservation["peer_destination"],
+                    scope_id=reservation["scope_id"])
+                if not hasattr(self, "_participant_pending_resources"):
+                    self._participant_pending_resources = {}
+                self._participant_pending_resources[session_id] = record
             self.store.put("participant_host", session_id, record)
             try:
                 self._apply_participant_interfaces()
@@ -265,6 +606,7 @@ class ParticipantAccessServiceMixin:
         self, *, purpose: str, scope_id: str, maximum_expires_at: int,
         access_mode: str = "participant_direct",
         preferred_external_port: int | None = None,
+        _reservation=None,
     ) -> dict[str, Any]:
         if purpose not in {"personal", "workspace"} or not isinstance(scope_id, str):
             raise ValidationError("Participant host scope is invalid")
@@ -292,6 +634,7 @@ class ParticipantAccessServiceMixin:
         record = self._new_listener_record(
             purpose=purpose, expires_at=provisional_expiry,
             ipv6=bool(ipv6_addresses), include_ipv4=True,
+            reservation=_reservation,
         )
         session_id = record["id"]
         v4_listener = next(item for item in record["listeners"] if item["listen_ip"] == "0.0.0.0")
@@ -318,8 +661,13 @@ class ParticipantAccessServiceMixin:
                     ),
                 )
                 mapping_record = mapping.record()
+                if _reservation:
+                    record["mapping"] = mapping_record
+                    self.store.put("participant_host", session_id, record)
                 endpoints.append(mapping.endpoint())
             except TypeError:
+                if _reservation:
+                    raise
                 # Compatibility with deterministic injected mappers.
                 try:
                     mapping = create_port_mapping(
@@ -345,6 +693,9 @@ class ParticipantAccessServiceMixin:
                     lifetime=DEFAULT_MAPPING_LIFETIME, routes=routes,
                 )
                 pinhole_record = pinhole.record()
+                if _reservation:
+                    record["pinhole"] = pinhole_record
+                    self.store.put("participant_host", session_id, record)
                 ipv6_addresses = ipv6_addresses[:1]
             except ConnectivityError as exc:
                 # No advertised IPv6 firewall-control service is compatible with
@@ -404,6 +755,8 @@ class ParticipantAccessServiceMixin:
             self._apply_participant_interfaces()
             self.network.reannounce()
         except Exception as exc:
+            if _reservation:
+                raise
             self.store.delete("participant_host", session_id)
             if mapping_record:
                 remove_port_mapping(mapping_record)
@@ -609,6 +962,17 @@ class ParticipantAccessServiceMixin:
     ) -> dict[str, Any]:
         """Persist a verified route before activation and retire older scope routes."""
 
+        record, writes, deletions = self._prepare_participant_scope_replacement(
+            value, scope_kind=scope_kind, scope_id=scope_id, additional_writes=additional_writes)
+        self.store.put_and_delete(writes, deletions, redact_command_cache=True)
+        self.reconcile_prepared_participant_access()
+        return self.store.get("participant_access", record["id"]) or record
+
+    def _prepare_participant_scope_replacement(
+        self, value, *, scope_kind, scope_id, additional_writes=None,
+    ):
+        """Return scope replacement writes/deletions without DNS or activation."""
+
         if scope_kind not in {"contact", "workspace_device"} or not isinstance(scope_id, str):
             raise ValidationError("Participant access scope is invalid")
         access = validate_access_document(value)
@@ -626,30 +990,39 @@ class ParticipantAccessServiceMixin:
             else:
                 deletions.append(("participant_access", record_id))
         existing = self.store.get("participant_access", access["id"])
+        if existing is not None and existing.get("access") != access:
+            raise ValidationError("Participant access identity changed")
         scopes = list(existing.get("scopes", [])) if existing else []
         if scope not in scopes:
             scopes.append(scope)
+        checked_scopes = list(existing.get("prepared_scope_checks", [])) if existing else []
+        if scope not in checked_scopes:
+            checked_scopes.append(scope)
         record = {
             "id": access["id"], "access": access, "scopes": scopes,
             "resolved_endpoints": [], "candidate_results": [],
             "resolution_attempted": False,
             "consented_at": float(time.time()),
+            "prepared_replacement": True,
+            "prepared_scope_checks": checked_scopes,
         }
         writes.append(("participant_access", access["id"], record))
         writes.extend(additional_writes or [])
-        self.store.put_and_delete(writes, deletions, redact_command_cache=True)
+        writes.append(("participant_reconcile", "current", {"revision": secrets.token_hex(16)}))
+        return record, writes, deletions
 
-        # Network activity starts only after the exact scoped record is durable.
-        resolved, results = self._resolved_participant_endpoints(access)
-        record["resolved_endpoints"] = resolved
-        record["candidate_results"] = results
-        record["resolution_attempted"] = True
-        self.store.put("participant_access", access["id"], record)
-        try:
-            self._apply_participant_interfaces()
-        except Exception:
-            pass
-        return record
+    def reconcile_prepared_participant_access(self):
+        """Apply only the current committed scope set; never replay old writes."""
+        with self._dispatch_lock:
+            marker = self.store.get("participant_reconcile", "current")
+            if marker is None:
+                return
+            try:
+                self._apply_participant_interfaces()
+            except Exception:
+                return
+            if self.network is not None and self.store.get("participant_reconcile", "current") == marker:
+                self.store.delete("participant_reconcile", "current")
 
     def promote_pending_callback(
         self,
@@ -805,9 +1178,13 @@ class ParticipantAccessServiceMixin:
         self.store.put("participant_host", record["id"], record)
 
     def reconcile_participant_access(self) -> None:
+        self._reconcile_participant_retirements()
+        self.reconcile_prepared_participant_access()
         now = time.time()
         changed = False
         for record in list(self._participant_hosts()):
+            if record.get("reservation_operation_id") in self._participant_retirements():
+                continue
             if float(record.get("expires_at", 0)) <= now:
                 self.stop_participant_host(record["id"])
                 changed = True

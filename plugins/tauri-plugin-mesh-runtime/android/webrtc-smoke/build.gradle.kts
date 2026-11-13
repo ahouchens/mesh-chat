@@ -28,6 +28,7 @@ android {
     testBuildType = "release"
     sourceSets.getByName("androidTest").java.srcDir("../src/androidTest/java")
     sourceSets.getByName("androidTest").assets.srcDir("../src/androidTest/assets")
+    sourceSets.getByName("androidTest").assets.srcDir("../build/generated/transport-test-assets")
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -37,7 +38,10 @@ android {
 kotlin { compilerOptions { jvmTarget = JvmTarget.JVM_17 } }
 
 dependencies {
+    androidTestImplementation(project(":mesh-core-client"))
     implementation(project(":tauri-plugin-mesh-runtime"))
+    androidTestImplementation("androidx.activity:activity-ktx:1.10.1")
+    androidTestImplementation("androidx.core:core-ktx:1.15.0")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test:runner:1.6.2")
 }

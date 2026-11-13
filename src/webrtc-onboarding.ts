@@ -1,4 +1,6 @@
-import { onServiceEvent, serviceCommand } from "./api";
+import { onServiceEvent } from "./api";
+import { captureEffectScope, effectIsCurrent, type CoreEffectScope } from "./core-admission";
+import { requestEffect } from "./effect-requests";
 import type { ServiceEvent } from "./api";
 import { getWebRTCSessions } from "./webrtc-session";
 
@@ -87,12 +89,16 @@ async function channelBytes(data: unknown): Promise<ArrayBuffer | null> {
  */
 export async function attachWebRTCBridge(
   channel: RTCDataChannel,
-  options: { onError?: (error: unknown) => void; onClosed?: (bridgeId: string) => void; isCurrent?: () => boolean; peerDestination?: () => string | undefined } = {},
+  options: { effects?: CoreEffectScope; onError?: (error: unknown) => void; onClosed?: (bridgeId: string) => void; isCurrent?: () => boolean; peerDestination?: () => string | undefined } = {},
 ): Promise<WebRTCBridge> {
   if (channel.readyState !== "open") {
     throw new Error("The WebRTC DataChannel is not open.");
   }
   let closed = false;
+  const effects = captureEffectScope(options.effects);
+  const ownerCurrent = options.isCurrent;
+  const current = () => !closed && effectIsCurrent(effects) && ownerCurrent?.() !== false;
+  const requests = captureEffectScope({ ...effects, isCurrent: current });
   let unlisten: (() => void) | null = null;
   let closing: Promise<void> | null = null;
   let attached: AttachResult | null = null;
@@ -107,7 +113,7 @@ export async function attachWebRTCBridge(
   let pendingOutboundBytes = 0;
 
   const fail = (reason: unknown) => {
-    if (!closed) options.onError?.(reason);
+    if (current()) options.onError?.(reason);
   };
 
   const close = (): Promise<void> => {
@@ -132,7 +138,7 @@ export async function attachWebRTCBridge(
       await recovery?.catch(() => undefined);
       if (!native) return;
       try {
-        await serviceCommand("webrtc_detach", { bridge_id: native.bridge_id });
+        await requestEffect(effects, "webrtc_detach", { bridge_id: native.bridge_id }, true);
       } catch {
         // The service may already have retired the bridge.
       }
@@ -142,7 +148,7 @@ export async function attachWebRTCBridge(
   };
 
   const ensureOpen = () => {
-    if (closed || channel.readyState !== "open" || options.isCurrent?.() === false) {
+    if (!current() || channel.readyState !== "open") {
       throw new Error("The WebRTC bridge closed before attachment completed.");
     }
   };
@@ -151,7 +157,7 @@ export async function attachWebRTCBridge(
     void close();
   };
   const queueInbound = (data: unknown) => {
-    if (closed) return;
+    if (!current()) return;
     const size = data instanceof ArrayBuffer || ArrayBuffer.isView(data)
       ? data.byteLength
       : typeof Blob !== "undefined" && data instanceof Blob ? data.size : 0;
@@ -168,7 +174,7 @@ export async function attachWebRTCBridge(
   };
   const recover = (): Promise<void> => {
     if (recovery) return recovery;
-    if (closed) return Promise.resolve();
+    if (!current()) { void close(); return Promise.resolve(); }
     if (!attached) { recoveryRequested = true; return Promise.resolve(); }
     if (recoveryTimer !== null) clearTimeout(recoveryTimer);
     recoveryTimer = null;
@@ -179,7 +185,7 @@ export async function attachWebRTCBridge(
       // Ordinary commands recover an unexpected sidecar exit without unlocking
       // a deliberately locked app. Keep the verified peer and channel intact.
       const peer = options.peerDestination?.();
-      const restored = await serviceCommand<AttachResult>("webrtc_attach", {
+      const restored = await requestEffect<AttachResult>(requests, "webrtc_attach", {
         bridge_id: bridgeId, ...(peer ? { peer_destination: peer } : {}),
       });
       ensureOpen();
@@ -191,7 +197,7 @@ export async function attachWebRTCBridge(
       pendingInboundBytes = 0;
     }, () => {
       recovery = null;
-      if (!closed && channel.readyState === "open" && options.isCurrent?.() !== false) {
+      if (current() && channel.readyState === "open") {
         recoveryTimer = setTimeout(() => { recoveryTimer = null; void recover(); }, 3000);
       }
     });
@@ -199,13 +205,13 @@ export async function attachWebRTCBridge(
   };
   const inbound = (data: unknown) => {
     void channelBytes(data).then((packet) => {
-      if (!packet || closed || !attached) return;
+      if (!packet || !current() || !attached) return;
       if (recovery || recoveryTimer !== null) { queueInbound(packet); return; }
       if (packet.byteLength > attached.max_packet) {
         fail(new Error("The WebRTC packet exceeded the Reticulum MTU."));
         return;
       }
-      return serviceCommand<PacketResult>("webrtc_packet", {
+      return requestEffect<PacketResult>(requests, "webrtc_packet", {
         bridge_id: attached.bridge_id,
         data: bytesToBase64(packet),
       }).catch((reason: unknown) => {
@@ -220,7 +226,7 @@ export async function attachWebRTCBridge(
   };
   const outbound = (event: ServiceEvent) => {
     if (!attached || event.bridge_id !== attached.bridge_id || typeof event.data !== "string") return;
-    if (closed || channel.readyState !== "open") return;
+    if (!current() || channel.readyState !== "open") return;
     try {
       const packet = base64ToBytes(event.data);
       if (packet.byteLength <= attached.max_packet) channel.send(packet);
@@ -232,7 +238,7 @@ export async function attachWebRTCBridge(
   // attachment or event registration is still pending. Preserve those bytes.
   channel.binaryType = "arraybuffer";
   channel.onmessage = (event) => {
-    if (closed) return;
+    if (!current()) return;
     if (attached && !recovery && recoveryTimer === null) { inbound(event.data); return; }
     queueInbound(event.data);
   };
@@ -248,8 +254,8 @@ export async function attachWebRTCBridge(
     // Native attach announces immediately. Its listener must already exist;
     // Android's shared UI poll irreversibly drains each native event batch.
     const stopListening = await onServiceEvent((event: ServiceEvent) => {
-      if (!closed && event.event === "service_error") { void recover(); return; }
-      if (closed || event.event !== "webrtc_packet" || typeof event.data !== "string") return;
+      if (current() && event.event === "service_error") { void recover(); return; }
+      if (!current() || event.event !== "webrtc_packet" || typeof event.data !== "string") return;
       if (attached) { outbound(event); return; }
       // Established peers already have their own packet listeners. Their
       // traffic must not consume this attachment's bounded startup queue.
@@ -264,7 +270,7 @@ export async function attachWebRTCBridge(
     if (closed) stopListening();
     else unlisten = stopListening;
     ensureOpen();
-    return serviceCommand<AttachResult>("webrtc_attach");
+    return requestEffect<AttachResult>(requests, "webrtc_attach");
   });
   try {
     attached = await attachment;
@@ -276,7 +282,7 @@ export async function attachWebRTCBridge(
     // An idle carrier may receive neither a process-exit event nor a packet.
     // Probe the service independently of traffic and reconnect eligibility.
     healthTimer = setInterval(() => {
-      if (!closed && channel.readyState === "open" && options.isCurrent?.() !== false && recoveryTimer === null) void recover();
+      if (current() && channel.readyState === "open" && recoveryTimer === null) void recover();
     }, BRIDGE_HEALTH_INTERVAL_MS);
 
     return {

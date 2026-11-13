@@ -1,0 +1,1279 @@
+{
+  "v": 1,
+  "status": "experimental_design",
+  "api_major": 1,
+  "api_minor": 1,
+  "implemented_operations": [],
+  "experimental_component_operations": [
+    "runtime.capabilities",
+    "profile.query",
+    "connection.snapshot",
+    "application.snapshot",
+    "call.ice_servers",
+    "call.media_query",
+    "call.settings_query",
+    "call.settings_update",
+    "connection.start",
+    "connection.stop",
+    "diagnostics.query",
+    "events.ack",
+    "events.poll",
+    "group.close",
+    "group.create",
+    "group.invitation_accept",
+    "group.invitation_decline",
+    "group.invitation_retry",
+    "group.leave",
+    "group.member_remove",
+    "group.message_enqueue",
+    "group.query",
+    "message.enqueue",
+    "message.list",
+    "message.query",
+    "message.reaction_set",
+    "message.received",
+    "peer.approve",
+    "peer.delete",
+    "peer.draft_get",
+    "peer.draft_set",
+    "peer.pairing_accept",
+    "peer.pairing_create",
+    "peer.pairing_request",
+    "peer.query",
+    "peer.revoke",
+    "peer.unblock",
+    "runtime.mutate",
+    "runtime.query",
+    "runtime.stop",
+    "settings.query",
+    "settings.update",
+    "workspace.access_recommendation",
+    "workspace.admin_request_approve",
+    "workspace.admin_request_cancel",
+    "workspace.admin_request_decline",
+    "workspace.admin_request_dismiss",
+    "workspace.admin_request_submit",
+    "workspace.admission_grant_accept",
+    "workspace.admission_grant_create",
+    "workspace.admission_grant_end",
+    "workspace.admission_grant_list",
+    "workspace.authority_accept",
+    "workspace.authority_finalize",
+    "workspace.authority_loss_report",
+    "workspace.authority_offer",
+    "workspace.channel_archive",
+    "workspace.channel_create",
+    "workspace.channel_members",
+    "workspace.channel_members_update",
+    "workspace.channel_transfer_accept",
+    "workspace.channel_transfer_offer",
+    "workspace.channel_update",
+    "workspace.channels",
+    "workspace.close",
+    "workspace.connection",
+    "workspace.device_link_approve",
+    "workspace.device_link_create",
+    "workspace.device_link_decline",
+    "workspace.device_link_preview",
+    "workspace.device_link_submit",
+    "workspace.device_links",
+    "workspace.device_remove",
+    "workspace.device_removal_request",
+    "workspace.device_removal_approve",
+    "workspace.device_removal_decline",
+    "workspace.devices",
+    "workspace.display_name_request",
+    "workspace.history",
+    "workspace.invitation_create",
+    "workspace.invitation_preview",
+    "workspace.invitation_revoke",
+    "workspace.join",
+    "workspace.join_approve",
+    "workspace.join_decline",
+    "workspace.join_requests",
+    "workspace.leave",
+    "workspace.member_role",
+    "workspace.members",
+    "workspace.metadata_update",
+    "workspace.policy_update",
+    "workspace.query",
+    "workspace.read_hint_sync",
+    "workspace.remove_data",
+    "workspace.retention_update",
+    "workspace.snapshot",
+    "workspace.timeline_mutation",
+    "workspace.timeline_query",
+    "call.control",
+    "workspace.channel_recover",
+    "workspace.channel_state",
+    "workspace.member_remove",
+    "group.draft_set",
+    "workspace.draft_set",
+    "remote_profile.mutate",
+    "workspace.display_name_decide",
+    "workspace.direct_open",
+    "route.update",
+    "peer.update",
+    "conversation.mutate",
+    "peer.decide",
+    "link.preview",
+    "contact.invitation",
+    "recovery.transfer",
+    "connection.support",
+    "remote_profile.query",
+    "connection.document",
+    "peer.pairing_preview",
+    "workspace.join_prompt",
+    "workspace.create",
+    "profile.create",
+    "peer.composer_query",
+    "peer.composer_update",
+    "message.enqueue_draft",
+    "profile.catalog",
+    "profile.lock",
+    "profile.select",
+    "profile.unlock",
+    "call.operation_list",
+    "call.operation_query",
+    "call.operation_abandon",
+    "peer.pairing_begin",
+    "peer.pairing_query",
+    "peer.pairing_cancel",
+    "group.composer_query",
+    "group.composer_update",
+    "group.message_enqueue_draft"
+  ],
+  "private_host_operations": [
+    "native.command",
+    "bootstrap.preview"
+  ],
+  "bootstrap_operations": [
+    "profile.create",
+    "bootstrap.preview"
+  ],
+  "runtime_host_operations": [
+    "profile.catalog",
+    "profile.select",
+    "profile.unlock",
+    "profile.lock"
+  ],
+  "keyed_actions": {
+    "workspace.connection": [
+      "invite_contact",
+      "prompt_dismiss",
+      "prompt_submit",
+      "reconnect_consent"
+    ],
+    "workspace.history": [
+      "cancel",
+      "hide_direct",
+      "hide_message",
+      "prune",
+      "start"
+    ],
+    "workspace.access_recommendation": [
+      "apply",
+      "apply_by_id",
+      "create",
+      "send"
+    ]
+  },
+  "action_permissions": {
+    "remote_profile.mutate": {
+      "create": "approve",
+      "approve_propagation": "approve",
+      "remove": "approve",
+      "remove_propagation": "approve"
+    },
+    "workspace.access_recommendation": {
+      "apply": "approve",
+      "apply_by_id": "approve"
+    },
+    "workspace.connection": {
+      "reconnect_consent": "approve"
+    }
+  },
+  "operations": [
+    {
+      "operation": "bootstrap.preview",
+      "permission": "profile_owner",
+      "scope": "runtime",
+      "mutation": false,
+      "visibility": "private_host",
+      "idempotency": "query"
+    },
+    {
+      "operation": "runtime.capabilities",
+      "permission": "observe",
+      "scope": "runtime",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "runtime.stop",
+      "permission": "runtime_owner",
+      "scope": "runtime",
+      "mutation": true,
+      "idempotency": "convergent_desired_state"
+    },
+    {
+      "operation": "application.snapshot",
+      "permission": "approve",
+      "scope": "runtime",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "native.command",
+      "visibility": "private_host",
+      "permission": "approve",
+      "scope": "runtime",
+      "mutation": true,
+      "idempotency": "renderer_command_contract"
+    },
+    {
+      "operation": "profile.create",
+      "permission": "profile_owner",
+      "scope": "runtime",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "profile.select",
+      "permission": "profile_owner",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "profile.unlock",
+      "permission": "profile_owner",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "profile.lock",
+      "permission": "profile_owner",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "profile.query",
+      "permission": "observe",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "peer.pairing_create",
+      "permission": "pair",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "peer.pairing_request",
+      "permission": "pair",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "convergent_desired_state"
+    },
+    {
+      "operation": "peer.pairing_accept",
+      "permission": "pair",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "convergent_desired_state"
+    },
+    {
+      "operation": "workspace.query",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "workspace.join_requests",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "workspace.join_approve",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.members",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "workspace.join_decline",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.member_role",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.channels",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "workspace.channel_create",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.channels",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "workspace.channel_create",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.invitation_create",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.admission_grant_end",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.admission_grant_accept",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.admission_grant_create",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.admission_grant_list",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.invitation_revoke",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.invitation_preview",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "workspace.join",
+      "permission": "pair",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "peer.query",
+      "permission": "observe",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "peer.approve",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "convergent_desired_state"
+    },
+    {
+      "operation": "peer.revoke",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "convergent_desired_state"
+    },
+    {
+      "operation": "peer.unblock",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "convergent_desired_state"
+    },
+    {
+      "operation": "peer.delete",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "convergent_desired_state"
+    },
+    {
+      "operation": "peer.draft_get",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "peer.draft_set",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "last_write_wins"
+    },
+    {
+      "operation": "call.settings_query",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "call.settings_update",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "last_write_wins"
+    },
+    {
+      "operation": "call.ice_servers",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "call.media_query",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "settings.query",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "settings.update",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "last_write_wins"
+    },
+    {
+      "operation": "message.reaction_set",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "convergent_desired_state"
+    },
+    {
+      "operation": "group.query",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "group.create",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "repeatable"
+    },
+    {
+      "operation": "group.message_enqueue",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "repeatable"
+    },
+    {
+      "operation": "group.member_remove",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "repeatable"
+    },
+    {
+      "operation": "group.invitation_decline",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "repeatable"
+    },
+    {
+      "operation": "group.invitation_retry",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "repeatable"
+    },
+    {
+      "operation": "group.invitation_accept",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "repeatable"
+    },
+    {
+      "operation": "group.close",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "repeatable"
+    },
+    {
+      "operation": "group.leave",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "repeatable"
+    },
+    {
+      "operation": "connection.start",
+      "permission": "connect",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "convergent_desired_state"
+    },
+    {
+      "operation": "connection.stop",
+      "permission": "connect",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "convergent_desired_state"
+    },
+    {
+      "operation": "connection.retry",
+      "permission": "connect",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "connection.snapshot",
+      "permission": "observe",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "message.enqueue",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "message.query",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "message.list",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "message.received",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "events.poll",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "events.ack",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "diagnostics.query",
+      "permission": "diagnose",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "workspace.channel_members",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "workspace.channel_members_update",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.channel_update",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.channel_archive",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.device_link_create",
+      "permission": "pair",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.device_link_preview",
+      "permission": "pair",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "workspace.device_link_submit",
+      "permission": "pair",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.device_links",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "workspace.device_link_approve",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.device_link_decline",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.channel_transfer_offer",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.channel_transfer_accept",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.policy_update",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.retention_update",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.admin_request_dismiss",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.admin_request_cancel",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.admin_request_decline",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.admin_request_approve",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.metadata_update",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.devices",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "workspace.device_remove",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.remove_data",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.authority_loss_report",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.authority_finalize",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.authority_accept",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.authority_offer",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.read_hint_sync",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.display_name_request",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.admin_request_submit",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.leave",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.close",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.device_removal_request",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "repeatable"
+    },
+    {
+      "operation": "workspace.device_removal_approve",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "repeatable"
+    },
+    {
+      "operation": "workspace.device_removal_decline",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "repeatable"
+    },
+    {
+      "operation": "workspace.timeline_query",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "workspace.timeline_mutation",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.snapshot",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "workspace.access_recommendation",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.history",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.connection",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "runtime.query",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "runtime.mutate",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "call.control",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.channel_recover",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.channel_state",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.member_remove",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "group.draft_set",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "none"
+    },
+    {
+      "operation": "workspace.draft_set",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "remote_profile.mutate",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.display_name_decide",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.direct_open",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "route.update",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "peer.update",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "none"
+    },
+    {
+      "operation": "conversation.mutate",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "none"
+    },
+    {
+      "operation": "peer.decide",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "none"
+    },
+    {
+      "operation": "link.preview",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "none"
+    },
+    {
+      "operation": "contact.invitation",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "none"
+    },
+    {
+      "operation": "recovery.transfer",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "none"
+    },
+    {
+      "operation": "connection.support",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "none"
+    },
+    {
+      "operation": "remote_profile.query",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "none"
+    },
+    {
+      "operation": "connection.document",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "none"
+    },
+    {
+      "operation": "peer.pairing_preview",
+      "permission": "pair",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "none"
+    },
+    {
+      "operation": "workspace.join_prompt",
+      "permission": "pair",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.create",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "peer.composer_query",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "peer.composer_update",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "message.enqueue_draft",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "profile.catalog",
+      "permission": "observe",
+      "scope": "runtime",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "call.operation_list",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "call.operation_query",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "call.operation_abandon",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "peer.pairing_begin",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "peer.pairing_query",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "peer.pairing_cancel",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "group.composer_query",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "group.composer_update",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key",
+      "additional_permissions": [
+        "read"
+      ]
+    },
+    {
+      "operation": "group.message_enqueue_draft",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key",
+      "additional_permissions": [
+        "read"
+      ]
+    }
+  ],
+  "limits": {
+    "frame_bytes": 4194304,
+    "request_json_depth": 16,
+    "request_json_structural_tokens": 1024,
+    "text_utf8_bytes": 16384,
+    "peers_per_profile": 256,
+    "idempotency_seconds": 604800,
+    "enqueue_keys_per_caller_profile": 4096,
+    "enqueue_keys_per_vault": 65536,
+    "event_batch_count": 128,
+    "event_batch_bytes": 1048576,
+    "event_retention_count": 2048,
+    "event_retention_seconds": 604800,
+    "recovery_scan_count": 128,
+    "cursor_bytes": 1024,
+    "acknowledgment_seconds": 604800,
+    "acknowledgment_keys_per_caller_profile": 4096,
+    "acknowledgment_keys_per_vault": 65536,
+    "received_scan_count": 128,
+    "received_batch_bytes": 1048576,
+    "diagnostic_count": 256,
+    "diagnostic_bytes": 262144,
+    "composer_text_utf8_bytes": 16384,
+    "composers_per_caller_profile": 256,
+    "composers_per_vault": 4096,
+    "composer_update_idempotency_seconds": 3600,
+    "composer_update_keys_per_caller_profile": 8192,
+    "composer_update_keys_per_vault": 65536,
+    "composer_send_idempotency_seconds": 604800,
+    "composer_send_keys_per_caller_profile": 4096,
+    "composer_send_keys_per_vault": 65536,
+    "profile_slots": 8,
+    "profile_lifecycle_keys_per_host": 4096,
+    "profile_lifecycle_keys_per_caller_profile": 256,
+    "profile_unlock_credentials": 128,
+    "optional_key_idempotency_seconds": 604800,
+    "optional_keys_per_caller_profile": 4096,
+    "optional_keys_per_vault": 65536,
+    "call_operations_per_caller_profile": 256,
+    "call_operations_per_vault": 4096,
+    "call_operation_retention_seconds": 604800,
+    "call_operation_keys_per_caller_profile": 4096,
+    "call_operation_keys_per_vault": 65536,
+    "pairing_intents_per_runtime": 32,
+    "pairing_active_intents": 1,
+    "pairing_intent_seconds": 300,
+    "pairing_code_utf8_bytes": 2048,
+    "pairing_key_idempotency_seconds": 604800,
+    "pairing_keys_per_caller_profile": 4096,
+    "pairing_keys_per_vault": 65536,
+    "group_composer_text_utf8_bytes": 16384,
+    "group_composers_per_caller_profile": 256,
+    "group_composers_per_vault": 4096,
+    "group_composer_update_idempotency_seconds": 3600,
+    "group_composer_update_keys_per_caller_profile": 8192,
+    "group_composer_update_keys_per_vault": 65536,
+    "group_composer_send_idempotency_seconds": 604800,
+    "group_composer_send_keys_per_caller_profile": 4096,
+    "group_composer_send_keys_per_vault": 65536
+  },
+  "optional_keyed_operations": [
+    "group.create",
+    "group.message_enqueue"
+  ],
+  "call_recovery_operations": [
+    "call.operation_list",
+    "call.operation_query",
+    "call.operation_abandon"
+  ],
+  "pairing_intent_operations": [
+    "peer.pairing_begin",
+    "peer.pairing_query",
+    "peer.pairing_cancel"
+  ],
+  "group_composer_operations": [
+    "group.composer_query",
+    "group.composer_update",
+    "group.message_enqueue_draft"
+  ]
+}

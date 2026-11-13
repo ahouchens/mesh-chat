@@ -1,4 +1,4 @@
-import { serviceCommand } from "./api";
+import { coreApiLinkPreview } from "./api";
 import type { MessageLink } from "./message-links";
 
 export type PreviewCard = { status: "ready"; title: string; author: string; text: string; image: string | null };
@@ -9,9 +9,8 @@ type PreviewResult = PreviewCard | { status: "loading" | "unavailable" };
 export async function loadPreview(link: MessageLink, signal: AbortSignal): Promise<PreviewCard | null> {
   const deadline = Date.now() + 15000;
   while (!signal.aborted && Date.now() < deadline) {
-    const result = await serviceCommand<PreviewResult>("link_preview", {
-      provider: link.kind, identifier: link.id,
-    });
+    if (!link.id) return null;
+    const result = await coreApiLinkPreview(link.kind, link.id) as PreviewResult;
     if (signal.aborted) return null;
     if (result.status === "ready") return result;
     if (result.status !== "loading") return null;

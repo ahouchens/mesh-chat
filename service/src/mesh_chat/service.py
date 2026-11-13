@@ -3,7 +3,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-import queue
 import threading
 import time
 import uuid
@@ -14,9 +13,10 @@ import LXMF
 import RNS
 
 from . import connection_diagnostics
+from .chat_text import validate_chat_text
 from .background_availability import BackgroundAvailabilityMixin
 from .contact_invitations import ContactInvitationsMixin
-from .native_webrtc_control import NativeWebRTCControlMixin
+from .native_webrtc_service import NativeWebRTCServiceMixin
 from .app_protocol import (
     DELIVERY_WINDOW_SECONDS,
     GROUP_KINDS,
@@ -27,6 +27,7 @@ from .app_protocol import (
 from .errors import (
     ContactInUse,
     ContactNotApproved,
+    IdentityMismatch,
     InvitationInvalid,
     MeshChatError,
     MailboxNotConfigured,
@@ -44,14 +45,13 @@ from .invitations import (
     readable_fingerprint,
     verify_invitation,
 )
-from .call_manager import CallManager
+from .call_manager import CallManager, CallOutcomeRequiresResync, CallOperationCapacityExceeded
 from .call_settings import CallSettings
 from .turn_credentials import fetch_ice_servers
 from .signal_mailbox import fetch as fetch_signal
 from .signal_mailbox import publish as publish_signal
 from .signal_mailbox import create_pairing, parse_pairing
 from .webrtc_interface import WebRTCInterface
-from .webrtc_signaling import _fingerprint
 from .webrtc_onboarding import (
     create_onboarding_answer,
     create_onboarding_offer,
@@ -108,6 +108,7 @@ MAX_PENDING_REQUESTS = 100
 CONTACT_FLUSH_ATTEMPTS = 4
 ROUTE_REFRESH_MARGIN_SECONDS = 10 * 60
 ROUTE_REFRESH_RETRY_SECONDS = 5 * 60
+MAX_ROUTE_UPDATE_JOBS = 256
 DELETED_MESSAGE_REPLAY_GRACE_SECONDS = 24 * 60 * 60
 
 DIRECT_RETRY_STATES = {
@@ -164,9 +165,17 @@ def _payload(
     return value
 
 
+class NativeStartupIncomplete(NativeUnavailable):
+    """Private construction failure retaining the exact retiring runtime."""
+
+    def __init__(self, service):
+        super().__init__("Native runtime startup cleanup is incomplete")
+        self.retiring_service = service
+
+
 class MeshChatService(
     ContactInvitationsMixin,
-    NativeWebRTCControlMixin,
+    NativeWebRTCServiceMixin,
     BackgroundAvailabilityMixin,
     ReconnectServiceMixin,
     ReactionServiceMixin,
@@ -477,10 +486,35 @@ class MeshChatService(
         "acknowledge_native_notification",
     }
 
-    def __init__(self, store: VaultStore, profile_dir: Path, emit: EventCallback, *, direct_native=None):
+    def __init__(self, store: VaultStore, profile_dir: Path, emit: EventCallback, *, direct_native=None,
+                 connection_policy="legacy", native_webrtc_host=None):
+        if connection_policy not in {"legacy", "shared-native"}:
+            raise ValueError("Unsupported connection policy")
+        self._native_host = native_webrtc_host
+        if connection_policy == "shared-native" or native_webrtc_host is not None:
+            # Private composition option, never a renderer command. Qualification
+            # must explicitly select a native host before this becomes default.
+            from .native_webrtc_host import require_host
+            self._native_host = require_host(self._native_webrtc_host())
+            if (callable(getattr(self._native_host, "inventory", None))
+                    and not all(callable(getattr(self._native_host, name, None))
+                                for name in ("shutdown", "activate"))):
+                raise NativeUnavailable("Recoverable native host lacks quarantine or activation capability")
+        self._connection_policy = connection_policy
+        self._connection_runtime = None
+        self._runtime_incarnation = uuid.uuid4().hex
         from .link_previews import LinkPreviews
         self._link_previews = LinkPreviews()
         self.store = store
+        from .message_journal import MessageJournal
+        self._message_journal = MessageJournal(store)
+        from .received_messages import ReceivedMessages
+        self._received_messages = ReceivedMessages(store)
+        self._carrier_journal = None
+        if connection_policy == "shared-native" and callable(getattr(self._native_host, "inventory", None)):
+            from .carrier_journal import CarrierJournal
+            self._carrier_journal = CarrierJournal(store)
+        self._carrier_recovery_pending = self._carrier_journal is not None
         self.profile_dir = profile_dir
         self.emit = emit
         self._direct_native = direct_native
@@ -488,6 +522,9 @@ class MeshChatService(
         self._identity: RNS.Identity | None = None
         self._shutdown = threading.Event()
         self._dispatch_lock = threading.RLock()
+        self._core_call_epoch = uuid.uuid4().hex
+        self._core_signal_attempts = {}
+        self._core_signal_results = {}
         self._retry_queue_lock = threading.Lock()
         self._direct_retry_ids: dict[str, None] = {}
         self._group_retry_ids: dict[str, None] = {}
@@ -520,15 +557,49 @@ class MeshChatService(
         self._webrtc_bridges: dict[str, WebRTCInterface] = {}
         self._native_webrtc_sessions: dict[str, str] = {}
         self._native_webrtc_lock = threading.RLock()
+        from .native_resource_registry import NativeResourceRegistry
+        self._native_resources = NativeResourceRegistry()
+        from .native_startup_packets import NativeStartupPackets
+        self._native_startup_packets = NativeStartupPackets()
         self._native_webrtc_live: set[str] = set()
         self._native_webrtc_creating: set[str] = set()
         self._native_webrtc_profile_sessions: dict[str, str] = {}
         self._native_webrtc_descriptions: dict[str, dict] = {}
         self._native_webrtc_peers: dict[str, str] = {}
         self._native_webrtc_controls: dict[str, dict] = {}
+        self._native_recovered_bindings = {}
         self._background_reconnect_supervisor = None
-        identity_record = store.get("identity", "local")
-        profile_record = store.get("profile", "local")
+        self._retry_thread = threading.Thread(target=self._retry_loop, daemon=True)
+        try:
+            self._load_local_profile()
+            self._retry_thread.start()
+            from .native_webrtc_events import NativeEventInbox
+            self._native_webrtc_events = NativeEventInbox()
+            self._native_webrtc_event_thread = threading.Thread(
+                target=self._native_webrtc_event_loop,
+                daemon=True,
+                name="mesh-chat-native-webrtc-events",
+            )
+            self._native_webrtc_event_thread.start()
+            self._direct_recovery.start()
+            if self._connection_policy == "shared-native":
+                from .connection.composition import native_runtime
+                self._connection_runtime = native_runtime(self)
+                self._connection_runtime.start()
+            if self._background_availability_enabled():
+                self._sync_background_reconnect()
+        except Exception:
+            try:
+                self.close()
+            except Exception as error:
+                raise NativeStartupIncomplete(self) from error
+            if not self._store_closed:
+                raise NativeStartupIncomplete(self)
+            raise
+
+    def _load_local_profile(self):
+        identity_record = self.store.get("identity", "local")
+        profile_record = self.store.get("profile", "local")
         if identity_record is not None or profile_record is not None:
             if identity_record is None or profile_record is None:
                 raise ValidationError("Local profile is incomplete")
@@ -542,19 +613,6 @@ class MeshChatService(
             self._start_network(profile_record["display_name"])
             with self._dispatch_lock:
                 self._recover_outbox()
-
-        self._retry_thread = threading.Thread(target=self._retry_loop, daemon=True)
-        self._retry_thread.start()
-        self._native_webrtc_events: queue.Queue[tuple[str, str, str] | None] = queue.Queue()
-        self._native_webrtc_event_thread = threading.Thread(
-            target=self._native_webrtc_event_loop,
-            daemon=True,
-            name="mesh-chat-native-webrtc-events",
-        )
-        self._native_webrtc_event_thread.start()
-        self._direct_recovery.start()
-        if self._background_availability_enabled():
-            self._sync_background_reconnect()
 
     def _start_network(self, display_name: str) -> None:
         if self._identity is None or self.network is not None:
@@ -605,12 +663,39 @@ class MeshChatService(
         if self.settings.lan_listener_port != previous:
             self.store.put("settings", "network", self.settings.to_dict())
 
-    def create_profile(self, display_name: str) -> dict[str, Any]:
+    def create_profile(
+        self, display_name: str, *, operation_id: str | None = None
+    ) -> dict[str, Any]:
+        with self._dispatch_lock:
+            return self._create_profile(display_name, operation_id)
+
+    def _create_profile(self, display_name: str, operation_id: str | None) -> dict[str, Any]:
+        if self._close_started or (self._shutdown.is_set() and self._connection_policy == "shared-native"):
+            raise NativeUnavailable("Profile runtime is shutting down")
         name = _display_name(display_name)
         existing = self.store.get("profile", "local")
+        if existing is not None and self._identity is None:
+            raise ValidationError("Local identity is unavailable")
+        digest = None
+        if operation_id is not None:
+            try:
+                if not isinstance(operation_id, str) or str(uuid.UUID(operation_id)) != operation_id:
+                    raise ValueError
+            except (ValueError, AttributeError) as error:
+                raise ValidationError("Operation ID is invalid") from error
+            material = json.dumps({"command": "create_profile", "display_name": name},
+                                  ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+            digest = hashlib.sha256(material.encode("ascii")).hexdigest()
+            replay = self.store.operation_result(operation_id, digest)
+            if replay is not None:
+                if existing is None or replay.get("identity_hash") != existing.get("identity_hash"):
+                    raise ValidationError("Profile creation receipt has no matching identity")
+                return replay
         if existing is not None:
-            if existing["display_name"] != name or self._identity is None:
+            if existing["display_name"] != name:
                 raise ValidationError("A different local profile already exists")
+            if operation_id is not None:
+                return self.store.commit_operation(operation_id, digest, existing, ())
             return existing
         identity = RNS.Identity()
         destination = RNS.Destination.hash(identity, "lxmf", "delivery")
@@ -623,18 +708,40 @@ class MeshChatService(
             fingerprint=readable_fingerprint(identity.get_public_key()),
             created_at=now,
         )
-        self._identity = identity
-        self._prepare_lan_fallback()
-        self.store.put_many(
-            [
-                ("identity", "local", {"private_key": _b64(identity.get_private_key())}),
-                ("profile", "local", profile.to_dict()),
-                ("settings", "network", self.settings.to_dict()),
-            ]
-        )
-        self._start_network(name)
+        records = [
+            ("identity", "local", {"private_key": _b64(identity.get_private_key())}),
+            ("profile", "local", profile.to_dict()),
+            ("settings", "network", self.settings.to_dict()),
+        ]
+        try:
+            if operation_id is None:
+                self.store.put_many(records)
+            else:
+                self.store.commit_operation(operation_id, digest, profile.to_dict(), records)
+        except Exception:
+            # A committed write may lose its return path. Install only this
+            # generated identity after verifying the exact durable receipt.
+            if operation_id is not None:
+                try:
+                    committed = self.store.operation_result(operation_id, digest)
+                    if committed == profile.to_dict() and self.store.get("profile", "local") == committed:
+                        self._activate_created_profile(identity, name)
+                except Exception:
+                    pass
+            raise
+        self._activate_created_profile(identity, name)
         self._changed()
         return profile.to_dict()
+
+    def _activate_created_profile(self, identity, name):
+        if self._close_started or (self._shutdown.is_set() and self._connection_policy == "shared-native"):
+            raise NativeUnavailable("Profile runtime is shutting down")
+        self._identity = identity
+        self._prepare_lan_fallback()
+        self._start_network(name)
+        runtime = self._connection_runtime
+        if runtime is not None:
+            runtime.synchronize()
 
     def invitation(
         self,
@@ -1139,6 +1246,7 @@ class MeshChatService(
         if scope_kind != "workspace_device" or not isinstance(scope_id, str) or not isinstance(peer_destination, str):
             raise ValidationError("Route update scope is invalid")
         workspace = self._require_workspace(scope_id)
+        self._require_current_workspace_access("route_update", {"workspace_id": workspace["id"]})
         if workspace.get("state") != "active":
             raise ValidationError("Workspace is not active")
         manifest = self._workspace_current_manifest(workspace)
@@ -1153,7 +1261,12 @@ class MeshChatService(
     def create_route_update_command(
         self, scope_kind: Any, scope_id: Any, peer_destination: Any = None,
         *, preferred_external_port: int | None = None,
+        operation_id: str | None = None,
     ) -> dict[str, Any]:
+        if operation_id is not None:
+            with self._dispatch_lock:
+                return self._create_keyed_route_update(scope_kind, scope_id, peer_destination,
+                    preferred_external_port, operation_id)
         if self._identity is None:
             raise ValidationError("Local identity is unavailable")
         canonical_scope, audience, _public_key, _label = self._route_update_binding(
@@ -1206,9 +1319,99 @@ class MeshChatService(
             "delivery_mode": "automatic" if delivered_live else "share_required",
         }
 
+    def _create_keyed_route_update(self, scope_kind, scope_id, peer_destination, preferred_external_port, operation_id):
+        from .participant_service import ParticipantReservationCapacity, ParticipantReservationUnavailable
+
+        if self._identity is None or self._shutdown.is_set():
+            raise ParticipantReservationUnavailable("Local profile is unavailable")
+        canonical, audience, public_key, _ = self._route_update_binding(scope_kind, scope_id, peer_destination)
+        operation_id, digest, replay = self._workspace_operation("create_route_update", operation_id, {
+            "scope_kind": scope_kind, "scope_id": scope_id, "peer_destination": peer_destination,
+            "preferred_external_port": preferred_external_port,
+        })
+        if replay is not None and replay != {"action": "participant_host", "intent_id": operation_id}:
+            raise ParticipantReservationUnavailable("Route reservation is unavailable")
+        generation_id = f"out:{scope_kind}:{canonical}:{audience.hex()}"
+        previous = self.store.get("participant_host_intent", operation_id)
+        generation = self.store.get("route_generation", generation_id) or {}
+        now = time.time()
+        outbox = self.store.items("route_update_outbox")
+        expired = [("route_update_outbox", identifier) for identifier, item in outbox
+                   if float(item.get("expires_at", 0)) <= now]
+        if previous is None and len(outbox) - len(expired) >= MAX_ROUTE_UPDATE_JOBS:
+            raise ParticipantReservationCapacity("Too many route update jobs")
+        if previous is None:
+            intent = self.reserve_participant_host_intent(operation_id, digest,
+                purpose="personal" if scope_kind == "contact" else "workspace", scope_id=canonical,
+                maximum_expires_at=int(now) + 24 * 60 * 60,
+                relationship_scope={"kind": scope_kind, "id": scope_id}, peer_destination=audience.hex(),
+                generation_id=generation_id, base_generation=int(generation.get("generation", 0)),
+                preferred_external_port=preferred_external_port)
+        else:
+            intent = previous
+        access = dict(self.materialize_participant_host_intent(operation_id, digest))
+        host_id = access.pop("host_session_id")
+        completion = self.store.get("participant_host_completion", operation_id)
+        if completion is not None:
+            if completion.get("input_digest") != digest or not isinstance(completion.get("result"), dict):
+                raise ParticipantReservationUnavailable("Route completion is unavailable")
+            result = dict(completion["result"])
+        else:
+            serialized = create_signed_route_update(self._identity, scope_kind=scope_kind, scope_id=canonical,
+                audience_destination=audience, generation=intent["generation"], access=access)
+            result = {**route_update_formats(serialized), "expires_at": access["expires_at"],
+                "generation": intent["generation"], "host_session_id": host_id,
+                "methods": sorted({item["path"] for item in access["endpoints"]}),
+                "delivery_mode": "share_required"}
+            job = {"id": operation_id, "input_digest": digest, "state": "pending", "document": serialized,
+                "expires_at": access["expires_at"], "scope_kind": scope_kind, "scope_id": scope_id,
+                "peer_destination": audience.hex(), "recipient_public_key": _b64(public_key),
+                "generation_id": generation_id, "generation": intent["generation"], "host_session_id": host_id}
+            writes = self._prepare_participant_host_completion(operation_id, digest, result=result)
+            writes.extend([
+                ("route_generation", generation_id, {"id": generation_id, "generation": intent["generation"],
+                    "updated_at": time.time(), "host_session_id": host_id, "document": serialized,
+                    "relationship_scope": {"kind": scope_kind, "id": scope_id}, "peer_destination": audience.hex(),
+                    "preferred_external_port": next((int(item["port"]) for item in access["endpoints"]
+                        if item.get("path") in {"pcp", "upnp", "nat_pmp"}), None)}),
+                ("route_update_outbox", operation_id, job),
+            ])
+            # The immutable global receipt already reserves the key. Complete
+            # this reservation atomically without replacing its receipt pointer.
+            self.store.put_and_delete(writes, expired)
+            self._retry_route_update_outbox(operation_id)
+        job = self.store.get("route_update_outbox", operation_id)
+        result["delivery_mode"] = "automatic" if job is not None and job.get("state") == "submitted" else "share_required"
+        return result
+
+    def _retry_route_update_outbox(self, operation_id=None):
+        if self.network is None:
+            return
+        for identifier, job in self.store.items("route_update_outbox", limit=MAX_ROUTE_UPDATE_JOBS):
+            if operation_id is not None and identifier != operation_id:
+                continue
+            if float(job.get("expires_at", 0)) <= time.time():
+                self.store.delete("route_update_outbox", identifier)
+                continue
+            if job.get("state") != "pending":
+                continue
+            try:
+                _, audience, public_key, _ = self._route_update_binding(
+                    job["scope_kind"], job["scope_id"], job["peer_destination"])
+                self.materialize_participant_host_intent(identifier, job["input_digest"])
+                if _b64(public_key) != job["recipient_public_key"]:
+                    continue
+            except Exception:
+                continue
+            if self._send_live_route_update(job["document"], audience=audience,
+                    recipient_public_key=public_key, expires_at=int(job["expires_at"]),
+                    logical_id=str(uuid.uuid5(uuid.UUID(identifier), "route-update-delivery"))):
+                self.store.put("route_update_outbox", identifier, {**job, "state": "submitted"})
+
     def _send_live_route_update(
         self, serialized: str, *, audience: bytes,
         recipient_public_key: bytes, expires_at: int,
+        logical_id: str | None = None,
     ) -> bool:
         if self.network is None:
             return False
@@ -1225,7 +1428,7 @@ class MeshChatService(
             profile = self._require_profile()
             local = bytes.fromhex(profile["destination_hash"])
             self.network.send(
-                logical_id=_new_id(),
+                logical_id=logical_id or _new_id(),
                 conversation_id=conversation_id(local, audience),
                 recipient_public_key=recipient_public_key,
                 recipient_destination=audience,
@@ -1242,6 +1445,7 @@ class MeshChatService(
     def _refresh_callback_routes(self) -> None:
         """Refresh an expiring hosted route over an already usable Reticulum path."""
 
+        self._retry_route_update_outbox()
         if self.network is None:
             return
         path_known = getattr(self.network, "path_known", None)
@@ -1352,7 +1556,7 @@ class MeshChatService(
                     response["updated_at"] = now
                     self.store.put("connection_response", response_id, response)
 
-    def _verified_scoped_route_update(self, raw: Any) -> tuple[Any, str, str]:
+    def _verified_scoped_route_update(self, raw: Any, *, check_generation: bool = True) -> tuple[Any, str, str]:
         if not isinstance(raw, str):
             raise ValidationError("Reconnect update must be text")
         update = verify_route_update(raw)
@@ -1375,6 +1579,7 @@ class MeshChatService(
                 raise ValidationError("Reconnect update contact scope is invalid")
         else:
             workspace = self._require_workspace(update.scope_id)
+            self._require_current_workspace_access("route_update", {"workspace_id": workspace["id"]})
             if workspace.get("state") != "active":
                 raise ValidationError("Workspace is not active")
             manifest = self._workspace_current_manifest(workspace)
@@ -1389,7 +1594,7 @@ class MeshChatService(
             label = device_match[0].display_name
         generation_id = f"in:{update.scope_kind}:{update.scope_id}:{update.issuer_destination.hex()}"
         previous = self.store.get("route_generation", generation_id)
-        if previous is not None and update.generation <= int(previous.get("generation", 0)):
+        if check_generation and previous is not None and update.generation <= int(previous.get("generation", 0)):
             raise ValidationError("Reconnect update is stale or was already used")
         return update, durable_scope, label
 
@@ -1397,7 +1602,10 @@ class MeshChatService(
         update, _scope, label = self._verified_scoped_route_update(raw)
         return {**update.preview(), "issuer_display_name": label}
 
-    def apply_route_update(self, raw: Any) -> dict[str, Any]:
+    def apply_route_update(self, raw: Any, *, operation_id: str | None = None) -> dict[str, Any]:
+        if operation_id is not None:
+            with self._dispatch_lock:
+                return self._apply_keyed_route_update(raw, operation_id)
         update, durable_scope, label = self._verified_scoped_route_update(raw)
         generation_id = f"in:{update.scope_kind}:{update.scope_id}:{update.issuer_destination.hex()}"
         generation_record = {
@@ -1421,6 +1629,42 @@ class MeshChatService(
             "connection_results": record.get("candidate_results", []),
         }
 
+    def _apply_keyed_route_update(self, raw, operation_id):
+        from .participant_service import ParticipantReservationUnavailable
+
+        if self._identity is None or self._shutdown.is_set():
+            raise ParticipantReservationUnavailable("Local profile is unavailable")
+        update, scope, label = self._verified_scoped_route_update(raw, check_generation=False)
+        operation_id, digest, replay = self._workspace_operation("apply_route_update", operation_id, {"update": raw})
+        generation_id = f"in:{update.scope_kind}:{update.scope_id}:{update.issuer_destination.hex()}"
+        generation = self.store.get("route_generation", generation_id)
+        if replay is not None:
+            if generation is None or int(generation.get("generation", 0)) != update.generation:
+                raise ParticipantReservationUnavailable("Route generation was superseded")
+        else:
+            if generation is not None and update.generation <= int(generation.get("generation", 0)):
+                raise ValidationError("Reconnect update is stale or was already used")
+            generation = {"id": generation_id, "generation": update.generation, "updated_at": time.time(),
+                          "runtime_epoch": self._participant_runtime_epoch()}
+            record, writes, deletions = self._prepare_participant_scope_replacement(update.access,
+                scope_kind=update.scope_kind, scope_id=scope,
+                additional_writes=[("route_generation", generation_id, generation)])
+            self.store.commit_operation(operation_id, digest,
+                {"generation_id": generation_id, "generation": update.generation, "access_id": record["id"]},
+                writes, deletions, redact_command_cache=True)
+            self.reconcile_prepared_participant_access()
+            if self.network is not None:
+                self.network.remember_contact(update.issuer_public_identity, update.issuer_destination)
+                self.network.reannounce()
+            self._changed()
+        record = self.store.get("participant_access", update.access["id"])
+        if (record is None or record.get("access") != update.access
+                or {"kind": update.scope_kind, "id": scope} not in record.get("scopes", [])):
+            raise ContactNotApproved("Route access consent is no longer active")
+        results = (record.get("candidate_results", []) if self.network is not None
+                   and generation.get("runtime_epoch") == self._participant_runtime_epoch() else [])
+        return {**update.preview(), "issuer_display_name": label, "connection_results": results}
+
     def _ensure_contact_request(self, contact: dict[str, Any]) -> dict[str, Any]:
         for message in self.store.list("message"):
             if (
@@ -1439,6 +1683,20 @@ class MeshChatService(
         )
         self._attempt(request["id"])
         return request
+
+    def send_contact_request(self, contact_id: str) -> dict[str, Any]:
+        """Send or resend this device's signed request to a known peer.
+
+        An unexpired outbound request is reused rather than duplicated, so the
+        operation converges while the request window is open.
+        """
+        contact = self._require_contact(contact_id)
+        if contact["trust"] not in {
+            TrustState.AWAITING_CONSENT.value,
+            TrustState.PENDING_REQUEST.value,
+        }:
+            raise ValidationError("Contact request is not available for this trust state")
+        return self._ensure_contact_request(contact)
 
     def approve_request(self, contact_id: str) -> dict[str, Any]:
         contact = self._require_contact(contact_id)
@@ -1548,7 +1806,8 @@ class MeshChatService(
             contact["trust_before_block"] = contact["trust"]
             contact["trust"] = TrustState.BLOCKED.value
             contact["updated_at"] = time.time()
-            self.store.put("contact", contact_id, contact)
+            with self._connection_authority_update(contact_id):
+                self.store.put("contact", contact_id, contact)
             self._changed()
         return contact
 
@@ -1568,7 +1827,8 @@ class MeshChatService(
         contact["trust"] = previous
         contact.pop("trust_before_block", None)
         contact["updated_at"] = time.time()
-        self.store.put("contact", contact_id, contact)
+        with self._connection_authority_update(contact_id):
+            self.store.put("contact", contact_id, contact)
         if previous == TrustState.AWAITING_CONSENT.value:
             self._ensure_contact_request(contact)
         elif previous in {TrustState.APPROVED.value, TrustState.VERIFIED.value}:
@@ -1647,10 +1907,12 @@ class MeshChatService(
             ]
         )
         deletions.extend(self._reaction_deletions("direct", contact_id))
-        self.store.put_and_delete(writes, deletions, redact_command_cache=True)
+        with self._connection_authority_update(contact_id):
+            self.store.put_and_delete(writes, deletions, redact_command_cache=True)
         self.release_remote_scope("contact", contact_id)
         self.release_participant_scope("contact", contact_id)
         self._release_callback_hosts("contact", contact_id)
+        self.retire_native_peer(contact["destination_hash"])
         for record_id, record in list(self.store.items("route_generation")):
             if (
                 contact["destination_hash"] in record_id
@@ -1687,10 +1949,7 @@ class MeshChatService(
             TrustState.PENDING_REQUEST.value,
         }:
             raise ContactNotApproved("Contact is not approved for outbound chat")
-        if not isinstance(text, str) or not text.strip():
-            raise ValidationError("Message is empty")
-        if len(text.encode("utf-8")) > MAX_TEXT_BYTES:
-            raise ValidationError("Message exceeds the 16 KiB limit")
+        validate_chat_text(text)
         message = self._create_outbound(contact, MessageKind.CHAT, text)
         if contact["trust"] in {TrustState.APPROVED.value, TrustState.VERIFIED.value}:
             self._attempt(message["id"])
@@ -1774,6 +2033,80 @@ class MeshChatService(
         )
         self._changed()
         return result
+
+    def keyed_call_control(self, action, params, operation_id):
+        """Commit call state, redacted receipt and signaling outbox before I/O."""
+        with self._dispatch_lock:
+            identity = self._call_identity()
+            payload = {key: value for key, value in params.items() if key != "profile"}
+            operation_id, digest, replay = self._workspace_operation(
+                "core.call.control", operation_id, payload)
+            if action == "start":
+                contact_id = params["contact_id"]
+            elif replay is not None:
+                contact_id = replay["contact_id"]
+            else:
+                record = self.calls._get(params["call_id"])
+                if record is None:
+                    raise ValidationError("Call is unknown")
+                contact_id = record["contact_id"]
+            contact = self._require_call_peer(contact_id)
+            if contact.get("trust") not in {"approved", "verified", "workspace"}:
+                raise ContactNotApproved("Calls require an approved contact")
+            if replay is not None:
+                if (replay.get("runtime_epoch") != self._core_call_epoch
+                        or self.calls._get(replay["result"]["id"]) is None):
+                    raise CallOutcomeRequiresResync("Call command belongs to an earlier resource view")
+                return self.calls.get(replay["result"]["id"])
+            prepared = self.calls.prepare_control(identity, contact, action, params, operation_id)
+            records = [("call", record["id"], record) for record in prepared.records] if self.calls.persist else []
+            deletions = [("call", identifier) for identifier in prepared.deletions] if self.calls.persist else []
+            direct_messages = []
+            workspaces = set()
+            for index, (target, document) in enumerate(prepared.documents):
+                delivery_records, message_id, workspace = self._prepare_keyed_call_signal(
+                    target, document, operation_id, index)
+                records.extend(delivery_records)
+                if message_id is not None:
+                    direct_messages.append(message_id)
+                if workspace is not None:
+                    workspaces.add(workspace)
+            outcome = {"result": prepared.result, "contact_id": contact_id,
+                       "runtime_epoch": self._core_call_epoch}
+            self.store.commit_operation(operation_id, digest, outcome, records, deletions)
+            self.calls.apply_prepared(prepared)
+            for message_id in direct_messages:
+                self._queue_direct_retry(message_id)
+                self._attempt(message_id)
+            for workspace in workspaces:
+                self._workspace_changed(workspace, resource_kind="call")
+            self._changed()
+            return prepared.result
+
+    def _prepare_keyed_call_signal(self, contact_id, document, operation_id, index):
+        if not isinstance(document, str) or not 1 <= len(document.encode("utf-8")) <= MAX_TEXT_BYTES:
+            raise ValidationError("Call document is invalid")
+        if contact_id.startswith("workspace:"):
+            contact = self._workspace_reconnect_contact(contact_id)
+            workspace = self._require_workspace(contact["workspace_id"])
+            manifest = self._workspace_current_manifest(workspace)
+            member = next((item for item in manifest.members
+                           if item.member_id == contact["peer_member_id"]), None)
+            device = next((item for item in member.devices
+                           if item.device_id == contact["peer_device_id"]), None) if member else None
+            if member is None or device is None or member.status != "active":
+                raise ContactNotApproved("Workspace call peer is not active")
+            delivery = self._workspace_delivery_record(workspace_id=workspace["id"],
+                recipient_member_id=member.member_id, recipient_device=device,
+                kind="workspace_call_signal", document=document, priority=1)
+            return [("workspace_delivery", delivery["id"], delivery),
+                    *self._due_records(add=[delivery])], None, workspace["id"]
+        contact = self._require_contact(contact_id)
+        if contact.get("trust") not in {"approved", "verified"}:
+            raise ContactNotApproved("Calls require an approved contact")
+        message = self._outbound_record(contact, MessageKind.CALL_SIGNAL, document)
+        message["id"] = str(uuid.uuid5(uuid.UUID(operation_id), f"call-signal:{index}"))
+        return [("message", message["id"], message)], message["id"], None
 
     def answer_call(
         self,
@@ -1881,12 +2214,13 @@ class MeshChatService(
         return self._call_settings.rtc_configuration()
 
     def signal_publish(
-        self,
-        document: str,
-        role: str,
-        session_id: str | None = None,
+        self, document: str, role: str, session_id: str | None = None,
         mailbox_token: str | None = None,
     ) -> dict[str, Any]:
+        base, pairing, code = self._prepare_signal_publish(document, role, session_id, mailbox_token)
+        return self._publish_prepared_signal(document, role, base, pairing, code)
+
+    def _prepare_signal_publish(self, document, role, session_id=None, mailbox_token=None):
         base = self._call_settings.signal_mailbox_url
         if base is None:
             raise MailboxNotConfigured("Signaling mailbox is not configured")
@@ -1897,7 +2231,9 @@ class MeshChatService(
             offer = verify_onboarding_offer(document)
             if offer.signer_destination != self._require_profile()["destination_hash"]:
                 raise ValidationError("Only this device's offer can be published")
-            code = create_pairing(base)
+            previous = contexts.get(offer.session_id)
+            code = (previous["code"] if previous is not None
+                    and previous["offer"].serialized == offer.serialized else create_pairing(base))
             contexts[offer.session_id] = {"code": code, "offer": offer, "expires_at": time.time() + 600}
         elif role == "answer":
             try:
@@ -1912,10 +2248,67 @@ class MeshChatService(
         else:
             raise ValidationError("Onboarding role is invalid")
         pairing = parse_pairing(code, base)
+        return base, pairing, code
+
+    @staticmethod
+    def _publish_prepared_signal(document, role, base, pairing, code):
         result = publish_signal(base, document, role, token=pairing["token"],
                                 session=pairing["session"], secret=pairing["secret"])
-        # The UI shares this code explicitly, never in diagnostics or persistence.
         return {**result, "session_id": code}
+
+    def keyed_signal_publish(self, document, role, operation_id, session_id=None, mailbox_token=None):
+        """Record durable intent before HTTP; never persist pairing secrets or SDP."""
+        with self._dispatch_lock:
+            profile = self._require_profile()
+            self._call_identity()
+            base = self._call_settings.signal_mailbox_url
+            if base is None:
+                raise MailboxNotConfigured("Signaling mailbox is not configured")
+            payload = {"action": "signal_publish", "document": document, "role": role,
+                       "session_id": session_id, "mailbox_token": mailbox_token}
+            operation_id, digest, replay = self._workspace_operation(
+                "core.call.control", operation_id, payload)
+            if replay is not None and (replay.get("runtime_epoch") != self._core_call_epoch
+                    or replay.get("identity_hash") != profile["identity_hash"]
+                    or replay.get("mailbox_url") != base):
+                raise CallOutcomeRequiresResync("Signaling intent requires a current pairing context")
+            now = time.time()
+            for identifier, attempt in tuple(self._core_signal_attempts.items()):
+                if attempt["pairing"]["expires_at"] <= now:
+                    self._core_signal_attempts.pop(identifier, None)
+                    self._core_signal_results.pop(identifier, None)
+            attempt = self._core_signal_attempts.get(operation_id)
+            if replay is not None and attempt is None:
+                raise CallOutcomeRequiresResync("Signaling pairing context is no longer available")
+            if attempt is not None and attempt["digest"] != digest:
+                raise ValidationError("Operation ID was already used with different input")
+            if attempt is None:
+                if len(self._core_signal_attempts) >= 32:
+                    raise CallOperationCapacityExceeded("Too many pending signaling operations")
+                base, pairing, code = self._prepare_signal_publish(document, role, session_id, mailbox_token)
+                offer = self._signal_contexts()[json.loads(document)["session_id"]]["offer"]
+                attempt = {"digest": digest, "base": base, "pairing": pairing, "code": code,
+                           "offer": offer, "identity_hash": profile["identity_hash"]}
+                self._core_signal_attempts[operation_id] = attempt
+            if attempt["base"] != base or attempt["identity_hash"] != profile["identity_hash"]:
+                raise CallOutcomeRequiresResync("Signaling authority changed")
+            checked = (verify_onboarding_offer(document) if role == "offer"
+                       else verify_onboarding_answer(document, attempt["offer"]))
+            if checked.signer_destination != profile["destination_hash"]:
+                raise ContactNotApproved("Only this device's signaling can be published")
+            parse_pairing(attempt["code"], base)
+            # The immutable receipt records intent, not an HTTP success. A process
+            # restart deliberately requires resync rather than allocating a new room.
+            if replay is None:
+                self.store.commit_operation(operation_id, digest,
+                    {"action": "signal_publish", "runtime_epoch": self._core_call_epoch,
+                     "identity_hash": profile["identity_hash"], "mailbox_url": base}, ())
+            if operation_id in self._core_signal_results:
+                return dict(self._core_signal_results[operation_id])
+            result = self._publish_prepared_signal(document, role, attempt["base"],
+                                                   attempt["pairing"], attempt["code"])
+            self._core_signal_results[operation_id] = dict(result)
+            return result
 
     def _signal_contexts(self) -> dict[str, Any]:
         contexts = getattr(self, "_signal_pairing_contexts", {})
@@ -1932,6 +2325,7 @@ class MeshChatService(
         session: str,
         role: str,
         mailbox_token: str | None = None,
+        *, pending: bool = False,
     ) -> dict[str, Any]:
         base = self._call_settings.signal_mailbox_url
         if base is None:
@@ -1940,7 +2334,9 @@ class MeshChatService(
             raise ValidationError("Use an encrypted pairing context")
         pairing = parse_pairing(session, base)
         fetched = fetch_signal(base, pairing["session"], role,
-                               token=pairing["token"], secret=pairing["secret"])
+                               token=pairing["token"], secret=pairing["secret"], pending=pending)
+        if not fetched.get("document"):
+            return {**fetched, "session_id": session}
         if role == "offer":
             offer = verify_onboarding_offer(fetched["document"])
             self._signal_contexts()[offer.session_id] = {
@@ -2190,434 +2586,6 @@ class MeshChatService(
                 "data": base64.b64encode(data).decode("ascii"),
             }
         )
-
-    # ------------------------------------------------- native WebRTC host
-    _native_webrtc_host_class = None
-    _native_answer_exchange_timeout = 120.0
-
-    @classmethod
-    def _native_webrtc_host(cls):
-        if cls._native_webrtc_host_class is None:
-            try:
-                from java import jclass
-
-                cls._native_webrtc_host_class = jclass(
-                    "com.meshchat.runtime.NativeWebRtcHost"
-                )
-            except Exception as exc:
-                raise NativeUnavailable("Native WebRTC is unavailable") from exc
-        return cls._native_webrtc_host_class
-
-    def webrtc_attach_native(self, session_id: str) -> dict[str, Any]:
-        if self.network is None:
-            raise NetworkUnavailable("Reticulum is not running for a WebRTC bridge")
-        existing = self._native_webrtc_sessions.get(session_id)
-        if existing is not None and existing in self._webrtc_bridges:
-            return {
-                "bridge_id": existing,
-                "max_packet": WebRTCInterface.HW_MTU,
-                "state": "online",
-            }
-        bridge_id = _new_id()
-
-        def send(data: bytes) -> None:
-            try:
-                self._native_webrtc_host().send(session_id, data)
-            except Exception:
-                pass
-
-        interface = WebRTCInterface(
-            RNS.Transport,
-            send,
-            name=f"Mesh Chat native WebRTC {bridge_id[:8]}",
-        )
-        try:
-            self.network.reticulum._add_interface(
-                interface, mode=interface.MODE_POINT_TO_POINT
-            )
-            if interface not in RNS.Transport.interfaces:
-                raise RuntimeError("Reticulum did not register the native WebRTC interface")
-        except Exception as exc:
-            interface.detach()
-            raise NetworkUnavailable("Could not attach the native WebRTC interface") from exc
-        self._webrtc_bridges[bridge_id] = interface
-        self._native_webrtc_sessions[session_id] = bridge_id
-        try:
-            self.network.reannounce()
-        except Exception:
-            pass
-        for delay in (2.0, 6.0):
-            threading.Thread(
-                target=self._webrtc_announce_later,
-                args=(bridge_id, delay),
-                daemon=True,
-                name="mesh-chat-native-webrtc-announce",
-            ).start()
-        self._changed()
-        return {
-            "bridge_id": bridge_id,
-            "max_packet": WebRTCInterface.HW_MTU,
-            "state": "online",
-        }
-
-    def webrtc_detach_native(self, session_id: str) -> dict[str, Any]:
-        bridge_id = self._native_webrtc_sessions.pop(session_id, None)
-        if bridge_id is not None:
-            self.webrtc_detach(bridge_id)
-        return {"state": "closed"}
-
-    def native_webrtc_event(self, event: str, session_id: str, data: str = "") -> None:
-        """Queue a WebRTC callback without blocking the WebRTC/JNI thread.
-
-        The callback can run while a Python command still owns the dispatch
-        lock and is waiting for the native method to return. Taking that lock
-        here would deadlock the command; the worker takes it after the command
-        has unwound.
-        """
-        if not isinstance(event, str) or not isinstance(session_id, str):
-            return
-        if not isinstance(data, str):
-            return
-        queue_ref = getattr(self, "_native_webrtc_events", None)
-        if queue_ref is None or self._shutdown.is_set():
-            return
-        try:
-            queue_ref.put_nowait((event, session_id, data))
-        except Exception:
-            pass
-
-    def _native_webrtc_event_loop(self) -> None:
-        while not self._shutdown.is_set():
-            try:
-                with self._dispatch_lock:
-                    self._expire_native_answer_exchanges()
-                    self._maintain_native_controls()
-            except Exception:
-                pass
-            try:
-                item = self._native_webrtc_events.get(timeout=0.5)
-            except queue.Empty:
-                continue
-            if item is None:
-                return
-            try:
-                self._handle_native_webrtc_event(*item)
-            except Exception:
-                pass
-
-    def _handle_native_webrtc_event(
-        self, event: str, session_id: str, data: str = ""
-    ) -> None:
-        with self._dispatch_lock:
-            if event == "ice" or event in {"open", "closed"}:
-                connection_diagnostics.record(self, "transport_state", {
-                    "setup_id": session_id, "state": data if event == "ice" else event,
-                    "command": "native_webrtc_event", "component": "ice" if event == "ice" else "bridge",
-                })
-            elif event == "channel" and data.startswith("mesh-reticulum:"):
-                connection_diagnostics.record(self, "transport_state", {
-                    "setup_id": session_id, "state": data.partition(":")[2],
-                    "command": "native_webrtc_event", "component": "data_channel",
-                })
-            if event == "open":
-                if session_id not in self._native_webrtc_live:
-                    return
-                self._native_webrtc_descriptions.get(session_id, {}).pop("answer_wait_until", None)
-                try:
-                    attached = self.webrtc_attach_native(session_id)
-                except Exception:
-                    return
-                self.emit(
-                    {
-                        "type": "event",
-                        "event": "webrtc_native_open",
-                        "session_id": session_id,
-                        "bridge_id": attached["bridge_id"],
-                    }
-                )
-            elif event == "message":
-                bridge_id = self._native_webrtc_sessions.get(session_id)
-                if bridge_id is not None:
-                    try:
-                        self.webrtc_packet(bridge_id, data)
-                    except Exception:
-                        pass
-            elif event == "control":
-                if session_id not in self._native_webrtc_live or len(data) > 90_000:
-                    return
-                label, _, encoded = data.partition(":")
-                if label not in {"mesh-onboarding", "meshchat-reconnect"}:
-                    return
-                try:
-                    text = base64.b64decode(encoded, validate=True).decode("utf-8")
-                except Exception:
-                    return
-                if len(text) <= 65_536:
-                    self._native_control_receive(session_id, label, text)
-                    if label == "meshchat-reconnect":
-                        return
-                    self.emit(
-                        {
-                            "type": "event",
-                            "event": "webrtc_control",
-                            "session_id": session_id,
-                            "label": label,
-                            "data": text,
-                        }
-                    )
-            elif event == "closed":
-                self._release_native_session(session_id)
-                self.webrtc_detach_native(session_id)
-                self.emit(
-                    {
-                        "type": "event",
-                        "event": "webrtc_native_state",
-                        "session_id": session_id,
-                        "state": "closed",
-                    }
-                )
-            elif event in {"ice", "channel", "signaling", "gathering"}:
-                if event == "ice" and (data == "closed" or (
-                    data == "failed" and not self._native_answer_exchange_pending(session_id)
-                )):
-                    self.native_webrtc_close(session_id)
-                if event == "channel":
-                    label, _, state = data.partition(":")
-                    if session_id in self._native_webrtc_live and label in {"mesh-onboarding", "meshchat-reconnect"} and state == "open":
-                        self._native_webrtc_controls.setdefault(session_id, {})["label"] = label
-                        self._native_control_next = 0
-                    if label == "mesh-reticulum" and state in {"closing", "closed"}:
-                        self.native_webrtc_close(session_id)
-                    if label == "mesh-onboarding" and state == "open":
-                        self.emit(
-                            {
-                                "type": "event",
-                                "event": "webrtc_control_open",
-                                "session_id": session_id,
-                                "label": label,
-                            }
-                        )
-                self.emit(
-                    {
-                        "type": "event",
-                        "event": "webrtc_native_state",
-                        "session_id": session_id,
-                        "state": event,
-                        "detail": data[:160],
-                    }
-                )
-
-    def _native_answer_exchange_pending(self, session_id: str) -> bool:
-        with self._native_webrtc_lock:
-            deadline = self._native_webrtc_descriptions.get(session_id, {}).get("answer_wait_until", 0)
-            return (session_id in self._native_webrtc_live
-                    and session_id not in self._native_webrtc_sessions
-                    and time.monotonic() < deadline)
-
-    def _expire_native_answer_exchanges(self) -> None:
-        # Run in the native event worker, even if the WebView is suspended.
-        # Preserving a pending answer must not leave abandoned peers alive.
-        now = time.monotonic()
-        with self._native_webrtc_lock:
-            expired = [session_id for session_id, description in self._native_webrtc_descriptions.items()
-                       if session_id in self._native_webrtc_live
-                       and session_id not in self._native_webrtc_sessions
-                       and description.get("answer_wait_until", float("inf")) <= now]
-        for session_id in expired:
-            self.native_webrtc_close(session_id)
-
-    def native_reconnect_session(self, profile_id: str) -> str | None:
-        with self._native_webrtc_lock:
-            current = self._native_webrtc_profile_sessions.get(profile_id)
-            if current:
-                return current
-            # A manually paired native transport remains usable without a
-            # mailbox. Reconnect must reuse it after the contact is approved.
-            for session_id in self._native_webrtc_peers:
-                if (session_id in self._native_webrtc_sessions
-                        and self._native_webrtc_controls.get(session_id, {}).get("profile_id") == profile_id):
-                    return session_id
-            return None
-
-    def close_native_reconnect_session(self, profile_id: str) -> None:
-        session_id = self.native_reconnect_session(profile_id)
-        if session_id is not None:
-            self.native_webrtc_close(session_id)
-
-    def _claim_native_session(self, session_id: str, profile_id: Any, *, background: bool) -> bool:
-        relay_only = False
-        with self._dispatch_lock:
-            if self._shutdown.is_set():
-                raise NativeUnavailable("Native WebRTC is shutting down")
-            if profile_id is not None:
-                profile = self._reconnect_profile(profile_id)
-                public = self._reconnect_profile_public(profile)
-                if not public["effective"]["ready"] or not profile.get("active"):
-                    raise ContactNotApproved("Reconnect profile is not active and ready")
-                relay_only = not profile.get("allow_direct_ip_disclosure")
-                in_background = self._workspace_lifecycle_state().get("state") in {
-                    "background", "background_available", "suspended",
-                }
-                if background != in_background or (background and not self._background_availability_enabled()):
-                    raise NativeUnavailable("Native reconnect ownership changed")
-            with self._native_webrtc_lock:
-                if session_id in self._native_webrtc_live:
-                    raise NativeUnavailable("Native WebRTC session already exists")
-                if profile_id is not None:
-                    if self.native_reconnect_session(profile_id):
-                        raise NativeUnavailable("Native reconnect profile already has a peer")
-                    self._native_webrtc_profile_sessions[profile_id] = session_id
-                self._native_webrtc_live.add(session_id)
-                self._native_webrtc_creating.add(session_id)
-        return relay_only
-
-    def _release_native_session(self, session_id: str) -> None:
-        with self._native_webrtc_lock:
-            self._native_webrtc_live.discard(session_id)
-            if session_id in self._native_webrtc_creating:
-                return
-            self._native_webrtc_descriptions.pop(session_id, None)
-            self._native_webrtc_peers.pop(session_id, None)
-            self._native_webrtc_controls.pop(session_id, None)
-            for profile_id, current in list(self._native_webrtc_profile_sessions.items()):
-                if current == session_id:
-                    del self._native_webrtc_profile_sessions[profile_id]
-
-    def _native_sdp_result(self, session_id: str, raw: str) -> dict[str, Any]:
-        result = json.loads(raw)
-        if not result.get("ok"):
-            raise NativeUnavailable(str(result.get("error", "native_webrtc_sdp_failed")))
-        if session_id not in self._native_webrtc_live or self._shutdown.is_set():
-            raise NativeUnavailable("Native WebRTC creation was cancelled")
-        # The signed document must bind the fingerprint in the actual SDP.
-        # Normalize here as well as in Kotlin so bridge metadata cannot drift.
-        fingerprints = [line[len("a=fingerprint:"):] for line in result.get("sdp", "").splitlines()
-                        if line.startswith("a=fingerprint:")]
-        if len(fingerprints) != 1:
-            raise ValidationError("Native WebRTC SDP fingerprint is invalid")
-        result["fingerprint"] = _fingerprint(fingerprints[0])
-        self._native_webrtc_descriptions.setdefault(session_id, {})["local"] = result["sdp"]
-        return result
-
-    def native_webrtc_offer(
-        self, session_id: Any, ice: Any, channels: Any, profile_id: Any = None, *, background: bool = False,
-    ) -> dict[str, Any]:
-        if not isinstance(session_id, str) or not 8 <= len(session_id) <= 128:
-            raise ValidationError("Native WebRTC session is invalid")
-        if not isinstance(ice, dict) or not isinstance(channels, list):
-            raise ValidationError("Native WebRTC configuration is invalid")
-        if self._claim_native_session(session_id, profile_id, background=background):
-            ice = {**ice, "iceTransportPolicy": "relay"}
-        try:
-            return self._native_sdp_result(session_id, self._native_webrtc_host().createOffer(
-                session_id,
-                json.dumps(ice, separators=(",", ":")),
-                json.dumps(channels, separators=(",", ":")),
-            ))
-        except Exception:
-            self.native_webrtc_close(session_id)
-            raise
-        finally:
-            with self._native_webrtc_lock:
-                self._native_webrtc_creating.discard(session_id)
-                if session_id not in self._native_webrtc_live:
-                    self._release_native_session(session_id)
-
-    def native_webrtc_accept(
-        self, session_id: Any, offer_sdp: Any, ice: Any, channels: Any, profile_id: Any = None, *, background: bool = False,
-    ) -> dict[str, Any]:
-        if not isinstance(session_id, str) or not isinstance(offer_sdp, str):
-            raise ValidationError("Native WebRTC session is invalid")
-        if not isinstance(ice, dict) or not isinstance(channels, list):
-            raise ValidationError("Native WebRTC configuration is invalid")
-        if self._claim_native_session(session_id, profile_id, background=background):
-            ice = {**ice, "iceTransportPolicy": "relay"}
-        self._native_webrtc_descriptions[session_id] = {"remote_offer": offer_sdp}
-        if profile_id is None and any(
-            isinstance(channel, dict) and channel.get("label") == "mesh-onboarding" for channel in channels
-        ):
-            # The offerer cannot send checks to this peer until the person
-            # returns its signed answer. An early ICE failure must not destroy
-            # the session before binding/signing or during that manual wait.
-            # Match the browser answerer's bounded exchange window; established
-            # channels and automatic reconnect retain immediate failure cleanup.
-            self._native_webrtc_descriptions[session_id]["answer_wait_until"] = (
-                time.monotonic() + self._native_answer_exchange_timeout
-            )
-        try:
-            return self._native_sdp_result(session_id, self._native_webrtc_host().acceptOffer(
-                session_id,
-                offer_sdp,
-                json.dumps(ice, separators=(",", ":")),
-                json.dumps(channels, separators=(",", ":")),
-            ))
-        except Exception:
-            self.native_webrtc_close(session_id)
-            raise
-        finally:
-            with self._native_webrtc_lock:
-                self._native_webrtc_creating.discard(session_id)
-                if session_id not in self._native_webrtc_live:
-                    self._release_native_session(session_id)
-
-    def native_webrtc_apply_answer(self, session_id: Any, answer_sdp: Any) -> dict[str, Any]:
-        if not isinstance(session_id, str) or not isinstance(answer_sdp, str):
-            raise ValidationError("Native WebRTC answer is invalid")
-        result = json.loads(
-            self._native_webrtc_host().applyAnswer(session_id, answer_sdp)
-        )
-        if not result.get("ok"):
-            raise NativeUnavailable(str(result.get("error", "native_webrtc_apply_failed")))
-        return result
-
-    def native_webrtc_control(
-        self, session_id: Any, label: Any, text: Any
-    ) -> dict[str, Any]:
-        if (
-            not isinstance(session_id, str)
-            or label not in {"mesh-onboarding", "meshchat-reconnect"}
-            or not isinstance(text, str)
-            or not 1 <= len(text) <= 65_536
-        ):
-            raise ValidationError("Native WebRTC control message is invalid")
-        accepted = bool(self._native_webrtc_host().sendControl(session_id, label, text))
-        return {"accepted": accepted}
-
-    def native_webrtc_close(self, session_id: Any) -> dict[str, Any]:
-        if not isinstance(session_id, str):
-            raise ValidationError("Native WebRTC session is invalid")
-        with self._native_webrtc_lock:
-            was_live = session_id in self._native_webrtc_live
-            self._native_webrtc_live.discard(session_id)
-        if was_live:
-            connection_diagnostics.record(self, "transport_state", {
-                "setup_id": session_id, "state": "closed", "command": "native_webrtc_close", "component": "bridge",
-            })
-        try:
-            self._native_webrtc_host().close(session_id)
-        finally:
-            self._release_native_session(session_id)
-            with self._dispatch_lock:
-                self.webrtc_detach_native(session_id)
-        return {"state": "closed"}
-
-    def native_webrtc_stats(self, session_id: Any) -> dict[str, Any]:
-        if not isinstance(session_id, str):
-            raise ValidationError("Native WebRTC session is invalid")
-        result = json.loads(self._native_webrtc_host().stats(session_id))
-        if not result.get("ok"):
-            raise NativeUnavailable(str(result.get("error", "native_webrtc_stats_failed")))
-        stats = result.get("result", {})
-        if isinstance(stats, dict):
-            stats["attached"] = (
-                session_id in self._native_webrtc_sessions
-                and stats.get("data_channel_state") == "open"
-                and stats.get("ice_connection_state") not in {"failed", "closed"}
-            )
-            stats["session_id"] = session_id
-        return stats
-
-
 
     @staticmethod
     def _conversation_marker_id(kind: str, target_id: str) -> str:
@@ -3046,6 +3014,9 @@ class MeshChatService(
         ):
             self._apply_contact_hints(contact)
         try:
+            for pending in list(getattr(self, "_pending_contact_carriers", {}).values()):
+                if pending.send(contact, message):
+                    return
             destination = bytes.fromhex(contact["destination_hash"])
             prefer_signed_route = getattr(self.network, "prefer_signed_route", None)
             if callable(prefer_signed_route):
@@ -3402,15 +3373,27 @@ class MeshChatService(
             )
         self._changed()
 
-    def dismiss_workspace_invitation_prompt(self, prompt_id: Any) -> dict[str, Any]:
+    def dismiss_workspace_invitation_prompt(
+        self, prompt_id: Any, *, operation_id: Any = None
+    ) -> dict[str, Any]:
         if not isinstance(prompt_id, str):
             raise ValidationError("Workspace invitation prompt ID is invalid")
         record = self.store.get("workspace_contact_invite", prompt_id)
         if record is None:
             raise ValidationError("Workspace invitation prompt is unavailable")
+        digest = None
+        if operation_id is not None:
+            operation_id, digest, replay = self._workspace_operation(
+                "dismiss_workspace_invitation_prompt", operation_id, {"prompt_id": prompt_id})
+            if replay is not None:
+                return replay
         record["state"] = "dismissed"
         record["dismissed_at"] = time.time()
-        self.store.put("workspace_contact_invite", prompt_id, record)
+        if operation_id is None:
+            self.store.put("workspace_contact_invite", prompt_id, record)
+        else:
+            self.store.commit_operation(operation_id, digest, {"dismissed": True},
+                                        [("workspace_contact_invite", prompt_id, record)])
         self._changed()
         return {"dismissed": True}
 
@@ -3931,6 +3914,17 @@ class MeshChatService(
         )
         return value
 
+    def _check_connection_command_owner(self, command, payload):
+        if getattr(self, "_connection_policy", "legacy") != "shared-native":
+            return
+        from .connection.commands import owner_only
+        if owner_only(command, payload):
+            raise NativeUnavailable("Connection operation is owned by the service")
+        if (command in {"native_webrtc_apply_answer", "native_webrtc_control"}
+                and isinstance(payload, dict) and isinstance(payload.get("session_id"), str)
+                and self._shared_native_session(payload["session_id"])):
+            raise NativeUnavailable("Native reconnect is owned by the service")
+
     def dispatch(self, request: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         with self._dispatch_lock:
             if request.get("v") != 1:
@@ -3944,7 +3938,11 @@ class MeshChatService(
                 or command not in self.COMMANDS
             ):
                 raise ValidationError("Command envelope is invalid")
+            self._check_connection_command_owner(command, request.get("payload", {}))
             cache_response = command not in self.UNCACHED_COMMANDS
+            if getattr(self, "_connection_policy", "legacy") == "shared-native":
+                from .connection.commands import TRANSIENT_OPERATIONS
+                cache_response = cache_response and command not in TRANSIENT_OPERATIONS
             if cache_response:
                 cached = self.store.command_response(command_id)
                 if cached is not None:
@@ -3956,6 +3954,7 @@ class MeshChatService(
             return response, command == "shutdown"
 
     def _execute(self, command: str, value: Any) -> Any:
+        self._check_connection_command_owner(command, value)
         if command == "link_preview":
             body = _payload(value, allowed={"provider", "identifier"}, required={"provider", "identifier"})
             return self._link_previews.get(body["provider"], body["identifier"])
@@ -4228,6 +4227,27 @@ class MeshChatService(
         if command == "native_ringing_calls":
             _payload(value, allowed=set())
             return self.native_ringing_calls()
+        if command == "signal_publish":
+            body = _payload(
+                value,
+                allowed={"document", "role", "session_id", "mailbox_token"},
+                required={"document", "role"},
+            )
+            return self.signal_publish(
+                body["document"],
+                body["role"],
+                body.get("session_id"),
+                body.get("mailbox_token"),
+            )
+        if command == "signal_fetch":
+            body = _payload(
+                value,
+                allowed={"session_id", "role", "mailbox_token"},
+                required={"session_id", "role"},
+            )
+            return self.signal_fetch(
+                body["session_id"], body["role"], body.get("mailbox_token")
+            )
         if command == "restart_call":
             body = _payload(
                 value,
@@ -4263,27 +4283,6 @@ class MeshChatService(
         if command == "call_ice_servers":
             _payload(value, allowed=set())
             return self.call_ice_servers()
-        if command == "signal_publish":
-            body = _payload(
-                value,
-                allowed={"document", "role", "session_id", "mailbox_token"},
-                required={"document", "role"},
-            )
-            return self.signal_publish(
-                body["document"],
-                body["role"],
-                body.get("session_id"),
-                body.get("mailbox_token"),
-            )
-        if command == "signal_fetch":
-            body = _payload(
-                value,
-                allowed={"session_id", "role", "mailbox_token"},
-                required={"session_id", "role"},
-            )
-            return self.signal_fetch(
-                body["session_id"], body["role"], body.get("mailbox_token")
-            )
         if command == "reconnect_profiles":
             _payload(value, allowed=set())
             return self.reconnect_profiles()
@@ -4414,6 +4413,9 @@ class MeshChatService(
             return self.webrtc_packet(body["bridge_id"], body["data"])
         if command == "webrtc_detach":
             body = _payload(value, allowed={"bridge_id"}, required={"bridge_id"})
+            if any(bridge == body["bridge_id"] and self._shared_native_session(session)
+                   for session, bridge in self._native_webrtc_sessions.items()):
+                return {"state": "managed"}
             return self.webrtc_detach(body["bridge_id"])
         if command == "native_webrtc_offer":
             body = _payload(
@@ -4439,6 +4441,8 @@ class MeshChatService(
                 allowed={"session_id", "answer_sdp"},
                 required={"session_id", "answer_sdp"},
             )
+            if self._shared_native_session(body["session_id"]):
+                raise NativeUnavailable("Native reconnect is owned by the service")
             return self.native_webrtc_apply_answer(
                 body["session_id"], body["answer_sdp"]
             )
@@ -4453,6 +4457,8 @@ class MeshChatService(
             )
         if command == "native_webrtc_close":
             body = _payload(value, allowed={"session_id"}, required={"session_id"})
+            if self._shared_native_session(body["session_id"]):
+                return {"state": "managed"}
             return self.native_webrtc_close(body["session_id"])
         if command == "native_webrtc_stats":
             body = _payload(value, allowed={"session_id"}, required={"session_id"})
@@ -5687,6 +5693,10 @@ class MeshChatService(
             return self.open_notification_target(body["notification_id"])
         if command == "reconcile_mobile_lifecycle":
             _payload(value, allowed=set())
+            if getattr(self, "_connection_policy", "legacy") == "shared-native":
+                # A renderer visibility event cannot assert an OS execution
+                # fact. The native lifecycle binding already reports resume.
+                return self.background_availability_status()
             return self.mobile_lifecycle_transition(
                 "foreground", "renderer_recovery"
             )
@@ -5911,10 +5921,40 @@ class MeshChatService(
 
     def close(self) -> None:
         with self._close_lock:
-            if self._close_started:
+            finalizer = self._close_finalizer
+            if (self._store_closed or getattr(self, "_close_active", False)
+                    or (finalizer is not None and finalizer.is_alive())):
                 return
             self._close_started = True
+            self._close_active = True
         self._shutdown.set()
+        try:
+            self._retire_service_resources()
+        finally:
+            with self._close_lock:
+                self._close_active = False
+
+    def _retire_service_resources(self) -> None:
+        carriers = {id(carrier): carrier for carrier in getattr(self, "_closing_contact_carriers", ())}
+        carriers.update({id(carrier): carrier for carrier in getattr(self, "_pending_contact_carriers", {}).values()})
+        self._closing_contact_carriers = tuple(carriers.values())
+        if not hasattr(self, "_closing_native_handles"):
+            self._closing_native_handles = {}
+        for session in getattr(self, "_native_webrtc_live", set()) | getattr(self, "_native_webrtc_creating", set()):
+            physical = self._native_resources.physical(session)
+            if physical is not None:
+                self._closing_native_handles[physical] = session
+        for carrier in self._closing_contact_carriers:
+            carrier.close()
+        contact_carriers_stopped = all(carrier.wait(timeout=0.1) for carrier in self._closing_contact_carriers)
+        connection_runtime = getattr(self, "_connection_runtime", None)
+        connection_stopped = connection_runtime is None or connection_runtime.stop(timeout=0.5)
+        for physical, session in tuple(self._closing_native_handles.items()):
+            if self._native_resources.current(session, physical):
+                self.native_webrtc_close(session, expected_physical=physical)
+            else:
+                self._native_webrtc_host().close(physical)
+            self._closing_native_handles.pop(physical)
         getattr(self, "_signal_pairing_contexts", {}).clear()
         native_events = getattr(self, "_native_webrtc_events", None)
         if native_events is not None:
@@ -5985,7 +6025,9 @@ class MeshChatService(
         # callback or retry. If the bounded foreground shutdown expires, a
         # daemon finalizer waits for that worker and closes the vault exactly
         # once without delaying desktop's sidecar deadline.
-        workers_stopped = self._direct_recovery.wait(timeout=0.1) and packets_stopped and callbacks_stopped and not self._retry_thread.is_alive()
+        workers_stopped = (contact_carriers_stopped and connection_stopped and self._direct_recovery.wait(timeout=0.1)
+                           and packets_stopped and callbacks_stopped and not self._retry_thread.is_alive()
+                           and (native_thread is None or not native_thread.is_alive()))
         if not workers_stopped:
             finalizer = threading.Thread(
                 target=self._finish_deferred_close,
@@ -6002,7 +6044,15 @@ class MeshChatService(
         """Close the vault after bounded shutdown had to leave a worker active."""
 
         try:
+            native_thread = getattr(self, "_native_webrtc_event_thread", None)
+            if native_thread is not None and native_thread is not threading.current_thread():
+                native_thread.join()
+            for carrier in getattr(self, "_closing_contact_carriers", ()):
+                carrier.wait()
             self._direct_packets.wait()
+            connection_runtime = getattr(self, "_connection_runtime", None)
+            if connection_runtime is not None:
+                connection_runtime.wait()
             self._direct_recovery.wait()
             if (
                 self._retry_thread.is_alive()
@@ -6028,4 +6078,11 @@ class MeshChatService(
                 return
             with self._dispatch_lock:
                 self.store.close()
+                for context in getattr(self, "_native_pairing_contexts", {}).values():
+                    context.clear()
+                for name in ("_native_pairing_contexts", "_core_signal_attempts",
+                             "_core_signal_results", "_signal_pairing_contexts"):
+                    getattr(self, name, {}).clear()
+                self._identity = None
+                self.network = None
                 self._store_closed = True

@@ -21,6 +21,7 @@ from .connectivity import (
 from .errors import MeshChatError, ValidationError, WORKSPACE_ALREADY_KNOWN_REASONS, WorkspaceAlreadyKnown
 from .direct_native import NativeChannel, NativeFrameReader
 from .ipc import FrameWriter, IPC_VERSION, read_frame
+from .inherited_input import interruptible_input
 from .service import MeshChatService
 from .vault import VaultStore
 from .crash_diagnostics import report_failure
@@ -239,7 +240,8 @@ def _error_response(command_id: Any, error: Exception) -> dict[str, Any]:
     }
 
 
-def _initialize(request: dict[str, Any], writer: FrameWriter) -> MeshChatService:
+def _initialize(request: dict[str, Any], writer: FrameWriter, *, desktop_transport=None,
+                native_webrtc_host=None) -> MeshChatService:
     if request.get("v") != IPC_VERSION or request.get("command") != "initialize":
         raise ValidationError("First command must initialize the service")
     payload = request.get("payload")
@@ -263,21 +265,58 @@ def _initialize(request: dict[str, Any], writer: FrameWriter) -> MeshChatService
         raise ValidationError("Vault key is invalid") from exc
     _start_parent_watchdog(parent_pid)
     store = VaultStore(Path(profile_value), key)
+    if desktop_transport is not None:
+        private_host = {"connection_policy": "shared-native",
+                        "native_webrtc_host": desktop_transport}
+    elif native_webrtc_host is not None:
+        private_host = {"connection_policy": "shared-native",
+                        "native_webrtc_host": native_webrtc_host}
+    else:
+        private_host = {}
     service = MeshChatService(store, Path(profile_value).resolve(), writer.write,
-                              direct_native=NativeChannel(writer.write))
+                              direct_native=NativeChannel(writer.write), **private_host)
     display_name = payload.get("display_name")
     if display_name is not None and service.store.get("profile", "local") is None:
         service.create_profile(display_name)
     return service
 
 
+def _start_core_api_endpoint(service):
+    """Start the app-owned facade endpoint when the trusted launcher asks for it."""
+    name = os.environ.get("MESH_CHAT_CORE_API_PIPE")
+    image = os.environ.get("MESH_CHAT_CORE_API_CLIENT_IMAGE")
+    if name is None and image is None:
+        return None
+    if os.name != "nt" or not name or not image:
+        raise ValidationError("Core API pipe configuration is invalid")
+    from .core_api.sidecar_host import start
+    return start(service, pipe_name=name, client_image=image)
+
+
+def _discard_initialization(request):
+    """Drop host bootstrap key references before the long-lived control loop."""
+    if isinstance(request, dict):
+        payload = request.get("payload")
+        if isinstance(payload, dict):
+            payload.pop("vault_key", None)
+        request.clear()
+
+
 def main() -> int:
     if sys.argv[1:] == ["--direct-bootstrap"]:
         from .direct_bootstrap_worker import main as bootstrap_main
         return bootstrap_main(os.environ.get("MESH_CHAT_BOOTSTRAP_DIRECTORY"))
-    reader = sys.stdin.buffer
+    if sys.argv[1:] == ["--app-owned-native"]:
+        from .app_owned_host import run
+        return run(interruptible_input(sys.stdin.buffer), FrameWriter(sys.stdout.buffer),
+                   watch_parent=_start_parent_watchdog)
+    reader = interruptible_input(sys.stdin.buffer)
     writer = FrameWriter(sys.stdout.buffer)
     service: MeshChatService | None = None
+    desktop_transport = None
+    native_webrtc = None
+    core_api_endpoint = None
+    qualification_control = None
     requests = None
     stage = "read_initial"
     command = "initialize"
@@ -287,7 +326,31 @@ def main() -> int:
         initial = read_frame(reader)
         try:
             stage = "initialize"
-            service = _initialize(initial, writer)
+            if sys.argv[1:] == ["--shared-webview"]:
+                from .desktop_transport_host import DesktopTransportHost
+                # Only the app-owned launcher supplies this private mode. JSON
+                # initialization cannot select or replace the transport host.
+                desktop_transport = DesktopTransportHost(writer.write,
+                    lambda *event: service.native_webrtc_event(*event) if service is not None else None)
+                service = _initialize(initial, writer, desktop_transport=desktop_transport)
+            elif sys.argv[1:] in (["--native-webrtc"], ["--qualification-native-webrtc"]):
+                if os.name != "nt":
+                    raise ValidationError("Native WebRTC messaging requires Windows")
+                qualification = sys.argv[1:] == ["--qualification-native-webrtc"]
+                if qualification:
+                    from .core_api.qualification_host import reserve_fresh_profile
+                    reserve_fresh_profile(initial)
+                from .native_windows_webrtc import WindowsNativeWebRTCHost
+                # Trusted launcher mode only; JSON initialization cannot select it.
+                native_webrtc = WindowsNativeWebRTCHost(
+                    lambda *event: service.native_webrtc_event(*event) if service is not None else None)
+                service = _initialize(initial, writer, native_webrtc_host=native_webrtc)
+                if qualification:
+                    from .core_api.qualification_host import QualificationControl, mark_initialized_profile
+                    mark_initialized_profile(initial)
+                    qualification_control = QualificationControl(lambda: service)
+            else:
+                service = _initialize(initial, writer)
             stage = "write_response"
             writer.write(
                 {
@@ -297,12 +360,17 @@ def main() -> int:
                     "result": service.snapshot(),
                 }
             )
+            core_api_endpoint = _start_core_api_endpoint(service)
         except Exception as exc:
             report_failure(stage, exc, command)
             writer.write(_error_response(initial.get("id"), exc))
             return 2
+        finally:
+            _discard_initialization(initial)
+            initial = None
 
-        requests = NativeFrameReader(reader, service._direct_native)
+        private_reader = {"desktop_transport": desktop_transport} if desktop_transport is not None else {}
+        requests = NativeFrameReader(reader, service._direct_native, **private_reader)
         while True:
             stage = "read_command"
             request = requests.read()
@@ -310,7 +378,11 @@ def main() -> int:
             command = request.get("command")
             try:
                 stage = "dispatch"
-                result, should_stop = service.dispatch(request)
+                if qualification_control is not None and command in qualification_control.commands:
+                    result = {"ok": True, "result": qualification_control.dispatch(command, request.get("payload"))}
+                    should_stop = False
+                else:
+                    result, should_stop = service.dispatch(request)
                 stage = "write_response"
                 writer.write({"type": "response", "id": command_id, **result})
                 if should_stop:
@@ -323,6 +395,15 @@ def main() -> int:
         report_failure(stage, exc, command, requests)
         return 3
     finally:
+        if core_api_endpoint is not None:
+            try:
+                core_api_endpoint.close()
+            except Exception as exc:
+                report_failure("shutdown", exc, command, requests)
+        if desktop_transport is not None:
+            desktop_transport.shutdown()
+        if native_webrtc is not None:
+            native_webrtc.shutdown()
         if requests is not None:
             try:
                 requests.close()

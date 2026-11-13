@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mesh-chat:core-api:workspace-policy-update-result:1",
+  "title": "Experimental workspace policy update v1",
+  "description": "Applied workspace creation, posting and invitation policies.",
+  "type": "object", "additionalProperties": false,
+  "required": ["api_version", "request_id", "ok", "result"],
+  "properties": {
+    "api_version": {"const": 1},
+    "request_id": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,80}$"},
+    "ok": {"const": true},
+    "result": {"$ref": "#/$defs/policies"}
+  },
+  "$defs": {
+    "handle": {"type": "string", "pattern": "^[A-Za-z0-9_-]{16,128}$"},
+    "policies": {
+      "type": "object", "additionalProperties": false,
+      "required": ["profile", "workspace", "channel_creation", "posting",
+                   "invitation_requests"],
+      "properties": {
+        "profile": {"$ref": "#/$defs/handle"},
+        "workspace": {"$ref": "#/$defs/handle"},
+        "channel_creation": {"enum": ["all_members", "owner_and_admins"]},
+        "posting": {"enum": ["all_members", "owner_and_admins"]},
+        "invitation_requests": {"enum": ["owner_only", "owner_and_admins",
+                                         "all_members_request"]}
+      }
+    }
+  }
+}

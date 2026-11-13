@@ -1,5 +1,6 @@
+import { useProfileRequestAdmission } from "./profile-lifetime";
 import { useEffect, useState } from "react";
-import { appBuildInfo, desktopServiceHealth, serviceCommand } from "./api";
+import { appBuildInfo, coreApiCapabilities, coreApiConnectionSupport, coreApiProfile, desktopServiceHealth } from "./api";
 import packageInfo from "../package.json";
 import { clearWebRTCSessionEvents, getWebRTCSessions, recentWebRTCSessionEvents } from "./webrtc-session";
 
@@ -44,7 +45,7 @@ const choice = (value: unknown, allowed: Set<string>) => typeof value === "strin
 const boolean = (value: unknown) => typeof value === "boolean" ? value : null;
 const pendingMessageStates = ["waiting_for_keys", "queued", "sending", "stored_for_delivery", "received_by_endpoint"];
 const reconnectReasons = ["local_capabilities_missing", "peer_capabilities_missing", "peer_capabilities_expired",
-  "local_capabilities_expired", "consent_missing", "peer_consent_missing", "relay_required", "mailbox_not_configured", "workspace_peer_inactive", "encrypted_capabilities_required"];
+  "local_capabilities_expired", "consent_missing", "peer_consent_missing", "relay_required", "mailbox_not_configured", "workspace_peer_inactive", "encrypted_capabilities_required", "contact_not_approved"];
 const reconnectStates = ["idle", "waiting_for_peer", "probing", "offer_pending", "answer_pending", "connecting",
   "connected", "retry_wait", "peer_offline", "manual_required", "stopped", unavailable];
 
@@ -186,8 +187,10 @@ function desktopHealth(raw: unknown) {
   };
 }
 
-export function diagnosticReport(build: unknown, raw: unknown, log = false, host: unknown = null) {
+export function diagnosticReport(build: unknown, raw: unknown, log = false, host: unknown = null,
+                                 facade: unknown = null) {
   const value = object(raw);
+  const facadeValue = object(facade);
   const cleanEvent = (rawEvent: unknown) => {
     const event = object(rawEvent);
     return { time: number(event.time, 2**53 - 1), attempt: token(event.attempt, /^[0-9a-f]{12}$/),
@@ -223,6 +226,11 @@ export function diagnosticReport(build: unknown, raw: unknown, log = false, host
     native_check_counts: rows.at(-1)?.checks_started !== null && rows.length ? "see_event_counts" : unavailable, receipt_status: "see_event_timestamp", approval_status: "see_event_timestamp",
     retention_days: 7, event_limit: 200, events_included: rows.length, history_event_count: history.length,
     truncated: value.truncated === true || rows.length < history.length,
+    ...(facade ? { core_api: {
+      api_major: number(facadeValue.api_major, 99), api_minor: number(facadeValue.api_minor, 99),
+      stability: token(facadeValue.stability, /^[a-z_]{3,32}$/),
+      operations: Array.isArray(facadeValue.operations) ? facadeValue.operations.length : null,
+    } } : {}),
     last_failure: value.last_failure ? cleanEvent(value.last_failure) : null,
     events: rows };
   let text = JSON.stringify(report, null, 2);
@@ -233,13 +241,35 @@ export function diagnosticReport(build: unknown, raw: unknown, log = false, host
 }
 
 export function ConnectionDiagnostics({ full = false }: { full?: boolean }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   const [build, setBuild] = useState<unknown>(null);
   const [feedback, setFeedback] = useState("");
   const [fallback, setFallback] = useState("");
   const [busy, setBusy] = useState(false);
+  const [facade, setFacade] = useState<{ available: boolean; label: string }>({ available: false, label: "unavailable" });
+  const [facadeProfile, setFacadeProfile] = useState<{ display_name: string; peers: number } | null>(null);
   useEffect(() => {
     let active = true;
     void (async () => { try { const value = await appBuildInfo(); if (active) setBuild(value); } catch { /* Bundled version remains visible offline. */ } })();
+    return () => { active = false; };
+  }, []);
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      try {
+        const value = await coreApiCapabilities();
+        if (active) {
+          setFacade({
+            available: true,
+            label: `${value.api_major}.${value.api_minor}, ${value.operations.length} operations`,
+          });
+        }
+        const profile = await coreApiProfile();
+        if (active) {
+          setFacadeProfile({ display_name: profile.display_name, peers: profile.peers.length });
+        }
+      } catch { /* Older hosts and mobile builds do not expose the facade pipe yet. */ }
+    })();
     return () => { active = false; };
   }, []);
   const copy = async (mode: "summary" | "log" | "version") => {
@@ -249,17 +279,23 @@ export function ConnectionDiagnostics({ full = false }: { full?: boolean }) {
     // restart an unexpectedly exited sidecar and erase its stopped state.
     let host: unknown = null;
     try { host = await desktopServiceHealth(); } catch { /* Mobile/older hosts may not expose this. */ }
-    try { report = await serviceCommand("connection_diagnostics"); } catch { /* Copy app information even when the service cannot start. */ }
+    let facadeValue: unknown = null;
+    try { facadeValue = await coreApiCapabilities(); } catch { /* Older hosts and mobile builds may not expose the facade. */ }
+    try { report = await coreApiConnectionSupport("diagnostics", undefined, admitProfileRequest); } catch { /* Copy app information even when the service cannot start. */ }
     const text = mode === "version"
-      ? JSON.stringify({ ...versionDetails(build), service_version: version(object(report).service_version) }, null, 2)
-      : diagnosticReport(build, report, mode === "log", host);
+      ? JSON.stringify({
+        ...versionDetails(build),
+        service_version: version(object(report).service_version),
+        ...(facadeValue ? { core_api: facadeValue } : {}),
+      }, null, 2)
+      : diagnosticReport(build, report, mode === "log", host, facadeValue);
     try { await navigator.clipboard.writeText(text); setFeedback("Copied"); }
     catch { setFallback(text); setFeedback("Copy is unavailable. Select the report below or save it to a file."); }
     finally { setBusy(false); }
   };
   const clear = async () => {
     setBusy(true); setFeedback("");
-    try { await serviceCommand("clear_connection_diagnostics"); clearWebRTCSessionEvents(); setFallback(""); setFeedback("Diagnostic history cleared. Your workspace and messages are unchanged."); }
+    try { await coreApiConnectionSupport("clear", undefined, admitProfileRequest); clearWebRTCSessionEvents(); setFallback(""); setFeedback("Diagnostic history cleared. Your workspace and messages are unchanged."); }
     catch { setFeedback("Diagnostic history could not be cleared. Try again when the app is unlocked."); }
     finally { setBusy(false); }
   };
@@ -271,6 +307,8 @@ export function ConnectionDiagnostics({ full = false }: { full?: boolean }) {
   const details = versionDetails(build);
   return <section className="connection-diagnostics form-stack" aria-label="Connection diagnostics">
     <p className="muted">Mesh Chat version {packageInfo.version}</p>
+    <p className="muted" role="status">Core API: {facade.available ? `available (${facade.label})` : "unavailable"}</p>
+    {facadeProfile && <p className="muted" role="status">Core API profile: {facadeProfile.display_name} ({facadeProfile.peers} peers)</p>}
     {details.version_mismatch && <p role="alert">App components have different versions. Copy version details before updating.</p>}
     <div className="dialog-actions"><button className="button button--secondary" disabled={busy} onClick={() => void copy("summary")}>Copy diagnostics</button>
       {full && <><button className="button button--secondary" disabled={busy} onClick={() => void copy("log")}>Copy connection log</button><button className="button button--secondary" disabled={busy} onClick={() => void copy("version")}>Copy version details</button></>}

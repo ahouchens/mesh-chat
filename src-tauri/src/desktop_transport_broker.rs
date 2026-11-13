@@ -1,0 +1,526 @@
+//! Private transport admission, independent of windows and service dispatch.
+use serde_json::Value;
+use std::collections::{HashSet, VecDeque};
+
+pub struct Binding {
+    pid: u32,
+    label: String,
+    token: String,
+    epoch: Option<String>,
+    sequence: u64,
+    requests: VecDeque<Value>,
+    pending: HashSet<String>,
+    retired: bool,
+    polls: u64,
+    suspended: bool,
+    awaiting_bind: bool,
+    previous_epoch: Option<String>,
+    generation: u64,
+    controls: VecDeque<Value>,
+}
+
+impl Binding {
+    pub fn new(pid: u32, label: String, token: String) -> Self {
+        Self {
+            pid,
+            label,
+            token,
+            epoch: None,
+            sequence: 0,
+            requests: VecDeque::new(),
+            pending: HashSet::new(),
+            retired: false,
+            polls: 0,
+            suspended: false,
+            awaiting_bind: false,
+            previous_epoch: None,
+            generation: 0,
+            controls: VecDeque::new(),
+        }
+    }
+
+    pub fn pid(&self) -> u32 {
+        self.pid
+    }
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+    pub fn suspended(&self) -> bool {
+        self.suspended && !self.awaiting_bind && !self.retired
+    }
+
+    pub fn poll_process(&self, current: Option<u32>) -> Result<u32, &'static str> {
+        // Process publication precedes trusted rebinding. While suspended, a
+        // retained window can drain controls but cannot deliver service replies.
+        if self.suspended() {
+            Ok(self.pid)
+        } else {
+            current.ok_or("transport_retired")
+        }
+    }
+
+    pub fn suspend(&mut self, pid: u32) -> Result<(), &'static str> {
+        if pid != self.pid || self.retired || self.suspended || !self.controls.is_empty() {
+            return Err("transport_handoff_unavailable");
+        }
+        self.generation = self
+            .generation
+            .checked_add(1)
+            .ok_or("transport_generation_exhausted")?;
+        self.controls
+            .push_back(serde_json::json!({"v":1,"type":"desktop_transport_binding",
+            "generation":self.generation.to_string(),"action":"suspend","epoch":self.epoch}));
+        self.previous_epoch = self.epoch.clone();
+        self.suspended = true;
+        self.requests.clear();
+        self.pending.clear();
+        Ok(())
+    }
+
+    pub fn rebind(&mut self, pid: u32) -> Result<(), &'static str> {
+        if !self.suspended() {
+            return Err("transport_handoff_unavailable");
+        }
+        self.pid = pid;
+        self.epoch = None;
+        self.sequence = 0;
+        self.awaiting_bind = true;
+        Ok(())
+    }
+    #[cfg(feature = "transport-qualification")]
+    pub fn diagnostics(&self) -> Value {
+        serde_json::json!({"registered":true, "polls":self.polls,
+            "pending":self.pending.len(), "queued":self.requests.len()})
+    }
+    pub fn fault(&self) -> Option<Value> {
+        self.epoch.as_ref().map(|epoch| {
+            serde_json::json!({
+                "v": 1, "type": "desktop_transport_fault", "epoch": epoch
+            })
+        })
+    }
+
+    pub fn admit(&mut self, pid: u32, frame: Value) -> Result<(), &'static str> {
+        if pid != self.pid || self.retired || (self.suspended && !self.awaiting_bind) {
+            return Err("transport_retired");
+        }
+        if !fields(&frame, &["v", "type", "epoch", "id", "request"])
+            || frame["v"].as_u64() != Some(1)
+            || frame["type"] != "desktop_transport"
+            || !bounded(&frame, 256 * 1024)
+        {
+            return Err("invalid_transport_frame");
+        }
+        let epoch = frame["epoch"]
+            .as_str()
+            .filter(|s| {
+                s.len() == 32
+                    && s.bytes()
+                        .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+            })
+            .ok_or("invalid_transport_epoch")?;
+        if self
+            .epoch
+            .as_deref()
+            .is_some_and(|current| current != epoch)
+        {
+            return Err("transport_epoch_changed");
+        }
+        let id = frame["id"].as_str().ok_or("invalid_transport_sequence")?;
+        let sequence = id
+            .parse::<u64>()
+            .map_err(|_| "invalid_transport_sequence")?;
+        if sequence <= self.sequence || sequence.to_string() != id {
+            return Err("transport_replay");
+        }
+        let operation = frame["request"]["op"]
+            .as_str()
+            .ok_or("invalid_transport_operation")?;
+        if !matches!(
+            operation,
+            "createOffer"
+                | "acceptOffer"
+                | "applyAnswer"
+                | "inspect"
+                | "inventory"
+                | "activate"
+                | "send"
+                | "sendControl"
+                | "close"
+                | "reset"
+        ) {
+            return Err("invalid_transport_operation");
+        }
+        if self.awaiting_bind {
+            if self.previous_epoch.as_deref() == Some(epoch) {
+                return Err("transport_epoch_reused");
+            }
+            self.generation = self
+                .generation
+                .checked_add(1)
+                .ok_or("transport_generation_exhausted")?;
+            self.controls
+                .push_back(serde_json::json!({"v":1,"type":"desktop_transport_binding",
+                "generation":self.generation.to_string(),"action":"bind","epoch":epoch}));
+            self.awaiting_bind = false;
+            self.suspended = false;
+        }
+        if operation == "reset" {
+            if !fields(&frame["request"], &["op"]) {
+                return Err("invalid_transport_operation");
+            }
+            self.requests.clear();
+            self.pending.clear();
+            self.retired = true;
+        } else if self.pending.len() >= 16 || self.requests.len() >= 16 {
+            return Err("transport_capacity");
+        }
+        self.epoch = Some(epoch.to_owned());
+        self.sequence = sequence;
+        self.pending.insert(id.to_owned());
+        self.requests.push_back(frame);
+        Ok(())
+    }
+
+    pub fn exchange(
+        &mut self,
+        pid: u32,
+        label: &str,
+        token: &str,
+        incoming: Vec<Value>,
+    ) -> Result<(Vec<Value>, Vec<Value>), &'static str> {
+        // Authentication errors cannot retire the legitimate host or consume its queue.
+        if pid != self.pid || label != self.label || token != self.token {
+            return Err("transport_caller_denied");
+        }
+        self.polls = self.polls.saturating_add(1);
+        if incoming.len() > 64 || !bounded(&incoming, 2 * 1024 * 1024) {
+            return Err("transport_frame_budget");
+        }
+        // The private window has not received the new binding yet. Its old
+        // observations cannot be attributed to the replacement process.
+        if self.suspended || !self.controls.is_empty() {
+            let mut outgoing: Vec<Value> = self.controls.drain(..).collect();
+            outgoing.extend(self.requests.drain(..));
+            return Ok((Vec::new(), outgoing));
+        }
+        for frame in &incoming {
+            self.validate_reply(frame)?;
+        }
+        let accepted = incoming
+            .into_iter()
+            .filter(|frame| {
+                frame["type"] == "desktop_transport_event"
+                    || frame["id"]
+                        .as_str()
+                        .is_some_and(|id| self.pending.remove(id))
+            })
+            .collect();
+        Ok((accepted, self.requests.drain(..).collect()))
+    }
+
+    fn validate_reply(&self, frame: &Value) -> Result<(), &'static str> {
+        if frame["v"].as_u64() != Some(1)
+            || frame["epoch"].as_str() != self.epoch.as_deref()
+            || self.epoch.is_none()
+            || !bounded(frame, 256 * 1024)
+        {
+            return Err("invalid_transport_frame");
+        }
+        if frame["type"] == "desktop_transport_reply"
+            && fields(frame, &["v", "type", "epoch", "id", "ok", "result"])
+            && frame["id"]
+                .as_str()
+                .is_some_and(|id| !id.is_empty() && id.len() <= 20)
+            && frame["ok"].as_bool().is_some()
+            && (frame["ok"] == true || frame["result"].is_null())
+        {
+            return Ok(());
+        }
+        if frame["type"] == "desktop_transport_event"
+            && fields(frame, &["v", "type", "epoch", "event", "resource", "data"])
+            && frame["event"].as_str().is_some_and(|event| {
+                matches!(
+                    event,
+                    "open"
+                        | "closed"
+                        | "ice"
+                        | "channel"
+                        | "signaling"
+                        | "gathering"
+                        | "message"
+                        | "control"
+                )
+            })
+            && frame["resource"].as_str().is_some_and(|id| {
+                !id.is_empty()
+                    && id.len() <= 128
+                    && id
+                        .bytes()
+                        .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
+            })
+            && frame["data"].as_str().is_some_and(|data| {
+                data.len()
+                    <= if frame["event"] == "message" {
+                        1500
+                    } else {
+                        90000
+                    }
+            })
+        {
+            return Ok(());
+        }
+        Err("invalid_transport_frame")
+    }
+}
+
+fn fields(value: &Value, names: &[&str]) -> bool {
+    value.as_object().is_some_and(|object| {
+        object.len() == names.len() && names.iter().all(|name| object.contains_key(*name))
+    })
+}
+
+fn bounded(value: &impl serde::Serialize, limit: usize) -> bool {
+    serde_json::to_vec(value).is_ok_and(|encoded| encoded.len() <= limit)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    const EPOCH: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    fn binding() -> Binding {
+        Binding::new(42, "private-window".into(), "private-token".into())
+    }
+    fn request(id: u64, op: &str) -> Value {
+        json!({"v":1,"type":"desktop_transport","epoch":EPOCH,"id":id.to_string(),"request":{"op":op}})
+    }
+    fn response(id: u64) -> Value {
+        json!({"v":1,"type":"desktop_transport_reply","epoch":EPOCH,"id":id.to_string(),"ok":true,"result":null})
+    }
+    fn exchange(host: &mut Binding, incoming: Vec<Value>) -> (Vec<Value>, Vec<Value>) {
+        host.exchange(42, "private-window", "private-token", incoming)
+            .unwrap()
+    }
+
+    #[test]
+    fn inventory_uses_the_same_private_process_and_request_fences() {
+        let mut host = binding();
+        assert!(host.admit(99, request(1, "inventory")).is_err());
+        host.admit(42, request(1, "inventory")).unwrap();
+        assert!(host.admit(42, request(1, "inventory")).is_err());
+        assert_eq!(exchange(&mut host, vec![]).1, vec![request(1, "inventory")]);
+        let mut reply = response(1);
+        reply["result"] = json!({"v":1,"adapter_epoch":EPOCH,"resources":[]});
+        assert_eq!(exchange(&mut host, vec![reply.clone()]).0, vec![reply]);
+    }
+
+    #[test]
+    fn handoff_discards_old_frames_and_binds_a_fresh_service_epoch_before_requests() {
+        let mut host = binding();
+        host.admit(42, request(1, "inspect")).unwrap();
+        exchange(&mut host, vec![]);
+        host.suspend(42).unwrap();
+        assert!(host.admit(42, request(2, "activate")).is_err());
+        host.rebind(43).unwrap();
+        assert!(host.admit(43, request(1, "inventory")).is_err());
+        let mut next = request(1, "inventory");
+        next["epoch"] = json!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        host.admit(43, next.clone()).unwrap();
+        assert!(host.admit(42, request(2, "close")).is_err());
+        let (replies, commands) = host
+            .exchange(43, "private-window", "private-token", vec![response(1)])
+            .unwrap();
+        assert!(replies.is_empty());
+        assert_eq!(
+            commands,
+            vec![
+                json!({"v":1,"type":"desktop_transport_binding","generation":"1","action":"suspend","epoch":EPOCH}),
+                json!({"v":1,"type":"desktop_transport_binding","generation":"2","action":"bind","epoch":next["epoch"]}),
+                next.clone()
+            ]
+        );
+        assert!(host
+            .exchange(43, "private-window", "private-token", vec![response(1)])
+            .is_err());
+        let mut reply = response(1);
+        reply["epoch"] = next["epoch"].clone();
+        assert_eq!(
+            host.exchange(43, "private-window", "private-token", vec![reply.clone()])
+                .unwrap()
+                .0,
+            vec![reply]
+        );
+    }
+
+    #[test]
+    fn suspended_window_can_poll_but_handoff_cannot_accumulate_unbounded_controls() {
+        let mut host = binding();
+        assert!(host.suspend(99).is_err());
+        host.suspend(42).unwrap();
+        assert!(host.suspend(42).is_err());
+        let commands = exchange(&mut host, vec![]).1;
+        assert_eq!(commands.len(), 1);
+        assert!(commands[0]["epoch"].is_null());
+        assert!(exchange(&mut host, vec![response(1)]).0.is_empty());
+        host.rebind(43).unwrap();
+        assert!(host.rebind(44).is_err());
+        assert!(host.suspend(43).is_err());
+    }
+
+    #[test]
+    fn suspended_poll_during_process_publication_cannot_retire_or_bind_the_host() {
+        let mut host = binding();
+        host.admit(42, request(1, "inspect")).unwrap();
+        exchange(&mut host, vec![]);
+        host.suspend(42).unwrap();
+        // The replacement PID is visible, but trusted registration has not run.
+        let pid = host.poll_process(Some(43)).unwrap();
+        let (replies, controls) = host
+            .exchange(pid, "private-window", "private-token", vec![response(1)])
+            .unwrap();
+        assert!(replies.is_empty());
+        assert_eq!(controls.len(), 1);
+        assert_eq!(controls[0]["action"], "suspend");
+        assert_eq!(host.pid(), 42);
+        assert!(host.admit(43, request(2, "inventory")).is_err());
+        assert!(host
+            .exchange(pid, "private-window", "private-token", vec![response(1)])
+            .unwrap()
+            .0
+            .is_empty());
+
+        host.rebind(43).unwrap();
+        let mut next = request(1, "inventory");
+        next["epoch"] = json!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        host.admit(43, next.clone()).unwrap();
+        let pid = host.poll_process(Some(43)).unwrap();
+        let (replies, commands) = host
+            .exchange(pid, "private-window", "private-token", vec![response(1)])
+            .unwrap();
+        assert!(replies.is_empty());
+        assert_eq!(commands.len(), 2);
+        assert_eq!(commands[0]["action"], "bind");
+        assert_eq!(commands[1], next);
+        let mut fresh = response(1);
+        fresh["epoch"] = next["epoch"].clone();
+        assert_eq!(
+            host.exchange(pid, "private-window", "private-token", vec![fresh.clone()])
+                .unwrap()
+                .0,
+            vec![fresh]
+        );
+    }
+
+    #[test]
+    fn publication_gap_does_not_relax_window_capability_or_active_process_checks() {
+        let mut host = binding();
+        assert!(host.poll_process(None).is_err());
+        let pid = host.poll_process(Some(43)).unwrap();
+        assert!(host
+            .exchange(pid, "private-window", "private-token", vec![])
+            .is_err());
+        host.suspend(42).unwrap();
+        let pid = host.poll_process(Some(43)).unwrap();
+        for (label, token) in [
+            ("other-window", "private-token"),
+            ("private-window", "forged"),
+        ] {
+            assert_eq!(
+                host.exchange(pid, label, token, vec![]).unwrap_err(),
+                "transport_caller_denied"
+            );
+        }
+        assert_eq!(host.poll_process(None).unwrap(), 42);
+        assert_eq!(
+            host.exchange(pid, "private-window", "private-token", vec![])
+                .unwrap()
+                .1
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn inherited_requests_cannot_supply_platform_binding_controls() {
+        let mut host = binding();
+        for op in ["suspend", "bind", "resume"] {
+            assert!(host.admit(42, request(1, op)).is_err());
+        }
+        host.admit(42, request(1, "activate")).unwrap();
+    }
+
+    #[test]
+    fn only_the_exact_process_window_and_capability_can_drain_or_reply() {
+        let mut host = binding();
+        host.admit(42, request(1, "inspect")).unwrap();
+        for (pid, label, token) in [
+            (99, "private-window", "private-token"),
+            (42, "main", "private-token"),
+            (42, "private-window", "forged"),
+        ] {
+            assert_eq!(
+                host.exchange(pid, label, token, vec![response(1)])
+                    .unwrap_err(),
+                "transport_caller_denied"
+            );
+        }
+        assert_eq!(exchange(&mut host, vec![]).1, vec![request(1, "inspect")]);
+        assert_eq!(exchange(&mut host, vec![response(1)]).0, vec![response(1)]);
+        let (replies, commands) = exchange(&mut host, vec![response(1)]);
+        assert!(replies.is_empty());
+        assert!(commands.is_empty());
+    }
+
+    #[test]
+    fn stale_service_epochs_and_replayed_sequences_cannot_allocate() {
+        let mut host = binding();
+        host.admit(42, request(2, "createOffer")).unwrap();
+        assert!(host.admit(99, request(3, "createOffer")).is_err());
+        assert!(host.admit(42, request(2, "createOffer")).is_err());
+        assert!(host.admit(42, request(1, "close")).is_err());
+        let mut foreign = request(3, "createOffer");
+        foreign["epoch"] = json!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        assert!(host.admit(42, foreign).is_err());
+        assert_eq!(exchange(&mut host, vec![]).1.len(), 1);
+    }
+
+    #[test]
+    fn pending_work_stays_bounded_after_the_window_drains_and_reset_has_reserved_admission() {
+        let mut host = binding();
+        for id in 1..=16 {
+            host.admit(42, request(id, "inspect")).unwrap();
+        }
+        assert_eq!(exchange(&mut host, vec![]).1.len(), 16);
+        assert_eq!(
+            host.admit(42, request(17, "inspect")).unwrap_err(),
+            "transport_capacity"
+        );
+        host.admit(42, request(18, "reset")).unwrap();
+        assert!(host.admit(42, request(19, "createOffer")).is_err());
+        let (replies, commands) = exchange(&mut host, vec![response(1)]);
+        assert!(replies.is_empty());
+        assert_eq!(commands, vec![request(18, "reset")]);
+        assert_eq!(exchange(&mut host, vec![]).1.len(), 0);
+    }
+
+    #[test]
+    fn malformed_and_oversized_frames_cannot_consume_valid_pending_replies() {
+        let mut host = binding();
+        host.admit(42, request(1, "inspect")).unwrap();
+        let mut invalid = response(1);
+        invalid["ok"] = json!(1);
+        assert!(host
+            .exchange(42, "private-window", "private-token", vec![invalid])
+            .is_err());
+        assert!(host
+            .exchange(42, "private-window", "private-token", vec![response(1); 65])
+            .is_err());
+        let mut huge = response(1);
+        huge["result"] = json!("x".repeat(256 * 1024));
+        assert!(host
+            .exchange(42, "private-window", "private-token", vec![huge])
+            .is_err());
+        assert_eq!(exchange(&mut host, vec![response(1)]).0.len(), 1);
+    }
+}

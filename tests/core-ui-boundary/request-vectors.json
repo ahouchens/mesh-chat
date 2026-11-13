@@ -1,0 +1,1377 @@
+[
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "runtime.capabilities",
+    "params": {}
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "runtime.stop",
+    "params": {}
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "application.snapshot",
+    "params": {}
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "native.command",
+    "params": {
+      "command": "workspace_snapshot",
+      "payload": {}
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "profile.create",
+    "params": {
+      "display_name": "Alex"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:catalog",
+    "operation": "profile.catalog",
+    "params": {}
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "profile.select",
+    "params": {
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "profile.unlock",
+    "params": {
+      "credential_handle": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "profile.lock",
+    "params": {
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "profile.query",
+    "params": {
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "peer.pairing_create",
+    "params": {
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "peer.pairing_request",
+    "params": {
+      "peer": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "peer.pairing_accept",
+    "params": {
+      "document": "signed-pairing-document",
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.query",
+    "params": {
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.join_requests",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.join_approve",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "request": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.members",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.join_decline",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "request": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.member_role",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "member": "callerScopedHandle1",
+      "role": "admin",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.channels",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.channel_create",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "name": "Core Chat",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.invitation_create",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.admission_grant_end",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "grant": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.admission_grant_accept",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "grant": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.admission_grant_create",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "admin_member": "callerScopedHandle1",
+      "admin_device": "callerScopedHandle1",
+      "max_admissions": 5,
+      "lifetime_days": 7,
+      "v2_ready": true,
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.admission_grant_list",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.invitation_revoke",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "invitation": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.invitation_preview",
+    "params": {
+      "document": "workspace-invitation",
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.join",
+    "params": {
+      "document": "workspace-invitation",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "peer.query",
+    "params": {
+      "peer": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "peer.approve",
+    "params": {
+      "peer": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "peer.revoke",
+    "params": {
+      "peer": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "peer.unblock",
+    "params": {
+      "peer": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "peer.delete",
+    "params": {
+      "peer": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "peer.draft_get",
+    "params": {
+      "peer": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "peer.draft_set",
+    "params": {
+      "peer": "callerScopedHandle1",
+      "text": "draft",
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "call.settings_query",
+    "params": {
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "call.settings_update",
+    "params": {
+      "settings": {
+        "relay_only": true
+      },
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "call.ice_servers",
+    "params": {
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "call.media_query",
+    "params": {
+      "call": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:call-list",
+    "operation": "call.operation_list",
+    "params": { "profile": "callerScopedHandle1" }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:call-query",
+    "operation": "call.operation_query",
+    "params": { "profile": "callerScopedHandle1", "operation": "callerScopedOperation1" }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:call-abandon",
+    "operation": "call.operation_abandon",
+    "params": { "profile": "callerScopedHandle1", "operation": "callerScopedOperation1" },
+    "idempotency_key": "boundary-call-abandon-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "settings.query",
+    "params": {
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "settings.update",
+    "params": {
+      "settings": {},
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "message.reaction_set",
+    "params": {
+      "message": "callerScopedHandle1",
+      "emoji": "👍",
+      "active": true,
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "group.query",
+    "params": {
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "group.create",
+    "params": {
+      "title": "Team",
+      "posting_policy": "members",
+      "members": [
+        "callerScopedHandle1"
+      ],
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "group.message_enqueue",
+    "params": {
+      "group": "callerScopedHandle1",
+      "text": "Hello",
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "group.member_remove",
+    "params": {
+      "group": "callerScopedHandle1",
+      "member": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "group.invitation_decline",
+    "params": {
+      "invitation": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "group.invitation_retry",
+    "params": {
+      "group": "callerScopedHandle1",
+      "member": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "group.invitation_accept",
+    "params": {
+      "invitation": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "group.close",
+    "params": {
+      "group": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "group.leave",
+    "params": {
+      "group": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "connection.start",
+    "params": {
+      "peer": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "connection.stop",
+    "params": {
+      "peer": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "connection.retry",
+    "params": {
+      "connection": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "connection.snapshot",
+    "params": {
+      "connection": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "message.enqueue",
+    "params": {
+      "recipient": "callerScopedHandle1",
+      "kind": "text",
+      "text": "Hello",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "message.query",
+    "params": {
+      "message": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "message.list",
+    "params": {
+      "cursor": null,
+      "limit": 128,
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "message.received",
+    "params": {
+      "cursor": null,
+      "limit": 128,
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "events.poll",
+    "params": {
+      "cursor": null,
+      "limit": 128,
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "events.ack",
+    "params": {
+      "cursor": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "diagnostics.query",
+    "params": {
+      "limit": 256,
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.channel_members",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "channel": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.channel_members_update",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "channel": "callerScopedHandle1",
+      "members": [
+        "callerScopedHandle1"
+      ],
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.channel_update",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "channel": "callerScopedHandle1",
+      "name": "Renamed",
+      "topic": "",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.channel_archive",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "channel": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.device_link_create",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.device_link_preview",
+    "params": {
+      "document": "device-link",
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.device_link_submit",
+    "params": {
+      "document": "device-link",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.device_links",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.device_link_approve",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "request": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.device_link_decline",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "request": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.channel_transfer_offer",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "channel": "callerScopedHandle1",
+      "member": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.channel_transfer_accept",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "channel": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.policy_update",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "channel_creation": "owner_and_admins",
+      "posting": "owner_and_admins",
+      "invitation_requests": "owner_only",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.retention_update",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "retention_days": 30,
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.admin_request_dismiss",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "request": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.admin_request_cancel",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "request": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.admin_request_decline",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "request": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.admin_request_approve",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "request": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.metadata_update",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "name": "Team",
+      "description": "A team",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.devices",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.device_remove",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "device": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.remove_data",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "confirmation": "DELETE",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.authority_loss_report",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.authority_finalize",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "transition": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.authority_accept",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "transition": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.authority_offer",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "transition_kind": "ownership_transfer",
+      "successor_member": "callerScopedHandle1",
+      "successor_device": "callerScopedHandle1",
+      "outgoing_owner_role": "admin",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.read_hint_sync",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "enabled": true,
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.display_name_request",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "display_name": "Alex",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.admin_request_submit",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "request_kind": "invitation",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.leave",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.close",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.device_removal_request",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "device": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.device_removal_approve",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "request": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.device_removal_decline",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "request": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.timeline_query",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "view": "threads",
+      "limit": 50,
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.timeline_mutation",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "action": "mentions_read",
+      "high_water": "mmmmmmmmmmmmmmmmmmmm",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.snapshot",
+    "params": {
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.access_recommendation",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "action": "list",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.history",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "action": "prune",
+      "max_events": 100,
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.connection",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "action": "reconnect_status",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "runtime.query",
+    "params": {
+      "action": "background",
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "runtime.mutate",
+    "params": {
+      "action": "notification_previews",
+      "hidden": true,
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "call.control",
+    "params": {
+      "action": "end",
+      "call_id": "cccccccccccccccccccc",
+      "reason": "completed",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.channel_recover",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "channel": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.channel_state",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "channel": "callerScopedHandle1",
+      "action": "subscribe",
+      "subscribed": true,
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.member_remove",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "member": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "group.draft_set",
+    "params": {
+      "group": "callerScopedHandle1",
+      "text": "draft",
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.draft_set",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "conversation": "c1",
+      "text": "draft",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "remote_profile.mutate",
+    "params": {
+      "action": "remove",
+      "remote_profile_id": "r1",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.display_name_decide",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "request": "r1",
+      "approve": true,
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.direct_open",
+    "params": {
+      "workspace": "callerScopedHandle1",
+      "member": "callerScopedHandle1",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "route.update",
+    "params": {
+      "action": "create",
+      "scope_kind": "contact",
+      "scope_id": "c1",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "peer.update",
+    "params": {
+      "peer": "callerScopedHandle1",
+      "action": "verify",
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "conversation.mutate",
+    "params": {
+      "action": "delete",
+      "kind": "direct",
+      "target_id": "c1",
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "peer.decide",
+    "params": {
+      "peer": "callerScopedHandle1",
+      "accept": false,
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "link.preview",
+    "params": {
+      "provider": "youtube",
+      "identifier": "abc",
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "contact.invitation",
+    "params": {
+      "action": "receive",
+      "document": "doc",
+      "peer": "p1",
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "recovery.transfer",
+    "params": {
+      "action": "export",
+      "identifier": "r1",
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "connection.support",
+    "params": {
+      "action": "diagnostics",
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "remote_profile.query",
+    "params": {
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "connection.document",
+    "params": {
+      "action": "preview_direct",
+      "document": "doc",
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "peer.pairing_preview",
+    "params": {
+      "document": "doc",
+      "profile": "callerScopedHandle1"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.join_prompt",
+    "params": {
+      "prompt": "p1",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "workspace.create",
+    "params": {
+      "name": "Lake",
+      "description": "",
+      "profile": "callerScopedHandle1"
+    },
+    "idempotency_key": "boundary-operation-key-0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:1",
+    "operation": "bootstrap.preview",
+    "params": {
+      "kind": "personal",
+      "document": "signed-personal-invitation"
+    }
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:composer-query",
+    "operation": "peer.composer_query",
+    "params": {"profile": "callerScopedHandle1", "peer": "callerScopedPeer01"}
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:composer-update",
+    "operation": "peer.composer_update",
+    "params": {"profile": "callerScopedHandle1", "peer": "callerScopedPeer01",
+               "expected_revision": null, "text": "Serialized composer text"},
+    "idempotency_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:enqueue-draft",
+    "operation": "message.enqueue_draft",
+    "params": {"profile": "callerScopedHandle1", "recipient": "callerScopedPeer01",
+               "draft_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+    "idempotency_key": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:pairing-begin",
+    "operation": "peer.pairing_begin",
+    "params": {"profile": "callerScopedHandle1", "role": "offer", "allow_direct_ip_disclosure": false},
+    "idempotency_key": "boundary-pairing-begin-key0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:pairing-query",
+    "operation": "peer.pairing_query",
+    "params": {"profile": "callerScopedHandle1", "pairing": "callerScopedPairingHandle1"}
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:pairing-cancel",
+    "operation": "peer.pairing_cancel",
+    "params": {"profile": "callerScopedHandle1", "pairing": "callerScopedPairingHandle1"},
+    "idempotency_key": "boundary-pairing-cancel-key0001"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:group-composer-query",
+    "operation": "group.composer_query",
+    "params": {"profile": "callerScopedHandle1", "group": "callerScopedGroup01"}
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:group-composer-update",
+    "operation": "group.composer_update",
+    "params": {"profile": "callerScopedHandle1", "group": "callerScopedGroup01",
+               "expected_revision": null, "text": "Serialized group composer text"},
+    "idempotency_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  {
+    "api_version": 1,
+    "request_id": "boundary:group-enqueue-draft",
+    "operation": "group.message_enqueue_draft",
+    "params": {"profile": "callerScopedHandle1", "group": "callerScopedGroup01",
+               "draft_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+    "idempotency_key": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  }
+]

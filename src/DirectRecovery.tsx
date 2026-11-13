@@ -1,6 +1,7 @@
+import { useProfileRequestAdmission } from "./profile-lifetime";
 import { useEffect, useState } from "react";
 import { ConnectionDiagnostics } from "./ConnectionDiagnostics";
-import { serviceCommand } from "./api";
+import { coreApiRecoveryTransfer, serviceCommand } from "./api";
 
 type Peer = { relationship_id: string; workspace_id: string; peer_device_id: string; state: string;
   native_engine_healthy: boolean; authenticated_peer_live: boolean; rns_ready: boolean };
@@ -17,6 +18,7 @@ const labels: Record<string, string> = {
   authorization_unavailable: "This device relationship is no longer authorized",
 };
 export function DirectRecovery({ workspaceId }: { workspaceId: string }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   const [peers, setPeers] = useState<Peer[]>([]);
   const [input, setInput] = useState("");
   const [output, setOutput] = useState("");
@@ -29,7 +31,7 @@ export function DirectRecovery({ workspaceId }: { workspaceId: string }) {
   const [helperBusy, setHelperBusy] = useState(false);
   useEffect(() => {
     let active = true;
-    const refresh = () => void serviceCommand<Peer[]>("direct_recovery_status", {}).then(rows => {
+    const refresh = () => void serviceCommand<Peer[]>("direct_recovery_status", {}, admitProfileRequest).then(rows => {
       if (active) setPeers(rows.filter(row => row.workspace_id === workspaceId));
     }).catch(() => { if (active) setError("Direct connection status is unavailable."); });
     refresh(); const timer = setInterval(refresh, 2000);
@@ -38,8 +40,8 @@ export function DirectRecovery({ workspaceId }: { workspaceId: string }) {
   useEffect(() => {
     let active = true;
     void Promise.all([
-      serviceCommand<Connectivity>("workspace_connectivity", { workspace_id: workspaceId }),
-      serviceCommand<{ enabled: boolean }>("workspace_helper_status", { workspace_id: workspaceId }),
+      serviceCommand<Connectivity>("workspace_connectivity", { workspace_id: workspaceId }, admitProfileRequest),
+      serviceCommand<{ enabled: boolean }>("workspace_helper_status", { workspace_id: workspaceId }, admitProfileRequest),
     ]).then(([connectivity, status]) => {
       if (!active) return;
       const available = connectivity.members.flatMap((member) =>
@@ -58,7 +60,7 @@ export function DirectRecovery({ workspaceId }: { workspaceId: string }) {
   const setHelperConsent = async (enabled: boolean) => {
     setHelperBusy(true); setError("");
     try {
-      const value = await serviceCommand<{ enabled: boolean }>("workspace_helper_consent_set", { workspace_id: workspaceId, enabled });
+      const value = await serviceCommand<{ enabled: boolean }>("workspace_helper_consent_set", { workspace_id: workspaceId, enabled }, admitProfileRequest);
       setHelperEnabled(Boolean(value.enabled));
       setFeedback(enabled ? "This device will relay one-hop connection updates for active workspace members." : "Connection-update relaying is off.");
     } catch { setError("Could not save connection-helper consent."); }
@@ -68,7 +70,7 @@ export function DirectRecovery({ workspaceId }: { workspaceId: string }) {
     if (!helperId) return;
     setBusy(true); setError(""); setOutput(""); setFeedback("");
     try {
-      await serviceCommand("relay_workspace_connection_update", { workspace_id: workspaceId, relationship_id: relationshipId, helper_device_id: helperId });
+      await serviceCommand("relay_workspace_connection_update", { workspace_id: workspaceId, relationship_id: relationshipId, helper_device_id: helperId }, admitProfileRequest);
       setFeedback("Connection update queued through the selected workspace helper.");
     } catch { setError("Could not queue this connection update through the helper."); }
     finally { setBusy(false); }
@@ -76,7 +78,9 @@ export function DirectRecovery({ workspaceId }: { workspaceId: string }) {
   const action = async (command: string, identifier: string) => {
     setBusy(true); setError(""); setOutput("");
     try {
-      const result = await serviceCommand<{ state: string; text?: string }>(command, { identifier });
+      const result = command === "export_recovery_update"
+        ? await coreApiRecoveryTransfer("export", { identifier }, admitProfileRequest) as { state: string; text?: string }
+        : await serviceCommand<{ state: string; text?: string }>(command, { identifier }, admitProfileRequest);
       if (result.text) setOutput(result.text);
       setFeedback(result.state === "preparing" ? "Preparing fresh connection details. Choose Share connection update again when ready. Keep both apps open." : "Connection action saved.");
     } catch { setError("Could not update this connection. Check that the workspace and device are still active."); }
@@ -85,7 +89,7 @@ export function DirectRecovery({ workspaceId }: { workspaceId: string }) {
   const apply = async () => {
     setBusy(true); setError("");
     try {
-      await serviceCommand("import_recovery_update", { document: input.trim(), workspace_id: workspaceId });
+      await coreApiRecoveryTransfer("import", { document: input.trim(), workspace_id: workspaceId }, admitProfileRequest);
       setInput(""); setFeedback("Connection update verified. Reconnection keeps your existing membership and queued messages.");
     } catch { setError("This update could not be verified. It may be expired, replayed, or intended for another device."); }
     finally { setBusy(false); }

@@ -71,6 +71,9 @@ class RecordingWorkspaceNetwork:
     def recipient_ready(self, _destination: bytes) -> bool:
         return True
 
+    def recipient_ready_for_fields(self, destination: bytes, _fields: dict[int, Any], _text: str = "") -> bool:
+        return self.recipient_ready(destination)
+
     def path_known(self, _destination: bytes) -> bool:
         return self.path_available
 
@@ -922,6 +925,64 @@ def test_direct_workspace_binding_runtime_lease_lifecycle(tmp_path, terminal):
         else:
             monotonic[0] = 11
             assert not lease.check() and lease.reason == "expired"  # Document, not authority's 300s.
+    finally:
+        owner.close()
+        member.close()
+
+
+@pytest.mark.parametrize("action", ["remove", "leave", "close", "receive"])
+@pytest.mark.parametrize("fail_write", [False, True])
+def test_shared_connection_authority_is_fenced_before_workspace_commit(tmp_path, monkeypatch, action, fail_write):
+    from mesh_chat.connection.model import Execution
+    from mesh_chat.connection.runtime import ConnectionRuntime
+
+    owner, _, _, member, _, _, workspace, _, _ = _joined_pair(tmp_path, base=96000)
+    service = member if action in {"leave", "receive"} else owner
+    profile = {"id": "workspace-test-peer", "scope_kind": "workspace", "workspace_id": workspace["id"],
+               "contact_id": "peer", "local_device_id": "local", "remote_device_id": "remote",
+               "active": True, "effective": {"ready": True}}
+    runtime = ConnectionRuntime("workspace-test", lambda *_: SimpleNamespace(),
+        profiles=lambda: {"profiles": [profile]}, execution=lambda: Execution.AVAILABLE, activate=lambda _: None)
+    service._connection_runtime = runtime
+    runtime.synchronize()
+    write_method = "put_and_delete" if action == "receive" else "commit_operation"
+    original = getattr(service.store, write_method)
+    writes = []
+
+    def commit(*args, **kwargs):
+        assert runtime.snapshots()[profile["id"]]["desired"] == "stopped"
+        writes.append(True)
+        if fail_write:
+            raise OSError("simulated workspace transaction failure")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(service.store, write_method, commit)
+    try:
+        def mutate():
+            if action == "remove":
+                remote = member._require_workspace(workspace["id"])
+                return owner.remove_workspace_member(workspace["id"], remote["local_member_id"], _op(96010))
+            if action == "leave":
+                return member.leave_workspace(workspace["id"], _op(96010))
+            if action == "receive":
+                remote = member._require_workspace(workspace["id"])
+                owner.remove_workspace_member(workspace["id"], remote["local_member_id"], _op(96010))
+                manifest = owner._workspace_current_manifest(owner._require_workspace(workspace["id"]))
+                return member._receive_workspace_manifest(WorkspaceWirePayload(
+                    kind="workspace_manifest_root", logical_id=_op(96011), workspace_id=workspace["id"],
+                    expires_at=int(time.time()) + 60, document=manifest.serialized))
+            return owner.close_workspace(workspace["id"], _op(96010))
+        if fail_write:
+            with pytest.raises(OSError, match="transaction failure"):
+                mutate()
+            monkeypatch.setattr(service.store, write_method, original)
+            # A later unread-count update cannot restore failed revocation.
+            service._workspace_changed(workspace["id"])
+            runtime.synchronize()
+            assert runtime.snapshots()[profile["id"]]["desired"] == "stopped"
+        else:
+            mutate()
+        assert writes
     finally:
         owner.close()
         member.close()
@@ -2027,6 +2088,50 @@ def test_workspace_delivery_retries_dirty_signed_route_attachment(
     joiner.close()
 
 
+def test_channel_record_waits_for_its_own_transport_keys_before_counting_attempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner, owner_network = _service(tmp_path / "owner", RNS.Identity(), "Alex")
+    member, member_network = _service(tmp_path / "member", RNS.Identity(), "Bailey")
+    workspace = owner.create_workspace(_op(9700), "Channel readiness", "")
+    invitation = owner.create_workspace_invitation_command(workspace["id"], _op(9701))
+    member.submit_workspace_join(invitation["text"], _op(9702))
+    for sent in _flush(member, member_network):
+        _deliver(owner, sent, source_profile=member._require_profile(), recipient_profile=owner._require_profile())
+    request = owner.workspace_snapshot()["workspace_join_requests"][0]
+    owner.approve_workspace_join(workspace["id"], request["id"], _op(9703))
+    channel = next(row for row in owner.store.list("workspace_delivery")
+                   if row.get("kind") == "workspace_channel_record" and row.get("workspace_id") == workspace["id"])
+    channel["next_attempt_at"] = 0
+    owner.store.put("workspace_delivery", channel["id"], channel)
+
+    main_keys_ready = False
+    def payload_ready(destination: bytes, fields: dict[int, Any], text: str = "") -> bool:
+        wire = parse_workspace_payload(SimpleNamespace(get_fields=lambda: fields, content=text))
+        assert wire.kind == "workspace_channel_record"
+        return main_keys_ready
+    monkeypatch.setattr(owner_network, "recipient_ready_for_fields", payload_ready)
+    assert owner_network.recipient_ready(bytes.fromhex(channel["recipient_destination"]))
+
+    owner._attempt_workspace_delivery(channel["id"])
+    waiting = owner.store.get("workspace_delivery", channel["id"])
+    assert waiting["state"] == DeliveryState.WAITING_FOR_KEYS.value
+    assert waiting["attempt_count"] == 0
+    assert owner_network.sent == []
+    assert owner_network.requested_paths == [bytes.fromhex(channel["recipient_destination"])]
+
+    main_keys_ready = True
+    waiting["next_attempt_at"] = 0
+    owner.store.put("workspace_delivery", channel["id"], waiting)
+    owner._attempt_workspace_delivery(channel["id"])
+    sent = owner_network.sent
+    assert len(sent) == 1
+    assert parse_workspace_payload(SimpleNamespace(get_fields=lambda: sent[0]["fields"], content=sent[0]["text"])).kind == "workspace_channel_record"
+    assert owner.store.get("workspace_delivery", channel["id"])["attempt_count"] == 1
+    owner.close()
+    member.close()
+
+
 def test_workspace_delivery_preference_failure_does_not_starve_due_batch(
     tmp_path: Path,
 ) -> None:
@@ -2968,7 +3073,14 @@ def test_workspace_decline_is_scoped_and_terminal_close_invalidates_requests(
 
 def test_eight_person_workspace_catches_up_concurrent_invites_and_admin_changes(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from mesh_chat import workspace_service as workspace_service_module
+
+    # The recording network never acknowledges delivery. Keep prior controls
+    # below their retry deadline while checking exact administrative fanout.
+    now = time.time()
+    monkeypatch.setattr(workspace_service_module, "time", SimpleNamespace(time=lambda: now))
     owner_identity = RNS.Identity()
     owner_root = tmp_path / "owner-eight"
     owner_vault_key = os.urandom(32)

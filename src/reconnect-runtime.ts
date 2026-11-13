@@ -1,4 +1,5 @@
-import { serviceCommand } from "./api";
+import { coreApiPeerForDestination, coreApiRequest as unscopedCoreApiRequest, loadCallIceServers, serviceCommand as unscopedServiceCommand } from "./api";
+import { captureEffectScope, effectIsCurrent, type CoreEffectScope } from "./core-admission";
 import type { CallIceConfiguration } from "./types";
 import {
   ReconnectCoordinator,
@@ -18,7 +19,7 @@ import { setWebRTCSession, getWebRTCSessions, getWebRTCSessionByKey, closeWebRTC
 export const DISCONNECTED_SESSION_GRACE_MS = 10_000;
 const disconnectedSince = new WeakMap<WebRTCSession, number>();
 const nativeSessions = new Map<string, { peer: NativeReconnectPeer; contactId: string }>();
-type ServiceSession = { sessionId: string; contactId: string; disconnectedAt?: number; unavailableAt?: number };
+type ServiceSession = { sessionId: string; contactId: string; effects?: CoreEffectScope; disconnectedAt?: number; unavailableAt?: number };
 const serviceSessions = new Map<string, ServiceSession>();
 const serviceLookups = new Set<ServiceSession & { profileId: string }>();
 let closeGeneration = 0;
@@ -29,21 +30,21 @@ const profileCloseGenerations = new Map<string, number>();
 export function closeNativeReconnectSessions(contactId?: string): void {
   if (contactId) contactCloseGenerations.set(contactId, (contactCloseGenerations.get(contactId) ?? 0) + 1);
   else closeGeneration += 1;
-  const closing = new Set<string>();
+  const closing = new Map<string, CoreEffectScope | undefined>();
   for (const item of serviceLookups) {
-    if (!contactId || item.contactId === contactId) closing.add(item.sessionId);
+    if (!contactId || item.contactId === contactId) closing.set(item.sessionId, item.effects);
   }
   for (const [profileId, item] of serviceSessions) {
     if (contactId && item.contactId !== contactId) continue;
     serviceSessions.delete(profileId);
-    closing.add(item.sessionId);
+    closing.set(item.sessionId, item.effects);
   }
   for (const [profileId, item] of nativeSessions) {
     if (contactId && item.contactId !== contactId) continue;
     nativeSessions.delete(profileId);
     item.peer.close();
   }
-  for (const sessionId of closing) void nativeWebRTCClose(sessionId).catch(() => undefined);
+  for (const [sessionId, effects] of closing) void nativeWebRTCClose(sessionId, effects).catch(() => undefined);
 }
 
 function hasLiveSession(profileId: string, contactId: string): boolean {
@@ -80,7 +81,7 @@ function hasLiveSession(profileId: string, contactId: string): boolean {
   });
 }
 
-export interface ReconnectRuntimeOptions {
+export interface ReconnectRuntimeOptions extends CoreEffectScope {
   refresh: () => Promise<void>;
   onSession?: (path: WebRTCSessionPath) => void;
 }
@@ -95,31 +96,40 @@ export interface ReconnectRuntimeOptions {
 export function createReconnectDeps(
   options: ReconnectRuntimeOptions,
 ): ReconnectCoordinatorDeps {
+  const effects = captureEffectScope(options);
+  const admit = effects.admit;
+  const coreApiRequest = <T>(...args: Parameters<typeof unscopedCoreApiRequest>): Promise<T> => admit
+    ? admit(() => unscopedCoreApiRequest<T>(...args)) : unscopedCoreApiRequest<T>(...args);
+  const serviceCommand = <T>(command: string, payload?: Record<string, unknown>): Promise<T> => {
+    if (admit) return unscopedServiceCommand<T>(command, payload, admit);
+    return payload === undefined ? unscopedServiceCommand<T>(command) : unscopedServiceCommand<T>(command, payload);
+  };
   return {
     profiles: async () => {
       const generation = ++refreshGeneration;
       const closing = closeGeneration;
       const contacts = new Map(contactCloseGenerations);
       const profiles = new Map(profileCloseGenerations);
-      const current = (profile: ReconnectProfile) => closing === closeGeneration &&
+      const current = (profile: ReconnectProfile) => effectIsCurrent(effects) && closing === closeGeneration &&
         contacts.get(profile.contact_id) === contactCloseGenerations.get(profile.contact_id) &&
         profiles.get(profile.id) === profileCloseGenerations.get(profile.id);
       const payload = await serviceCommand<ReconnectProfilesPayload>("reconnect_profiles");
       const previous = new Map(serviceSessions);
       const next = new Map<string, ServiceSession>();
       await Promise.all(payload.profiles.map(async (profile) => {
+        if (profile.policy_owner === "service") return;
         const sessionId = profile.native_session_id;
         if (!sessionId || nativeSessions.has(profile.id)) return;
         if (!current(profile)) {
-          await nativeWebRTCClose(sessionId).catch(() => undefined);
+          await nativeWebRTCClose(sessionId, effects).catch(() => undefined);
           return;
         }
-        const lookup = { profileId: profile.id, sessionId, contactId: profile.contact_id };
+        const lookup = { profileId: profile.id, sessionId, contactId: profile.contact_id, effects };
         serviceLookups.add(lookup);
         try {
-          const stats = await nativeWebRTCStats(sessionId);
+          const stats = await nativeWebRTCStats(sessionId, effects);
           if (!current(profile)) {
-            await nativeWebRTCClose(sessionId).catch(() => undefined);
+            await nativeWebRTCClose(sessionId, effects).catch(() => undefined);
             return;
           }
           if (generation !== refreshGeneration) return;
@@ -128,10 +138,10 @@ export function createReconnectDeps(
           const disconnectedAt = stats.ice_connection_state === "disconnected"
             ? (old?.sessionId === sessionId ? old.disconnectedAt : undefined) ?? Date.now() : undefined;
           if (disconnectedAt !== undefined && Date.now() - disconnectedAt >= DISCONNECTED_SESSION_GRACE_MS) {
-            await nativeWebRTCClose(sessionId);
+            await nativeWebRTCClose(sessionId, effects);
             return;
           }
-          next.set(profile.id, { sessionId, contactId: profile.contact_id, disconnectedAt });
+          next.set(profile.id, { sessionId, contactId: profile.contact_id, disconnectedAt, effects });
         } catch {
           const old = previous.get(profile.id);
           if (generation === refreshGeneration && current(profile) && old?.sessionId === sessionId) {
@@ -139,7 +149,7 @@ export function createReconnectDeps(
             if (Date.now() - unavailableAt < DISCONNECTED_SESSION_GRACE_MS) {
               next.set(profile.id, { ...old, unavailableAt });
             } else {
-              await nativeWebRTCClose(sessionId).catch(() => undefined);
+              await nativeWebRTCClose(sessionId, effects).catch(() => undefined);
             }
           }
         } finally {
@@ -148,7 +158,7 @@ export function createReconnectDeps(
       }));
       // Keep the live registry visible throughout asynchronous health checks.
       // Only the latest refresh may replace it, and closes fence late results.
-      if (generation === refreshGeneration) {
+      if (generation === refreshGeneration && effectIsCurrent(effects)) {
         for (const [profileId, item] of serviceSessions) {
           const profile = payload.profiles.find((candidate) => candidate.id === profileId);
           if (!profile || current(profile)) serviceSessions.delete(profileId);
@@ -162,13 +172,35 @@ export function createReconnectDeps(
       maintainReconnectCapabilities(payload.profiles);
       return payload;
     },
-    start: (contactId) =>
-      serviceCommand("reconnect_start", { contact_id: contactId }),
-    stop: (contactId) =>
-      serviceCommand(
+    start: async (contactId, destination) => {
+      if (destination) {
+        try {
+          const target = await coreApiPeerForDestination(destination);
+          return await coreApiRequest("connection.start", {
+            profile: target.profile, peer: target.peer,
+          });
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+        }
+      }
+      return serviceCommand("reconnect_start", { contact_id: contactId });
+    },
+    stop: async (contactId, destination) => {
+      if (destination) {
+        try {
+          const target = await coreApiPeerForDestination(destination);
+          return await coreApiRequest("connection.stop", {
+            profile: target.profile, peer: target.peer,
+          });
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+        }
+      }
+      return serviceCommand(
         "reconnect_stop",
         contactId ? { contact_id: contactId } : {},
-      ),
+      );
+    },
     requestCreate: (contactId, attemptId) =>
       serviceCommand("reconnect_request_create", {
         contact_id: contactId,
@@ -213,9 +245,7 @@ export function createReconnectDeps(
         ...(attemptId ? { attempt_id: attemptId } : {}),
       }),
     ice: async (profile) => {
-      const configuration = await serviceCommand<CallIceConfiguration>(
-        "call_ice_servers",
-      );
+      const configuration = await loadCallIceServers() as unknown as CallIceConfiguration;
       if (
         !profile.allow_direct_ip_disclosure &&
         configuration.iceTransportPolicy !== "relay"
@@ -227,7 +257,7 @@ export function createReconnectDeps(
       return configuration;
     },
     createPeer: (ice, role, profile) => isNativeWebRTCPlatform()
-      ? NativeReconnectPeer.create(ice, role, profile?.id)
+      ? NativeReconnectPeer.create(ice, role, profile?.id, effects)
       : ReconnectPeer.create(ice, role),
     attach: async (peer: CoordinatorPeer, profile: ReconnectProfile, isCurrent = () => true) => {
       if (peer instanceof NativeReconnectPeer) {
@@ -274,6 +304,7 @@ export function createReconnectDeps(
         const channel = await concrete.open();
         check(channel);
         bridge = await attachWebRTCBridge(channel, {
+          effects,
           isCurrent: () => {
             // After negotiation finishes, the coordinator retires its attempt.
             // Bridge supervision belongs to the registered transport instead.
@@ -287,6 +318,7 @@ export function createReconnectDeps(
         const path = await concrete.path();
         check(channel);
         setWebRTCSession({
+          effects,
           key: profile.id,
           bridge,
           channel,
@@ -325,18 +357,18 @@ export function createReconnectDeps(
     hasSession: hasLiveSession,
     closeSession: async (profileId) => {
       profileCloseGenerations.set(profileId, (profileCloseGenerations.get(profileId) ?? 0) + 1);
-      const closing = new Set([...serviceLookups].filter((item) => item.profileId === profileId).map((item) => item.sessionId));
+      const closing = new Map([...serviceLookups].filter((item) => item.profileId === profileId).map((item) => [item.sessionId, item.effects]));
       const serviceSession = serviceSessions.get(profileId);
       if (serviceSession) {
         serviceSessions.delete(profileId);
-        closing.add(serviceSession.sessionId);
+        closing.set(serviceSession.sessionId, serviceSession.effects);
       }
       const native = nativeSessions.get(profileId);
       if (native) {
         nativeSessions.delete(profileId);
         native.peer.close();
       }
-      await Promise.all([...closing].map((sessionId) => nativeWebRTCClose(sessionId).catch(() => undefined)));
+      await Promise.all([...closing].map(([sessionId, origin]) => nativeWebRTCClose(sessionId, origin).catch(() => undefined)));
       await closeWebRTCSession(profileId);
     },
     fingerprint,

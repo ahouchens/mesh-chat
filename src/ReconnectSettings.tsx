@@ -1,3 +1,4 @@
+import { useProfileRequestAdmission } from "./profile-lifetime";
 import { useCallback, useEffect, useState } from "react";
 import { RefreshCw, ShieldAlert } from "lucide-react";
 
@@ -54,6 +55,8 @@ function setupHints(profile: ReconnectProfile | null): string[] {
         return "Automatic reconnect is turned off for this contact.";
       case "peer_consent_missing":
         return "Automatic reconnect is turned off on the contact’s device.";
+      case "contact_not_approved":
+        return "Reconnect requires an approved, unblocked contact.";
       case "relay_required":
         return "Direct IP disclosure is off. Enable the community relay or allow direct IP disclosure.";
       default:
@@ -71,6 +74,7 @@ export function ReconnectSettings({
   coordinator: ReconnectCoordinator | null;
   onChanged: () => Promise<void>;
 }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   const [payload, setPayload] = useState<ReconnectProfilesPayload | null>(null);
   const [snapshot, setSnapshot] = useState<ReconnectSnapshot>(() =>
     coordinator ? coordinator.snapshot() : EMPTY,
@@ -90,7 +94,7 @@ export function ReconnectSettings({
     }
     setLoading(true);
     try {
-      const value = await serviceCommand<ReconnectProfilesPayload>("reconnect_profiles");
+      const value = await serviceCommand<ReconnectProfilesPayload>("reconnect_profiles", undefined, admitProfileRequest);
       setPayload(value && Array.isArray(value.profiles) ? value : null);
     } catch {
       // The service may be locked between renders.
@@ -148,7 +152,7 @@ export function ReconnectSettings({
         contact_id: contact.id,
         auto_reconnect: autoReconnect,
         allow_direct_ip_disclosure: allowDirectIpDisclosure,
-      });
+      }, admitProfileRequest);
       const shared = result.native_shared || (result.capabilities
         ? sendReconnectCapabilities(result.capabilities, contact.id)
         : false);

@@ -1,7 +1,18 @@
+import { CallDialog, IncomingCallPrompt, type CallPeer } from "./CallDialog";
+import { CallRecoveryNotice } from "./CallRecoveryNotice";
+import { ProfileLockScreen, ProfileSelector } from "./ProfileControls";
+import { authenticateProfile, bootProfiles, profileErrorCode, queryProfileCatalog, snapshotForCatalog, submitProfileAction, type ProfileAction, type ProfileCatalog } from "./core-profiles";
+import { ProfileLifetime, ProfileLifetimeContext, ProfileRetiredError, useProfileLifetime, useProfileRequestAdmission, useProfileEffectScope } from "./profile-lifetime";
+import { admitCoreRequest, type CoreRequestAdmission } from "./core-admission";
+import { prepareKeyedGroupCreation, submitKeyedGroupCreation, prepareKeyedGroupSend, submitKeyedGroupSend, type GroupCreationTicket, type GroupSendTicket } from "./core-groups";
+import { workspaceConnectivityLabel, workspaceStateLabel, workspaceSyncIssueLabel } from "./workspaceLabels";
+import { contactTrustDescription, contactTrustLabel, groupComposerState, groupInvitationBanner, groupInviteDeliveryLabel, groupPolicyLabel, pluralize } from "./groupLabels";
+import { canPrepareDirectHost, directActionLabel, directPhaseLabel, directFailureReport, directReasonLabel, sanitizedDoctorSummary } from "./directLabels";
+import { errorMessage } from "./errors";
+import { DirectMessageComposer } from "./DirectMessageComposer";
+import { GroupMessageComposer } from "./GroupMessageComposer";
+import { newOperationId } from "./operationId";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
-import { createPortal } from "react-dom";
-import { connectionPath, waitForCandidates } from "./webrtc-peer";
-import { acquireCallAudio, releaseCallAudio } from "./call-audio";
 import {
   BookUser,
   Bell,
@@ -26,10 +37,8 @@ import {
   Megaphone,
   MessageCircleMore,
   Mic,
-  MicOff,
   Moon,
   Phone,
-  PhoneOff,
   Pencil,
   Plus,
   QrCode,
@@ -47,11 +56,87 @@ import {
   UserRoundPlus,
   Users,
   Video,
-  VideoOff,
   WifiOff,
   X,
 } from "lucide-react";
 import {
+  coreApiAcceptInvitation,
+  coreApiBootstrapPreview,
+  coreApiCreateGroup,
+  coreApiCreateInvitation,
+  coreApiCreateProfile,
+  coreApiCreateWorkspace,
+  loadCallSettings,
+  saveCallSettings,
+  saveNetworkSettings,
+  coreApiPeerForDestination,
+  coreApiProfile,
+  coreApiRequest,
+  coreApiCloseGroup,
+  coreApiGroupInvitation,
+  coreApiGroupDraftSet,
+  coreApiWorkspaceDraftSet,
+  coreApiWorkspaceJoinDecision,
+  coreApiCreateWorkspaceInvitation,
+  coreApiRemoteProfile,
+  coreApiRemoteProfiles,
+  coreApiPreviewWorkspaceInvitation,
+  coreApiPreviewInvitation,
+  coreApiSnapshot,
+  coreApiJoinWorkspace,
+  coreApiSubmitWorkspacePrompt,
+  coreApiWorkspaceMemberRole,
+  coreApiWorkspacePolicy,
+  coreApiCreateWorkspaceChannel,
+  coreApiRecoverWorkspaceChannel,
+  coreApiRemoveWorkspaceMember,
+  coreApiWorkspaceChannelState,
+  coreApiUpdateWorkspaceChannel,
+  coreApiUpdateChannelMembers,
+  coreApiWorkspaceDeviceLinkDecision,
+  coreApiRequestDeviceRemoval,
+  coreApiWorkspaceMetadata,
+  coreApiWorkspaceAdminRequest,
+  coreApiWorkspaceLifecycle,
+  coreApiReportAuthorityLoss,
+  coreApiWorkspaceAuthority,
+  coreApiWorkspaceAuthorityOffer,
+  coreApiWorkspaceAdminSubmit,
+  coreApiRuntimeMutate,
+  coreApiRuntimeQuery,
+  coreApiWorkspaceConnection,
+  coreApiWorkspaceHistory,
+  coreApiWorkspaceAccessRecommendation,
+  coreApiWorkspaceSnapshot,
+  coreApiTimelineMutation,
+  coreApiTimelineQuery,
+  coreApiAdmissionGrantEnd,
+  coreApiAdmissionGrantAccept,
+  coreApiAdmissionGrantCreate,
+  coreApiAdmissionGrantList,
+  coreApiWorkspaceInvitationRevoke,
+  coreApiWorkspaceDisplayNameRequest,
+  coreApiWorkspaceDisplayNameDecision,
+  coreApiOpenWorkspaceDirect,
+  coreApiRouteUpdate,
+  coreApiUpdatePeer,
+  coreApiConversation,
+  coreApiConversationReaction,
+  coreApiDecidePeerRequest,
+  coreApiContactInvitation,
+  coreApiConnectionSupport,
+  coreApiConnectionDocument,
+  coreApiWorkspaceReadHintSync,
+  coreApiWorkspaceRetention,
+  coreApiDecideDeviceRemoval,
+  coreApiCreateWorkspaceDeviceLink,
+  coreApiSubmitDeviceLink,
+  coreApiOfferChannelTransfer,
+  coreApiAcceptChannelTransfer,
+  coreApiLeaveGroup,
+  coreApiRetryGroupInvitation,
+  coreApiRemoveGroupMember,
+  coreApiSendGroupMessage,
   initializeService,
   lockService,
   notificationCapability,
@@ -62,7 +147,6 @@ import {
   openNotificationSettings,
   openBatterySettings,
   requestNotificationPermission,
-  requestMediaPermission,
   runtimePlatform,
   setNativeTheme,
   setNativeBackgroundAvailability,
@@ -71,6 +155,9 @@ import {
 import { contactConnectionLabel, deliveryLabel, workspaceJoinStatus } from "./status";
 import { EmojiGlyph } from "./EmojiGlyph";
 import { MessageContent } from "./MessageContent";
+import { Dialog } from "./Dialog";
+import { Button } from "./Button";
+import { CreateWorkspaceDialog } from "./CreateWorkspaceDialog";
 import { WorkspaceMessageMenu } from "./WorkspaceMessageMenu";
 import { ConnectionDiagnostics } from "./ConnectionDiagnostics";
 import { ContactRequests } from "./ContactRequests";
@@ -98,8 +185,6 @@ import { InvitationImportActions, InvitationQrCode } from "./InvitationTransfer"
 import { classifyInvitationInput, InvitationTransferError, normalizeInvitationInput } from "./invitation-transfer";
 import packageInfo from "../package.json";
 import type {
-  CallIceConfiguration,
-  CallMedia,
   CallSettings,
   CallSummary,
   BackgroundAvailability,
@@ -242,90 +327,6 @@ function connectionDocumentKind(value: string): "reply" | "route" | null {
   return null;
 }
 
-function pluralize(count: number, singular: string, plural = `${singular}s`): string {
-  return `${count} ${count === 1 ? singular : plural}`;
-}
-
-function groupPolicyLabel(policy: GroupPostingPolicy): string {
-  return policy === "owner_admins" ? "Only the owner can post" : "Everyone can post";
-}
-
-function contactTrustLabel(contact: Contact): string {
-  switch (contact.trust) {
-    case "verified": return "Verified";
-    case "approved": return "Approved";
-    case "awaiting_consent": return "Waiting for acceptance";
-    case "pending_request": return "Incoming request";
-    case "identity_changed": return "Identity changed";
-    case "blocked": return "Blocked";
-  }
-}
-
-function contactTrustDescription(contact: Contact): string {
-  switch (contact.trust) {
-    case "verified": return "You compared this fingerprint with the contact through another trusted channel.";
-    case "approved": return "This contact accepted your connection, but the fingerprint has not been independently compared.";
-    case "awaiting_consent": return "Your connection request is still waiting for this person to accept it.";
-    case "pending_request": return "This person is waiting for you to accept or decline their request.";
-    case "identity_changed": return "Messaging is paused because this destination presented different identity material.";
-    case "blocked": return "Direct messages and connection requests from this contact are ignored.";
-  }
-}
-
-function groupInviteDeliveryLabel(member: GroupMember): string {
-  switch (member.invite_delivery_state) {
-    case "delivered": return "Invitation ready for review";
-    case "received_by_endpoint": return "Reached device · confirming receipt";
-    case "stored_for_delivery": return "Stored securely for delivery";
-    case "sending": return "Sending invitation";
-    case "waiting_for_keys": return "Trying to find device";
-    case "expired": return "Invitation expired";
-    case "failed": return "Invitation needs attention";
-    default: return "Invitation queued";
-  }
-}
-
-function groupInvitationBanner(members: GroupMember[]): string {
-  const awaiting = members.filter((member) => member.invite_delivery_state === "delivered");
-  const confirming = members.filter((member) => member.invite_delivery_state === "received_by_endpoint");
-  const unreachable = members.filter((member) => !["delivered", "received_by_endpoint", "stored_for_delivery"].includes(member.invite_delivery_state ?? "queued"));
-  if (unreachable.length > 0) {
-    const names = unreachable.map((member) => member.display_name).join(", ");
-    return `Trying to reach ${names}. Keep Mesh Chat open on both devices and use the same non-guest network.`;
-  }
-  if (confirming.length > 0) return `${pluralize(confirming.length, "invitation")} reached the device and is waiting for app confirmation.`;
-  if (awaiting.length > 0) return `${pluralize(awaiting.length, "invitation")} ready for review · waiting for acceptance.`;
-  return `${pluralize(members.length, "invitation")} stored for delivery.`;
-}
-
-function groupComposerState(group: Group, selfDestination: string): { canPost: boolean; reason: string } {
-  const activeMembers = group.members.filter((member) => member.status === "active");
-  const self = activeMembers.find((member) => member.destination_hash === selfDestination);
-  const hasRecipient = activeMembers.some((member) => member.destination_hash !== selfDestination);
-  const policyAllowsPosting = group.posting_policy === "members" || self?.role === "owner";
-  const canPost = group.status === "active"
-    && Boolean(self)
-    && !group.membership_update_pending
-    && hasRecipient
-    && policyAllowsPosting;
-  const reason = group.status === "closed"
-    ? "This group is closed. Messages already received remain on this device."
-    : group.status === "forked"
-      ? "Messaging is paused because conflicting membership information was detected."
-      : group.status === "joining"
-        ? "Waiting for the owner to accept you and publish the next membership update."
-        : group.status === "removed" || group.status === "left" || !self
-          ? "You are no longer an active member of this group."
-          : group.membership_update_pending
-            ? "Messaging is paused until the signed membership update reaches every current member."
-            : !hasRecipient
-              ? "There are no other active members to receive a message."
-              : !policyAllowsPosting
-                ? "Only the owner can post in this announcement channel."
-                : "";
-  return { canPost, reason };
-}
-
 function groupDeliveryLabel(message: GroupMessage): string {
   const summary = message.delivery_summary;
   if (!summary) return message.state ? deliveryLabel[message.state] : "Saved on this device";
@@ -342,82 +343,76 @@ function groupDeliveryLabel(message: GroupMessage): string {
   return `Sending to ${total}`;
 }
 
-function errorMessage(error: unknown): string {
-  const raw = String(error);
-  if (raw.includes("direct_connection_unavailable")) {
-    return "This device could not open a direct Internet path through the current network. Check whether the router permits UPnP, NAT-PMP, PCP, or inbound IPv6; otherwise use nearby access or explicitly choose an approved access point.";
-  }
-  if (raw.includes("profile_in_use")) {
-    return "Your encrypted profile is still in use by another Mesh Chat process. Close any other Mesh Chat window, wait a moment, and reopen the app. Your existing encrypted data is unchanged.";
-  }
-  if (raw.includes("protected_storage_unavailable")) {
-    return "Protected storage is unavailable. Turn on FileVault (macOS), use an EFS-capable NTFS profile (Windows), or place the profile on fscrypt/LUKS storage (Linux), then reopen Mesh Chat. No private data was written.";
-  }
-  if (raw.includes("credential_store_unavailable")) {
-    return "The operating-system credential store is unavailable. Unlock Keychain, Credential Manager, or your Linux Secret Service, then reopen Mesh Chat.";
-  }
-  if (raw.includes("mobile_runtime_unavailable") || raw.includes("service_start_failed")) {
-    return "The mobile messaging runtime could not start. Reopen Mesh Chat after unlocking the device and granting local-network access.";
-  }
-  if (raw.includes("service_timeout")) {
-    return "Mesh Chat did not respond in time. Check the conversation before trying again.";
-  }
-  if (raw.includes("service_busy")) {
-    return "Mesh Chat is finishing earlier delivery work. Wait a moment and try again.";
-  }
-  if (raw.includes("service_stopped") || raw.includes("service_not_running")) {
-    return "The messaging service stopped. Reopen Mesh Chat and try again.";
-  }
-  if (raw.includes("native_unavailable")) {
-    return "The on-device connection service stopped responding. Close and reopen Mesh Chat, then try again. Your saved request and messages are unchanged.";
-  }
-  if (raw.includes("workspace_already_known")) {
-    return "This workspace is already saved on this device. Open it from the workspace switcher to check its status. A different invitation cannot replace an existing join request.";
-  }
-  if (raw.includes("identity_mismatch")) {
-    return "This invitation’s identity check failed.";
-  }
-  if (raw.includes("invitation_expired")) {
-    return "This invitation has expired. Ask the sender to create a new one.";
-  }
-  if (raw.includes("invitation_invalid")) {
-    return "This does not appear to be a complete Mesh Chat invitation or connection document. Open the original Mesh Chat file or copy the entire value, including its prefix and everything after the colon.";
-  }
-  if (raw.includes("invitation_file_type_invalid")) {
-    return "Choose a .meshchat-invite, .meshchat-connect, .meshchat-route, .meshchat, or JSON invitation file.";
-  }
-  if (raw.includes("invitation_file_too_large")) {
-    return "That invitation file is larger than Mesh Chat can open safely.";
-  }
-  if (raw.includes("invitation_file_encoding_invalid")) {
-    return "That invitation file is not valid UTF-8 text. Ask the sender to share the original Mesh Chat file again.";
-  }
-  if (raw.includes("invitation_file_invalid")) {
-    return "That file does not contain a complete Mesh Chat invitation or connection document.";
-  }
-  if (raw.includes("invitation_file_unavailable")) {
-    return "Android could not read that file. Download it to this device and try again.";
-  }
-  if (raw.includes("contact_not_approved")) {
-    return "This contact is not approved for that action.";
-  }
-  if (raw.includes("contact_in_use")) {
-    return "Remove this contact from any pending group invitations before deleting them.";
-  }
-  if (raw.includes("stale_cursor")) {
-    return "History changed while this page was open. Reload from the newest retained page.";
-  }
-  if (raw.includes("history_pruned")) {
-    return "That history was pruned from this device under the active retention preference.";
-  }
-  if (raw.includes("workspace_limit_reached")) {
-    return "This device already has 16 workspaces. Remove a workspace you have left or closed before joining another.";
-  }
-  if (raw.includes("invalid_request")) {
-    return "That information could not be validated.";
-  }
-  return "Something went wrong. Your saved messages were not discarded.";
+async function fetchWorkspaceTimeline(
+  workspace: { id: string; core_handle?: string },
+  view: "threads" | "thread_messages" | "mentions" | "search" | "channel_messages" | "direct_messages",
+  params: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  return await coreApiTimelineQuery(
+    workspace.core_handle ?? "", view, params);
 }
+
+async function loadWorkspaceSnapshot(): Promise<WorkspaceSnapshot> {
+  return await coreApiWorkspaceSnapshot() as unknown as WorkspaceSnapshot;
+}
+
+async function fetchWorkspaceAccessRecommendation(
+  workspace: { id: string; core_handle?: string },
+  action: string,
+  params: Record<string, unknown>,
+  key?: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
+): Promise<Record<string, unknown>> {
+  return await coreApiWorkspaceAccessRecommendation(
+    workspace.core_handle ?? "", action as never, params, key, admit);
+}
+
+async function fetchWorkspaceHistory(
+  workspace: { id: string; core_handle?: string },
+  action: string,
+  params: Record<string, unknown>,
+  key?: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
+): Promise<Record<string, unknown>> {
+  return await coreApiWorkspaceHistory(
+    workspace.core_handle ?? "", action as never, params, key, admit);
+}
+
+async function fetchWorkspaceConnection(
+  workspace: { id: string; core_handle?: string } | null,
+  action: string,
+  params: Record<string, unknown>,
+  key?: string,
+  admit: CoreRequestAdmission = admitCoreRequest,
+): Promise<Record<string, unknown>> {
+  return await coreApiWorkspaceConnection(
+    workspace?.core_handle ?? null, action, params, key, admit);
+}
+
+async function fetchBackgroundStatus(): Promise<BackgroundAvailability> {
+  return await coreApiRuntimeQuery("background") as unknown as BackgroundAvailability;
+}
+
+async function setBackgroundAvailability(enabled: boolean, admit: CoreRequestAdmission = admitCoreRequest): Promise<BackgroundAvailability> {
+  return await coreApiRuntimeMutate("background_set", { enabled }, newOperationId(), admit) as unknown as BackgroundAvailability;
+}
+
+async function fetchNotificationState(): Promise<WorkspaceNotificationState> {
+  return await coreApiRuntimeQuery("notifications") as unknown as WorkspaceNotificationState;
+}
+
+async function setNotificationPreviews(hidden: boolean, admit: CoreRequestAdmission = admitCoreRequest): Promise<WorkspaceNotificationState> {
+  return await coreApiRuntimeMutate("notification_previews", { hidden }, newOperationId(), admit) as unknown as WorkspaceNotificationState;
+}
+
+async function openNotificationTarget(notificationId: string, lifetime: ProfileLifetime, generation: number): Promise<NotificationOpenTarget> {
+  const profile = await coreApiProfile();
+  const response = await lifetime.mutate(generation, () => coreApiRequest<{ result?: NotificationOpenTarget }>("runtime.mutate", {
+    profile: profile.profile, action: "notification_open", notification_id: notificationId,
+  }, newOperationId()));
+  return response.result ?? {} as NotificationOpenTarget;
+}
+
 
 function workspaceInvitationErrorMessage(error: unknown, value: string): string {
   if (error instanceof InvitationTransferError) return error.message;
@@ -432,102 +427,6 @@ function workspaceInvitationErrorMessage(error: unknown, value: string): string 
 
 function importedDocumentErrorMessage(error: unknown): string {
   return error instanceof InvitationTransferError ? error.message : errorMessage(error);
-}
-
-function Button({
-  children,
-  variant = "primary",
-  className = "",
-  ...props
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & {
-  variant?: "primary" | "secondary" | "ghost" | "danger";
-}) {
-  return (
-    <button className={`button button--${variant} ${className}`} {...props}>
-      {children}
-    </button>
-  );
-}
-
-const directPhaseLabel: Record<DirectDoctorStep["phase"], string> = {
-  precondition: "Internet route", ipv6: "Native IPv6", upnp: "UPnP",
-  nat_pmp: "NAT-PMP", pcp: "PCP", firewall: "Host firewall",
-  listener: "Invitation listener",
-};
-
-function directReasonLabel(reason: string): string {
-  const labels: Record<string, string> = {
-    ready_to_prepare: "Ready to prepare",
-    no_default_route: "No active default Internet route",
-    no_global_ipv4: "No directly assigned public IPv4",
-    no_global_ipv6: "No usable global IPv6 on the active route",
-    upnp_no_discovery: "No UPnP Internet gateway discovered",
-    upnp_wan_private: "Upstream or double NAT detected",
-    upnp_wan_shared: "Provider/shared NAT likely",
-    upnp_mapping_denied: "The router denied the UPnP mapping",
-    upnp_unsupported_lease: "The router does not support the requested UPnP lease",
-    nat_pmp_no_response: "No NAT-PMP response",
-    nat_pmp_mapping_denied: "The router denied the NAT-PMP mapping",
-    pcp_no_response: "No PCP response",
-    pcp_mapping_denied: "The router denied the PCP mapping",
-    upstream_nat_detected: "Upstream or double NAT detected",
-    listener_bind_failed: "The temporary listener could not start",
-    windows_firewall_blocked: "Windows Firewall needs attention",
-    windows_firewall_permission_required: "Permission will be requested after preparing",
-    firewall_check_unsupported: "Check this device’s firewall manually",
-    session_limit: "Too many temporary invitations are active",
-    direct_public_ipv4: "Public IPv4 is assigned directly to this device",
-    global_ipv6_available: "Usable global IPv6 is present",
-    mapping_prepared: "Prepared, not externally verified",
-    router_state_changed: "The router or address changed; create a new invitation",
-    manual_setup_required: "Automatic setup is unavailable",
-  };
-  return labels[reason] ?? "Unavailable on this network";
-}
-
-function directActionLabel(action: string): string {
-  const labels: Record<string, string> = {
-    retry: "Retry after checking this network.",
-    continue: "Continue to the remaining checks.",
-    prepare_direct: "Prepare the invitation, then keep Mesh Chat open.",
-    share_invitation: "Share the invitation and keep Mesh Chat open.",
-    wait_for_recipient: "Keep Mesh Chat open while the recipient connects.",
-    configure_firewall_after_prepare: "After preparing, allow only its temporary TCP port.",
-    connect_to_internet: "Connect this device to the Internet and retry.",
-    try_router_mapping: "Try a supported automatic router mapping or manual forward.",
-    try_another_method: "Try another listed mapping method or manual forwarding.",
-    check_host_firewall: "Check this device’s inbound firewall for the temporary TCP port.",
-    configure_upstream_router_or_bridge_mode: "Forward through both routers or use modem bridge/passthrough mode.",
-    contact_provider_or_use_approved_access_point: "Ask the provider about inbound service or choose an approved participant access point.",
-    set_up_manual_forward_or_choose_explicit_fallback: "Set up a manual TCP forward, choose same-network mode, or explicitly select an approved access point.",
-    stop_an_active_invitation: "Stop an older hosted invitation and retry.",
-    check_active_network_profile: "Connect using the intended Windows network profile and retry.",
-    retry_or_check_firewall: "Retry, then check the host firewall if binding still fails.",
-    restart_app: "Restart Mesh Chat and try again.",
-    follow_guided_firewall_instructions: "Use the guided narrow firewall rule or configure it manually.",
-    use_ipv6_firewall_instructions: "Allow only the temporary TCP port in the IPv6 firewall, then retry.",
-  };
-  return labels[action] ?? "Retry after checking this network.";
-}
-
-function sanitizedDoctorSummary(report: DirectDoctorReport): string {
-  return [
-    `Mesh Chat direct connection: ${directReasonLabel(report.summary.reason)}`,
-    ...report.checks.map((step) => `${directPhaseLabel[step.phase]}: ${step.result} — ${directReasonLabel(step.reason)}`),
-    `Next action: ${directActionLabel(report.summary.recommended_action)}`,
-  ].join("\n");
-}
-
-function canPrepareDirectHost(report: DirectDoctorReport): boolean {
-  return report.summary.result === "available"
-    || report.summary.result === "prepared_unverified";
-}
-
-function directFailureReport(reason: unknown): DirectDoctorReport | null {
-  const details = (reason as { details?: Record<string, string> })?.details;
-  if (!details?.phase || !details.result || !details.reason || !details.recommended_action) return null;
-  const step = details as unknown as DirectDoctorStep;
-  return { summary: step, checks: [step] };
 }
 
 function ReturnConnectionUnavailable({ report, busy, onRetry }: {
@@ -549,6 +448,7 @@ function ReturnConnectionUnavailable({ report, busy, onRetry }: {
     <Button variant="secondary" disabled={busy} onClick={onRetry}><RefreshCw size={17} /> {busy ? "Checking…" : "Check this network again"}</Button>
   </section>;
 }
+
 
 function DirectDoctorPanel({
   report,
@@ -659,6 +559,7 @@ function candidateSummary(results: ParticipantCandidateResult[]): string {
 }
 
 function InvitationShare({ formats, onShared }: { formats: InvitationFormats; onShared?: () => void }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   const [feedback, setFeedback] = useState("");
   const [hostingStopped, setHostingStopped] = useState(false);
   const [firewallBusy, setFirewallBusy] = useState(false);
@@ -706,7 +607,7 @@ function InvitationShare({ formats, onShared }: { formats: InvitationFormats; on
     if (!formats.host_session_id || firewallBusy) return;
     setFirewallBusy(true);
     try {
-      const result = await serviceCommand<DirectDoctorStep>("configure_participant_firewall", { access_id: formats.host_session_id });
+      const result = await serviceCommand<DirectDoctorStep>("configure_participant_firewall", { access_id: formats.host_session_id }, admitProfileRequest);
       setFeedback(result.result === "prepared_unverified"
         ? "Temporary Windows Firewall rule added for this invitation only."
         : `${directReasonLabel(result.reason)} ${directActionLabel(result.recommended_action)}`);
@@ -717,7 +618,7 @@ function InvitationShare({ formats, onShared }: { formats: InvitationFormats; on
   const stopHosting = async () => {
     if (!formats.host_session_id) return;
     try {
-      await serviceCommand("stop_participant_host", { access_id: formats.host_session_id });
+      await serviceCommand("stop_participant_host", { access_id: formats.host_session_id }, admitProfileRequest);
       setHostingStopped(true);
       setFeedback("Direct hosting stopped. Create a new Internet invitation to reconnect.");
     } catch (reason) {
@@ -788,724 +689,6 @@ function ConnectionDocumentShare({ formats, kind, onShared }: { formats: Connect
   </section>;
 }
 
-function Dialog({
-  title,
-  onClose,
-  children,
-  wide = false,
-}: {
-  title: string;
-  onClose: () => void;
-  children: React.ReactNode;
-  wide?: boolean;
-}) {
-  const closeRef = useRef<HTMLButtonElement>(null);
-  const dialogRef = useRef<HTMLElement>(null);
-  const onCloseRef = useRef(onClose);
-  const titleId = useId();
-  useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
-  useEffect(() => {
-    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    closeRef.current?.focus();
-    const onKeyDown = (event: KeyboardEvent) => {
-      const currentDialog = dialogRef.current;
-      if (!currentDialog || currentDialog.closest('[aria-hidden="true"]')) return;
-      const visibleDialogs = [...document.querySelectorAll<HTMLElement>('[role="dialog"][aria-modal="true"]')]
-        .filter((dialog) => !dialog.closest('[aria-hidden="true"]'));
-      if (visibleDialogs.at(-1) !== currentDialog) return;
-      if (event.key === "Escape" && !event.defaultPrevented) {
-        event.preventDefault();
-        onCloseRef.current();
-        return;
-      }
-      if (event.key !== "Tab" || event.defaultPrevented) return;
-      const focusable = [...currentDialog.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), summary, [href], [tabindex]:not([tabindex="-1"])')]
-        .filter((element) => element.getAttribute("aria-hidden") !== "true");
-      if (focusable.length === 0) return;
-      const first = focusable[0];
-      const last = focusable.at(-1)!;
-      if (event.shiftKey && (document.activeElement === first || !currentDialog.contains(document.activeElement))) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && (document.activeElement === last || !currentDialog.contains(document.activeElement))) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("keydown", onKeyDown);
-      if (previousFocus?.isConnected) previousFocus.focus();
-    };
-  }, []);
-  return (
-    <div className="dialog-backdrop" role="presentation" onMouseDown={onClose}>
-      <section
-        ref={dialogRef}
-        className={`dialog ${wide ? "dialog--wide" : ""}`}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        onMouseDown={(event) => event.stopPropagation()}
-      >
-        <div className="dialog__header">
-          <h2 id={titleId}>{title}</h2>
-          <button ref={closeRef} className="icon-button" onClick={onClose} aria-label="Close">
-            <X size={20} />
-          </button>
-        </div>
-        {children}
-      </section>
-    </div>
-  );
-}
-
-function callFingerprint(sdp: string): string {
-  for (const line of sdp.split(/\r?\n/)) {
-    if (line.startsWith("a=fingerprint:")) return line.slice("a=fingerprint:".length).trim();
-  }
-  throw new Error("The call could not be secured (no DTLS fingerprint).");
-}
-
-function callHasNetworkCandidate(sdp: string): boolean {
-  return /(?:^|\r?\n)a=candidate:/u.test(sdp);
-}
-
-type CallPeer = { id: string; display_name: string };
-
-function IncomingCallPrompt({ call, name, onReview, onChanged }: {
-  call: CallSummary; name: string; onReview: () => void; onChanged: () => Promise<void>;
-}) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const decline = async () => {
-    if (busy) return;
-    setBusy(true);
-    setError("");
-    try {
-      await serviceCommand("end_call", { call_id: call.id, reason: "declined" });
-      await onChanged();
-    } catch {
-      setError("The call could not be dismissed. Try again.");
-    } finally {
-      setBusy(false);
-    }
-  };
-  // Keep the alert above Settings and an invitation dialog which may still be
-  // open. Receiving an invitation never starts microphone or camera capture.
-  return createPortal(<Dialog title={`Incoming ${call.media === "video" ? "video" : "audio"} call`} onClose={() => void decline()}>
-    <p>{name} is calling.</p>
-    {error && <p className="form-error" role="alert">{error}</p>}
-    <div className="dialog-actions">
-      <Button variant="secondary" disabled={busy} onClick={() => void decline()}>Decline</Button>
-      <Button disabled={busy} onClick={onReview}>Review</Button>
-    </div>
-  </Dialog>, document.body);
-}
-
-function CallDialog({
-  contact,
-  initialCall,
-  onClose,
-  onChanged,
-}: {
-  contact: CallPeer;
-  initialCall?: CallSummary;
-  onClose: () => void;
-  onChanged: () => Promise<void>;
-}) {
-  const [call, setCall] = useState<CallSummary | undefined>(initialCall);
-  const [media, setMedia] = useState<CallMedia | null>(null);
-  const [phase, setPhase] = useState<"idle" | "preparing" | "calling" | "ringing" | "connecting" | "in_call" | "ended" | "error">(
-    initialCall?.direction === "inbound" && initialCall.state === "ringing" ? "ringing" : "idle",
-  );
-  const [muted, setMuted] = useState(false);
-  const [cameraEnabled, setCameraEnabled] = useState(initialCall?.media === "video");
-  const [path, setPath] = useState<"direct" | "relay" | "unknown">("unknown");
-  const [quality, setQuality] = useState<"good" | "fair" | "poor" | "unknown">("unknown");
-  const [error, setError] = useState("");
-  const pcRef = useRef<RTCPeerConnection | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const remoteStreamRef = useRef<MediaStream | null>(null);
-  const restartTimerRef = useRef<number | null>(null);
-  const qualityTimerRef = useRef<number | null>(null);
-  const audioOwnerRef = useRef<object | null>(null);
-  const mediaOperationRef = useRef(0);
-  const mediaOperationPendingRef = useRef(false);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const localVideoRef = useRef<HTMLVideoElement | null>(null);
-  const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
-  const callIdRef = useRef<string | undefined>(initialCall?.id);
-  const roleRef = useRef<"caller" | "callee" | undefined>(initialCall?.role);
-  const remoteSetRef = useRef(false);
-  const pollRef = useRef<number | null>(null);
-  const pollBusyRef = useRef<object | null>(null);
-  const restartInFlightRef = useRef(false);
-  const restartAnswerInFlightRef = useRef(false);
-  const lastRestartOfferRef = useRef("");
-  const lastRestartAnswerRef = useRef("");
-  const restartRef = useRef<() => void>(() => undefined);
-
-  const cleanup = useCallback(() => {
-    mediaOperationRef.current += 1;
-    mediaOperationPendingRef.current = false;
-    pollBusyRef.current = null;
-    restartInFlightRef.current = false;
-    restartAnswerInFlightRef.current = false;
-    if (pollRef.current !== null) {
-      window.clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
-    streamRef.current?.getTracks().forEach((track) => track.stop());
-    streamRef.current = null;
-    remoteStreamRef.current = null;
-    for (const timer of [restartTimerRef, qualityTimerRef]) {
-      if (timer.current !== null) window.clearTimeout(timer.current);
-      timer.current = null;
-    }
-    const pc = pcRef.current;
-    pcRef.current = null;
-    if (pc) {
-      pc.ontrack = null;
-      pc.onconnectionstatechange = null;
-      pc.close();
-    }
-    if (audioRef.current) audioRef.current.srcObject = null;
-    if (localVideoRef.current) localVideoRef.current.srcObject = null;
-    if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
-    if (audioOwnerRef.current) {
-      const owner = audioOwnerRef.current;
-      audioOwnerRef.current = null;
-      void releaseCallAudio(owner).catch(() => undefined);
-    }
-  }, []);
-
-  const failCall = useCallback((message: string) => {
-    const callId = callIdRef.current;
-    cleanup();
-    if (callId) {
-      void serviceCommand("end_call", { call_id: callId, reason: "cancelled" }).catch(() => undefined);
-    }
-    setError(message);
-    setPhase("error");
-  }, [cleanup]);
-
-  useEffect(() => cleanup, [cleanup]);
-
-  useEffect(() => {
-    if (phase !== "ringing" || !call?.id) return;
-    let active = true;
-    let busy = false;
-    const timer = window.setInterval(async () => {
-      if (busy) return;
-      busy = true;
-      try {
-        const latest = await serviceCommand<CallMedia>("call_media", { call_id: call.id });
-        if (!active) return;
-        if (["ended", "declined", "busy", "no_answer", "failed"].includes(latest.state)) {
-          cleanup();
-          setPhase(latest.state === "failed" ? "error" : "ended");
-          if (latest.state === "failed") setError("The call ended unexpectedly.");
-        }
-      } catch {
-        // Keep the invitation visible through a transient service read error.
-      } finally {
-        busy = false;
-      }
-    }, 1000);
-    return () => { active = false; window.clearInterval(timer); };
-  }, [call?.id, cleanup, phase]);
-
-  useEffect(() => {
-    const onOnline = () => {
-      const pc = pcRef.current;
-      if (!callIdRef.current || !pc) return;
-      if (restartTimerRef.current !== null) window.clearTimeout(restartTimerRef.current);
-      restartTimerRef.current = window.setTimeout(() => {
-        restartTimerRef.current = null;
-        if (pcRef.current === pc) restartRef.current();
-      }, 1000);
-    };
-    window.addEventListener("online", onOnline);
-    return () => window.removeEventListener("online", onOnline);
-  }, []);
-
-  const inspectPath = useCallback(async (pc: RTCPeerConnection) => {
-    const path = await connectionPath(pc);
-    if (pcRef.current === pc) setPath(path === "relayed" ? "relay" : path);
-  }, []);
-
-  const inspectQuality = useCallback(async (pc: RTCPeerConnection) => {
-    try {
-      const stats = await pc.getStats();
-      if (pcRef.current !== pc) return;
-      let lost = 0;
-      let received = 0;
-      let jitter = 0;
-      stats.forEach((report) => {
-        const value = report as unknown as Record<string, unknown>;
-        if (value.type !== "inbound-rtp") return;
-        lost += Number(value.packetsLost ?? 0);
-        received += Number(value.packetsReceived ?? 0);
-        jitter = Math.max(jitter, Number(value.jitter ?? 0));
-      });
-      const total = lost + received;
-      const loss = total > 0 ? lost / total : 0;
-      setQuality(loss > 0.08 || jitter > 0.08 ? "poor" : loss > 0.02 || jitter > 0.03 ? "fair" : total > 0 ? "good" : "unknown");
-    } catch {
-      if (pcRef.current === pc) setQuality("unknown");
-    }
-  }, []);
-
-  const attachPeer = useCallback((configuration: CallIceConfiguration) => {
-    const pc = new RTCPeerConnection({
-      iceServers: configuration.iceServers,
-      iceTransportPolicy: configuration.iceTransportPolicy,
-    });
-    pc.ontrack = (event) => {
-      if (pcRef.current !== pc) return;
-      const stream = remoteStreamRef.current ?? event.streams[0] ?? new MediaStream();
-      if (!stream.getTracks().includes(event.track)) stream.addTrack(event.track);
-      remoteStreamRef.current = stream;
-      if (audioRef.current) {
-        audioRef.current.srcObject = stream;
-        void audioRef.current.play().catch(() => undefined);
-      }
-      if (event.track.kind === "video" && remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = stream;
-        void remoteVideoRef.current.play().catch(() => undefined);
-      }
-    };
-    pc.onconnectionstatechange = () => {
-      if (pcRef.current !== pc) return;
-      if (pc.connectionState === "connected") {
-        if (restartTimerRef.current !== null) window.clearTimeout(restartTimerRef.current);
-        restartTimerRef.current = null;
-        setPhase("in_call");
-        setError("");
-        void inspectPath(pc);
-        void inspectQuality(pc);
-        if (qualityTimerRef.current !== null) window.clearTimeout(qualityTimerRef.current);
-        qualityTimerRef.current = window.setTimeout(() => {
-          qualityTimerRef.current = null;
-          if (pcRef.current === pc) void inspectQuality(pc);
-        }, 3000);
-      }
-      if (pc.connectionState === "disconnected") {
-        setPhase("connecting");
-        if (restartTimerRef.current === null) {
-          restartTimerRef.current = window.setTimeout(() => {
-            restartTimerRef.current = null;
-            if (pcRef.current === pc) restartRef.current();
-          }, 1500);
-        }
-      }
-      if (pc.connectionState === "failed") {
-        failCall("The media path could not be established.");
-      }
-    };
-    pcRef.current = pc;
-    return pc;
-  }, [failCall, inspectPath, inspectQuality]);
-
-  const startPolling = useCallback((callId: string) => {
-    if (pollRef.current !== null) window.clearInterval(pollRef.current);
-    pollRef.current = window.setInterval(async () => {
-      const pc = pcRef.current;
-      if (!pc || callIdRef.current !== callId || pollBusyRef.current) return;
-      const operation = mediaOperationRef.current;
-      const current = () => pcRef.current === pc && callIdRef.current === callId && mediaOperationRef.current === operation;
-      const poll = {};
-      pollBusyRef.current = poll;
-      try {
-        let latest: CallMedia;
-        try {
-          latest = await serviceCommand<CallMedia>("call_media", { call_id: callId });
-        } catch {
-          // A transient service read can be retried on the next poll.
-          return;
-        }
-        if (!current()) return;
-        setMedia(latest);
-        setCall((current) => current ? { ...current, ...latest } : current);
-        if (["ended", "declined", "busy", "no_answer", "failed"].includes(latest.state)) {
-          cleanup();
-          setPhase(latest.state === "failed" ? "error" : "ended");
-          if (latest.state === "failed") setError("The call ended unexpectedly.");
-          return;
-        }
-        if (
-          latest.restart_answer &&
-          lastRestartAnswerRef.current !== latest.restart_answer &&
-          pc.signalingState === "have-local-offer"
-        ) {
-          await pc.setRemoteDescription({ type: "answer", sdp: latest.restart_answer });
-          if (!current()) return;
-          lastRestartAnswerRef.current = latest.restart_answer;
-          remoteSetRef.current = true;
-          setPhase(pc.connectionState === "connected" ? "in_call" : "connecting");
-          void inspectPath(pc);
-        }
-        if (
-          latest.restart_offer &&
-          roleRef.current === "callee" &&
-          lastRestartOfferRef.current !== latest.restart_offer &&
-          !restartAnswerInFlightRef.current
-        ) {
-          restartAnswerInFlightRef.current = true;
-          try {
-            if (current()) {
-              await pc.setRemoteDescription({ type: "offer", sdp: latest.restart_offer });
-              if (!current()) return;
-              const answer = await pc.createAnswer();
-              if (!current()) return;
-              await pc.setLocalDescription(answer);
-              if (!current()) return;
-              await waitForCandidates(pc);
-              if (!current()) return;
-              const sdp = pc.localDescription?.sdp;
-              if (sdp) {
-                await serviceCommand("answer_call_restart", {
-                  call_id: callId,
-                  sdp,
-                  dtls_fingerprint: callFingerprint(sdp),
-                });
-                if (!current()) return;
-                lastRestartOfferRef.current = latest.restart_offer;
-                setPhase(pc.connectionState === "connected" ? "in_call" : "connecting");
-              }
-            }
-          } catch (reason) {
-            if (current()) failCall(errorMessage(reason));
-            return;
-          } finally {
-            if (current()) restartAnswerInFlightRef.current = false;
-          }
-        }
-        if (latest.remote_sdp && !remoteSetRef.current && pc.signalingState === "have-local-offer") {
-          await pc.setRemoteDescription({ type: "answer", sdp: latest.remote_sdp });
-          if (!current()) return;
-          remoteSetRef.current = true;
-          setPhase(pc.connectionState === "connected" ? "in_call" : "connecting");
-        }
-        if (latest.state === "in_call" && pc.connectionState === "connected") setPhase("in_call");
-      } catch (reason) {
-        if (current()) failCall(errorMessage(reason));
-      } finally {
-        if (pollBusyRef.current === poll) pollBusyRef.current = null;
-      }
-    }, 1000);
-  }, [cleanup, failCall, inspectPath]);
-
-  const prepareMedia = useCallback(async (media: "audio" | "video") => {
-    if (!navigator.mediaDevices?.getUserMedia) {
-      throw new Error("This device does not expose a microphone to Mesh Chat.");
-    }
-    if (await runtimePlatform() !== "desktop") {
-      const permission = await requestMediaPermission(media);
-      if (!permission.audio || (media === "video" && !permission.camera)) {
-        throw new Error(media === "video" ? "Microphone and camera access are required for a video call." : "Microphone access is required for an audio call.");
-      }
-    }
-    return navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-      video: media === "video" ? { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } } : false,
-    });
-  }, []);
-
-  const attemptRestart = useCallback(async () => {
-    const callId = callIdRef.current;
-    const pc = pcRef.current;
-    if (!callId || !pc || restartInFlightRef.current) return;
-    if (roleRef.current !== "caller" || pc.signalingState !== "stable" ||
-        !["disconnected", "failed"].includes(pc.connectionState)) return;
-    const operation = mediaOperationRef.current;
-    const current = () => pcRef.current === pc && callIdRef.current === callId && mediaOperationRef.current === operation;
-    restartInFlightRef.current = true;
-    try {
-      setPhase("connecting");
-      const offer = await pc.createOffer({ iceRestart: true });
-      if (!current()) return;
-      await pc.setLocalDescription(offer);
-      if (!current()) return;
-      await waitForCandidates(pc);
-      if (!current()) return;
-      const sdp = pc.localDescription?.sdp;
-      if (!sdp) throw new Error("The reconnecting call offer could not be created.");
-      if (!callHasNetworkCandidate(sdp)) throw new Error("No call network candidate was found. Check the connection or configure TURN.");
-      await serviceCommand("restart_call", {
-        call_id: callId,
-        sdp,
-        dtls_fingerprint: callFingerprint(sdp),
-      });
-      if (!current()) return;
-      setPhase(pc.connectionState === "connected" ? "in_call" : "connecting");
-    } catch (reason) {
-      if (current()) failCall(errorMessage(reason));
-    } finally {
-      if (current()) restartInFlightRef.current = false;
-    }
-  }, [failCall, waitForCandidates]);
-  restartRef.current = () => { void attemptRestart(); };
-
-  const configureVideoSender = useCallback(async (pc: RTCPeerConnection, stream: MediaStream) => {
-    const track = stream.getVideoTracks()[0];
-    if (!track) return;
-    const sender = pc.getSenders().find((candidate) => candidate.track === track);
-    if (!sender) return;
-    try {
-      const capabilities = RTCRtpSender.getCapabilities("video");
-      if (capabilities) {
-        const codecs = [...capabilities.codecs].sort((left, right) => {
-          const score = (mime: string) => mime === "video/VP8" ? 0 : mime === "video/VP9" ? 1 : 2;
-          return score(left.mimeType) - score(right.mimeType);
-        });
-        pc.getTransceivers().find((transceiver) => transceiver.sender === sender)?.setCodecPreferences(codecs);
-      }
-    } catch {
-      // The platform may not expose codec preferences; keep its default.
-    }
-    try {
-      const parameters = sender.getParameters();
-      if (parameters.encodings[0]) {
-        parameters.encodings[0].maxBitrate = 500_000;
-        await sender.setParameters(parameters);
-      }
-    } catch {
-      // Bitrate shaping is best-effort; the call still proceeds.
-    }
-  }, []);
-
-  const startCall = useCallback(async (media: "audio" | "video") => {
-    if (mediaOperationPendingRef.current) return;
-    mediaOperationPendingRef.current = true;
-    const operation = ++mediaOperationRef.current;
-    const current = () => operation === mediaOperationRef.current;
-    let stream: MediaStream | null = null;
-    const audioOwner = {};
-    callIdRef.current = undefined;
-    roleRef.current = undefined;
-    remoteSetRef.current = false;
-    lastRestartOfferRef.current = "";
-    lastRestartAnswerRef.current = "";
-    setCall(undefined);
-    setMedia(null);
-    setMuted(false);
-    setPath("unknown");
-    setQuality("unknown");
-    setError("");
-    setPhase("preparing");
-    try {
-      const capturedStream = await prepareMedia(media);
-      stream = capturedStream;
-      if (!current()) throw new Error("Call cancelled.");
-      streamRef.current = capturedStream;
-      if (localVideoRef.current) localVideoRef.current.srcObject = capturedStream;
-      audioOwnerRef.current = audioOwner;
-      const focus = await acquireCallAudio(audioOwner, media);
-      if (!current()) throw new Error("Call cancelled.");
-      if (!focus.granted) throw new Error("Android could not take call-audio focus.");
-      const configuration = await serviceCommand<CallIceConfiguration>("call_ice_servers");
-      if (!current()) throw new Error("Call cancelled.");
-      const pc = attachPeer(configuration);
-      capturedStream.getTracks().forEach((track) => pc.addTrack(track, capturedStream));
-      void configureVideoSender(pc, capturedStream);
-      const offer = await pc.createOffer();
-      if (!current()) throw new Error("Call cancelled.");
-      await pc.setLocalDescription(offer);
-      if (!current()) throw new Error("Call cancelled.");
-      await waitForCandidates(pc);
-      if (!current()) throw new Error("Call cancelled.");
-      const sdp = pc.localDescription?.sdp;
-      if (!sdp) throw new Error("The call offer could not be created.");
-      if (!callHasNetworkCandidate(sdp)) throw new Error("No call network candidate was found. Check the connection or configure TURN.");
-      const result = await serviceCommand<CallSummary>("start_call", {
-        contact_id: contact.id,
-        media,
-        sdp,
-        dtls_fingerprint: callFingerprint(sdp),
-      });
-      if (!current()) {
-        await serviceCommand("end_call", { call_id: result.id, reason: "cancelled" }).catch(() => undefined);
-        throw new Error("Call cancelled.");
-      }
-      callIdRef.current = result.id;
-      roleRef.current = result.role;
-      setCall(result);
-      setCameraEnabled(media === "video");
-      setPhase(pc.connectionState === "connected" ? "in_call" : "calling");
-      startPolling(result.id);
-      await onChanged().catch(() => undefined);
-    } catch (reason) {
-      if (!current()) {
-        stream?.getTracks().forEach((track) => track.stop());
-        void releaseCallAudio(audioOwner).catch(() => undefined);
-        return;
-      }
-      failCall(errorMessage(reason));
-    } finally {
-      if (current()) mediaOperationPendingRef.current = false;
-    }
-  }, [attachPeer, configureVideoSender, contact.id, failCall, onChanged, prepareMedia, startPolling, waitForCandidates]);
-
-  const acceptCall = useCallback(async () => {
-    if (!call || mediaOperationPendingRef.current) return;
-    mediaOperationPendingRef.current = true;
-    const operation = ++mediaOperationRef.current;
-    const current = () => operation === mediaOperationRef.current;
-    let stream: MediaStream | null = null;
-    const audioOwner = {};
-    setError("");
-    setPhase("preparing");
-    try {
-      const details = await serviceCommand<CallMedia>("call_media", { call_id: call.id });
-      if (!current()) throw new Error("Call cancelled.");
-      if (!details.remote_sdp) throw new Error("This call invitation has no media description.");
-      const capturedStream = await prepareMedia(call.media);
-      stream = capturedStream;
-      if (!current()) throw new Error("Call cancelled.");
-      streamRef.current = capturedStream;
-      if (localVideoRef.current) localVideoRef.current.srcObject = capturedStream;
-      audioOwnerRef.current = audioOwner;
-      const focus = await acquireCallAudio(audioOwner, call.media);
-      if (!current()) throw new Error("Call cancelled.");
-      if (!focus.granted) throw new Error("Android could not take call-audio focus.");
-      const configuration = await serviceCommand<CallIceConfiguration>("call_ice_servers");
-      if (!current()) throw new Error("Call cancelled.");
-      const pc = attachPeer(configuration);
-      await pc.setRemoteDescription({ type: "offer", sdp: details.remote_sdp });
-      if (!current()) throw new Error("Call cancelled.");
-      capturedStream.getTracks().forEach((track) => pc.addTrack(track, capturedStream));
-      void configureVideoSender(pc, capturedStream);
-      const answer = await pc.createAnswer();
-      if (!current()) throw new Error("Call cancelled.");
-      await pc.setLocalDescription(answer);
-      if (!current()) throw new Error("Call cancelled.");
-      await waitForCandidates(pc);
-      if (!current()) throw new Error("Call cancelled.");
-      const sdp = pc.localDescription?.sdp;
-      if (!sdp) throw new Error("The call answer could not be created.");
-      if (!callHasNetworkCandidate(sdp)) throw new Error("No call network candidate was found. Check the connection or configure TURN.");
-      const result = await serviceCommand<CallSummary>("answer_call", {
-        call_id: call.id,
-        sdp,
-        dtls_fingerprint: callFingerprint(sdp),
-      });
-      if (!current()) throw new Error("Call cancelled.");
-      setCall(result);
-      roleRef.current = result.role;
-      setMedia(details);
-      setCameraEnabled(call.media === "video");
-      setPhase(pc.connectionState === "connected" ? "in_call" : "connecting");
-      startPolling(call.id);
-      await onChanged().catch(() => undefined);
-    } catch (reason) {
-      if (!current()) {
-        stream?.getTracks().forEach((track) => track.stop());
-        void releaseCallAudio(audioOwner).catch(() => undefined);
-        return;
-      }
-      failCall(errorMessage(reason));
-    } finally {
-      if (current()) mediaOperationPendingRef.current = false;
-    }
-  }, [attachPeer, call, configureVideoSender, failCall, onChanged, prepareMedia, startPolling, waitForCandidates]);
-
-  const hangup = useCallback(async (reason: "completed" | "declined" | "cancelled") => {
-    const callId = callIdRef.current;
-    cleanup();
-    setPhase("ended");
-    if (callId) {
-      try {
-        await serviceCommand("end_call", { call_id: callId, reason });
-        await onChanged();
-      } catch {
-        // The call may already have ended on the other side.
-      }
-    }
-    onClose();
-  }, [cleanup, onChanged, onClose]);
-
-  const closeCall = useCallback(() => {
-    if (phase === "idle" || phase === "ended" || phase === "error") {
-      cleanup();
-      onClose();
-      return;
-    }
-    void hangup("cancelled");
-  }, [cleanup, hangup, onClose, phase]);
-
-  const toggleMute = useCallback(() => {
-    const next = !muted;
-    streamRef.current?.getAudioTracks().forEach((track) => { track.enabled = !next; });
-    setMuted(next);
-  }, [muted]);
-
-  const toggleCamera = useCallback(() => {
-    const next = !cameraEnabled;
-    streamRef.current?.getVideoTracks().forEach((track) => { track.enabled = next; });
-    setCameraEnabled(next);
-  }, [cameraEnabled]);
-
-  const incoming = call?.direction === "inbound";
-  const active = phase === "in_call";
-
-  return createPortal(
-    <Dialog title={incoming ? `Call from ${contact.display_name}` : `Call ${contact.display_name}`} onClose={closeCall}>
-      <div className="stack">
-        <audio ref={audioRef} autoPlay playsInline hidden />
-        <video ref={localVideoRef} className="call-video call-video--local" autoPlay muted playsInline hidden={!cameraEnabled || phase === "ended" || phase === "error"} />
-        <video ref={remoteVideoRef} className="call-video" autoPlay muted playsInline hidden={call?.media !== "video" || phase === "ended" || phase === "error"} />
-        {phase === "idle" && (
-          <>
-            <p className="muted">Audio and video are sent directly to {contact.display_name} over the authenticated call path. Your microphone and camera start only after you choose a call.</p>
-            <div className="dialog-actions">
-              <Button variant="secondary" onClick={onClose}>Cancel</Button>
-              <Button onClick={() => void startCall("audio")}><Phone size={17} /> Audio call</Button>
-              <Button onClick={() => void startCall("video")}><Video size={17} /> Video call</Button>
-            </div>
-          </>
-        )}
-        {phase === "ringing" && (
-          <>
-            <p className="direct-host-status" role="status"><Phone size={17} /> Incoming {call?.media === "video" ? "video" : "audio"} call</p>
-            <p className="muted">Your microphone and camera stay off until you accept.</p>
-            <div className="dialog-actions">
-              <Button variant="danger" onClick={() => void hangup("declined")}>Decline</Button>
-              <Button onClick={() => void acceptCall()}><Phone size={17} /> Accept</Button>
-            </div>
-          </>
-        )}
-        {(phase === "preparing" || phase === "calling" || phase === "connecting") && (
-          <>
-            <p className="direct-host-status" role="status">
-              <RefreshCw size={17} /> {phase === "preparing" ? "Preparing media…" : phase === "calling" ? "Calling and waiting for an answer…" : "Connecting the media path…"}
-            </p>
-            <p className="muted">The call uses the signed Reticulum signaling path; the media path is direct when the network allows it.</p>
-            <div className="dialog-actions">
-              <Button variant="secondary" onClick={() => void hangup("cancelled")}>Cancel</Button>
-            </div>
-          </>
-        )}
-        {active && (
-          <>
-            <p className="direct-host-status" role="status"><Phone size={17} /> In call · {path === "relay" ? "Relayed via TURN" : path === "direct" ? "Direct media" : "Checking media path"} · {quality === "unknown" ? "Measuring quality" : quality === "good" ? "Good quality" : quality === "fair" ? "Fair quality" : "Poor quality"}</p>
-            <div className="dialog-actions">
-              <Button variant="secondary" onClick={toggleMute}>{muted ? <MicOff size={17} /> : <Mic size={17} />} {muted ? "Unmute" : "Mute"}</Button>
-              {call?.media === "video" && <Button variant="secondary" onClick={toggleCamera}>{cameraEnabled ? <Video size={17} /> : <VideoOff size={17} />} {cameraEnabled ? "Camera off" : "Camera on"}</Button>}
-              <Button variant="danger" onClick={() => void hangup("completed")}><PhoneOff size={17} /> Hang up</Button>
-            </div>
-          </>
-        )}
-        {phase === "ended" && <><p className="muted">Call ended.</p><div className="dialog-actions"><Button onClick={closeCall}>Close</Button></div></>}
-        {phase === "error" && <p className="form-error" role="alert">{error || "The call could not connect."}</p>}
-        {media && active && <p className="muted">{media.candidate_count} network candidate{media.candidate_count === 1 ? "" : "s"} exchanged.</p>}
-        {phase === "error" && <div className="dialog-actions">{call && <Button onClick={() => void startCall(call.media)}>Try again</Button>}<Button variant="secondary" onClick={closeCall}>Close</Button></div>}
-      </div>
-    </Dialog>, document.body
-  );
-}
-
 function Onboarding({
   initialInvitation,
   initialPairingCode = "",
@@ -1515,6 +698,7 @@ function Onboarding({
   initialPairingCode?: string;
   onReady: (snapshot: Snapshot, pendingInvitation?: string, startWebRTC?: boolean) => void;
 }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   const initialWorkspacePrefixOnly = isWorkspaceInvitationValue(initialInvitation) && isWorkspacePrefixOnly(initialInvitation);
   const [mode, setMode] = useState<OnboardingMode>(initialInvitation ? "join" : initialPairingCode ? "start" : "home");
   const [webRTCJoin, setWebRTCJoin] = useState(Boolean(initialPairingCode));
@@ -1530,6 +714,12 @@ function Onboarding({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(() => initialWorkspacePrefixOnly ? incompleteWorkspacePrefixMessage(initialInvitation) : "");
   const previewGeneration = useRef(0);
+  const profileCreationInFlight = useRef(false);
+  const profileCreationOperations = useRef(new Map<string, {
+    key: string;
+    attempted: boolean;
+    accepted: boolean;
+  }>());
 
   const inspectInvitation = useCallback(async (candidate: string) => {
     const generation = ++previewGeneration.current;
@@ -1551,10 +741,7 @@ function Onboarding({
           return;
         }
         if (kind === "workspace_device") {
-          const checked = await serviceCommand<WorkspaceDeviceLinkPreview>(
-            "preview_workspace_device_link",
-            { device_link: normalized },
-          );
+          const checked = await coreApiBootstrapPreview("device_link", normalized);
           if (generation !== previewGeneration.current) return;
           setWorkspaceContext({
             kind: "device",
@@ -1562,10 +749,7 @@ function Onboarding({
             memberDisplayName: checked.member_display_name,
           });
         } else {
-          const checked = await serviceCommand<WorkspaceInvitationPreview>(
-            "preview_workspace_invitation",
-            { invitation: normalized },
-          );
+          const checked = await coreApiBootstrapPreview("workspace", normalized);
           if (generation !== previewGeneration.current) return;
           setWorkspaceContext({
             kind: "workspace",
@@ -1577,9 +761,7 @@ function Onboarding({
         setMode("start");
         return;
       }
-      const checked = await serviceCommand<InvitationPreview>("preview_invitation", {
-        invitation: normalized,
-      });
+      const checked = await coreApiBootstrapPreview("personal", normalized);
       if (generation !== previewGeneration.current) return;
       setPreview(checked);
       setRemoteConsent(false); setI2PConsent(false);
@@ -1613,20 +795,49 @@ function Onboarding({
   }, [initialPairingCode]);
 
   const createProfile = async () => {
+    const displayName = name.trim();
+    if (!displayName || profileCreationInFlight.current) return;
+    if (mode === "join" && (!preview
+      || Boolean(preview.remote_profile) && !remoteConsent
+      || Boolean(preview.i2p_access_point) && !i2pConsent)) return;
+    const hasPriorAttempt = [...profileCreationOperations.current.values()].some((operation) => operation.attempted);
+    const operation = profileCreationOperations.current.get(displayName)
+      ?? { key: newOperationId(), attempted: false, accepted: false };
+    profileCreationOperations.current.set(displayName, operation);
+    profileCreationInFlight.current = true;
     setBusy(true);
     setError("");
+    let ready: Snapshot | null = null;
     try {
-      await serviceCommand("create_profile", { display_name: name });
-      const ready = await serviceCommand<Snapshot>("snapshot");
+      // Resolve an uncertain response before another explicit submission,
+      // including one where the user edited the proposed display name.
+      ready = hasPriorAttempt ? await coreApiSnapshot() as unknown as Snapshot : null;
+      if (ready?.profile && ready.profile.display_name !== displayName) {
+        setError(`This device already has a profile named ${ready.profile.display_name}. Use that name to continue, or reopen Mesh Chat.`);
+        return;
+      }
+      if (!ready?.profile) {
+        if (operation.accepted) throw new Error("profile_snapshot_pending");
+        operation.attempted = true;
+        await coreApiCreateProfile(displayName, operation.key, admitProfileRequest);
+        operation.accepted = true;
+        ready = await coreApiSnapshot() as unknown as Snapshot;
+      }
+      if (!ready.profile) throw new Error("profile_snapshot_pending");
+      operation.accepted = true;
       if (mode === "join") {
-        await serviceCommand("accept_invitation", { invitation, ...(preview?.i2p_access_point ? { i2p_consent: i2pConsent } : {}) });
+        await coreApiAcceptInvitation(invitation,
+          Boolean(preview?.i2p_access_point && i2pConsent), admitProfileRequest);
         onReady(ready);
       } else {
         onReady(ready, pendingWorkspaceInvitation || undefined, webRTCJoin);
       }
     } catch (reason) {
-      setError(errorMessage(reason));
+      setError(operation.accepted && !ready?.profile
+        ? "Your profile was created. Try again to load it; this will not create another profile."
+        : errorMessage(reason));
     } finally {
+      profileCreationInFlight.current = false;
       setBusy(false);
     }
   };
@@ -1646,7 +857,7 @@ function Onboarding({
           <p className="muted">They can open this on a device that already has Mesh Chat.</p>
           {reachabilityWarning && <p className="direct-host-warning" role="status"><WifiOff size={17} /> {reachabilityWarning}</p>}
           <InvitationShare formats={formats} />
-          <Button variant="ghost" onClick={async () => onReady(await serviceCommand("snapshot"))}>
+          <Button variant="ghost" onClick={async () => onReady(await coreApiSnapshot() as unknown as Snapshot)}>
             Open Mesh Chat <ChevronRight size={18} />
           </Button>
         </section>
@@ -1771,6 +982,7 @@ function SecurityDetails({ fingerprint, destination, open, onOpenChange }: { fin
 }
 
 function NewChatDialog({ initialInvitation, initialTab = "invite", initialConnection = "direct_tcp", remoteProfiles, onClose, onChanged, onWorkspaceInvitation }: { initialInvitation: string; initialTab?: "invite" | "join"; initialConnection?: ConnectionTransportKind; remoteProfiles: RemoteProfile[]; onClose: () => void; onChanged: () => Promise<void>; onWorkspaceInvitation: (value: string) => void }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   const [tab, setTab] = useState<"invite" | "join">(initialInvitation ? "join" : initialTab);
   const [formats, setFormats] = useState<InvitationFormats | null>(null);
   const [raw, setRaw] = useState(initialInvitation);
@@ -1800,10 +1012,10 @@ function NewChatDialog({ initialInvitation, initialTab = "invite", initialConnec
 
   const stopUnsharedHost = async () => {
     const id = generatedHostSession.current;
-    if (id && !shared) await serviceCommand("stop_participant_host", { access_id: id }).catch(() => undefined);
+    if (id && !shared) await serviceCommand("stop_participant_host", { access_id: id }, admitProfileRequest).catch(() => undefined);
     generatedHostSession.current = null;
     const replyId = replyHostSession.current;
-    if (replyId && !replyShared) await serviceCommand("stop_participant_host", { access_id: replyId }).catch(() => undefined);
+    if (replyId && !replyShared) await serviceCommand("stop_participant_host", { access_id: replyId }, admitProfileRequest).catch(() => undefined);
     replyHostSession.current = null;
   };
   const closeDialog = async () => { await stopUnsharedHost(); onClose(); };
@@ -1814,7 +1026,7 @@ function NewChatDialog({ initialInvitation, initialTab = "invite", initialConnec
   };
   const checkDirect = async () => {
     setBusy(true); setInviteError("");
-    try { setDoctor(await serviceCommand<DirectDoctorReport>("check_direct_connection")); }
+    try { setDoctor(await serviceCommand<DirectDoctorReport>("check_direct_connection", undefined, admitProfileRequest)); }
     catch (reason) { setInviteError(errorMessage(reason)); }
     finally { setBusy(false); }
   };
@@ -1822,7 +1034,7 @@ function NewChatDialog({ initialInvitation, initialTab = "invite", initialConnec
     setBusy(true); setInviteError("");
     try {
       await stopUnsharedHost();
-      const setup = await serviceCommand<ManualParticipantSetup>("prepare_manual_participant_host", { purpose: "personal" });
+      const setup = await serviceCommand<ManualParticipantSetup>("prepare_manual_participant_host", { purpose: "personal" }, admitProfileRequest);
       generatedHostSession.current = setup.setup_id;
       setManualSetup(setup); setManualHost(""); setManualPort(String(setup.tcp_port)); setDoctor(null); setFormats(null); setShared(false);
     } catch (reason) { setInviteError(errorMessage(reason)); }
@@ -1839,9 +1051,9 @@ function NewChatDialog({ initialInvitation, initialTab = "invite", initialConnec
           : connectionChoice === "nearby" ? { connection_mode: "nearby" }
           : connectionChoice === "i2p" ? { connection_mode: "i2p", i2p_access_point: i2pAccessPoint.trim() }
             : { connection_mode: "remote", remote_profile_id: connectionChoice.slice("remote:".length) };
-      const created = await serviceCommand<InvitationFormats>("create_invitation", payload);
+      const created = await coreApiCreateInvitation(payload) as unknown as InvitationFormats;
       const previous = generatedHostSession.current;
-      if (previous && previous !== created.host_session_id) await serviceCommand("stop_participant_host", { access_id: previous }).catch(() => undefined);
+      if (previous && previous !== created.host_session_id) await serviceCommand("stop_participant_host", { access_id: previous }, admitProfileRequest).catch(() => undefined);
       generatedHostSession.current = created.host_session_id ?? null;
       setFormats(created); setShared(false); setManualSetup(null);
     } catch (reason) {
@@ -1867,13 +1079,13 @@ function NewChatDialog({ initialInvitation, initialTab = "invite", initialConnec
       }
       const documentKind = connectionDocumentKind(normalized);
       if (documentKind === "reply") {
-        const checked = await serviceCommand<ConnectionReplyPreview>("preview_connection_reply", { response: normalized });
+        const checked = await coreApiConnectionDocument("preview_reply", { response: normalized }, admitProfileRequest) as unknown as ConnectionReplyPreview;
         if (active) setConnectionReplyPreview(checked);
       } else if (documentKind === "route") {
-        const checked = await serviceCommand<RouteUpdatePreview>("preview_route_update", { update: normalized });
+        const checked = await coreApiRouteUpdate("preview", { update: normalized }, undefined, admitProfileRequest) as unknown as RouteUpdatePreview;
         if (active) setRouteUpdatePreview(checked);
       } else {
-        const checked = await serviceCommand<InvitationPreview>("preview_invitation", { invitation: normalized });
+        const checked = await coreApiPreviewInvitation(normalized) as unknown as InvitationPreview;
         if (active) setPreview(checked);
       }
     })().catch((reason) => { if (active) setError(importedDocumentErrorMessage(reason)); });
@@ -1892,12 +1104,12 @@ function NewChatDialog({ initialInvitation, initialTab = "invite", initialConnec
       }
       const documentKind = connectionDocumentKind(normalized);
       if (documentKind === "reply") {
-        setConnectionReplyPreview(await serviceCommand("preview_connection_reply", { response: normalized }));
+        setConnectionReplyPreview(await coreApiConnectionDocument("preview_reply", { response: normalized }, admitProfileRequest) as unknown as ConnectionReplyPreview);
         setPreview(null);
       } else if (documentKind === "route") {
-        setRouteUpdatePreview(await serviceCommand("preview_route_update", { update: normalized }));
+        setRouteUpdatePreview(await coreApiRouteUpdate("preview", { update: normalized }, undefined, admitProfileRequest) as unknown as RouteUpdatePreview);
         setPreview(null);
-      } else setPreview(await serviceCommand("preview_invitation", { invitation: normalized }));
+      } else setPreview(await coreApiPreviewInvitation(normalized) as unknown as InvitationPreview);
       setRemoteConsent(false); setI2PConsent(false);
     }
     catch (reason) { setError(importedDocumentErrorMessage(reason)); }
@@ -1906,7 +1118,8 @@ function NewChatDialog({ initialInvitation, initialTab = "invite", initialConnec
     if (busy || requestQueued) return;
     setBusy(true); setError(""); setCandidateResults([]);
     try {
-      const accepted = await serviceCommand<Contact>("accept_invitation", { invitation: raw, ...(preview?.i2p_access_point ? { i2p_consent: i2pConsent } : {}) });
+      const accepted = await coreApiAcceptInvitation(
+        raw, Boolean(preview?.i2p_access_point && i2pConsent), admitProfileRequest) as unknown as Contact;
       await onChanged();
       if (accepted.connection_results?.length && !accepted.connection_results.some((item) => item.result === "connected")) {
         setCandidateResults(accepted.connection_results);
@@ -1920,17 +1133,17 @@ function NewChatDialog({ initialInvitation, initialTab = "invite", initialConnec
   const createReply = async () => {
     setBusy(true); setError("");
     try {
-      const report = await serviceCommand<DirectDoctorReport>("check_direct_connection");
+      const report = await serviceCommand<DirectDoctorReport>("check_direct_connection", undefined, admitProfileRequest);
       if (!canPrepareDirectHost(report)) {
         setReplyDoctor(report);
         return;
       }
       setReplyDoctor(null);
-      const created = await serviceCommand<ConnectionDocumentFormats>("create_connection_reply", { invitation: raw, purpose: "personal" });
+      const created = await coreApiConnectionDocument("create_reply", { invitation: raw, purpose: "personal" }, admitProfileRequest) as unknown as ConnectionDocumentFormats;
       const previous = replyHostSession.current;
       replyHostSession.current = created.host_session_id ?? null;
       setReplyShared(false); setReplyFormats(created);
-      if (previous && previous !== created.host_session_id) await serviceCommand("stop_participant_host", { access_id: previous }).catch(() => undefined);
+      if (previous && previous !== created.host_session_id) await serviceCommand("stop_participant_host", { access_id: previous }, admitProfileRequest).catch(() => undefined);
     }
     catch (reason) {
       const report = directFailureReport(reason);
@@ -1942,8 +1155,8 @@ function NewChatDialog({ initialInvitation, initialTab = "invite", initialConnec
   const applyConnectionDocument = async () => {
     setBusy(true); setError("");
     try {
-      if (connectionReplyPreview) await serviceCommand("connect_using_reply", { response: raw });
-      else await serviceCommand("apply_route_update", { update: raw });
+      if (connectionReplyPreview) await serviceCommand("connect_using_reply", { response: raw }, admitProfileRequest);
+      else await coreApiRouteUpdate("apply", { update: raw }, undefined, admitProfileRequest);
       await onChanged(); onClose();
     } catch (reason) { setError(errorMessage(reason)); }
     finally { setBusy(false); }
@@ -1983,15 +1196,20 @@ function NewChatDialog({ initialInvitation, initialTab = "invite", initialConnec
   );
 }
 
+type GroupCreationAttempt = { ticket: GroupCreationTicket; result?: { group: string; name: string } };
+
 function CreateGroupDialog({
   contacts,
+  creationAttempts,
   onClose,
   onCreated,
 }: {
   contacts: Contact[];
+  creationAttempts: Map<string, GroupCreationAttempt>;
   onClose: () => void;
-  onCreated: (group: Group) => Promise<void>;
+  onCreated: (group: Group | { name: string; core_handle?: string }) => Promise<void>;
 }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   const [mode, setMode] = useState<"group" | "channel">("group");
   const [title, setTitle] = useState("");
   const [memberIds, setMemberIds] = useState<string[]>([]);
@@ -2000,6 +1218,11 @@ function CreateGroupDialog({
   const eligible = contacts.filter((contact) => contact.trust === "approved" || contact.trust === "verified");
   const memberLimitReached = memberIds.length >= 7;
   const postingPolicy: GroupPostingPolicy = mode === "channel" ? "owner_admins" : "members";
+  const creationInFlight = useRef(false);
+  const destinations = memberIds.map((id) => contacts.find((contact) => contact.id === id)?.destination_hash)
+    .filter((value): value is string => Boolean(value));
+  const creationFingerprint = JSON.stringify([title.trim(), postingPolicy, [...destinations].sort()]);
+  const previousCreation = creationAttempts.get(creationFingerprint);
 
   const toggleMember = (contactId: string) => {
     setMemberIds((current) => current.includes(contactId)
@@ -2008,20 +1231,33 @@ function CreateGroupDialog({
   };
 
   const create = async () => {
-    if (!title.trim() || memberIds.length === 0) return;
+    if (!title.trim() || memberIds.length === 0 || creationInFlight.current) return;
+    creationInFlight.current = true;
     setBusy(true);
     setError("");
     try {
-      const group = await serviceCommand<Group>("create_group", {
-        title: title.trim(),
-        member_ids: memberIds,
-        posting_policy: postingPolicy,
-      });
-      await onCreated(group);
+      try {
+        let attempt = creationAttempts.get(creationFingerprint);
+        if (!attempt) {
+          const ticket = await prepareKeyedGroupCreation(title.trim(), postingPolicy, destinations, newOperationId());
+          if (ticket) { attempt = { ticket }; creationAttempts.set(creationFingerprint, attempt); }
+        }
+        const created = attempt
+          ? attempt.result ?? (attempt.result = await submitKeyedGroupCreation(attempt.ticket, admitProfileRequest))
+          : await coreApiCreateGroup(title.trim(), postingPolicy, destinations, admitProfileRequest);
+        await onCreated({ name: created.name, ...(attempt ? { core_handle: created.group } : {}) });
+        creationAttempts.delete(creationFingerprint);
+        return;
+      } catch (reason) {
+        if (!String(reason).includes("core_api_unavailable")) throw reason;
+        throw new Error("core_api_unavailable");
+      }
     } catch (reason) {
-      setError(errorMessage(reason));
+      const previous = creationAttempts.get(creationFingerprint);
+      setError(previous?.result ? "The group was created. Its conversation could not refresh yet. Open the created group to try again."
+        : previous ? `${errorMessage(reason)} Group creation is not confirmed. Retry checks the original request.` : errorMessage(reason));
       setBusy(false);
-    }
+    } finally { creationInFlight.current = false; }
   };
 
   return (
@@ -2059,7 +1295,7 @@ function CreateGroupDialog({
         <div className="dialog__actions">
           <Button variant="secondary" onClick={onClose} disabled={busy}>Cancel</Button>
           <Button onClick={() => void create()} disabled={busy || !title.trim() || memberIds.length === 0}>
-            {busy ? "Creating…" : mode === "channel" ? "Create channel" : "Create group"}
+            {busy ? "Creating…" : previousCreation?.result ? "Open created group" : previousCreation ? "Retry group creation" : mode === "channel" ? "Create channel" : "Create group"}
           </Button>
         </div>
       </div>
@@ -2296,6 +1532,7 @@ function ContactsDialog({
   onDeleted: (contactId: string) => Promise<void>;
   reconnect: ReconnectCoordinator | null;
 }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   const sorted = useMemo(
     () => [...contacts].sort((left, right) => left.display_name.localeCompare(right.display_name)),
     [contacts],
@@ -2328,12 +1565,18 @@ function ContactsDialog({
     setReconnectFormats(null);
   }, [selected?.id, selected?.display_name]);
 
-  const run = async (command: string) => {
+  const run = async (command: "verify_contact" | "unverify_contact" | "block_contact" | "unblock_contact") => {
     if (!selected || busy) return;
     setBusy(true);
     setError("");
     try {
-      await serviceCommand(command, { contact_id: selected.id });
+      if (command === "verify_contact" || command === "unverify_contact") {
+        await coreApiUpdatePeer(selected.destination_hash, command === "verify_contact" ? "verify" : "unverify", undefined, admitProfileRequest);
+      } else {
+        const target = await coreApiPeerForDestination(selected.destination_hash);
+        await admitProfileRequest(() => coreApiRequest(command === "block_contact" ? "peer.revoke" : "peer.unblock",
+          { profile: target.profile, peer: target.peer }));
+      }
       setConfirm(null);
       await onChanged();
     } catch (reason) {
@@ -2347,10 +1590,7 @@ function ContactsDialog({
     setBusy(true);
     setError("");
     try {
-      await serviceCommand("update_contact", {
-        contact_id: selected.id,
-        display_name: name.trim(),
-      });
+      await coreApiUpdatePeer(selected.destination_hash, "rename", name.trim(), admitProfileRequest);
       await onChanged();
     } catch (reason) {
       setError(errorMessage(reason));
@@ -2361,7 +1601,7 @@ function ContactsDialog({
   const createReconnect = async () => {
     if (!selected || busy) return;
     setBusy(true); setError("");
-    try { setReconnectFormats(await serviceCommand<ConnectionDocumentFormats>("create_route_update", { scope_kind: "contact", scope_id: selected.id })); }
+    try { setReconnectFormats(await coreApiRouteUpdate("create", { scope_kind: "contact", scope_id: selected.id }, undefined, admitProfileRequest) as unknown as ConnectionDocumentFormats); }
     catch (reason) { setError(errorMessage(reason)); }
     finally { setBusy(false); }
   };
@@ -2371,7 +1611,13 @@ function ContactsDialog({
     setBusy(true);
     setError("");
     try {
-      await serviceCommand("delete_contact", { contact_id: contactId });
+      let handled = false;
+      try {
+        const target = await coreApiPeerForDestination(selected.destination_hash);
+        await admitProfileRequest(() => coreApiRequest("peer.delete", { profile: target.profile, peer: target.peer }));
+        handled = true;
+      } catch { /* Fall back only when the facade did not accept the deletion. */ }
+      if (!handled) throw new Error("core_api_unavailable");
       setConfirm(null);
       await onDeleted(contactId);
     } catch (reason) {
@@ -2458,6 +1704,7 @@ function participantMethodLabel(method: ParticipantHosting["methods"][number]): 
 type SettingsEditState = { dirty: boolean; busy: boolean };
 
 function ParticipantHostingSettings({ initial, workspaces, onChanged, onEditStateChange }: { initial: ParticipantHosting[]; workspaces: Workspace[]; onChanged: () => Promise<void>; onEditStateChange?: (state: SettingsEditState) => void }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   const [hosts, setHosts] = useState(initial);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState("");
@@ -2466,7 +1713,7 @@ function ParticipantHostingSettings({ initial, workspaces, onChanged, onEditStat
   const stop = async (host: ParticipantHosting) => {
     setBusy(host.id); setError("");
     try {
-      await serviceCommand("stop_participant_host", { access_id: host.id });
+      await serviceCommand("stop_participant_host", { access_id: host.id }, admitProfileRequest);
       setHosts((current) => current.filter((item) => item.id !== host.id));
       await onChanged();
     } catch (reason) { setError(errorMessage(reason)); }
@@ -2475,7 +1722,7 @@ function ParticipantHostingSettings({ initial, workspaces, onChanged, onEditStat
   const configureFirewall = async (host: ParticipantHosting) => {
     setBusy(host.id); setError("");
     try {
-      const outcome = await serviceCommand<DirectDoctorStep>("configure_participant_firewall", { access_id: host.id });
+      const outcome = await serviceCommand<DirectDoctorStep>("configure_participant_firewall", { access_id: host.id }, admitProfileRequest);
       if (outcome.result !== "prepared_unverified") setError(`${directReasonLabel(outcome.reason)} ${directActionLabel(outcome.recommended_action)}`);
       await onChanged();
     } catch (reason) { setError(errorMessage(reason)); }
@@ -2497,6 +1744,7 @@ function BackgroundAvailabilitySettings({
   initial?: BackgroundAvailability;
   onChanged: () => Promise<void>;
 }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   const [value, setValue] = useState<BackgroundAvailability | undefined>(initial);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -2504,7 +1752,7 @@ function BackgroundAvailabilitySettings({
   const enabled = value?.enabled === true;
   useEffect(() => {
     let active = true;
-    const update = () => { void serviceCommand<BackgroundAvailability>("background_status")
+    const update = () => { void fetchBackgroundStatus()
       .then((next) => { if (active) setValue(next); }).catch(() => undefined); };
     update();
     const timer = window.setInterval(update, 3000);
@@ -2525,15 +1773,15 @@ function BackgroundAvailabilitySettings({
     setError("");
     try {
       if (next) {
-        setValue(await serviceCommand<BackgroundAvailability>("set_background_availability", { enabled: true }));
+        setValue(await setBackgroundAvailability(true, admitProfileRequest));
         try {
           await setNativeBackgroundAvailability(true);
         } catch (reason) {
-          setValue(await serviceCommand<BackgroundAvailability>("set_background_availability", { enabled: false }).catch(() => undefined));
+          setValue(await setBackgroundAvailability(false, admitProfileRequest).catch(() => undefined));
           throw reason;
         }
       } else {
-        setValue(await serviceCommand<BackgroundAvailability>("set_background_availability", { enabled: false }));
+        setValue(await setBackgroundAvailability(false, admitProfileRequest));
         await setNativeBackgroundAvailability(false);
       }
       await onChanged();
@@ -2568,6 +1816,7 @@ function BackgroundAvailabilitySettings({
 }
 
 function RemoteConnectionsSettings({ initial, onChanged, onEditStateChange }: { initial: RemoteProfile[]; onChanged: () => Promise<void>; onEditStateChange?: (state: SettingsEditState) => void }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   const [profiles, setProfiles] = useState(initial);
   const [adding, setAdding] = useState(false);
   const [label, setLabel] = useState("");
@@ -2580,12 +1829,12 @@ function RemoteConnectionsSettings({ initial, onChanged, onEditStateChange }: { 
   const dirty = adding && Boolean(label || host || port !== "4242" || propagation || allowPrivate);
   useEffect(() => { onEditStateChange?.({ dirty, busy: busy !== null }); }, [dirty, busy, onEditStateChange]);
   const reload = async () => {
-    const result = await serviceCommand<{ profiles: RemoteProfile[] }>("list_remote_profiles");
-    setProfiles(result.profiles);
+    const result = await coreApiRemoteProfiles() as { profiles?: RemoteProfile[] };
+    setProfiles(result.profiles ?? []);
   };
-  const run = async (command: string, profileId: string) => {
+  const run = async (action: "test" | "retry" | "approve_propagation" | "remove_propagation" | "remove", profileId: string) => {
     setBusy(profileId); setError("");
-    try { await serviceCommand(command, { profile_id: profileId }); await reload(); await onChanged(); }
+    try { await coreApiRemoteProfile(action, { remote_profile_id: profileId }, newOperationId(), admitProfileRequest); await reload(); await onChanged(); }
     catch (reason) { setError(errorMessage(reason)); }
     finally { setBusy(null); }
   };
@@ -2594,18 +1843,18 @@ function RemoteConnectionsSettings({ initial, onChanged, onEditStateChange }: { 
     if (!label.trim() || !host.trim() || !Number.isInteger(numericPort)) return;
     setBusy("new"); setError("");
     try {
-      await serviceCommand("create_manual_remote_profile", {
+      await coreApiRemoteProfile("create", {
         label: label.trim(),
         endpoints: [{ host: host.trim(), port: numericPort }],
         propagation_node: propagation.trim() || null,
         allow_private: allowPrivate,
-      });
+      }, undefined, admitProfileRequest);
       setLabel(""); setHost(""); setPort("4242"); setPropagation(""); setAllowPrivate(false); setAdding(false);
       await reload(); await onChanged();
     } catch (reason) { setError(errorMessage(reason)); }
     finally { setBusy(null); }
   };
-  return <section className="settings-section remote-connections" aria-labelledby="remote-connections-title"><div className="settings-section__heading"><h3 id="remote-connections-title">Approved access points</h3><p>Internet invitations first try a temporary path hosted by the inviter. Add an operator-supplied Reticulum access point only as an explicit fallback when the inviter's device or router cannot accept an inbound connection.</p></div><p className="muted">Operators can observe IP addresses, timing, packet sizes, connection duration, and Reticulum routing identifiers. They cannot decrypt or forge valid MeshChat content.</p>{profiles.map((profile) => <article className="remote-profile-row" key={profile.id}><span><strong>{profile.label}</strong><small role="status">{remoteStateLabel(profile)}</small><small>{profile.ratchet_ready ? "Encrypted recipient ready" : profile.path_available ? "Known peer path; awaiting ratchet" : "Path discovery occurs when an invitation is used"} · {profile.offline_delivery_available ? "Offline delivery node connected" : profile.offline_delivery_approved ? "Offline delivery approved; node unavailable" : profile.offline_delivery_recommended ? "Offline delivery available after separate approval" : "Live delivery only"}</small></span><div><Button variant="secondary" disabled={busy === profile.id || profile.state === "expired"} onClick={() => void run("test_remote_profile", profile.id)}>Test</Button><Button variant="ghost" disabled={busy === profile.id || profile.state === "expired"} onClick={() => void run("retry_remote_profile", profile.id)}>Retry</Button>{profile.offline_delivery_recommended && <Button variant="ghost" disabled={busy === profile.id} onClick={() => void run(profile.offline_delivery_approved ? "remove_remote_propagation" : "approve_remote_propagation", profile.id)}>{profile.offline_delivery_approved ? "Remove offline delivery" : "Approve offline delivery"}</Button>}<Button variant="danger" disabled={busy === profile.id || profile.offline_delivery_approved} title={profile.offline_delivery_approved ? "Remove offline delivery approval first" : undefined} onClick={() => void run("remove_remote_profile", profile.id)}>Remove</Button></div>{profile.offline_delivery_recommended && !profile.offline_delivery_approved && <p>Optional node {profile.propagation_identifier} stores recipient-encrypted objects and routing metadata. Storage is not endpoint or human receipt. Android may not retrieve messages until Mesh Chat runs again.</p>}</article>)}{profiles.length === 0 && <p className="muted">No access point is configured. Internet invitations still try a direct path to the online inviter.</p>}{adding ? <div className="remote-profile-form"><label>Profile name<input value={label} maxLength={64} onChange={(event) => setLabel(event.target.value)} /></label><label>TCP hostname or address<input value={host} autoCapitalize="off" autoCorrect="off" spellCheck={false} onChange={(event) => setHost(event.target.value)} /></label><label>TCP port<input value={port} inputMode="numeric" onChange={(event) => setPort(event.target.value)} /></label><label>Recommended LXMF propagation destination <small>Optional, 32 hexadecimal characters</small><input value={propagation} maxLength={32} autoCapitalize="off" autoCorrect="off" spellCheck={false} onChange={(event) => setPropagation(event.target.value)} /></label><label className="checkbox-line"><input type="checkbox" checked={allowPrivate} onChange={(event) => setAllowPrivate(event.target.checked)} /> Advanced: allow a private-network endpoint. This can expose local services and must only be used with an operator you trust.</label><div className="dialog-actions"><Button variant="ghost" onClick={() => setAdding(false)}>Cancel</Button><Button disabled={busy === "new" || !label.trim() || !host.trim()} onClick={() => void add()}>{busy === "new" ? "Connecting…" : "Approve and connect"}</Button></div></div> : <Button variant="secondary" disabled={profiles.length >= 4} onClick={() => setAdding(true)}>Add remote connection</Button>}{error && <p className="form-error" role="alert">{error}</p>}</section>;
+  return <section className="settings-section remote-connections" aria-labelledby="remote-connections-title"><div className="settings-section__heading"><h3 id="remote-connections-title">Approved access points</h3><p>Internet invitations first try a temporary path hosted by the inviter. Add an operator-supplied Reticulum access point only as an explicit fallback when the inviter's device or router cannot accept an inbound connection.</p></div><p className="muted">Operators can observe IP addresses, timing, packet sizes, connection duration, and Reticulum routing identifiers. They cannot decrypt or forge valid MeshChat content.</p>{profiles.map((profile) => <article className="remote-profile-row" key={profile.id}><span><strong>{profile.label}</strong><small role="status">{remoteStateLabel(profile)}</small><small>{profile.ratchet_ready ? "Encrypted recipient ready" : profile.path_available ? "Known peer path; awaiting ratchet" : "Path discovery occurs when an invitation is used"} · {profile.offline_delivery_available ? "Offline delivery node connected" : profile.offline_delivery_approved ? "Offline delivery approved; node unavailable" : profile.offline_delivery_recommended ? "Offline delivery available after separate approval" : "Live delivery only"}</small></span><div><Button variant="secondary" disabled={busy === profile.id || profile.state === "expired"} onClick={() => void run("test", profile.id)}>Test</Button><Button variant="ghost" disabled={busy === profile.id || profile.state === "expired"} onClick={() => void run("retry", profile.id)}>Retry</Button>{profile.offline_delivery_recommended && <Button variant="ghost" disabled={busy === profile.id} onClick={() => void run(profile.offline_delivery_approved ? "remove_propagation" : "approve_propagation", profile.id)}>{profile.offline_delivery_approved ? "Remove offline delivery" : "Approve offline delivery"}</Button>}<Button variant="danger" disabled={busy === profile.id || profile.offline_delivery_approved} title={profile.offline_delivery_approved ? "Remove offline delivery approval first" : undefined} onClick={() => void run("remove", profile.id)}>Remove</Button></div>{profile.offline_delivery_recommended && !profile.offline_delivery_approved && <p>Optional node {profile.propagation_identifier} stores recipient-encrypted objects and routing metadata. Storage is not endpoint or human receipt. Android may not retrieve messages until Mesh Chat runs again.</p>}</article>)}{profiles.length === 0 && <p className="muted">No access point is configured. Internet invitations still try a direct path to the online inviter.</p>}{adding ? <div className="remote-profile-form"><label>Profile name<input value={label} maxLength={64} onChange={(event) => setLabel(event.target.value)} /></label><label>TCP hostname or address<input value={host} autoCapitalize="off" autoCorrect="off" spellCheck={false} onChange={(event) => setHost(event.target.value)} /></label><label>TCP port<input value={port} inputMode="numeric" onChange={(event) => setPort(event.target.value)} /></label><label>Recommended LXMF propagation destination <small>Optional, 32 hexadecimal characters</small><input value={propagation} maxLength={32} autoCapitalize="off" autoCorrect="off" spellCheck={false} onChange={(event) => setPropagation(event.target.value)} /></label><label className="checkbox-line"><input type="checkbox" checked={allowPrivate} onChange={(event) => setAllowPrivate(event.target.checked)} /> Advanced: allow a private-network endpoint. This can expose local services and must only be used with an operator you trust.</label><div className="dialog-actions"><Button variant="ghost" onClick={() => setAdding(false)}>Cancel</Button><Button disabled={busy === "new" || !label.trim() || !host.trim()} onClick={() => void add()}>{busy === "new" ? "Connecting…" : "Approve and connect"}</Button></div></div> : <Button variant="secondary" disabled={profiles.length >= 4} onClick={() => setAdding(true)}>Add remote connection</Button>}{error && <p className="form-error" role="alert">{error}</p>}</section>;
 }
 
 const I2P_ROUTER_LABEL: Record<string, string> = {
@@ -2624,6 +1873,7 @@ const I2P_ROUTER_REASON: Record<string, string> = {
 };
 
 function WebRTCCallSettings({ onSaved, onEditStateChange }: { onSaved: () => Promise<void>; onEditStateChange?: (state: SettingsEditState) => void }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   const [settings, setSettings] = useState<CallSettings | null>(null);
   const [stun, setStun] = useState("");
   const [turnUrl, setTurnUrl] = useState("");
@@ -2652,23 +1902,24 @@ function WebRTCCallSettings({ onSaved, onEditStateChange }: { onSaved: () => Pro
   );
   useEffect(() => { onEditStateChange?.({ dirty, busy }); }, [dirty, busy, onEditStateChange]);
   useEffect(() => {
-    void serviceCommand<CallSettings>("call_settings").then((value) => {
-      setSettings(value);
-      setStun((value.stun_urls ?? []).join(", "));
-      setTurnUrl(value.turn_url ?? "");
-      setTurnUser(value.turn_username ?? "");
-      setTurnBrokerUrl(value.turn_broker_url ?? "");
-      setSignalMailboxUrl(value.signal_mailbox_url ?? "");
-      setTurnBrokerConsent(value.turn_broker_consent ?? false);
-      setRelayOnly(value.relay_only ?? false);
-      setStoreCallSignaling(value.store_call_signaling ?? true);
+    void loadCallSettings().then((value) => {
+      const settings = value as unknown as unknown as CallSettings;
+      setSettings(settings);
+      setStun((settings.stun_urls ?? []).join(", "));
+      setTurnUrl(settings.turn_url ?? "");
+      setTurnUser(settings.turn_username ?? "");
+      setTurnBrokerUrl(settings.turn_broker_url ?? "");
+      setSignalMailboxUrl(settings.signal_mailbox_url ?? "");
+      setTurnBrokerConsent(settings.turn_broker_consent ?? false);
+      setRelayOnly(settings.relay_only ?? false);
+      setStoreCallSignaling(settings.store_call_signaling ?? true);
     }).catch((reason) => setError(errorMessage(reason)));
   }, []);
   const save = async () => {
     if (busy || !settings || !dirty) return;
     setBusy(true); setSaved(false); setError("");
     try {
-      const result = await serviceCommand<CallSettings>("update_call_settings", {
+      const result = await saveCallSettings({
         stun_urls: stun.split(/[,\s]+/).map((value) => value.trim()).filter(Boolean),
         turn_url: turnUrl.trim() || null,
         turn_username: turnUser.trim() || null,
@@ -2678,7 +1929,7 @@ function WebRTCCallSettings({ onSaved, onEditStateChange }: { onSaved: () => Pro
         turn_broker_consent: turnBrokerConsent,
         relay_only: relayOnly,
         store_call_signaling: storeCallSignaling,
-      });
+      }, admitProfileRequest) as unknown as CallSettings;
       setSettings(result);
       setStun((result.stun_urls ?? []).join(", "));
       setTurnUrl(result.turn_url ?? "");
@@ -2743,6 +1994,7 @@ const SETTINGS_SECTIONS = [
 ] as const;
 
 function SettingsPage({ snapshot, theme, onThemeChange, onClose, onSaved, onBackHandlerChange }: { snapshot: Snapshot; theme: Theme; onThemeChange: (theme: Theme) => void; onClose: () => void; onSaved: () => Promise<void>; onBackHandlerChange?: (handler: (() => void) | null) => void }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   const [section, setSection] = useState<typeof SETTINGS_SECTIONS[number]["id"]>("appearance");
   const [settings, setSettings] = useState<NetworkSettings>(snapshot.settings);
   const [savedNetworkSettings, setSavedNetworkSettings] = useState(snapshot.settings);
@@ -2796,7 +2048,7 @@ function SettingsPage({ snapshot, theme, onThemeChange, onClose, onSaved, onBack
   useEffect(() => {
     void Promise.resolve(runtimePlatform()).then((value) => setIsAndroid(value === "android")).catch(() => undefined);
     if (settings.i2p_enabled) {
-      void Promise.resolve(serviceCommand<I2PStatus>("i2p_status")).then(setI2PStatus).catch(() => undefined);
+      void Promise.resolve(serviceCommand<I2PStatus>("i2p_status", undefined, admitProfileRequest)).then(setI2PStatus).catch(() => undefined);
     }
   }, []);
   const darkThemeRef = useRef<HTMLButtonElement>(null);
@@ -2825,7 +2077,7 @@ function SettingsPage({ snapshot, theme, onThemeChange, onClose, onSaved, onBack
   const refreshNotification = useCallback(async () => {
     const native = await notificationCapability();
     setCapability(native);
-    setNotification(await serviceCommand<WorkspaceNotificationState>("get_notification_state"));
+    setNotification(await fetchNotificationState());
   }, []);
   useEffect(() => { void refreshNotification().catch(() => undefined); }, [refreshNotification]);
   const requestPermission = async () => {
@@ -2844,9 +2096,7 @@ function SettingsPage({ snapshot, theme, onThemeChange, onClose, onSaved, onBack
     if (!notification || notificationBusy) return;
     setNotificationBusy(true); setNotificationError("");
     try {
-      setNotification(await serviceCommand<WorkspaceNotificationState>("set_hide_notification_previews", {
-        operation_id: newOperationId(), hidden: !notification.hide_previews,
-      }));
+      setNotification(await setNotificationPreviews(!notification.hide_previews, admitProfileRequest));
       await onSaved();
     } catch (reason) { setNotificationError(errorMessage(reason)); }
     finally { setNotificationBusy(false); }
@@ -2855,7 +2105,7 @@ function SettingsPage({ snapshot, theme, onThemeChange, onClose, onSaved, onBack
     if (saving || !networkDirty) return;
     setSaving(true); setSaveError("");
     try {
-      await serviceCommand("update_settings", { settings });
+      await saveNetworkSettings(settings as unknown as Record<string, unknown>, admitProfileRequest);
       setSavedNetworkSettings(settings);
       setSaved(true);
       await onSaved();
@@ -3329,7 +2579,7 @@ function MessageReactions({
   );
 }
 
-function Conversation({ contact, messages, draft, sendError, sending, detailsOpen, reactionTargetId, reactionCatalogOpen, reactionBusyEmoji, reactionError, onDetailsOpenChange, onToggleReactionPicker, onReactionCatalogOpenChange, onCloseReactionPicker, onSetReaction, onDraft, onSend, onHelp, onConnectionSettings, onBack, onDelete, onCall }: { contact: Contact; messages: ChatMessage[]; draft: string; sendError: string; sending: boolean; detailsOpen: boolean; reactionTargetId: string | null; reactionCatalogOpen: boolean; reactionBusyEmoji: string | null; reactionError: string; onDetailsOpenChange: (open: boolean) => void; onToggleReactionPicker: (messageId: string) => void; onReactionCatalogOpenChange: (messageId: string, open: boolean) => void; onCloseReactionPicker: () => void; onSetReaction: (messageId: string, emoji: string, active: boolean) => void; onDraft: (value: string) => void; onSend: () => void; onHelp: () => void; onConnectionSettings: () => void; onBack: () => void; onDelete: () => void; onCall: () => void }) {
+function Conversation({ contact, messages, composer, sending, detailsOpen, reactionTargetId, reactionCatalogOpen, reactionBusyEmoji, reactionError, onDetailsOpenChange, onToggleReactionPicker, onReactionCatalogOpenChange, onCloseReactionPicker, onSetReaction, onHelp, onConnectionSettings, onBack, onDelete, onCall }: { contact: Contact; messages: ChatMessage[]; composer: ReactNode; sending: boolean; detailsOpen: boolean; reactionTargetId: string | null; reactionCatalogOpen: boolean; reactionBusyEmoji: string | null; reactionError: string; onDetailsOpenChange: (open: boolean) => void; onToggleReactionPicker: (messageId: string) => void; onReactionCatalogOpenChange: (messageId: string, open: boolean) => void; onCloseReactionPicker: () => void; onSetReaction: (messageId: string, emoji: string, active: boolean) => void; onHelp: () => void; onConnectionSettings: () => void; onBack: () => void; onDelete: () => void; onCall: () => void }) {
   const messageListRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const messageList = messageListRef.current;
@@ -3372,7 +2622,7 @@ function Conversation({ contact, messages, draft, sendError, sending, detailsOpe
           </article>
         ))}
       </div>
-      <form className="composer" aria-busy={sending} onSubmit={(event) => { event.preventDefault(); onSend(); }}>{sendError && <p className="composer__error" role="alert">{sendError}</p>}<label className="sr-only" htmlFor="message-composer">Message {contact.display_name}</label><textarea id="message-composer" rows={1} value={draft} readOnly={sending} enterKeyHint="send" onChange={(event) => onDraft(event.target.value)} placeholder={`Message ${contact.display_name}`} maxLength={16384} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); onSend(); } }} /><button type="submit" disabled={sending || !draft.trim()} aria-label="Send message"><Send size={19} /></button></form>
+      {composer}
     </section>
   );
 }
@@ -3461,6 +2711,8 @@ function GroupConversation({
   draft,
   sendError,
   sending,
+  retrying,
+  pendingText,
   actionBusy,
   actionError,
   detailsOpen,
@@ -3470,6 +2722,9 @@ function GroupConversation({
   reactionError,
   onDraft,
   onSend,
+  onAccepted,
+  onSendingChange,
+  isPostingAllowed,
   onDetailsOpenChange,
   onToggleReactionPicker,
   onReactionCatalogOpenChange,
@@ -3488,6 +2743,8 @@ function GroupConversation({
   draft: string;
   sendError: string;
   sending: boolean;
+  retrying: boolean;
+  pendingText?: string;
   actionBusy: boolean;
   actionError: string;
   detailsOpen: boolean;
@@ -3497,6 +2754,9 @@ function GroupConversation({
   reactionError: string;
   onDraft: (value: string) => void;
   onSend: () => void;
+  onAccepted: () => Promise<unknown>;
+  onSendingChange: (sending: boolean) => void;
+  isPostingAllowed: () => boolean;
   onDetailsOpenChange: (open: boolean) => void;
   onToggleReactionPicker: (messageId: string) => void;
   onReactionCatalogOpenChange: (messageId: string, open: boolean) => void;
@@ -3566,64 +2826,21 @@ function GroupConversation({
         ))}
       </div>
       {canPost ? (
+        <GroupMessageComposer key={group.core_handle ?? group.id} group={group.core_handle ?? ""} displayName={group.title} onAccepted={onAccepted} onSendingChange={onSendingChange} isPostingAllowed={isPostingAllowed} legacyComposer={<>
+        {retrying && <details className="composer-saved" role="status"><summary>Previous group send is not confirmed. View original text</summary><textarea readOnly aria-label="Previous group send text" value={pendingText ?? ""} /></details>}
         <form className="composer" aria-busy={sending} onSubmit={(event) => { event.preventDefault(); onSend(); }}>
           {sendError && <p className="composer__error" role="alert">{sendError}</p>}
           <label className="sr-only" htmlFor="group-message-composer">Message {group.title}</label>
           <textarea id="group-message-composer" rows={1} value={draft} readOnly={sending} enterKeyHint="send" onChange={(event) => onDraft(event.target.value)} placeholder={`Message ${group.title}`} maxLength={16384} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); onSend(); } }} />
-          <button type="submit" disabled={sending || !draft.trim()} aria-label="Send group message"><Send size={19} /></button>
+          <button type="submit" disabled={sending || (!retrying && !draft.trim())} aria-label={retrying ? "Retry previous group send" : "Send group message"}><Send size={19} /></button>
         </form>
+        </>} />
       ) : <div className="composer composer--restricted"><LockKeyhole size={17} /><span>{composerReason}</span></div>}
     </section>
   );
 }
 
-function newOperationId(): string {
-  if (typeof globalThis.crypto?.randomUUID === "function") {
-    return globalThis.crypto.randomUUID();
-  }
-  const bytes = new Uint8Array(16);
-  globalThis.crypto.getRandomValues(bytes);
-  bytes[6] = (bytes[6] & 0x0f) | 0x40;
-  bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
 
-function workspaceConnectivityLabel(state: string): string {
-  return ({
-    local: "This device",
-    reachable: "Path known",
-    recently_reached: "Recently reached",
-    store_and_forward: "Stored for delivery",
-    queued: "Queued · no path",
-    unreachable: "Unreachable",
-    unknown: "No path yet",
-  } as Record<string, string>)[state] ?? state;
-}
-
-function workspaceStateLabel(workspace: Workspace): string {
-  const joinStatus = workspaceJoinStatus(workspace);
-  if (joinStatus) return joinStatus.headline;
-  switch (workspace.state) {
-    case "linking": return "Waiting for device approval";
-    case "leaving": return "Leave request pending";
-    case "left": return "Left workspace";
-    case "removed": return "Membership removed";
-    case "device_removed": return "This device was removed";
-    case "closed": return "Closed · read-only";
-    case "forked": return "Paused for a security conflict";
-    case "incomplete_sync": return "Incomplete sync";
-    default: return "Active";
-  }
-}
-
-function workspaceSyncIssueLabel(workspace: Workspace): string {
-  if (!workspace.sync_issue) return "";
-  if (workspace.sync_issue === "queue_pressure") {
-    return "Sync paused because the protected pending queue is full. Keep Mesh Chat open and review workspace diagnostics.";
-  }
-  return "Waiting for signed controls or an earlier event. Keep Mesh Chat open so an authorized peer can complete synchronization.";
-}
 
 function WorkspaceSwitcher({ workspaces, activeId, onSelect, onCreate, onJoin }: { workspaces: Workspace[]; activeId: "personal" | string; onSelect: (id: "personal" | string) => void; onCreate: () => void; onJoin: () => void }) {
   return (
@@ -3636,24 +2853,8 @@ function WorkspaceSwitcher({ workspaces, activeId, onSelect, onCreate, onJoin }:
   );
 }
 
-function CreateWorkspaceDialog({ onClose, onCreated }: { onClose: () => void; onCreated: (workspace: Workspace) => Promise<void> }) {
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const create = async () => {
-    if (!name.trim() || busy) return;
-    setBusy(true); setError("");
-    try {
-      const workspace = await serviceCommand<Workspace>("create_workspace", { operation_id: newOperationId(), name: name.trim(), description: description.trim() });
-      await onCreated(workspace);
-    } catch (reason) { setError(errorMessage(reason)); }
-    finally { setBusy(false); }
-  };
-  return <Dialog title="Create a workspace" onClose={onClose}><div className="form-stack workspace-create"><p className="dialog-lead">A private collaboration space for a trusted team.</p><label>Name<input autoFocus value={name} maxLength={64} onChange={(event) => setName(event.target.value)} aria-label="Workspace name" /></label><label>Description <small>Optional</small><textarea value={description} maxLength={250} onChange={(event) => setDescription(event.target.value)} aria-label="Workspace description" /></label><div className="workspace-facts"><p><ShieldCheck size={17} /><span><strong>This device becomes the owner authority.</strong> Link another device and rotate authority before retiring this one.</span></p><p><Users size={17} /><span>Every public message is encrypted separately for each member device.</span></p><p><WifiOff size={17} /><span>Delivery and history depend on reachable peers; there is no hosted workspace server.</span></p></div>{error && <p className="form-error" role="alert">{error}</p>}<div className="dialog-actions"><Button variant="ghost" onClick={onClose}>Cancel</Button><Button disabled={busy || !name.trim()} onClick={() => void create()}>{busy ? "Creating…" : "Create workspace"}</Button></div></div></Dialog>;
-}
-
 function JoinWorkspaceDialog({ initialValue = "", promptId, promptWorkspaceName, resumeWorkspaceId, workspaces, onClose, onJoined }: { initialValue?: string; promptId?: string | null; promptWorkspaceName?: string; resumeWorkspaceId?: string; workspaces: Workspace[]; onClose: () => void; onJoined: (workspace: Workspace) => Promise<void> }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   const [value, setValue] = useState(initialValue);
   const [preview, setPreview] = useState<WorkspaceInvitationPreview | null>(null);
   const [devicePreview, setDevicePreview] = useState<WorkspaceDeviceLinkPreview | null>(null);
@@ -3689,7 +2890,7 @@ function JoinWorkspaceDialog({ initialValue = "", promptId, promptWorkspaceName,
   const joinAttempt = useRef<{ command: string; document: string; operationId: string } | null>(null);
   const stopUnsharedReply = async () => {
     const hostId = replyHostSession.current;
-    if (hostId && !replyShared) await serviceCommand("stop_participant_host", { access_id: hostId }).catch(() => undefined);
+    if (hostId && !replyShared) await serviceCommand("stop_participant_host", { access_id: hostId }, admitProfileRequest).catch(() => undefined);
     replyHostSession.current = null;
   };
   const closeDialog = async () => { await stopUnsharedReply(); onClose(); };
@@ -3715,15 +2916,16 @@ function JoinWorkspaceDialog({ initialValue = "", promptId, promptWorkspaceName,
       }
       const isDeviceLink = classifyInvitationInput(normalized) === "workspace_device";
       if (isDeviceLink) {
-        const checked = await serviceCommand<WorkspaceDeviceLinkPreview>("preview_workspace_device_link", { device_link: normalized });
+        const checked = await fetchWorkspaceConnection(null, "device_link_preview",
+          { device_link: normalized }, undefined, admitProfileRequest) as unknown as WorkspaceDeviceLinkPreview;
         if (generation !== reviewGeneration.current) return;
         setDevicePreview(checked);
         setPreview(null);
         setRemoteConsent(false); setI2PConsent(false);
       } else {
         const checked = promptId
-          ? await serviceCommand<WorkspaceInvitationPreview>("preview_workspace_invitation_prompt", { prompt_id: promptId })
-          : await serviceCommand<WorkspaceInvitationPreview>("preview_workspace_invitation", { invitation: normalized });
+          ? await fetchWorkspaceConnection(null, "prompt_preview", { prompt_id: promptId }, undefined, admitProfileRequest) as unknown as WorkspaceInvitationPreview
+          : await coreApiPreviewWorkspaceInvitation(normalized) as WorkspaceInvitationPreview;
         if (generation !== reviewGeneration.current) return;
         setPreview(checked);
         setRemoteConsent(false); setI2PConsent(false);
@@ -3761,10 +2963,22 @@ function JoinWorkspaceDialog({ initialValue = "", promptId, promptWorkspaceName,
       if (joinAttempt.current?.command !== command || joinAttempt.current.document !== operationDocument) {
         joinAttempt.current = { command, document: operationDocument, operationId: newOperationId() };
       }
-      const workspace = await serviceCommand<Workspace>(command, {
-        operation_id: joinAttempt.current.operationId,
-        ...(devicePreview ? { device_link: document } : promptId ? { prompt_id: promptId } : { invitation: document, ...(preview?.i2p_access_point ? { i2p_consent: i2pConsent } : {}) }),
-      });
+      let workspace: Workspace | null = null;
+      if (devicePreview) {
+        try {
+          workspace = await coreApiSubmitDeviceLink(document, joinAttempt.current.operationId, admitProfileRequest);
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+        }
+      }
+      if (!workspace) {
+        if (devicePreview) throw new Error("core_api_unavailable");
+        workspace = promptId
+          ? await coreApiSubmitWorkspacePrompt(
+              promptId, joinAttempt.current.operationId, admitProfileRequest) as Workspace
+          : await coreApiJoinWorkspace(
+              document, joinAttempt.current.operationId, i2pConsent, admitProfileRequest) as Workspace;
+      }
       if (workspace.connection_results?.length && !workspace.connection_results.some((item) => item.result === "connected")) {
         setConnectionResults(workspace.connection_results);
         setJoinedWorkspace(workspace);
@@ -3777,17 +2991,17 @@ function JoinWorkspaceDialog({ initialValue = "", promptId, promptWorkspaceName,
   const createReply = async () => {
     setBusy(true); setError("");
     try {
-      const report = await serviceCommand<DirectDoctorReport>("check_direct_connection");
+      const report = await serviceCommand<DirectDoctorReport>("check_direct_connection", undefined, admitProfileRequest);
       if (!canPrepareDirectHost(report)) {
         setReplyDoctor(report);
         return;
       }
       setReplyDoctor(null);
-      const created = await serviceCommand<ConnectionDocumentFormats>("create_connection_reply", { invitation: value.trim(), purpose: "workspace" });
+      const created = await coreApiConnectionDocument("create_reply", { invitation: value.trim(), purpose: "workspace" }, admitProfileRequest) as unknown as ConnectionDocumentFormats;
       const previous = replyHostSession.current;
       replyHostSession.current = created.host_session_id ?? null;
       setReplyShared(false); setReplyFormats(created);
-      if (previous && previous !== created.host_session_id) await serviceCommand("stop_participant_host", { access_id: previous }).catch(() => undefined);
+      if (previous && previous !== created.host_session_id) await serviceCommand("stop_participant_host", { access_id: previous }, admitProfileRequest).catch(() => undefined);
     }
     catch (reason) {
       const report = directFailureReport(reason);
@@ -3852,6 +3066,7 @@ function JoinWorkspaceDialog({ initialValue = "", promptId, promptWorkspaceName,
 }
 
 function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles, contacts, webrtcActive, onOpenWebRTC, onClose }: { workspace: Workspace; existingInvitations: WorkspaceInvitation[]; remoteProfiles: RemoteProfile[]; contacts: Contact[]; webrtcActive: boolean; onOpenWebRTC: () => void; onClose: () => void }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   const availableContacts = contacts.filter((candidate) => {
     if (candidate.trust !== "approved" && candidate.trust !== "verified") return false;
     return !workspace.members.some((member) => member.status === "active"
@@ -3880,8 +3095,9 @@ function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles,
   const [firewallFeedback, setFirewallFeedback] = useState("");
   useEffect(() => {
     let active = true;
-    void serviceCommand<CallSettings>("call_settings").then((value) => {
-      if (active) setTurnConfigured(Boolean(value.turn_configured || (value.turn_broker_configured && value.turn_broker_consent)));
+    void loadCallSettings().then((value) => {
+      const settings = value as unknown as CallSettings;
+      if (active) setTurnConfigured(Boolean(settings.turn_configured || (settings.turn_broker_configured && settings.turn_broker_consent)));
     }).catch(() => { if (active) setTurnConfigured(false); });
     return () => { active = false; };
   }, []);
@@ -3890,10 +3106,8 @@ function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles,
     const selectedContact = contacts.find((candidate) => candidate.id === contactId);
     setContactBusy(true); setContactFeedback(""); setContactError("");
     try {
-      const result = await serviceCommand<{ sent: boolean; message_state?: string; invitation: WorkspaceInvitationFormats }>("invite_contact_to_workspace", {
-        workspace_id: workspace.id,
-        contact_id: contactId,
-      });
+      const result = await fetchWorkspaceConnection(workspace, "invite_contact",
+        { contact_id: contactId }, undefined, admitProfileRequest) as unknown as { sent: boolean; message_state?: string; invitation: WorkspaceInvitationFormats };
       if (result.invitation) {
         setExisting((current) => [...current, { ...result.invitation, offered_manifest_digest: "", state: "active", created_at: Date.now() / 1000, contact_id: contactId, contact_display_name: selectedContact?.display_name, delivery_state: result.message_state }]);
       }
@@ -3928,7 +3142,9 @@ function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles,
       if (connectionChoice === "webrtc" && webrtcControls.length !== 1) {
         throw new Error("Choose a verified contact for a specific WebRTC route, or keep exactly one WebRTC invitation session open.");
       }
-      const created = await serviceCommand<WorkspaceInvitationFormats>("create_workspace_invitation", { operation_id: newOperationId(), workspace_id: workspace.id, lifetime_days: 7, ...connection });
+      if (!workspace.core_handle) throw new Error("core_api_unavailable");
+      const created = await coreApiCreateWorkspaceInvitation(
+        workspace.core_handle, connection, newOperationId(), admitProfileRequest) as WorkspaceInvitationFormats;
       if (connectionChoice === "webrtc") {
         const control = webrtcControls[0].control;
         if (!control || control.readyState !== "open") throw new Error("The WebRTC DataChannel is not open.");
@@ -3947,7 +3163,19 @@ function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles,
     if (!invitationId || busy) return;
     setBusy(true); setError("");
     try {
-      await serviceCommand("revoke_workspace_invitation", { operation_id: newOperationId(), workspace_id: workspace.id, invitation_id: invitationId });
+      let handled = false;
+      const invitationHandle = existing.find((item) => item.id === invitationId)?.core_handle
+        ?? (invitation?.id === invitationId ? invitation.core_handle : undefined);
+      if (workspace.core_handle && invitationHandle) {
+        try {
+          await coreApiWorkspaceInvitationRevoke(workspace.core_handle, invitationHandle, newOperationId(), admitProfileRequest);
+          handled = true;
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+          throw new Error("core_api_unavailable");
+        }
+      }
+      if (!handled) throw new Error("core_api_unavailable");
       if (invitation?.id === invitationId) { setInvitation(null); setShared(false); }
       setExisting((current) => current.filter((item) => item.id !== invitationId)); setCopied(false);
     } catch (reason) { setError(errorMessage(reason)); }
@@ -3956,24 +3184,26 @@ function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles,
   const usableProfiles = remoteProfiles.filter((profile) => profile.state !== "expired");
   const checkDirect = async () => {
     setBusy(true); setError("");
-    try { setDoctor(await serviceCommand<DirectDoctorReport>("check_direct_connection")); }
+    try { setDoctor(await serviceCommand<DirectDoctorReport>("check_direct_connection", undefined, admitProfileRequest)); }
     catch (reason) { setError(errorMessage(reason)); }
     finally { setBusy(false); }
   };
   const prepareManual = async () => {
     setBusy(true); setError("");
     try {
-      if (manualSetup) await serviceCommand("stop_participant_host", { access_id: manualSetup.setup_id }).catch(() => undefined);
-      const setup = await serviceCommand<ManualParticipantSetup>("prepare_manual_participant_host", { purpose: "workspace" });
+      if (manualSetup) await serviceCommand("stop_participant_host", { access_id: manualSetup.setup_id }, admitProfileRequest).catch(() => undefined);
+      const setup = await serviceCommand<ManualParticipantSetup>("prepare_manual_participant_host", { purpose: "workspace" }, admitProfileRequest);
       setManualSetup(setup); setManualHost(""); setManualPort(String(setup.tcp_port)); setDoctor(null);
     } catch (reason) { setError(errorMessage(reason)); }
     finally { setBusy(false); }
   };
   const closeDialog = async () => {
     if (invitation?.host_session_id && !shared) {
-      await serviceCommand("revoke_workspace_invitation", { operation_id: newOperationId(), workspace_id: workspace.id, invitation_id: invitation.id }).catch(() => undefined);
+      if (workspace.core_handle && invitation.core_handle) {
+        await coreApiWorkspaceInvitationRevoke(workspace.core_handle, invitation.core_handle, newOperationId(), admitProfileRequest).catch(() => undefined);
+      }
     } else if (manualSetup) {
-      await serviceCommand("stop_participant_host", { access_id: manualSetup.setup_id }).catch(() => undefined);
+      await serviceCommand("stop_participant_host", { access_id: manualSetup.setup_id }, admitProfileRequest).catch(() => undefined);
     }
     onClose();
   };
@@ -4012,7 +3242,7 @@ function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles,
     if (!invitation?.host_session_id || busy) return;
     setBusy(true); setFirewallFeedback("");
     try {
-      const result = await serviceCommand<DirectDoctorStep>("configure_participant_firewall", { access_id: invitation.host_session_id });
+      const result = await serviceCommand<DirectDoctorStep>("configure_participant_firewall", { access_id: invitation.host_session_id }, admitProfileRequest);
       setFirewallFeedback(result.result === "prepared_unverified"
         ? "Temporary Windows Firewall rule added for this invitation only."
         : `${directReasonLabel(result.reason)} ${directActionLabel(result.recommended_action)}`);
@@ -4091,6 +3321,7 @@ function workspaceAdminRequestStateLabel(request: WorkspaceAdminRequest): string
 }
 
 export function WorkspacePeopleSettingsContent({ workspace, requests, adminRequests, busy, error, onRequestName, onDecideName, onRemove, onChangeRole, onInvitationPolicy, onSubmitAdminRequest, onDecideAdminRequest, onCancelAdminRequest, onDismissAdminRequest, onMessage }: { workspace: Workspace; requests: WorkspaceDisplayNameRequest[]; adminRequests: WorkspaceAdminRequest[]; busy: boolean; error: string; onRequestName: (displayName: string) => void; onDecideName: (requestId: string, approve: boolean) => void; onRemove: (memberId: string) => void; onChangeRole: (memberId: string, role: "admin" | "member") => void; onInvitationPolicy: (policy: "owner_only" | "owner_and_admins" | "all_members_request") => void; onSubmitAdminRequest: (kind: "invitation" | "member_removal" | "role_change", targetMemberId?: string, requestedRole?: "admin" | "member") => void; onDecideAdminRequest: (requestId: string, approve: boolean) => void; onCancelAdminRequest: (requestId: string) => void; onDismissAdminRequest: (requestId: string) => void; onMessage: (memberId: string) => void }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   const local = workspace.members.find((member) => member.id === workspace.local_member_id);
   const [displayName, setDisplayName] = useState(local?.display_name ?? "");
   const [invitationPolicy, setInvitationPolicy] = useState(workspace.policies.invitation_requests);
@@ -4115,7 +3346,7 @@ export function WorkspacePeopleSettingsContent({ workspace, requests, adminReque
     setConnectivityError("");
     try {
       const command = requestPaths ? "workspace_request_paths" : "workspace_connectivity";
-      setConnectivity(await serviceCommand<WorkspaceConnectivity>(command, { workspace_id: workspace.id }));
+      setConnectivity(await serviceCommand<WorkspaceConnectivity>(command, { workspace_id: workspace.id }, admitProfileRequest));
     } catch (reason) {
       setConnectivityError(errorMessage(reason));
     } finally {
@@ -4204,6 +3435,7 @@ export function WorkspaceAuthoritySettingsContent({ workspace, transitions, busy
 }
 
 export function WorkspaceAccessSettingsContent({ workspace, onSaved }: { workspace: Workspace; onSaved: () => Promise<void> }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   const [profiles, setProfiles] = useState<RemoteProfile[]>([]);
   const [profileId, setProfileId] = useState("");
   const [created, setCreated] = useState<WorkspaceAccessRecommendation | null>(null);
@@ -4220,7 +3452,7 @@ export function WorkspaceAccessSettingsContent({ workspace, onSaved }: { workspa
   const owner = workspace.local_role === "owner" && workspace.local_device_id === workspace.authority_device_id && workspace.state === "active";
   const loadReceived = async () => {
     try {
-      const value = await serviceCommand<{ recommendations: WorkspaceAccessRecommendationSummary[] }>("list_workspace_access_recommendations", { workspace_id: workspace.id });
+      const value = await fetchWorkspaceAccessRecommendation(workspace, "list", {}, undefined, admitProfileRequest) as unknown as { recommendations: WorkspaceAccessRecommendationSummary[] };
       setReceived(value.recommendations ?? []);
     } catch {
       setReceived([]);
@@ -4231,14 +3463,18 @@ export function WorkspaceAccessSettingsContent({ workspace, onSaved }: { workspa
   }, [workspace.id, workspace.state]);
   useEffect(() => {
     if (!owner) return;
-    void serviceCommand<{ profiles: RemoteProfile[] }>("list_remote_profiles")
-      .then((value) => { const available = value.profiles.filter((profile) => profile.expires_at > Date.now() / 1000); setProfiles(available); setProfileId(available[0]?.id ?? ""); })
+    void coreApiRemoteProfiles()
+      .then((value) => {
+        const available = ((value.profiles ?? []) as RemoteProfile[]).filter((profile) => profile.expires_at > Date.now() / 1000);
+        setProfiles(available); setProfileId(available[0]?.id ?? "");
+      })
       .catch((reason) => setError(errorMessage(reason)));
   }, [owner]);
   const create = async () => {
     setBusy(true); setError(""); setNotice("");
     try {
-      const result = await serviceCommand<WorkspaceAccessRecommendation>("create_workspace_access_recommendation", { workspace_id: workspace.id, remote_profile_id: profileId, lifetime_days: 7 });
+      const result = await fetchWorkspaceAccessRecommendation(workspace, "create",
+        { remote_profile_id: profileId, lifetime_days: 7 }, undefined, admitProfileRequest) as unknown as WorkspaceAccessRecommendation;
       setCreated(result);
       setRecommendation(result.text);
       setNotice("Recommendation created. Share the complete text with members.");
@@ -4248,14 +3484,17 @@ export function WorkspaceAccessSettingsContent({ workspace, onSaved }: { workspa
     if (!created) return;
     setBusy(true); setError(""); setNotice("");
     try {
-      const result = await serviceCommand<{ sent_devices: number }>("send_workspace_access_recommendation", { workspace_id: workspace.id, recommendation: created.text, operation_id: newOperationId() });
+      const result = await fetchWorkspaceAccessRecommendation(workspace, "send",
+        { recommendation: created.text },
+        newOperationId(), admitProfileRequest) as unknown as { sent_devices: number };
       setNotice(`Queued the recommendation for ${result.sent_devices} active member device${result.sent_devices === 1 ? "" : "s"}. Delivery remains retryable.`);
     } catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); }
   };
   const reviewReceived = async (id: string) => {
     setBusy(true); setError(""); setNotice(""); setReceivedPreview(null); setReceivedConsent(false);
     try {
-      const result = await serviceCommand<WorkspaceAccessPreview>("preview_workspace_access_recommendation_by_id", { workspace_id: workspace.id, recommendation_id: id });
+      const result = await fetchWorkspaceAccessRecommendation(workspace, "preview_by_id",
+        { recommendation_id: id }, undefined, admitProfileRequest) as unknown as WorkspaceAccessPreview;
       setReceivedPreview(result); setReceivedId(id);
     } catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); }
   };
@@ -4263,7 +3502,8 @@ export function WorkspaceAccessSettingsContent({ workspace, onSaved }: { workspa
     if (!receivedId) return;
     setBusy(true); setError(""); setNotice("");
     try {
-      const result = await serviceCommand<WorkspaceAccessApplyResult>("apply_workspace_access_recommendation_by_id", { workspace_id: workspace.id, recommendation_id: receivedId, consent: receivedConsent });
+      const result = await fetchWorkspaceAccessRecommendation(workspace, "apply_by_id",
+        { recommendation_id: receivedId, consent: receivedConsent }, undefined, admitProfileRequest) as unknown as WorkspaceAccessApplyResult;
       setNotice(`Attached “${result.profile.label}” to this workspace.`);
       setReceivedPreview(null); setReceivedId(null); setReceivedConsent(false);
       await loadReceived();
@@ -4273,13 +3513,15 @@ export function WorkspaceAccessSettingsContent({ workspace, onSaved }: { workspa
   const check = async () => {
     setBusy(true); setError(""); setNotice(""); setPreview(null); setConsent(false);
     try {
-      setPreview(await serviceCommand<WorkspaceAccessPreview>("preview_workspace_access_recommendation", { recommendation: recommendation.trim() }));
+      setPreview(await fetchWorkspaceAccessRecommendation(workspace, "preview",
+        { recommendation: recommendation.trim() }, undefined, admitProfileRequest) as unknown as WorkspaceAccessPreview);
     } catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); }
   };
   const apply = async () => {
     setBusy(true); setError(""); setNotice("");
     try {
-      const result = await serviceCommand<WorkspaceAccessApplyResult>("apply_workspace_access_recommendation", { recommendation: recommendation.trim(), consent });
+      const result = await fetchWorkspaceAccessRecommendation(workspace, "apply",
+        { recommendation: recommendation.trim(), consent }, undefined, admitProfileRequest) as unknown as WorkspaceAccessApplyResult;
       setNotice(`Attached “${result.profile.label}” to this workspace.`);
       setPreview(null); setConsent(false);
       await onSaved();
@@ -4296,6 +3538,7 @@ export function WorkspaceAccessSettingsContent({ workspace, onSaved }: { workspa
 }
 
 function WorkspaceReconnectSettings({ workspace, coordinator }: { workspace: Workspace; coordinator: ReconnectCoordinator | null }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   const [status, setStatus] = useState<WorkspaceReconnectStatus | null>(null);
   const [autoReconnect, setAutoReconnect] = useState(false);
   const [allowDirect, setAllowDirect] = useState(false);
@@ -4304,7 +3547,7 @@ function WorkspaceReconnectSettings({ workspace, coordinator }: { workspace: Wor
   const [notice, setNotice] = useState("");
   const load = async () => {
     try {
-      const value = await serviceCommand<WorkspaceReconnectStatus>("workspace_reconnect_status", { workspace_id: workspace.id });
+      const value = await fetchWorkspaceConnection(workspace, "reconnect_status", {}, undefined, admitProfileRequest) as unknown as WorkspaceReconnectStatus;
       if (typeof value?.enabled !== "boolean" || typeof value?.peer_count !== "number") return;
       setStatus(value);
       setAutoReconnect(value.enabled);
@@ -4315,7 +3558,9 @@ function WorkspaceReconnectSettings({ workspace, coordinator }: { workspace: Wor
   const save = async () => {
     setBusy(true); setError(""); setNotice("");
     try {
-      const value = await serviceCommand<WorkspaceReconnectStatus>("workspace_reconnect_consent_set", { workspace_id: workspace.id, auto_reconnect: autoReconnect, allow_direct_ip_disclosure: allowDirect, relay_consent_scope: "workspace" });
+      const value = await fetchWorkspaceConnection(workspace, "reconnect_consent",
+        { auto_reconnect: autoReconnect, allow_direct_ip_disclosure: allowDirect,
+          relay_consent_scope: "workspace" }, undefined, admitProfileRequest) as unknown as WorkspaceReconnectStatus;
       setStatus(value);
       setAutoReconnect(value.enabled);
       setAllowDirect(value.allow_direct_ip_disclosure);
@@ -4337,7 +3582,8 @@ function WorkspaceReconnectSettings({ workspace, coordinator }: { workspace: Wor
 }
 
 function WorkspaceAdmissionGrants({ workspace }: { workspace: Workspace }) {
-  type Grant = { id: string; state: string; admin_member_id: string; admin_device_id: string; max_admissions: number; use_count: number; expires_at: number; accepted: boolean };
+  const admitProfileRequest = useProfileRequestAdmission();
+  type Grant = { id: string; admission_grant?: string; state: string; admin_member_id: string; admin_device_id: string; max_admissions: number; use_count: number; expires_at: number; accepted: boolean };
   const [grants, setGrants] = useState<Grant[]>([]);
   const [adminMemberId, setAdminMemberId] = useState("");
   const [adminDeviceId, setAdminDeviceId] = useState("");
@@ -4348,10 +3594,21 @@ function WorkspaceAdmissionGrants({ workspace }: { workspace: Workspace }) {
   const candidates = workspace.members.filter((member) => member.role === "admin" && member.status === "active");
   const selectedAdmin = candidates.find((member) => member.id === adminMemberId) ?? candidates[0];
   const adminDevices = selectedAdmin?.devices ?? (selectedAdmin ? [selectedAdmin.device] : []);
+  const loadGrants = async (): Promise<Grant[]> => {
+    if (workspace.core_handle) {
+      try {
+        const result = await coreApiAdmissionGrantList(workspace.core_handle, admitProfileRequest);
+        return Array.isArray(result.grants) ? result.grants as unknown as Grant[] : [];
+      } catch (reason) {
+        if (!String(reason).includes("core_api_unavailable")) throw reason;
+      }
+    }
+    throw new Error("core_api_unavailable");
+  };
   useEffect(() => {
     let active = true;
-    void serviceCommand<Grant[]>("list_workspace_admission_grants", { workspace_id: workspace.id }).then((rows) => {
-      if (active) setGrants(Array.isArray(rows) ? rows : []);
+    void loadGrants().then((rows) => {
+      if (active) setGrants(rows);
     }).catch(() => { if (active) setError("Admission grants are unavailable."); });
     return () => { active = false; };
   }, [workspace.id]);
@@ -4361,27 +3618,62 @@ function WorkspaceAdmissionGrants({ workspace }: { workspace: Workspace }) {
     setAdminDeviceId((current) => adminDevices.some((device) => device.id === current) ? current : adminDevices[0]?.id ?? "");
   }, [selectedAdmin?.id, adminDevices.map((device) => device.id).join(":")]);
   const refresh = async () => {
-    const rows = await serviceCommand<Grant[]>("list_workspace_admission_grants", { workspace_id: workspace.id });
-    setGrants(Array.isArray(rows) ? rows : []);
+    setGrants(await loadGrants());
   };
   const create = async () => {
     if (!selectedAdmin || !adminDeviceId) return;
     setBusy(true); setError("");
     try {
-      await serviceCommand("create_workspace_admission_grant", { workspace_id: workspace.id, admin_member_id: selectedAdmin.id, admin_device_id: adminDeviceId, max_admissions: 5, lifetime_days: 7, v2_ready: v2Ready });
+      let handled = false;
+      const device = adminDevices.find((item) => item.id === adminDeviceId);
+      if (workspace.core_handle && selectedAdmin.core_handle && device?.core_handle) {
+        try {
+          await coreApiAdmissionGrantCreate(workspace.core_handle, selectedAdmin.core_handle, device.core_handle, v2Ready, newOperationId(), admitProfileRequest);
+          handled = true;
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+        }
+      }
+      if (!handled) throw new Error("core_api_unavailable");
       await refresh();
     } catch (reason) { setError(errorMessage(reason)); }
     finally { setBusy(false); }
   };
   const accept = async (grantId: string) => {
     setBusy(true); setError("");
-    try { await serviceCommand("accept_workspace_admission_grant", { workspace_id: workspace.id, grant_id: grantId }); await refresh(); }
+    try {
+      let handled = false;
+      const grant = grants.find((item) => item.id === grantId);
+      if (workspace.core_handle && grant?.admission_grant) {
+        try {
+          await coreApiAdmissionGrantAccept(workspace.core_handle, grant.admission_grant, newOperationId(), admitProfileRequest);
+          handled = true;
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+        }
+      }
+      if (!handled) throw new Error("core_api_unavailable");
+      await refresh();
+    }
     catch (reason) { setError(errorMessage(reason)); }
     finally { setBusy(false); }
   };
   const end = async (grantId: string) => {
     setBusy(true); setError("");
-    try { await serviceCommand("end_workspace_admission_grant", { workspace_id: workspace.id, grant_id: grantId }); await refresh(); }
+    try {
+      let handled = false;
+      const grant = grants.find((item) => item.id === grantId);
+      if (workspace.core_handle && grant?.admission_grant) {
+        try {
+          await coreApiAdmissionGrantEnd(workspace.core_handle, grant.admission_grant, newOperationId(), admitProfileRequest);
+          handled = true;
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+        }
+      }
+      if (!handled) throw new Error("core_api_unavailable");
+      await refresh();
+    }
     catch (reason) { setError(errorMessage(reason)); }
     finally { setBusy(false); }
   };
@@ -4433,6 +3725,7 @@ function workspaceHistoryStateLabel(status: WorkspaceHistoryStatus["status"]): s
 }
 
 export function WorkspaceHistorySettingsContent({ workspace, conversationId, conversationName, busy, error, onUpdate, onPrune }: { workspace: Workspace; conversationId?: string; conversationName?: string; busy: boolean; error: string; onUpdate: (retentionDays: 30 | 90 | 365 | null) => void; onPrune: () => Promise<WorkspaceRetentionPruneResult | null> }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   const [retention, setRetention] = useState<"30" | "90" | "365" | "indefinite">(workspace.retention_days === null ? "indefinite" : String(workspace.retention_days) as "30" | "90" | "365");
   const [result, setResult] = useState<WorkspaceRetentionPruneResult | null>(null);
   const [history, setHistory] = useState<WorkspaceHistoryStatus | null>(null);
@@ -4444,7 +3737,8 @@ export function WorkspaceHistorySettingsContent({ workspace, conversationId, con
     if (!conversationId) return;
     try {
       setHistoryError("");
-      setHistory(await serviceCommand<WorkspaceHistoryStatus>("get_workspace_history_status", { workspace_id: workspace.id, conversation_id: conversationId }));
+      setHistory(await fetchWorkspaceHistory(workspace, "status",
+        { conversation: conversationId }, undefined, admitProfileRequest) as unknown as WorkspaceHistoryStatus);
     } catch (reason) { setHistoryError(errorMessage(reason)); }
   }, [conversationId, workspace.id]);
   useEffect(() => { void loadHistory(); }, [loadHistory]);
@@ -4452,7 +3746,7 @@ export function WorkspaceHistorySettingsContent({ workspace, conversationId, con
     if (!conversationId) return;
     setHistoryBusy(true); setHistoryError("");
     try {
-      await serviceCommand(command, { operation_id: newOperationId(), workspace_id: workspace.id, conversation_id: conversationId });
+      await fetchWorkspaceHistory({ id: workspace.id, core_handle: workspace.core_handle }, command === "start_workspace_history" ? "start" : "cancel", { conversation: conversationId }, newOperationId(), admitProfileRequest);
       await loadHistory();
     } catch (reason) { setHistoryError(errorMessage(reason)); }
     finally { setHistoryBusy(false); }
@@ -4543,6 +3837,7 @@ function WorkspaceMessageCard({
   onOpenThread?: () => void;
   allowedMentionMemberIds: string[];
 }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState(message.text);
   const [editMentionMemberIds, setEditMentionMemberIds] = useState(
@@ -4565,12 +3860,11 @@ function WorkspaceMessageCard({
     setRevisionLoading(true);
     setRevisionError("");
     try {
-      const next = await serviceCommand<WorkspaceRevisionPage>("list_workspace_message_revisions", {
-        workspace_id: workspace.id,
+      const next = await fetchWorkspaceHistory(workspace, "revisions", {
         event_id: message.id,
         cursor: append ? revisionPage?.next_cursor ?? null : null,
         limit: 50,
-      });
+      }, undefined, admitProfileRequest) as unknown as WorkspaceRevisionPage;
       setRevisionPage((current) => append && current
         ? { ...next, revisions: [...current.revisions, ...next.revisions] }
         : next);
@@ -4640,6 +3934,7 @@ function WorkspaceMentionChips({ workspace, memberIds, onRemove }: { workspace: 
 }
 
 function WorkspaceTombstoneDialog({ workspace, conversationId, onClose }: { workspace: Workspace; conversationId: string; onClose: () => void }) {
+  const admitProfileRequest = useProfileRequestAdmission();
   const [page, setPage] = useState<WorkspaceTombstonePage | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -4648,12 +3943,11 @@ function WorkspaceTombstoneDialog({ workspace, conversationId, onClose }: { work
     setLoading(true);
     setError("");
     try {
-      const next = await serviceCommand<WorkspaceTombstonePage>("list_workspace_tombstones", {
-        workspace_id: workspace.id,
-        conversation_id: conversationId,
+      const next = await fetchWorkspaceHistory(workspace, "tombstones", {
+        conversation: conversationId,
         cursor: append ? page?.next_cursor ?? null : null,
         limit: 50,
-      });
+      }, undefined, admitProfileRequest) as unknown as WorkspaceTombstonePage;
       setPage((current) => append && current
         ? { ...next, tombstones: [...current.tombstones, ...next.tombstones] }
         : next);
@@ -4886,7 +4180,7 @@ type ConversationSelection = { kind: "contact" | "group"; id: string } | null;
 type ReactionTarget = { kind: "direct" | "group" | "workspace"; messageId: string; layer: "quick" | "catalog" } | null;
 
 type DraftWrite = {
-  command: "save_draft" | "save_group_draft" | "save_workspace_draft" | "save_workspace_direct_draft" | "save_workspace_thread_draft";
+  command: "save_group_draft" | "save_workspace_draft" | "save_workspace_direct_draft" | "save_workspace_thread_draft";
   payload: Record<string, unknown>;
 };
 
@@ -4945,7 +4239,26 @@ type WorkspaceMessageInvalidations = Record<string, {
 }>;
 
 function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageInvalidations, notificationTarget, onNotificationHandled, onLock, initialInvitation, onInvitationHandled, initialPairingCode = "", initialWebRTCJoin = false, onWebRTCJoinHandled, onPairingHandled }: { snapshot: Snapshot; theme: Theme; onThemeChange: (theme: Theme) => void; refresh: (afterCurrent?: boolean) => Promise<Snapshot>; workspaceMessageInvalidations: WorkspaceMessageInvalidations; notificationTarget: NotificationOpenTarget | null; onNotificationHandled: () => void; onLock: () => Promise<void>; initialInvitation: string; onInvitationHandled: () => void; initialPairingCode?: string; initialWebRTCJoin?: boolean; onWebRTCJoinHandled?: () => void; onPairingHandled?: () => void }) {
+  const profileEffects = useProfileEffectScope();
+  const admitProfileRequest = useProfileRequestAdmission();
+  const lifetime = useProfileLifetime();
+  const [profileGeneration] = useState(() => lifetime?.capture());
+  const draftsRetiring = useRef(false);
+  const profileCurrent = useCallback(() => !lifetime || lifetime.isCurrent(profileGeneration!), [lifetime, profileGeneration]);
+  const admitMutation: CoreRequestAdmission = useCallback((request) => lifetime
+    ? lifetime.mutate(profileGeneration!, request) : request(), [lifetime, profileGeneration]);
+  const admitDraft: CoreRequestAdmission = useCallback((request) => lifetime
+    ? lifetime.mutate(profileGeneration!, request, draftsRetiring.current) : request(), [lifetime, profileGeneration]);
+  const mutateWorkspaceTimeline = useCallback((
+    workspace: { id: string; core_handle?: string },
+    action: Parameters<typeof coreApiTimelineMutation>[1],
+    params: Record<string, unknown>,
+    operationId?: string,
+  ) => coreApiTimelineMutation(workspace.core_handle ?? "", action, params,
+    operationId ?? newOperationId(), admitMutation), [admitMutation]);
   const groups = snapshot.groups ?? [];
+  const currentGroups = useRef(groups);
+  currentGroups.current = groups;
   const groupMessages = snapshot.group_messages ?? [];
   const groupInvitations = snapshot.group_invitations ?? [];
   const workspaces = snapshot.workspaces ?? [];
@@ -4969,8 +4282,11 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
   const [query, setQuery] = useState("");
   const [showDeletedConversations, setShowDeletedConversations] = useState(false);
   const [conversationDetailsOpen, setConversationDetailsOpen] = useState(false);
-  const [drafts, setDrafts] = useState<Record<string, string>>(() => Object.fromEntries(snapshot.drafts.map((draft) => [draft.contact_id, draft.text])));
   const [groupDrafts, setGroupDrafts] = useState<Record<string, string>>(() => Object.fromEntries((snapshot.group_drafts ?? []).map((draft) => [draft.group_id, draft.text])));
+  const currentGroupDrafts = useRef(groupDrafts);
+  currentGroupDrafts.current = groupDrafts;
+  const pendingGroupSends = useRef(new Map<string, GroupSendTicket>());
+  const groupCreationAttempts = useRef(new Map<string, GroupCreationAttempt>());
   const [newChat, setNewChat] = useState(false);
   const [newChatStartTab, setNewChatStartTab] = useState<"invite" | "join">("invite");
   const [newChatTransport, setNewChatTransport] = useState<ConnectionTransportKind>("direct_tcp");
@@ -4993,12 +4309,12 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     setWebRtcSessionRevision((revision) => revision + 1);
   }), []);
   const [webrtcPath, setWebrtcPath] = useState<WebRTCSessionPath>(() => getWebRTCSession()?.path ?? "unknown");
-  // Reconnect is renderer-owned because the WebView owns RTCPeerConnection.
-  // This component only exists while the service is unlocked, so the
-  // coordinator can never run while the app is locked.
+  // Transitional WebView profiles retain the legacy coordinator. Service-owned
+  // profiles expose projections and never negotiate from this component.
   const refreshRef = useRef(refresh);
   useEffect(() => { refreshRef.current = refresh; }, [refresh]);
   const [reconnectCoordinator] = useState(() => createReconnectCoordinator({
+    ...profileEffects,
     refresh: async () => { await refreshRef.current(true); },
     onSession: (path) => {
       setWebRtcSessionActive(true);
@@ -5027,7 +4343,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       window.removeEventListener("focus", wake);
       window.removeEventListener("pageshow", wake);
       document.removeEventListener("visibilitychange", wake);
-      void reconnectCoordinator.stop();
+      reconnectCoordinator.detach();
       closeNativeReconnectSessions();
       void closeNativeWebRTCSessions();
       void closeWebRTCSession();
@@ -5187,15 +4503,8 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
   const [groupInvitationError, setGroupInvitationError] = useState("");
   const [workspaceJoinRequestError, setWorkspaceJoinRequestError] = useState("");
   const [sendError, setSendError] = useState("");
-  // A successful send command returns the message only after its encrypted
-  // record is durable. Keep that authoritative result visible until a later
-  // snapshot contains it. This is particularly important on mobile, where a
-  // separate draft-cleanup or snapshot bridge call can be delayed behind the
-  // single native worker even though the send itself has already succeeded.
-  const [locallySavedMessages, setLocallySavedMessages] = useState<Record<string, ChatMessage>>({});
   const [directSendBusy, setDirectSendBusy] = useState(false);
   const [groupSendBusy, setGroupSendBusy] = useState(false);
-  const directSendInFlight = useRef(false);
   const groupSendInFlight = useRef(false);
   const reactionInFlight = useRef(false);
   const reactionInteractionGeneration = useRef(0);
@@ -5245,21 +4554,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     }
   }, []);
 
-  useEffect(() => {
-    const persistedIds = new Set(snapshot.messages.map((message) => message.id));
-    setLocallySavedMessages((current) => {
-      const entries = Object.entries(current).filter(([id]) => !persistedIds.has(id));
-      return entries.length === Object.keys(current).length ? current : Object.fromEntries(entries);
-    });
-  }, [snapshot.messages]);
-
-  const directMessages = useMemo(() => {
-    const persistedIds = new Set(snapshot.messages.map((message) => message.id));
-    return [
-      ...snapshot.messages,
-      ...Object.values(locallySavedMessages).filter((message) => !persistedIds.has(message.id)),
-    ].sort((left, right) => left.created_at - right.created_at);
-  }, [locallySavedMessages, snapshot.messages]);
+  const directMessages = snapshot.messages;
 
   const normalizedQuery = query.trim().toLowerCase();
   const revealDeletedConversations = showDeletedConversations || Boolean(normalizedQuery);
@@ -5300,7 +4595,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     // Manual pairing can precede creation of a reconnect profile. Start native
     // path discovery once for this verified peer without requiring a chat send
     // or mailbox setup; the transport owns ongoing discovery/recovery.
-    void serviceCommand("reconnect_path_status", { contact_id: selectedApprovedContactId })
+    void serviceCommand("reconnect_path_status", { contact_id: selectedApprovedContactId }, admitProfileRequest)
       .then(() => { if (active) return refresh(true); })
       .catch(() => undefined);
     return () => { active = false; };
@@ -5415,20 +4710,25 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     workspacePageInFlight.current = true;
     setWorkspacePageLoading(true);
     try {
-      const page = await serviceCommand<WorkspaceMessagePage>(selectedWorkspaceDirect ? "list_workspace_direct_messages" : "list_workspace_messages", {
-        workspace_id: selectedWorkspace.id,
-        ...(selectedWorkspaceDirect ? { conversation_id: selectedWorkspaceDirect.id } : { channel_id: selectedWorkspaceChannel!.id }),
-        cursor: append ? workspacePage?.next_cursor ?? null : null,
-        limit: 50,
-      });
-      if (workspacePageSelection.current !== selectionKey) return;
+      const page = await fetchWorkspaceTimeline(
+        selectedWorkspace,
+        selectedWorkspaceDirect ? "direct_messages" : "channel_messages",
+        selectedWorkspaceDirect
+          ? { conversation: selectedWorkspaceDirect.id, cursor: append ? workspacePage?.next_cursor ?? null : null, limit: 50 }
+          : { channel: selectedWorkspaceChannel!.id, cursor: append ? workspacePage?.next_cursor ?? null : null, limit: 50 },
+      ) as unknown as WorkspaceMessagePage;
+      if (!profileCurrent() || workspacePageSelection.current !== selectionKey) return;
       setWorkspacePage((current) => append && current ? { ...page, messages: [...page.messages, ...current.messages] } : page);
       if (!append && selectedWorkspaceConversation.unread_count > 0) {
-        await serviceCommand(selectedWorkspaceDirect ? "mark_workspace_direct_read" : "mark_workspace_read", { operation_id: newOperationId(), workspace_id: selectedWorkspace.id, ...(selectedWorkspaceDirect ? { conversation_id: selectedWorkspaceDirect.id } : { channel_id: selectedWorkspaceChannel!.id }), high_water: page.high_water });
+        await mutateWorkspaceTimeline(selectedWorkspace,
+        selectedWorkspaceDirect ? "direct_read" : "workspace_read",
+        selectedWorkspaceDirect
+          ? { conversation: selectedWorkspaceDirect.id, high_water: page.high_water }
+          : { channel: selectedWorkspaceChannel!.id, high_water: page.high_water });
       }
     } catch (reason) { setWorkspaceError(errorMessage(reason)); }
     finally { workspacePageInFlight.current = false; setWorkspacePageLoading(false); }
-  }, [selectedWorkspace?.id, selectedWorkspaceConversation?.id, selectedWorkspaceConversation?.unread_count, selectedWorkspaceDirect?.id, selectedWorkspaceChannel?.id, workspacePage?.next_cursor]);
+  }, [selectedWorkspace?.id, selectedWorkspaceConversation?.id, selectedWorkspaceConversation?.unread_count, selectedWorkspaceDirect?.id, selectedWorkspaceChannel?.id, workspacePage?.next_cursor, profileCurrent, mutateWorkspaceTimeline]);
 
   useEffect(() => {
     if (!selectedWorkspace || !selectedWorkspaceConversation) {
@@ -5456,11 +4756,10 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     workspaceMentionsInFlight.current = true;
     setWorkspaceMentionLoading(true);
     try {
-      const page = await serviceCommand<WorkspaceMentionPage>("list_workspace_mentions", {
-        workspace_id: selectedWorkspace.id,
+      const page = await fetchWorkspaceTimeline(selectedWorkspace, "mentions", {
         cursor: append ? workspaceMentionPage?.next_cursor ?? null : null,
         limit: 50,
-      });
+      }) as unknown as WorkspaceMentionPage;
       setWorkspaceMentionPage((current) => append && current ? { ...page, mentions: [...current.mentions, ...page.mentions] } : page);
     } catch (reason) { setWorkspaceError(errorMessage(reason)); }
     finally { workspaceMentionsInFlight.current = false; setWorkspaceMentionLoading(false); }
@@ -5480,13 +4779,12 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     setWorkspaceSearchLoading(true);
     if (!append) setWorkspaceSearchError("");
     try {
-      const page = await serviceCommand<WorkspaceSearchPage>("search_workspace", {
-        workspace_id: selectedWorkspace.id,
+      const page = await fetchWorkspaceTimeline(selectedWorkspace, "search", {
         query: workspaceSearchQuery,
         scope: workspaceSearchScope,
         cursor: append ? workspaceSearchPage?.next_cursor ?? null : null,
         limit: 25,
-      });
+      }) as unknown as WorkspaceSearchPage;
       if (request !== workspaceSearchRequest.current) return;
       setWorkspaceSearchPage((current) => append && current
         ? { ...page, results: [...current.results, ...page.results] }
@@ -5515,11 +4813,10 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     workspaceThreadsInFlight.current = true;
     setWorkspaceThreadActivityLoading(true);
     try {
-      const page = await serviceCommand<WorkspaceThreadActivityPage>("list_workspace_threads", {
-        workspace_id: selectedWorkspace.id,
+      const page = await fetchWorkspaceTimeline(selectedWorkspace, "threads", {
         cursor: append ? workspaceThreadActivityPage?.next_cursor ?? null : null,
         limit: 50,
-      });
+      }) as unknown as WorkspaceThreadActivityPage;
       setWorkspaceThreadActivityPage((current) => append && current ? { ...page, threads: [...current.threads, ...page.threads] } : page);
     } catch (reason) { setWorkspaceError(errorMessage(reason)); }
     finally { workspaceThreadsInFlight.current = false; setWorkspaceThreadActivityLoading(false); }
@@ -5539,19 +4836,16 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     workspaceThreadInFlight.current = true;
     setWorkspaceThreadLoading(true);
     try {
-      const page = await serviceCommand<WorkspaceThreadPage>("list_workspace_thread_messages", {
-        workspace_id: selectedWorkspace.id,
-        thread_root_id: workspaceThreadRootId,
+      const page = await fetchWorkspaceTimeline(selectedWorkspace, "thread_messages", {
+        thread_root: workspaceThreadRootId,
         cursor: append ? workspaceThreadPage?.next_cursor ?? null : null,
         limit: 50,
-      });
-      if (workspaceThreadSelection.current !== selectionKey) return;
+      }) as unknown as WorkspaceThreadPage;
+      if (!profileCurrent() || workspaceThreadSelection.current !== selectionKey) return;
       setWorkspaceThreadPage((current) => append && current ? { ...page, unread_count: current.unread_count, replies: [...page.replies, ...current.replies] } : page);
       if (!append && page.unread_count > 0) {
-        await serviceCommand("mark_workspace_thread_read", {
-          operation_id: newOperationId(),
-          workspace_id: selectedWorkspace.id,
-          thread_root_id: workspaceThreadRootId,
+        await mutateWorkspaceTimeline(selectedWorkspace, "thread_read", {
+          thread_root: workspaceThreadRootId,
           high_water: page.high_water,
         });
         setWorkspaceThreadPage((current) => current ? { ...current, unread_count: 0 } : current);
@@ -5559,7 +4853,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       }
     } catch (reason) { setWorkspaceError(errorMessage(reason)); }
     finally { workspaceThreadInFlight.current = false; setWorkspaceThreadLoading(false); }
-  }, [selectedWorkspace?.id, workspaceThreadRootId, workspaceThreadPage?.next_cursor, refresh]);
+  }, [selectedWorkspace?.id, workspaceThreadRootId, workspaceThreadPage?.next_cursor, refresh, profileCurrent, mutateWorkspaceTimeline]);
 
   useEffect(() => {
     if (!workspaceThreadRootId || !selectedWorkspace) {
@@ -5634,7 +4928,10 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     setReactionBusy({ kind, messageId, emoji: validation.emoji });
     setReactionError("");
     try {
-      await serviceCommand("set_message_reaction", { kind, message_id: messageId, emoji: validation.emoji, active });
+      const target = kind === "direct" ? selectedContact?.id : selectedGroup?.id;
+      if (!target) throw new Error("core_api_unavailable");
+      await coreApiConversationReaction(
+        kind, target, messageId, validation.emoji, active, admitProfileRequest);
       await refresh(true);
       if (reactionInteractionGeneration.current === interactionGeneration) {
         setReactionTarget((current) => current?.kind === kind && current.messageId === messageId ? null : current);
@@ -5657,10 +4954,8 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     }
     setConversationActionError("");
     try {
-      await serviceCommand("restore_conversation", {
-        kind: next.kind === "contact" ? "direct" : "group",
-        id: next.id,
-      });
+      await coreApiConversation(
+        "restore", next.kind === "contact" ? "direct" : "group", next.id, admitProfileRequest);
       setQuery("");
       selectConversation(next);
       await refresh(true);
@@ -5678,7 +4973,31 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
   };
   const enqueueDraftWrite = (slot: DraftWriteSlot, write: DraftWrite): Promise<void> => {
     const result = slot.tail.then(async () => {
-      await serviceCommand(write.command, write.payload);
+      if ((write.command === "save_workspace_draft"
+           || write.command === "save_workspace_direct_draft"
+           || write.command === "save_workspace_thread_draft")
+          && typeof write.payload.workspace_id === "string") {
+        const workspace = workspaces.find((item) => item.id === write.payload.workspace_id);
+        if (!workspace?.core_handle) throw new Error("core_api_unavailable");
+        await coreApiWorkspaceDraftSet(
+          workspace.core_handle,
+          String(write.payload.channel_id ?? write.payload.conversation_id ?? ""),
+          String(write.payload.text ?? ""),
+          String(write.payload.operation_id ?? newOperationId()),
+          {
+            threadRoot: typeof write.payload.thread_root_id === "string" ? write.payload.thread_root_id : undefined,
+            mentions: Array.isArray(write.payload.mention_member_ids)
+              ? write.payload.mention_member_ids.map(String) : undefined,
+          }, admitDraft);
+        return;
+      }
+      if (write.command === "save_group_draft" && typeof write.payload.group_id === "string") {
+        const group = (snapshot.groups ?? []).find((item) => item.id === write.payload.group_id);
+        if (!group?.core_handle) throw new Error("core_api_unavailable");
+        await coreApiGroupDraftSet(group.core_handle, String(write.payload.text ?? ""), admitDraft);
+        return;
+      }
+      throw new Error("core_api_unavailable");
     });
     // Keep the ordering barrier usable after an individual persistence error;
     // an immediate clear after a successful send must still be able to run.
@@ -5686,6 +5005,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     return result;
   };
   const scheduleDraftWrite = (key: string, write: DraftWrite) => {
+    if (!profileCurrent()) return;
     const slot = draftSlot(key);
     slot.pending = write;
     if (slot.timer !== null) window.clearTimeout(slot.timer);
@@ -5709,26 +5029,34 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     await cancelPendingDraftWrite(key);
     await enqueueDraftWrite(draftSlot(key), write);
   };
+  const retireDrafts = useRef<() => Promise<unknown>>(() => Promise.resolve());
+  retireDrafts.current = async () => {
+    draftsRetiring.current = true;
+    const writes = [...draftWriteSlots.current.values()].map((slot) => {
+      if (slot.timer !== null) window.clearTimeout(slot.timer);
+      slot.timer = null;
+      const pending = slot.pending;
+      slot.pending = null;
+      return pending ? enqueueDraftWrite(slot, pending) : slot.tail;
+    });
+    const results = await Promise.allSettled(writes);
+    if (results.some((result) => result.status === "rejected")) throw new Error("draft_outcome_pending");
+  };
+  useEffect(() => {
+    if (lifetime) return lifetime.register(profileGeneration!, () => retireDrafts.current());
+  }, [lifetime, profileGeneration]);
   const deleteConversation = async () => {
     if (!deleteTarget || deleteBusy) return;
     const target = deleteTarget;
     const kind = target.kind === "contact" ? "direct" : "group";
-    const draftKey = `${target.kind}:${target.id}`;
     setDeleteBusy(true);
     setDeleteError("");
     try {
-      // Prevent a delayed draft write from recreating content after the vault
-      // has committed the deletion.
-      await cancelPendingDraftWrite(draftKey);
-      await serviceCommand("delete_conversation", { kind, id: target.id });
-      if (target.kind === "contact") {
-        setDrafts((current) => {
-          const next = { ...current };
-          delete next[target.id];
-          return next;
-        });
-        setLocallySavedMessages((current) => Object.fromEntries(Object.entries(current).filter(([, message]) => message.contact_id !== target.id)));
-      } else {
+      // Direct composer tickets are retired by the Core deletion transaction.
+      // The group writer still needs its pending keystrokes canceled here.
+      if (target.kind === "group") await cancelPendingDraftWrite(`group:${target.id}`);
+      await coreApiConversation("delete", kind, target.id, admitProfileRequest);
+      if (target.kind === "group") {
         setGroupDrafts((current) => {
           const next = { ...current };
           delete next[target.id];
@@ -5744,13 +5072,6 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     } finally {
       setDeleteBusy(false);
     }
-  };
-  const saveDraft = (contactId: string, text: string) => {
-    setDrafts((current) => ({ ...current, [contactId]: text }));
-    scheduleDraftWrite(`contact:${contactId}`, {
-      command: "save_draft",
-      payload: { contact_id: contactId, text },
-    });
   };
   const saveGroupDraft = (groupId: string, text: string) => {
     setGroupDrafts((current) => ({ ...current, [groupId]: text }));
@@ -5781,55 +5102,6 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       payload: { operation_id: newOperationId(), workspace_id: workspaceId, conversation_id: conversationId, thread_root_id: threadRootId, text, mention_member_ids: mentionMemberIds },
     });
   };
-  const send = async () => {
-    if (!selectedContact || directSendInFlight.current) return;
-    const text = drafts[selectedContact.id] ?? "";
-    if (!text.trim()) return;
-    const contactId = selectedContact.id;
-    const draftKey = `contact:${contactId}`;
-    directSendInFlight.current = true;
-    setDirectSendBusy(true);
-    setSendError("");
-    setDrafts((current) => ({ ...current, [contactId]: "" }));
-    // Drop every not-yet-started keystroke save and wait for the sole active
-    // save, if any. The send and final empty-draft write then have a strict
-    // order even on Android's single native Python worker.
-    await cancelPendingDraftWrite(draftKey);
-    try {
-      const saved = await serviceCommand<ChatMessage>("send_message", { contact_id: contactId, text });
-      setLocallySavedMessages((current) => ({ ...current, [saved.id]: saved }));
-    } catch (reason) {
-      setDrafts((current) => current[contactId] ? current : { ...current, [contactId]: text });
-      scheduleDraftWrite(draftKey, {
-        command: "save_draft",
-        payload: { contact_id: contactId, text },
-      });
-      setSendError(`${errorMessage(reason)} Your text is still in the composer. Check the conversation before sending it again.`);
-      directSendInFlight.current = false;
-      setDirectSendBusy(false);
-      return;
-    }
-    try {
-      await writeDraftNow(draftKey, {
-        command: "save_draft",
-        payload: { contact_id: contactId, text: "" },
-      });
-    } catch {
-      // The durable send already succeeded. Do not restore the text and imply
-      // that it is safe to submit again merely because draft cleanup failed.
-      setSendError("Your message was saved, but its saved draft could not be cleared. It may reappear after reopening Mesh Chat.");
-    }
-    try {
-      // A state-change event may already have started a snapshot before the
-      // send committed. Queue a new snapshot behind it instead of reusing it.
-      await refresh(true);
-    } catch {
-      setSendError((current) => current || "Your message was saved. The conversation could not refresh yet, but it will appear when Mesh Chat updates.");
-    } finally {
-      directSendInFlight.current = false;
-      setDirectSendBusy(false);
-    }
-  };
   const sendGroupMessage = async () => {
     if (!selectedGroup || groupSendInFlight.current) return;
     const posting = groupComposerState(selectedGroup, snapshot.profile?.destination_hash ?? "");
@@ -5838,31 +5110,50 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       return;
     }
     const groupId = selectedGroup.id;
-    const text = groupDrafts[groupId] ?? "";
+    const previous = pendingGroupSends.current.get(groupId);
+    const text = previous?.params.text ?? groupDrafts[groupId] ?? "";
     if (!text.trim()) return;
     const draftKey = `group:${groupId}`;
     groupSendInFlight.current = true;
     setGroupSendBusy(true);
     setSendError("");
-    setGroupDrafts((current) => ({ ...current, [groupId]: "" }));
+    setGroupDrafts((current) => !previous || current[groupId] === text ? { ...current, [groupId]: "" } : current);
     await cancelPendingDraftWrite(draftKey);
     try {
-      await serviceCommand("send_group_message", { group_id: groupId, text });
+      let sent = false;
+      if (selectedGroup.core_handle) {
+        try {
+          const ticket = previous ?? await prepareKeyedGroupSend(selectedGroup.core_handle, text, newOperationId());
+          if (ticket) {
+            pendingGroupSends.current.set(groupId, ticket);
+            await submitKeyedGroupSend(ticket, admitMutation);
+            pendingGroupSends.current.delete(groupId);
+          } else await coreApiSendGroupMessage(selectedGroup.core_handle, text, admitMutation);
+          sent = true;
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+        }
+      }
+      if (!sent) throw new Error("core_api_unavailable");
     } catch (reason) {
+      const restoredText = currentGroupDrafts.current[groupId] || text;
       setGroupDrafts((current) => current[groupId] ? current : { ...current, [groupId]: text });
       scheduleDraftWrite(draftKey, {
         command: "save_group_draft",
-        payload: { group_id: groupId, text },
+        payload: { group_id: groupId, text: restoredText },
       });
-      setSendError(`${errorMessage(reason)} Your text is still in the composer. Check the conversation before sending it again.`);
+      setSendError(pendingGroupSends.current.has(groupId)
+        ? `${errorMessage(reason)} The previous send is not confirmed. Retry checks that same message.`
+        : `${errorMessage(reason)} Your text is still in the composer. Check the conversation before sending it again.`);
       groupSendInFlight.current = false;
       setGroupSendBusy(false);
       return;
     }
     try {
+      const remainingText = currentGroupDrafts.current[groupId] ?? "";
       await writeDraftNow(draftKey, {
         command: "save_group_draft",
-        payload: { group_id: groupId, text: "" },
+        payload: { group_id: groupId, text: remainingText === text ? "" : remainingText },
       });
     } catch {
       setSendError("Your message was saved, but its saved draft could not be cleared. It may reappear after reopening Mesh Chat.");
@@ -5876,16 +5167,24 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       setGroupSendBusy(false);
     }
   };
+  const finishGroupCreation = async (created: Group | { name: string; core_handle?: string }) => {
+    const refreshed = await refresh(true);
+    const group = "id" in created ? created : refreshed.groups?.find((item) => created.core_handle
+      ? item.core_handle === created.core_handle : item.title === created.name);
+    if (!group && created.core_handle) throw new Error("created_group_snapshot_pending");
+    if (group) selectConversation({ kind: "group", id: group.id });
+    setNewGroup(false);
+  };
   const connectionHelp = async () => {
-    if (selectedContact) setHelp(await serviceCommand("connection_help", { contact_id: selectedContact.id }));
+    if (selectedContact) setHelp(await coreApiConnectionSupport("help", { contact_id: selectedContact.id }, admitProfileRequest) as unknown as { code: string; action: string | null });
   };
   const respondToContactInvitation = async (invitation: ContactInvitation, accept: boolean) => {
     setInvitationBusy(invitation.id);
     setInvitationError("");
     try {
-      const accepted = await serviceCommand<{ id?: string; reconnect_capabilities?: string }>(
-        "decide_contact_invitation", { invitation_id: invitation.id, accept },
-      );
+      const accepted = await coreApiContactInvitation(
+        "decide", { invitation: invitation.id, accept }, admitProfileRequest
+      ) as { id?: string; reconnect_capabilities?: string };
       for (const session of getWebRTCSessions()) {
         if (session.controlPurpose === "reconnect" || session.peerDestination !== invitation.preview.destination_hash) continue;
         if (accept && accepted.id) updateWebRTCSessionContact(accepted.id, session.key);
@@ -5908,10 +5207,18 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     setRequestError("");
     setDismissedRequests((current) => current.filter((id) => id !== contact.id));
     try {
-      const approval = await serviceCommand<{ reconnect_capabilities?: string }>(
-        accept ? "approve_request" : "decline_request",
-        { contact_id: contact.id },
-      );
+      let approval: { reconnect_capabilities?: string } | null = null;
+      if (accept) {
+        try {
+          const target = await coreApiPeerForDestination(contact.destination_hash);
+          await admitProfileRequest(() => coreApiRequest("peer.approve", { profile: target.profile, peer: target.peer }));
+          approval = {};
+        } catch { /* Fall back only when approval was not accepted by the facade. */ }
+      }
+      if (!approval) {
+        approval = await coreApiDecidePeerRequest(
+          contact.destination_hash, accept, admitProfileRequest) as { reconnect_capabilities?: string };
+      }
       try {
         const matching = getWebRTCSessionForContact(contact.id);
         const pending = getWebRTCSessions().filter((candidate) =>
@@ -5977,8 +5284,17 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     setGroupInvitationError("");
     setDismissedGroupInvitations((current) => current.filter((id) => id !== invitation.id));
     try {
-      const result = await serviceCommand<Group | null>(accept ? "accept_group_invitation" : "decline_group_invitation", { invitation_id: invitation.id });
-      if (accept) selectConversation({ kind: "group", id: result?.id ?? invitation.group_id });
+      let handled = false;
+      if (invitation.core_handle) {
+        try {
+          await coreApiGroupInvitation(invitation.core_handle, accept, admitProfileRequest);
+          handled = true;
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+        }
+      }
+      if (!handled) throw new Error("core_api_unavailable");
+      if (accept) selectConversation({ kind: "group", id: invitation.group_id });
       await refresh(true);
     } catch (reason) {
       setGroupInvitationError(errorMessage(reason));
@@ -5990,7 +5306,26 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     setGroupActionBusy(true);
     setGroupActionError("");
     try {
-      await serviceCommand(command, payload);
+      let handled = false;
+      if (selectedGroup?.core_handle) {
+        try {
+          if (command === "leave_group") {
+            await coreApiLeaveGroup(selectedGroup.core_handle, admitProfileRequest);
+          } else if (command === "close_group") {
+            await coreApiCloseGroup(selectedGroup.core_handle, admitProfileRequest);
+          } else if (command === "retry_group_invitation"
+              && typeof payload.destination_hash === "string") {
+            await coreApiRetryGroupInvitation(
+              selectedGroup.core_handle, payload.destination_hash, admitProfileRequest);
+          } else if (typeof payload.destination_hash === "string") {
+            await coreApiRemoveGroupMember(selectedGroup.core_handle, payload.destination_hash, admitProfileRequest);
+          }
+          handled = true;
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+        }
+      }
+      if (!handled) throw new Error("core_api_unavailable");
       if (leaveConversation) setSelection(null);
       await refresh(true);
     } catch (reason) {
@@ -6000,6 +5335,13 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     }
   };
 
+  const applyAdmittedRole = async (workspaceId: string, memberId: string) => {
+    const latest = await refresh(true);
+    const workspace = (latest.workspaces ?? []).find((item) => item.id === workspaceId);
+    const member = workspace?.members.find((item) => item.id === memberId);
+    if (!workspace?.core_handle || !member?.core_handle) throw new Error("core_api_unavailable");
+    await coreApiWorkspaceMemberRole(workspace.core_handle, member.core_handle, "admin", newOperationId(), admitProfileRequest);
+  };
   const respondToWorkspaceJoin = async (request: WorkspaceJoinRequest, accept: boolean, role: "member" | "admin" = "member") => {
     if (workspaceActionBusy || !workspaces.some((workspace) => workspace.id === request.workspace_id)) return;
     setWorkspaceActionBusy(true); setWorkspaceActionError(""); setWorkspaceJoinRequestError("");
@@ -6013,10 +5355,23 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     };
     let roleWarning = "";
     try {
-      await serviceCommand(accept ? "approve_workspace_join" : "decline_workspace_join", { operation_id: newOperationId(), workspace_id: request.workspace_id, request_id: request.id });
+      const workspace = workspaces.find((candidate) => candidate.id === request.workspace_id);
+      let handled = false;
+      if (workspace?.core_handle && request.core_handle) {
+        try {
+          await coreApiWorkspaceJoinDecision(
+            workspace.core_handle, request.core_handle, accept, newOperationId(), admitProfileRequest);
+          handled = true;
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+        }
+      }
+      if (!handled) {
+        throw new Error("core_api_unavailable");
+      }
       if (accept && role === "admin") {
         try {
-          await serviceCommand("change_workspace_role", { operation_id: newOperationId(), workspace_id: request.workspace_id, member_id: request.member_id, role: "admin" });
+          await applyAdmittedRole(request.workspace_id, request.member_id);
         } catch (reason) {
           roleWarning = `Member admitted, but the administrator role change failed: ${errorMessage(reason)}`;
         }
@@ -6030,7 +5385,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
         if ((accept && admitted) || (!accept && !stillPending && !admitted)) {
           if (accept && admitted && role === "admin") {
             try {
-              await serviceCommand("change_workspace_role", { operation_id: newOperationId(), workspace_id: request.workspace_id, member_id: request.member_id, role: "admin" });
+              await applyAdmittedRole(request.workspace_id, request.member_id);
             } catch (roleReason) {
               roleWarning = `Member admitted, but the administrator role change failed: ${errorMessage(roleReason)}`;
             }
@@ -6090,11 +5445,251 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     if (!selectedWorkspace || workspaceActionBusy) return;
     setWorkspaceActionBusy(true); setWorkspaceActionError("");
     try {
-      await serviceCommand(command, {
-        operation_id: newOperationId(),
-        workspace_id: selectedWorkspace.id,
-        ...payload,
-      });
+      let handled = false;
+      if ((command === "approve_workspace_admin_request" || command === "decline_workspace_admin_request"
+           || command === "cancel_workspace_admin_request" || command === "dismiss_workspace_admin_request")
+          && selectedWorkspace.core_handle && typeof payload.request_id === "string") {
+        const request = workspaceAdminRequests.find((item) => item.id === payload.request_id);
+        if (request?.core_handle) {
+          const action = command.startsWith("approve") ? "approve"
+            : command.startsWith("decline") ? "decline"
+            : command.startsWith("cancel") ? "cancel" : "dismiss";
+          try {
+            await coreApiWorkspaceAdminRequest(
+              selectedWorkspace.core_handle, request.core_handle,
+              action as "approve" | "decline" | "cancel" | "dismiss", newOperationId(), admitProfileRequest);
+            await refresh(true);
+            return;
+          } catch (reason) {
+            if (!String(reason).includes("core_api_unavailable")) throw reason;
+          }
+        }
+      }
+      if (command === "remove_workspace_member" && selectedWorkspace.core_handle
+          && typeof payload.member_id === "string") {
+        const member = selectedWorkspace.members.find((item) => item.id === payload.member_id);
+        if (member?.core_handle) {
+          try {
+            await coreApiRemoveWorkspaceMember(
+              selectedWorkspace.core_handle, member.core_handle, newOperationId(), admitProfileRequest);
+            await refresh(true);
+            return;
+          } catch (reason) {
+            if (!String(reason).includes("core_api_unavailable")) throw reason;
+            throw new Error("core_api_unavailable");
+          }
+        }
+      }
+      if (command === "submit_workspace_admin_request" && selectedWorkspace.core_handle
+          && (payload.request_kind === "invitation" || payload.request_kind === "member_removal"
+              || payload.request_kind === "role_change")) {
+        const member = typeof payload.target_member_id === "string"
+          ? selectedWorkspace.members.find((item) => item.id === payload.target_member_id)
+          : null;
+        try {
+          await coreApiWorkspaceAdminSubmit(
+            selectedWorkspace.core_handle, payload.request_kind,
+            member?.core_handle ?? null,
+            payload.requested_role === "admin" || payload.requested_role === "member"
+              ? payload.requested_role : null,
+            typeof payload.note === "string" ? payload.note : "",
+            newOperationId(), admitProfileRequest);
+          await refresh(true);
+          return;
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+        }
+      }
+      if (command === "decide_workspace_display_name" && selectedWorkspace.core_handle
+          && typeof payload.request_id === "string" && typeof payload.approve === "boolean") {
+        try {
+          await coreApiWorkspaceDisplayNameDecision(
+            selectedWorkspace.core_handle, payload.request_id, payload.approve, newOperationId(), admitProfileRequest);
+          await refresh(true);
+          return;
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+          throw new Error("core_api_unavailable");
+        }
+      }
+      if (command === "request_workspace_display_name" && selectedWorkspace.core_handle
+          && typeof payload.display_name === "string") {
+        try {
+          await coreApiWorkspaceDisplayNameRequest(
+            selectedWorkspace.core_handle, payload.display_name, newOperationId(), admitProfileRequest);
+          await refresh(true);
+          return;
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+          throw new Error("core_api_unavailable");
+        }
+      }
+      if (command === "set_workspace_read_hint_sync" && selectedWorkspace.core_handle
+          && typeof payload.enabled === "boolean") {
+        try {
+          await coreApiWorkspaceReadHintSync(
+            selectedWorkspace.core_handle, payload.enabled, newOperationId(), admitProfileRequest);
+          await refresh(true);
+          return;
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+          throw new Error("core_api_unavailable");
+        }
+      }
+      if (command === "offer_workspace_authority_transition" && selectedWorkspace.core_handle
+          && typeof payload.successor_member_id === "string"
+          && typeof payload.successor_device_id === "string"
+          && (payload.transition_kind === "ownership_transfer"
+              || payload.transition_kind === "same_owner_rotation")) {
+        const member = selectedWorkspace.members.find((item) => item.id === payload.successor_member_id);
+        const device = member?.devices?.find((item) => item.id === payload.successor_device_id);
+        const outgoing = payload.outgoing_owner_role === "admin" || payload.outgoing_owner_role === "member"
+          ? payload.outgoing_owner_role : null;
+        if (member?.core_handle && device?.core_handle) {
+          try {
+            await coreApiWorkspaceAuthorityOffer(
+              selectedWorkspace.core_handle, payload.transition_kind,
+              member.core_handle, device.core_handle, outgoing, newOperationId(), admitProfileRequest);
+            await refresh(true);
+            return;
+          } catch (reason) {
+            if (!String(reason).includes("core_api_unavailable")) throw reason;
+            throw new Error("core_api_unavailable");
+          }
+        }
+      }
+      if ((command === "accept_workspace_authority_transition"
+           || command === "finalize_workspace_authority_transition")
+          && selectedWorkspace.core_handle && typeof payload.transition_id === "string") {
+        const transition = workspaceAuthorityTransitions.find((item) => item.id === payload.transition_id);
+        if (transition?.core_handle) {
+          try {
+            await coreApiWorkspaceAuthority(
+              selectedWorkspace.core_handle, transition.core_handle,
+              command === "accept_workspace_authority_transition" ? "accept" : "finalize",
+              newOperationId(), admitProfileRequest);
+            await refresh(true);
+            return;
+          } catch (reason) {
+            if (!String(reason).includes("core_api_unavailable")) throw reason;
+            throw new Error("core_api_unavailable");
+          }
+        }
+      }
+      if (command === "report_workspace_authority_loss" && selectedWorkspace.core_handle) {
+        try {
+          await coreApiReportAuthorityLoss(selectedWorkspace.core_handle, newOperationId(), admitProfileRequest);
+          await refresh(true);
+          return;
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+          throw new Error("core_api_unavailable");
+        }
+      }
+      if (command === "update_workspace_metadata" && selectedWorkspace.core_handle
+          && typeof payload.name === "string" && typeof payload.description === "string") {
+        try {
+          await coreApiWorkspaceMetadata(
+            selectedWorkspace.core_handle, payload.name, payload.description, newOperationId(), admitProfileRequest);
+          await refresh(true);
+          return;
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+          throw new Error("core_api_unavailable");
+        }
+      }
+      if (command === "update_workspace_retention" && selectedWorkspace.core_handle
+          && (payload.retention_days === null || typeof payload.retention_days === "number")) {
+        try {
+          await coreApiWorkspaceRetention(
+            selectedWorkspace.core_handle, payload.retention_days, newOperationId(), admitProfileRequest);
+          await refresh(true);
+          return;
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+          throw new Error("core_api_unavailable");
+        }
+      }
+      if (command === "request_workspace_device_removal" && selectedWorkspace.core_handle
+          && typeof payload.target_device_id === "string") {
+        const device = selectedWorkspace.members
+          .flatMap((member) => member.devices ?? [])
+          .find((item) => item.id === payload.target_device_id);
+        if (device?.core_handle) {
+          try {
+            await coreApiRequestDeviceRemoval(
+              selectedWorkspace.core_handle, device.core_handle, newOperationId(), admitProfileRequest);
+            await refresh(true);
+            return;
+          } catch (reason) {
+            if (!String(reason).includes("core_api_unavailable")) throw reason;
+          }
+        }
+      }
+      if ((command === "approve_workspace_device_removal"
+           || command === "decline_workspace_device_removal")
+          && selectedWorkspace.core_handle && typeof payload.removal_id === "string") {
+        const transition = workspaceDeviceTransitions.find((item) => item.id === payload.removal_id);
+        if (transition?.core_handle) {
+          try {
+            await coreApiDecideDeviceRemoval(
+              selectedWorkspace.core_handle, transition.core_handle,
+              command === "approve_workspace_device_removal", newOperationId(), admitProfileRequest);
+            await refresh(true);
+            return;
+          } catch (reason) {
+            if (!String(reason).includes("core_api_unavailable")) throw reason;
+          }
+        }
+      }
+      if ((command === "approve_workspace_device_link" || command === "decline_workspace_device_link")
+          && selectedWorkspace.core_handle && typeof payload.link_id === "string") {
+        const transition = workspaceDeviceTransitions.find((item) => item.id === payload.link_id);
+        if (transition?.core_handle) {
+          try {
+            await coreApiWorkspaceDeviceLinkDecision(
+              selectedWorkspace.core_handle, transition.core_handle,
+              command === "approve_workspace_device_link", newOperationId(), admitProfileRequest);
+            await refresh(true);
+            return;
+          } catch (reason) {
+            if (!String(reason).includes("core_api_unavailable")) throw reason;
+          }
+        }
+      }
+      if (command === "update_workspace_policies" && selectedWorkspace.core_handle
+          && typeof payload.channel_creation === "string"
+          && typeof payload.posting === "string") {
+        try {
+          await coreApiWorkspacePolicy(
+            selectedWorkspace.core_handle,
+            payload.channel_creation,
+            payload.posting,
+            typeof payload.invitation_requests === "string"
+              ? payload.invitation_requests
+              : selectedWorkspace.policies.invitation_requests,
+            newOperationId(), admitProfileRequest
+          );
+          handled = true;
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+        }
+      }
+      if (!handled && command === "change_workspace_role" && selectedWorkspace.core_handle
+          && typeof payload.member_id === "string") {
+        const member = selectedWorkspace.members.find((item) => item.id === payload.member_id);
+        if (member?.core_handle && (payload.role === "member" || payload.role === "admin")) {
+          try {
+            await coreApiWorkspaceMemberRole(
+              selectedWorkspace.core_handle, member.core_handle, payload.role, newOperationId(), admitProfileRequest);
+            handled = true;
+          } catch (reason) {
+            if (!String(reason).includes("core_api_unavailable")) throw reason;
+            throw new Error("core_api_unavailable");
+          }
+        }
+      }
+      if (!handled) throw new Error("core_api_unavailable");
       await refresh(true);
     } catch (reason) { setWorkspaceActionError(errorMessage(reason)); }
     finally { setWorkspaceActionBusy(false); }
@@ -6103,10 +5698,16 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     if (!selectedWorkspace || workspaceActionBusy) return null;
     setWorkspaceActionBusy(true); setWorkspaceActionError("");
     try {
-      const result = await serviceCommand<WorkspaceDeviceLinkFormats>("create_workspace_device_link", {
-        operation_id: newOperationId(),
-        workspace_id: selectedWorkspace.id,
-      });
+      let result: WorkspaceDeviceLinkFormats | null = null;
+      if (selectedWorkspace.core_handle) {
+        try {
+          result = await coreApiCreateWorkspaceDeviceLink(
+            selectedWorkspace.core_handle, newOperationId(), admitProfileRequest);
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+        }
+      }
+      if (!result) throw new Error("core_api_unavailable");
       await refresh(true);
       return result;
     } catch (reason) {
@@ -6118,11 +5719,9 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     if (!selectedWorkspace || workspaceActionBusy) return null;
     setWorkspaceActionBusy(true); setWorkspaceActionError("");
     try {
-      const result = await serviceCommand<WorkspaceRetentionPruneResult>("prune_workspace_history", {
-        operation_id: newOperationId(),
-        workspace_id: selectedWorkspace.id,
+      const result = await fetchWorkspaceHistory(selectedWorkspace, "prune", {
         max_events: 500,
-      });
+      }, newOperationId(), admitProfileRequest) as unknown as WorkspaceRetentionPruneResult;
       await refresh(true);
       if (result.pruned_this_batch) {
         setWorkspacePage(null);
@@ -6155,25 +5754,156 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     if (!selectedWorkspace || workspaceActionBusy) return;
     setWorkspaceActionBusy(true); setWorkspaceActionError("");
     try {
-      const result = await serviceCommand<WorkspaceChannel | { channel_id?: string }>(command, {
-        operation_id: newOperationId(),
-        workspace_id: selectedWorkspace.id,
-        ...payload,
-      });
-      if (command === "create_workspace_channel" && "id" in result) {
-        setWorkspaceSelectedChannelId(result.id);
-        setWorkspaceSelectedDirectId(null);
-        setWorkspaceMentionsOpen(false);
-        setWorkspaceThreadsOpen(false);
-        setWorkspaceThreadRootId(null);
-        setWorkspaceCreateChannelOpen(false);
-        setWorkspaceBrowseOpen(false);
-        setMobileSidebarOpen(false);
+      if (command === "update_workspace_private_channel_members" && selectedWorkspace.core_handle
+          && typeof payload.channel_id === "string") {
+        const channel = selectedWorkspaceChannels.find((item) => item.id === payload.channel_id);
+        const selected = Array.isArray(payload.member_ids) ? payload.member_ids : [];
+        const members = selected.flatMap((id) => {
+          const member = selectedWorkspace.members.find((item) => item.id === id);
+          return member?.core_handle ? [member.core_handle] : [];
+        });
+        if (channel?.core_handle) {
+          try {
+            await coreApiUpdateChannelMembers(
+              selectedWorkspace.core_handle, channel.core_handle, members, newOperationId(), admitProfileRequest);
+            await refresh(true);
+            return;
+          } catch (reason) {
+            if (!String(reason).includes("core_api_unavailable")) throw reason;
+            throw new Error("core_api_unavailable");
+          }
+        }
       }
-      if (command === "update_workspace_channel" && "id" in result && result.state === "archived") {
-        setWorkspaceManageChannelOpen(false);
+      if (command === "offer_workspace_channel_transfer" && selectedWorkspace.core_handle
+          && typeof payload.channel_id === "string"
+          && typeof payload.successor_member_id === "string") {
+        const channel = selectedWorkspaceChannels.find((item) => item.id === payload.channel_id);
+        const member = selectedWorkspace.members.find((item) => item.id === payload.successor_member_id);
+        if (channel?.core_handle && member?.core_handle) {
+          try {
+            await coreApiOfferChannelTransfer(
+              selectedWorkspace.core_handle, channel.core_handle, member.core_handle, newOperationId(), admitProfileRequest);
+            await refresh(true);
+            return;
+          } catch (reason) {
+            if (!String(reason).includes("core_api_unavailable")) throw reason;
+            throw new Error("core_api_unavailable");
+          }
+        }
       }
-      await refresh(true);
+      if (command === "accept_workspace_channel_transfer" && selectedWorkspace.core_handle
+          && typeof payload.transfer_id === "string") {
+        const transfer = workspaceChannelTransfers.find((item) => item.id === payload.transfer_id);
+        const channel = transfer && selectedWorkspaceChannels.find((item) => item.id === transfer.channel_id);
+        if (channel?.core_handle) {
+          try {
+            await coreApiAcceptChannelTransfer(
+              selectedWorkspace.core_handle, channel.core_handle, newOperationId(), admitProfileRequest);
+            await refresh(true);
+            return;
+          } catch (reason) {
+            if (!String(reason).includes("core_api_unavailable")) throw reason;
+            throw new Error("core_api_unavailable");
+          }
+        }
+      }
+      if (command === "update_workspace_channel" && selectedWorkspace.core_handle
+          && typeof payload.channel_id === "string") {
+        const channel = selectedWorkspaceChannels.find((item) => item.id === payload.channel_id);
+        if (channel?.core_handle && typeof payload.name === "string"
+            && typeof payload.topic === "string") {
+          try {
+            await coreApiUpdateWorkspaceChannel(
+              selectedWorkspace.core_handle, channel.core_handle, payload.name,
+              payload.topic, payload.archived === true, newOperationId(), admitProfileRequest);
+            if (payload.archived === true) setWorkspaceManageChannelOpen(false);
+            await refresh(true);
+            return;
+          } catch (reason) {
+            if (!String(reason).includes("core_api_unavailable")) throw reason;
+            throw new Error("core_api_unavailable");
+          }
+        }
+      }
+      if (command === "create_workspace_channel" && selectedWorkspace.core_handle
+          && typeof payload.name === "string") {
+        const name = payload.name;
+        const topic = typeof payload.topic === "string" ? payload.topic : "";
+        const visibility = payload.visibility === "private" ? "private" : "public";
+        const selected = Array.isArray(payload.member_ids) ? payload.member_ids : [];
+        const members = selected.flatMap((id) => {
+          const member = selectedWorkspace.members.find((item) => item.id === id);
+          return member?.core_handle ? [member.core_handle] : [];
+        });
+        try {
+          await coreApiCreateWorkspaceChannel(
+            selectedWorkspace.core_handle, name, topic, visibility, members, newOperationId(), admitProfileRequest);
+          const refreshed = await refresh(true);
+          const created = (refreshed.workspace_channels ?? []).find((channel) => channel.name === name);
+          if (created) setWorkspaceSelectedChannelId(created.id);
+          setWorkspaceSelectedDirectId(null);
+          setWorkspaceMentionsOpen(false);
+          setWorkspaceThreadsOpen(false);
+          setWorkspaceThreadRootId(null);
+          setWorkspaceCreateChannelOpen(false);
+          setWorkspaceBrowseOpen(false);
+          setMobileSidebarOpen(false);
+          return;
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+          throw new Error("core_api_unavailable");
+        }
+      }
+      if ((command === "set_workspace_channel_subscription"
+           || command === "set_workspace_channel_mentions_muted"
+           || command === "leave_workspace_private_channel")
+          && selectedWorkspace.core_handle && typeof payload.channel_id === "string") {
+        const channel = selectedWorkspaceChannels.find((item) => item.id === payload.channel_id);
+        if (channel?.core_handle) {
+          const action = command === "set_workspace_channel_subscription" ? "subscribe"
+            : command === "set_workspace_channel_mentions_muted" ? "mute" : "leave";
+          try {
+            await coreApiWorkspaceChannelState(
+              selectedWorkspace.core_handle, action,
+              { channel: channel.core_handle,
+                ...(action === "subscribe" ? { subscribed: payload.subscribed === true } : {}),
+                ...(action === "mute" ? { muted: payload.muted === true } : {}) },
+              newOperationId(), admitProfileRequest);
+            await refresh(true);
+            return;
+          } catch (reason) {
+            if (!String(reason).includes("core_api_unavailable")) throw reason;
+            throw new Error("core_api_unavailable");
+          }
+        }
+      }
+      if (command === "sync_workspace_channels" && selectedWorkspace.core_handle) {
+        try {
+          await coreApiWorkspaceChannelState(
+            selectedWorkspace.core_handle, "sync", {}, newOperationId(), admitProfileRequest);
+          await refresh(true);
+          return;
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+          throw new Error("core_api_unavailable");
+        }
+      }
+      if (command === "recover_workspace_channel" && selectedWorkspace.core_handle
+          && typeof payload.channel_id === "string") {
+        const channel = selectedWorkspaceChannels.find((item) => item.id === payload.channel_id);
+        if (channel?.core_handle) {
+          try {
+            await coreApiRecoverWorkspaceChannel(
+              selectedWorkspace.core_handle, channel.core_handle, newOperationId(), admitProfileRequest);
+            await refresh(true);
+            return;
+          } catch (reason) {
+            if (!String(reason).includes("core_api_unavailable")) throw reason;
+            throw new Error("core_api_unavailable");
+          }
+        }
+      }
+      throw new Error("core_api_unavailable");
     } catch (reason) { setWorkspaceActionError(errorMessage(reason)); }
     finally { setWorkspaceActionBusy(false); }
   };
@@ -6184,11 +5914,8 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     if (!selectedWorkspace || workspaceActionBusy) return;
     setWorkspaceActionBusy(true); setWorkspaceActionError("");
     try {
-      await serviceCommand("set_workspace_notification_preference", {
-        operation_id: newOperationId(),
-        workspace_id: selectedWorkspace.id,
-        conversation_id: conversationId,
-        mode,
+      await mutateWorkspaceTimeline(selectedWorkspace, "notification_preference", {
+        conversation: conversationId, mode,
       });
       await refresh(true);
     } catch (reason) { setWorkspaceActionError(errorMessage(reason)); }
@@ -6198,14 +5925,12 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     if (workspaceActionBusy) return;
     setWorkspaceActionBusy(true); setWorkspaceActionError("");
     try {
-      await serviceCommand("update_settings", {
-        settings: {
-          ...snapshot.settings,
-          approved_propagation_nodes: [
-            ...new Set([...snapshot.settings.approved_propagation_nodes, node]),
-          ],
-        },
-      });
+      await saveNetworkSettings({
+        ...snapshot.settings,
+        approved_propagation_nodes: [
+          ...new Set([...snapshot.settings.approved_propagation_nodes, node]),
+        ],
+      } as unknown as Record<string, unknown>, admitProfileRequest);
       await refresh(true);
     } catch (reason) { setWorkspaceActionError(errorMessage(reason)); }
     finally { setWorkspaceActionBusy(false); }
@@ -6248,14 +5973,13 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     await cancelPendingDraftWrite(draftKey);
     let saved: WorkspaceMessage;
     try {
-      saved = await serviceCommand<WorkspaceMessage>(kind === "direct" ? "send_workspace_direct_message" : "send_workspace_message", {
-        operation_id: durable.operationId,
-        event_id: durable.eventId,
-        workspace_id: workspaceId,
-        ...(kind === "direct" ? { conversation_id: conversationId } : { channel_id: conversationId }),
-        text,
-        mention_member_ids: durable.mentionMemberIds,
-      });
+      saved = await mutateWorkspaceTimeline(
+        { id: workspaceId, core_handle: workspaces.find((item) => item.id === workspaceId)?.core_handle },
+        kind === "direct" ? "direct_message" : "channel_message",
+        { conversation: conversationId, text, event_id: durable.eventId,
+          mention_member_ids: durable.mentionMemberIds },
+        durable.operationId,
+      ) as unknown as WorkspaceMessage;
     } catch (reason) {
       setWorkspaceError(`${errorMessage(reason)} Your text is still in the composer; retrying will reuse the same durable message ID.`);
       workspaceSendInFlight.current = false;
@@ -6315,15 +6039,12 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     await cancelPendingDraftWrite(draftWriteKey);
     let saved: WorkspaceMessage;
     try {
-      saved = await serviceCommand<WorkspaceMessage>("send_workspace_thread_reply", {
-        operation_id: durable.operationId,
+      saved = await mutateWorkspaceTimeline(selectedWorkspace, "thread_reply", {
         event_id: durable.eventId,
-        workspace_id: durable.workspaceId,
-        conversation_id: durable.conversationId,
-        thread_root_id: durable.threadRootId,
+        conversation: durable.conversationId,
+        thread_root: durable.threadRootId,
         text: durable.text,
-        mention_member_ids: durable.mentionMemberIds,
-      });
+      }, durable.operationId) as unknown as WorkspaceMessage;
     } catch (reason) {
       setWorkspaceError(`${errorMessage(reason)} Your reply is still in the composer; retrying will reuse the same durable message ID.`);
       workspaceSendInFlight.current = false;
@@ -6346,7 +6067,10 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     if (!selectedWorkspace || workspaceActionBusy) return;
     setWorkspaceActionBusy(true); setWorkspaceActionError("");
     try {
-      const direct = await serviceCommand<WorkspaceDirect>("open_workspace_direct", { operation_id: newOperationId(), workspace_id: selectedWorkspace.id, member_id: memberId });
+      const member = selectedWorkspace.members.find((item) => item.id === memberId);
+      if (!member?.core_handle) throw new Error("core_api_unavailable");
+      const direct = await coreApiOpenWorkspaceDirect(
+        selectedWorkspace.core_handle ?? "", member.core_handle, newOperationId(), admitProfileRequest) as { id: string } as WorkspaceDirect;
       setWorkspaceSelectedDirectId(direct.id);
       setWorkspaceSelectedChannelId(null);
       setWorkspaceMentionsOpen(false);
@@ -6363,7 +6087,8 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     if (!selectedWorkspace || !selectedWorkspaceDirect || workspaceActionBusy) return;
     setWorkspaceActionBusy(true); setWorkspaceError("");
     try {
-      await serviceCommand("hide_workspace_direct", { operation_id: newOperationId(), workspace_id: selectedWorkspace.id, conversation_id: selectedWorkspaceDirect.id });
+      await fetchWorkspaceHistory(selectedWorkspace, "hide_direct",
+        { conversation: selectedWorkspaceDirect.id }, newOperationId(), admitProfileRequest);
       setWorkspaceSelectedDirectId(null);
       await refresh(true);
     } catch (reason) { setWorkspaceError(errorMessage(reason)); }
@@ -6373,9 +6098,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     if (!selectedWorkspace || !workspaceMentionPage || workspaceMentionPage.unread_count === 0) return;
     setWorkspaceError("");
     try {
-      await serviceCommand("mark_workspace_mentions_read", {
-        operation_id: newOperationId(),
-        workspace_id: selectedWorkspace.id,
+      await mutateWorkspaceTimeline(selectedWorkspace, "mentions_read", {
         high_water: workspaceMentionPage.high_water,
       });
       setWorkspaceMentionPage((current) => current ? {
@@ -6447,7 +6170,8 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     if (!selectedWorkspace) return;
     setWorkspaceError("");
     try {
-      await serviceCommand("hide_workspace_message", { operation_id: newOperationId(), workspace_id: selectedWorkspace.id, event_id: eventId });
+      await fetchWorkspaceHistory(selectedWorkspace, "hide_message",
+        { event_id: eventId }, newOperationId(), admitProfileRequest);
       if (workspaceThreadRootId === eventId) {
         setWorkspaceThreadRootId(null);
         setWorkspaceThreadPage(null);
@@ -6465,13 +6189,17 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     if (!selectedWorkspace) return;
     setWorkspaceError("");
     try {
-      const updated = await serviceCommand<WorkspaceMessage>(command, {
-        operation_id: newOperationId(),
-        mutation_event_id: newOperationId(),
-        workspace_id: selectedWorkspace.id,
-        event_id: eventId,
-        ...(command === "edit_workspace_message" ? { text, mention_member_ids: mentionMemberIds } : {}),
-      });
+      const updated = await mutateWorkspaceTimeline(
+        selectedWorkspace,
+        command === "edit_workspace_message" ? "message_edit" : "message_delete",
+        {
+          event_id: eventId,
+          mutation_event_id: newOperationId(),
+          ...(command === "edit_workspace_message"
+            ? { text, mention_member_ids: mentionMemberIds } : {}),
+        },
+        newOperationId(),
+      ) as unknown as WorkspaceMessage;
       setWorkspacePage((current) => current ? {
         ...current,
         messages: current.messages.map((message) => message.id === eventId ? updated : message),
@@ -6493,14 +6221,11 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     setReactionBusy({ kind: "workspace", messageId, emoji: validation.emoji });
     setReactionError("");
     try {
-      const updated = await serviceCommand<WorkspaceMessage>("set_workspace_reaction", {
-        operation_id: newOperationId(),
-        mutation_event_id: newOperationId(),
-        workspace_id: selectedWorkspace.id,
-        event_id: messageId,
-        emoji: validation.emoji,
-        active,
-      });
+      const updated = await mutateWorkspaceTimeline(
+        selectedWorkspace, "reaction_set",
+        { event_id: messageId, emoji: validation.emoji, active,
+          mutation_event_id: newOperationId() }, newOperationId(),
+      ) as unknown as WorkspaceMessage;
       setWorkspacePage((current) => current ? {
         ...current,
         messages: current.messages.map((message) => message.id === messageId ? updated : message),
@@ -6522,7 +6247,22 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     if (!selectedWorkspace || workspaceActionBusy) return;
     setWorkspaceActionBusy(true); setWorkspaceActionError("");
     try {
-      await serviceCommand(command, { operation_id: newOperationId(), workspace_id: selectedWorkspace.id, ...(confirmation ? { confirmation } : {}) });
+      let handled = false;
+      if (selectedWorkspace.core_handle) {
+        try {
+          await coreApiWorkspaceLifecycle(
+            selectedWorkspace.core_handle,
+            command === "close_workspace" ? "close"
+              : command === "leave_workspace" ? "leave" : "remove",
+            newOperationId(),
+            confirmation, admitProfileRequest
+          );
+          handled = true;
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+        }
+      }
+      if (!handled) throw new Error("core_api_unavailable");
       const removed = command === "remove_workspace_data";
       if (removed) { setActiveSpaceId("personal"); setWorkspaceSettingsSection(null); }
       await refresh(true);
@@ -6739,7 +6479,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     setContactInviteDismissBusy(promptId);
     setContactInviteDismissError(null);
     try {
-      await serviceCommand("dismiss_workspace_invitation_prompt", { prompt_id: promptId });
+      await fetchWorkspaceConnection(null, "prompt_dismiss", { prompt_id: promptId }, undefined, admitProfileRequest);
       setDismissedContactInviteIds((current) => new Set(current).add(promptId));
       void refresh(true).catch(() => undefined);
     } catch {
@@ -6804,6 +6544,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
         </> : null}
         <footer className="sidebar__footer" title={networkAvailable ? "The local network service is running. This does not confirm that another device is reachable." : undefined}><span className={`network-dot ${networkAvailable ? "network-dot--on" : ""}`} />{networkAvailable ? "Network service active" : "Networking unavailable"}</footer>
       </aside>
+      <CallRecoveryNotice />
       <div ref={mainPaneRef} className="main-pane" aria-hidden={settings || workspaceSettingsSection ? true : undefined}>
         {snapshot.service_error && (
           <div className="service-warning" role="alert">
@@ -6997,8 +6738,9 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
           <Conversation
             contact={selectedContact}
             messages={messages}
-            draft={drafts[selectedContact.id] ?? ""}
-            sendError={sendError}
+            composer={<DirectMessageComposer key={selectedContact.destination_hash}
+              destination={selectedContact.destination_hash} displayName={selectedContact.display_name}
+              onAccepted={() => refresh(true)} onSendingChange={setDirectSendBusy} />}
             sending={directSendBusy}
             detailsOpen={conversationDetailsOpen}
             reactionTargetId={reactionTarget?.kind === "direct" ? reactionTarget.messageId : null}
@@ -7010,8 +6752,6 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
             onReactionCatalogOpenChange={(messageId, open) => setReactionCatalogOpen("direct", messageId, open)}
             onCloseReactionPicker={closeReactionPicker}
             onSetReaction={(messageId, emoji, active) => void setMessageReaction("direct", messageId, emoji, active)}
-            onDraft={(value) => { setSendError(""); saveDraft(selectedContact.id, value); }}
-            onSend={() => void send()}
             onHelp={() => void connectionHelp()}
             onConnectionSettings={() => { setContactsInitialId(selectedContact.id); setContactsOpen(true); }}
             onBack={() => selectConversation(null)}
@@ -7026,6 +6766,8 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
             draft={groupDrafts[selectedGroup.id] ?? ""}
             sendError={sendError}
             sending={groupSendBusy}
+            retrying={pendingGroupSends.current.has(selectedGroup.id)}
+            pendingText={pendingGroupSends.current.get(selectedGroup.id)?.params.text}
             actionBusy={groupActionBusy}
             actionError={groupActionError}
             detailsOpen={conversationDetailsOpen}
@@ -7040,6 +6782,12 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
             onSetReaction={(messageId, emoji, active) => void setMessageReaction("group", messageId, emoji, active)}
             onDraft={(value) => { setSendError(""); saveGroupDraft(selectedGroup.id, value); }}
             onSend={() => void sendGroupMessage()}
+            onAccepted={() => refresh(true)}
+            onSendingChange={setGroupSendBusy}
+            isPostingAllowed={() => {
+              const current = currentGroups.current.find((item) => item.id === selectedGroup.id);
+              return Boolean(current && groupComposerState(current, snapshot.profile?.destination_hash ?? "").canPost);
+            }}
             onBack={() => selectConversation(null)}
             onDelete={() => { setDeleteError(""); setDeleteTarget({ kind: "group", id: selectedGroup.id }); }}
             onRemove={(destinationHash) => void runGroupAction("remove_group_member", { group_id: selectedGroup.id, destination_hash: destinationHash })}
@@ -7093,8 +6841,8 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       {connectEntryOpen && <ConnectEntryDialog onClose={() => setConnectEntryOpen(false)} onInvite={() => { setNewChatStartTab("invite"); setNewChatTransport("direct_tcp"); setConnectEntryOpen(false); setNewChat(true); }} onJoin={() => { setNewChatStartTab("join"); setConnectEntryOpen(false); setNewChat(true); }} onWebRTC={() => { setConnectEntryOpen(false); setWebRtcOnboardingOpen(true); }} onTransport={(kind) => { setNewChatStartTab("invite"); setNewChatTransport(kind); setConnectEntryOpen(false); setNewChat(true); }} onResume={() => { setConnectEntryOpen(false); setResumePairingOpen(true); }} resumeCode={resumePairingCode} />}
       {webrtcOnboardingOpen && <WebRTCOnboardingDialog initialPairingCode={initialPairingCode || (resumePairingOpen ? resumePairingCode : "")} onClose={() => { setWebRtcOnboardingOpen(false); setResumePairingOpen(false); onPairingHandled?.(); }} onConnected={(path) => { setWebRtcSessionActive(true); setWebRtcSessionCount(getWebRTCSessionCount()); setWebrtcPath(path); }} onFallback={() => { setNewChatStartTab("invite"); setNewChat(true); }} onChanged={async () => { await refresh(true); }} workspaces={(snapshot.workspaces ?? []).map((workspace) => ({ id: workspace.id, name: workspace.name }))} />}
       {newChat && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><NewChatDialog initialInvitation={initialInvitation} initialTab={newChatStartTab} initialConnection={newChatTransport} remoteProfiles={snapshot.remote_profiles ?? []} onClose={() => { setNewChat(false); onInvitationHandled(); }} onChanged={async () => { await refresh(true); }} onWorkspaceInvitation={(value) => { setNewChat(false); setJoinWorkspaceValue(value); setJoinWorkspaceOpen(true); }} /></div>}
-      {newGroup && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><CreateGroupDialog contacts={snapshot.contacts} onClose={() => setNewGroup(false)} onCreated={async (group) => { await refresh(true); selectConversation({ kind: "group", id: group.id }); setNewGroup(false); }} /></div>}
-      {contactsOpen && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><ContactsDialog initialContactId={contactsInitialId} contacts={snapshot.contacts.filter((contact) => contact.trust !== "pending_request")} reconnect={reconnectCoordinator} onClose={() => setContactsOpen(false)} onChanged={async () => { await refresh(true); }} onOpenConversation={async (contact) => { const hidden = hiddenConversationKeys.has(`direct:${contact.id}`); setContactsOpen(false); await restoreAndSelect({ kind: "contact", id: contact.id }, hidden); }} onDeleted={async (contactId) => { if (selection?.kind === "contact" && selection.id === contactId) setSelection(null); setDrafts((current) => { const next = { ...current }; delete next[contactId]; return next; }); setLocallySavedMessages((current) => Object.fromEntries(Object.entries(current).filter(([, message]) => message.contact_id !== contactId))); await refresh(true); }} /></div>}
+      {newGroup && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><CreateGroupDialog creationAttempts={groupCreationAttempts.current} contacts={snapshot.contacts} onClose={() => setNewGroup(false)} onCreated={finishGroupCreation} /></div>}
+      {contactsOpen && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><ContactsDialog initialContactId={contactsInitialId} contacts={snapshot.contacts.filter((contact) => contact.trust !== "pending_request")} reconnect={reconnectCoordinator} onClose={() => setContactsOpen(false)} onChanged={async () => { await refresh(true); }} onOpenConversation={async (contact) => { const hidden = hiddenConversationKeys.has(`direct:${contact.id}`); setContactsOpen(false); await restoreAndSelect({ kind: "contact", id: contact.id }, hidden); }} onDeleted={async (contactId) => { if (selection?.kind === "contact" && selection.id === contactId) setSelection(null); await refresh(true); }} /></div>}
       {settings && <div className={`settings-page-slot ${hasForegroundRequest ? "dialog-suspended" : ""}`} aria-hidden={hasForegroundRequest ? true : undefined}><SettingsPage snapshot={snapshot} theme={theme} onThemeChange={onThemeChange} onClose={() => setSettings(false)} onBackHandlerChange={registerSettingsBackHandler} onSaved={async () => { await refresh(true); }} /></div>}
       {notificationTarget && !notificationTarget.available && <Dialog title="Notification unavailable" onClose={onNotificationHandled}><div className="form-stack"><p>{notificationTarget.message ?? "This notification is no longer available or authorized on this device."}</p><p className="muted">Mesh Chat did not open stale content or change any read state.</p><Button onClick={onNotificationHandled}>Done</Button></div></Dialog>}
       {deleteTarget && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><DeleteConversationDialog kind={deleteTarget.kind === "contact" ? "direct" : "group"} name={deleteTargetName} busy={deleteBusy} error={deleteError} onCancel={() => { if (!deleteBusy) { setDeleteError(""); setDeleteTarget(null); } }} onConfirm={() => void deleteConversation()} /></div>}
@@ -7109,6 +6857,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
 }
 
 export default function App() {
+  const [lifetime] = useState(() => new ProfileLifetime());
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [initialInvitation, setInitialInvitation] = useState("");
@@ -7117,7 +6866,22 @@ export default function App() {
   const [workspaceMessageInvalidations, setWorkspaceMessageInvalidations] = useState<WorkspaceMessageInvalidations>({});
   const [notificationTarget, setNotificationTarget] = useState<NotificationOpenTarget | null>(null);
   const [fatal, setFatal] = useState("");
-  const [locked, setLocked] = useState(false);
+  const [lockState, setLockState] = useState<"open" | "locking" | "locked" | "uncertain">("open");
+  const [lockError, setLockError] = useState("");
+  const [lockPending, setLockPending] = useState(false);
+  const [unlocking, setUnlocking] = useState(false);
+  const [catalog, setCatalog] = useState<ProfileCatalog | null>(null);
+  const catalogRef = useRef<ProfileCatalog | null>(null);
+  const profileAction = useRef<{ ticket: ProfileAction; credential?: string; hostGeneration?: string; blocked: boolean; submitted: boolean } | null>(null);
+  const [pendingProfileAction, setPendingProfileAction] = useState<ProfileAction | null>(null);
+  const [profileReviewRequired, setProfileReviewRequired] = useState(false);
+  const openingProfileGeneration = useRef<number | null>(null);
+  const profilePublication = useRef(0);
+  const hostGeneration = useRef<string | null>(null);
+  const profileBusy = useRef(false);
+  const [profileBusyState, setProfileBusyState] = useState(false);
+  const locked = lockState !== "open";
+  const lockInFlight = useRef<Promise<void> | null>(null);
   const refreshInFlight = useRef<Promise<Snapshot> | null>(null);
   const workspaceRefreshInFlight = useRef<Promise<WorkspaceSnapshot> | null>(null);
   const mobileReconcileInFlight = useRef<Promise<void> | null>(null);
@@ -7129,10 +6893,13 @@ export default function App() {
     try { void setNativeTheme(theme).catch(() => undefined); } catch { /* Browser previews do not expose the native bridge. */ }
   }, [theme]);
   const refresh = useCallback(function requestSnapshot(afterCurrent = false): Promise<Snapshot> {
+    if (!lifetime.active) return Promise.reject(new ProfileRetiredError());
+    const generation = lifetime.capture();
+    const trailing = () => lifetime.isCurrent(generation) ? requestSnapshot(false) : Promise.reject(new ProfileRetiredError());
     if (workspaceRefreshInFlight.current) {
       return workspaceRefreshInFlight.current.then(
-        () => requestSnapshot(false),
-        () => requestSnapshot(false),
+        trailing,
+        trailing,
       );
     }
     if (refreshInFlight.current) {
@@ -7143,43 +6910,188 @@ export default function App() {
       // coalesce because the first continuation installs the next in-flight
       // request before the other continuations run.
       return current.then(
-        () => requestSnapshot(false),
-        () => requestSnapshot(false),
+        trailing,
+        trailing,
       );
     }
-    const request = serviceCommand<Snapshot>("snapshot").then((latest) => {
-      setSnapshot(latest);
+    const request = (coreApiSnapshot() as unknown as Promise<Snapshot>).then((latest) => {
+      if (!lifetime.isCurrent(generation)) throw new ProfileRetiredError();
+      setSnapshot((current) => lifetime.isCurrent(generation) ? latest : current);
       return latest;
     });
     refreshInFlight.current = request;
     const clear = () => { if (refreshInFlight.current === request) refreshInFlight.current = null; };
     void request.then(clear, clear);
     return request;
-  }, []);
+  }, [lifetime]);
   const refreshWorkspace = useCallback(function requestWorkspaceSnapshot(afterCurrent = false): Promise<WorkspaceSnapshot> {
+    if (!lifetime.active) return Promise.reject(new ProfileRetiredError());
+    const generation = lifetime.capture();
+    const trailing = () => lifetime.isCurrent(generation) ? requestWorkspaceSnapshot(false) : Promise.reject(new ProfileRetiredError());
     if (refreshInFlight.current) {
       return refreshInFlight.current.then(
-        () => requestWorkspaceSnapshot(false),
-        () => requestWorkspaceSnapshot(false),
+        trailing,
+        trailing,
       );
     }
     if (workspaceRefreshInFlight.current) {
       const current = workspaceRefreshInFlight.current;
       if (!afterCurrent) return current;
       return current.then(
-        () => requestWorkspaceSnapshot(false),
-        () => requestWorkspaceSnapshot(false),
+        trailing,
+        trailing,
       );
     }
-    const request = serviceCommand<WorkspaceSnapshot>("workspace_snapshot").then((latest) => {
-      setSnapshot((current) => current ? { ...current, ...latest } : current);
+    const request = loadWorkspaceSnapshot().then((latest) => {
+      if (!lifetime.isCurrent(generation)) throw new ProfileRetiredError();
+      setSnapshot((current) => lifetime.isCurrent(generation) && current ? { ...current, ...latest } : current);
       return latest;
     });
     workspaceRefreshInFlight.current = request;
     const clear = () => { if (workspaceRefreshInFlight.current === request) workspaceRefreshInFlight.current = null; };
     void request.then(clear, clear);
     return request;
-  }, []);
+  }, [lifetime]);
+
+  const generation = lifetime.active ? lifetime.capture() : -1;
+  const refreshCurrentProfile = useCallback((afterCurrent?: boolean) => lifetime.isCurrent(generation)
+    ? refresh(afterCurrent) : Promise.reject(new ProfileRetiredError()), [lifetime, generation, refresh]);
+
+  const lockProfile = useCallback((): Promise<void> => {
+    if (lockInFlight.current) return lockInFlight.current;
+    const retirement = lifetime.retire();
+    refreshInFlight.current = null;
+    workspaceRefreshInFlight.current = null;
+    mobileReconcileInFlight.current = null;
+    setSnapshot(null);
+    setNotificationTarget(null);
+    setWorkspaceMessageInvalidations({});
+    setLockError("");
+    setLockState("locking");
+    const request = (async () => {
+      try {
+        setLockPending(await retirement === "pending");
+        await lockService();
+        setLockState("locked");
+      } catch (reason) {
+        setLockError(errorMessage(reason));
+        setLockState("uncertain");
+      }
+    })();
+    lockInFlight.current = request;
+    void request.then(() => { if (lockInFlight.current === request) lockInFlight.current = null; });
+    return request;
+  }, [lifetime]);
+
+  const unlockProfile = async () => {
+    if (unlocking || lockState !== "locked") return;
+    setUnlocking(true);
+    setLockError("");
+    const generation = lifetime.beginOpening();
+    try {
+      const ready = await initializeService();
+      if (lifetime.finishOpening(generation)) {
+        setSnapshot(ready);
+        setFatal("");
+        setLockState("open");
+      }
+    } catch (reason) {
+      lifetime.failOpening(generation);
+      setLockError(errorMessage(reason));
+    } finally { setUnlocking(false); }
+  };
+  const publishCatalog = (value: ProfileCatalog) => { catalogRef.current = value; setCatalog(value); };
+  const hideProfile = (allowCleanup = true): Promise<"pending" | "drained"> => {
+    profilePublication.current += 1;
+    if (openingProfileGeneration.current !== null) {
+      lifetime.failOpening(openingProfileGeneration.current); openingProfileGeneration.current = null;
+    }
+    const retirement = lifetime.retire(allowCleanup);
+    refreshInFlight.current = null;
+    workspaceRefreshInFlight.current = null;
+    mobileReconcileInFlight.current = null;
+    setSnapshot(null); setNotificationTarget(null); setWorkspaceMessageInvalidations({});
+    return retirement;
+  };
+  const openCatalogProfile = async (value: ProfileCatalog) => {
+    const opening = lifetime.beginOpening();
+    openingProfileGeneration.current = opening;
+    const publication = ++profilePublication.current;
+    try {
+      const ready = await snapshotForCatalog(value);
+      if (publication !== profilePublication.current) throw new ProfileRetiredError();
+      if (!lifetime.finishOpening(opening)) throw new ProfileRetiredError();
+      setSnapshot(ready); setFatal(""); setLockState("open");
+    } catch (reason) { lifetime.failOpening(opening); throw reason; }
+    finally { if (openingProfileGeneration.current === opening) openingProfileGeneration.current = null; }
+  };
+  const runProfileAction = async (action?: ProfileAction["action"], profile?: string) => {
+    if (profileBusy.current || profileReviewRequired || profileAction.current?.blocked) return;
+    const owner = profileAction.current ?? (action && profile ? { ticket: Object.freeze({ action, profile, key: newOperationId() }), blocked: false, submitted: false, credential: undefined as string | undefined, hostGeneration: hostGeneration.current ?? undefined } : null);
+    if (!owner) return;
+    profileAction.current = owner; setPendingProfileAction(owner.ticket);
+    profileBusy.current = true; setProfileBusyState(true); setLockError("");
+    const ensureOwner = () => {
+      if (profileAction.current !== owner || owner.blocked
+          || (owner.hostGeneration && hostGeneration.current && owner.hostGeneration !== hostGeneration.current)) throw Object.assign(new Error("resync_required"), { code: "resync_required" });
+    };
+    try {
+      setLockState("locking");
+      setLockPending(await hideProfile() === "pending");
+      ensureOwner();
+      if (owner.ticket.action === "unlock" && !owner.credential) {
+        const authorized = await authenticateProfile(owner.ticket.profile);
+        ensureOwner();
+        if (hostGeneration.current && authorized.host_generation !== hostGeneration.current) throw Object.assign(new Error("resync_required"), { code: "resync_required" });
+        owner.credential = authorized.credential_handle;
+        owner.hostGeneration = authorized.host_generation;
+        hostGeneration.current = authorized.host_generation;
+      }
+      ensureOwner();
+      owner.submitted = true;
+      const result = await submitProfileAction(owner.ticket, owner.credential);
+      ensureOwner();
+      publishCatalog(result);
+      const selected = result.profiles.find((row) => row.selected);
+      if (selected?.state === "retiring") {
+        setLockState("uncertain"); setLockError("Profile retirement is still pending. Retry the same action to check its outcome."); return;
+      }
+      profileAction.current = null; setPendingProfileAction(null); setLockState("locked");
+      if (owner.ticket.action === "unlock" && selected?.profile === owner.ticket.profile && selected.state === "unlocked") await openCatalogProfile(result);
+    } catch (reason) {
+      const code = owner.blocked ? "resync_required" : profileErrorCode(reason);
+      if (code === "resync_required") { owner.blocked = true; setProfileReviewRequired(true); }
+      // Authentication cancellation must retain any earlier uncertain Core submission.
+      if (!owner.submitted && !owner.blocked) { profileAction.current = null; setPendingProfileAction(null); }
+      if (["forbidden", "authentication_required", "authentication_expired", "invalid_credential", "credential_expired"].includes(code)) owner.credential = undefined;
+      setLockError(code === "authentication_cancelled" ? "Device authentication was canceled. Profile content remains hidden."
+        : code === "unsupported_operation" ? "Device authentication is unavailable on this platform. Profile content remains hidden."
+        : code === "forbidden" && owner.ticket.action === "unlock" ? "Device authorization was rejected or expired. Retry to authenticate again."
+        : code === "resync_required" ? "The profile host changed. Review the current profiles before starting another action."
+        : errorMessage(reason));
+      setLockState(owner.submitted || owner.blocked ? "uncertain" : "locked");
+    } finally { profileBusy.current = false; setProfileBusyState(false); }
+  };
+  const reviewProfiles = async () => {
+    if (profileBusy.current) return;
+    profileBusy.current = true; setProfileBusyState(true);
+    try {
+      const current = await queryProfileCatalog(); publishCatalog(current);
+      if (profileAction.current?.blocked) { profileAction.current = null; setPendingProfileAction(null); }
+      setProfileReviewRequired(false);
+      setLockError("");
+    } catch (reason) { setLockError(errorMessage(reason)); }
+    finally { profileBusy.current = false; setProfileBusyState(false); }
+  };
+  const reopenReviewedProfile = async () => {
+    if (profileBusy.current || profileReviewRequired || !catalog) return;
+    profileBusy.current = true; setProfileBusyState(true); setLockError("");
+    try { await openCatalogProfile(catalog); }
+    catch (reason) {
+      if (["resync_required", "locked", "profile_changed"].includes(profileErrorCode(reason))) setProfileReviewRequired(true);
+      setLockError(errorMessage(reason));
+    } finally { profileBusy.current = false; setProfileBusyState(false); }
+  };
   useEffect(() => {
     let active = true;
     const cleanups: Array<() => void> = [];
@@ -7187,6 +7099,20 @@ export default function App() {
     void (async () => {
       try {
         keepCleanup(await onServiceEvent((event) => {
+          if (active && event.event === "profile_lifecycle" && catalogRef.current) {
+            const previous = catalogRef.current;
+            const selected = previous.profiles.find((row) => row.selected);
+            const replaced = hostGeneration.current !== null && event.host_generation !== hostGeneration.current;
+            if (event.host_generation) hostGeneration.current = event.host_generation;
+            if (replaced || ((lifetime.active || openingProfileGeneration.current !== null) && (event.profile !== previous.selected_profile || event.revision !== previous.revision || event.state !== selected?.state))) {
+              void hideProfile(false); setLockState("uncertain");
+              setProfileReviewRequired(true);
+              setLockError("The profile host changed. Review the current profiles before continuing.");
+              if (profileAction.current) profileAction.current.blocked = true;
+            }
+            return;
+          }
+          if (!active || !lifetime.active) return;
           // The bridge's own subscriber forwards binary packets. Refreshing
           // the entire UI for each resource fragment competes with that pump
           // and with call signaling on the same service command queue.
@@ -7218,11 +7144,23 @@ export default function App() {
         // The focus and visible-window refresh below still self-heal a missed listener.
       }
       if (!active) return;
+      if (!lifetime.active) return;
+      const generation = lifetime.capture();
       try {
-        const result = await initializeService();
-        if (active) setSnapshot(result);
+        const result = await bootProfiles();
+        if (active && lifetime.isCurrent(generation)) {
+          if (result.catalog) {
+            publishCatalog(result.catalog);
+            if (!result.snapshot) { await hideProfile(); setLockState("locked"); }
+            if (result.error) {
+              setLockError(errorMessage(result.error));
+              if (profileErrorCode(result.error) === "resync_required") setProfileReviewRequired(true);
+            }
+          }
+          if (result.snapshot) setSnapshot(result.snapshot);
+        }
       } catch (reason) {
-        if (active) setFatal(errorMessage(reason));
+        if (active && lifetime.isCurrent(generation)) setFatal(errorMessage(reason));
       }
     })();
     void onInvitation((value) => {
@@ -7235,37 +7173,41 @@ export default function App() {
       }
     }).then(keepCleanup).catch(() => undefined);
     void onNotificationOpen(async (notificationId) => {
+      if (!active || !lifetime.active) return;
+      const generation = lifetime.capture();
       try {
-        const target = await serviceCommand<NotificationOpenTarget>("open_notification_target", { notification_id: notificationId });
-        if (active) {
+        const target = await openNotificationTarget(notificationId, lifetime, generation);
+        if (active && lifetime.isCurrent(generation)) {
           await refresh(true);
-          if (active) setNotificationTarget({ ...target });
+          if (active && lifetime.isCurrent(generation)) setNotificationTarget({ ...target });
         }
       } catch (reason) {
-        if (active) setNotificationTarget({ available: false, reason: "unavailable", message: errorMessage(reason) });
+        if (active && lifetime.isCurrent(generation)) setNotificationTarget({ available: false, reason: "unavailable", message: errorMessage(reason) });
       }
     }).then(keepCleanup).catch(() => undefined);
     return () => { active = false; cleanups.forEach((cleanup) => cleanup()); };
-  }, [refresh, refreshWorkspace]);
+  }, [lifetime, refresh, refreshWorkspace]);
   useEffect(() => {
     if (!snapshot?.profile || locked) return;
+    const generation = lifetime.capture();
     let active = true;
     let busy = false;
+    const current = () => active && lifetime.isCurrent(generation);
     const visible = () => document.visibilityState !== "hidden";
     const restoreBackground = async () => {
-      if (!active || busy || !visible()) return;
+      if (!current() || busy || !visible()) return;
       busy = true;
       try {
-        if (await runtimePlatform() !== "android" || !active) return;
-        const background = await serviceCommand<BackgroundAvailability>("background_status");
-        if (!active || background?.native?.enabled !== true) return;
+        if (await runtimePlatform() !== "android" || !current()) return;
+        const background = await fetchBackgroundStatus();
+        if (!current() || background?.native?.enabled !== true) return;
         let capability = await notificationCapability();
-        if (!active) return;
+        if (!current()) return;
         if (capability.permission_state === "not_requested") capability = await requestNotificationPermission();
-        if (!active || !visible() || capability.permission_state !== "allowed") return;
+        if (!current() || !visible() || capability.permission_state !== "allowed") return;
         // Native permission callbacks restore the saved preference. The UI
         // must never turn an opt-out back on after an asynchronous prompt.
-        if (active) await refresh(true);
+        if (current()) await refresh(true);
       } catch {
         // Native status retains permission/start failures for Settings to show.
       } finally {
@@ -7281,16 +7223,18 @@ export default function App() {
       window.removeEventListener("focus", restore);
       document.removeEventListener("visibilitychange", restore);
     };
-  }, [snapshot?.profile?.destination_hash, locked, refresh]);
+  }, [snapshot?.profile?.destination_hash, locked, lifetime, refresh]);
   useEffect(() => {
     let active = true;
     let timer: number | undefined;
     let mobile = false;
     const reconcileMobile = () => {
+      if (!lifetime.active) return Promise.resolve();
+      const generation = lifetime.capture();
       if (mobileReconcileInFlight.current) return mobileReconcileInFlight.current;
-      const request = serviceCommand("reconcile_mobile_lifecycle")
-        .then(() => refresh(true))
-        .catch(() => refresh())
+      const request = serviceCommand("reconcile_mobile_lifecycle", {}, (submit) => lifetime.mutate(generation, submit))
+        .then(() => lifetime.isCurrent(generation) ? refresh(true) : undefined)
+        .catch(() => lifetime.isCurrent(generation) ? refresh() : undefined)
         .then(() => undefined);
       mobileReconcileInFlight.current = request;
       const clear = () => {
@@ -7300,7 +7244,7 @@ export default function App() {
       return request;
     };
     const refreshVisible = () => {
-      if (!active || document.visibilityState !== "visible") return;
+      if (!active || !lifetime.active || document.visibilityState !== "visible") return;
       if (mobile) {
         void reconcileMobile().catch(() => undefined);
       } else {
@@ -7321,22 +7265,30 @@ export default function App() {
       window.removeEventListener("focus", refreshVisible);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [refresh]);
-  if (locked) return <main className="fatal-screen"><LockKeyhole size={36} /><h1>Mesh Chat is locked</h1><p>The messaging service is stopped and its keys have been released.</p><Button onClick={async () => { setSnapshot(await initializeService()); setLocked(false); }}>Unlock</Button></main>;
+  }, [lifetime, refresh]);
+  const selectedProfile = catalog?.profiles.find((row) => row.selected);
+  const profilesControl = catalog && <ProfileSelector catalog={catalog} disabled={profileBusyState || profileReviewRequired || Boolean(pendingProfileAction) || selectedProfile?.state === "retiring"} onSelect={(profile) => void runProfileAction("select", profile)} />;
+  if (catalog && locked) return <ProfileLockScreen catalog={catalog} busy={profileBusyState} pending={pendingProfileAction} reviewRequired={profileReviewRequired} retirementPending={lockPending} error={lockError} onAction={runProfileAction} onReview={reviewProfiles} onOpen={reopenReviewedProfile} />;
+  if (locked) return <main className="fatal-screen"><LockKeyhole size={36} /><h1>{lockState === "locking" ? "Locking your profile…" : lockState === "uncertain" ? "Lock not confirmed" : "Mesh Chat is locked"}</h1><p>{lockState === "locked" ? "The messaging service is stopped and its keys have been released." : "Profile content is hidden while admitted work and service retirement finish."}</p>{lockPending && <p role="status">Some requests did not finish before locking. Check their saved outcomes after unlocking.</p>}{lockError && <p role="alert">{lockError}</p>}{lockState === "locked" && <Button disabled={unlocking} onClick={() => void unlockProfile()}>{unlocking ? "Opening profile…" : "Unlock"}</Button>}{lockState === "uncertain" && <Button onClick={() => void lockProfile()}>Retry lock</Button>}</main>;
   if (fatal) return <main className="fatal-screen"><LockKeyhole size={36} /><h1>Mesh Chat stopped safely</h1><p>{fatal}</p><p className="muted">No plaintext fallback was used.</p></main>;
   if (!snapshot) return <main className="loading-screen"><Brand /><span className="spinner" /><p>Opening your private profile…</p></main>;
   if (!snapshot.profile) {
     return (
+      <ProfileLifetimeContext.Provider value={lifetime}>
       <Onboarding
+        key={generation}
         initialInvitation={initialInvitation}
         initialPairingCode={initialPairingCode}
         onReady={(ready, pendingInvitation, startWebRTC) => {
+          if (!lifetime.isCurrent(generation)) return;
           setInitialWebRTCJoin(Boolean(startWebRTC));
           setInitialInvitation(pendingInvitation ?? "");
           setSnapshot(ready);
         }}
       />
+      </ProfileLifetimeContext.Provider>
     );
   }
-  return <Messenger snapshot={snapshot} theme={theme} onThemeChange={setTheme} refresh={refresh} workspaceMessageInvalidations={workspaceMessageInvalidations} notificationTarget={notificationTarget} onNotificationHandled={() => setNotificationTarget(null)} initialInvitation={initialInvitation} initialPairingCode={initialPairingCode} initialWebRTCJoin={initialWebRTCJoin} onWebRTCJoinHandled={() => setInitialWebRTCJoin(false)} onPairingHandled={() => setInitialPairingCode("")} onInvitationHandled={() => setInitialInvitation("")} onLock={async () => { await lockService(); setSnapshot(null); setLocked(true); }} />;
+  const messenger = <Messenger key={`${generation}:${snapshot.profile.destination_hash}`} snapshot={snapshot} theme={theme} onThemeChange={setTheme} refresh={refreshCurrentProfile} workspaceMessageInvalidations={workspaceMessageInvalidations} notificationTarget={notificationTarget} onNotificationHandled={() => { if (lifetime.isCurrent(generation)) setNotificationTarget(null); }} initialInvitation={initialInvitation} initialPairingCode={initialPairingCode} initialWebRTCJoin={initialWebRTCJoin} onWebRTCJoinHandled={() => setInitialWebRTCJoin(false)} onPairingHandled={() => setInitialPairingCode("")} onInvitationHandled={() => setInitialInvitation("")} onLock={() => lifetime.isCurrent(generation) ? catalog && selectedProfile ? runProfileAction("lock", selectedProfile.profile) : lockProfile() : Promise.resolve()} />;
+  return <ProfileLifetimeContext.Provider value={lifetime}>{catalog ? <div className="runtime-profile-shell">{profilesControl}{messenger}</div> : messenger}</ProfileLifetimeContext.Provider>;
 }

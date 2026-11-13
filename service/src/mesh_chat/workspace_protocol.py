@@ -318,6 +318,7 @@ class VerifiedWorkspaceChannel:
     serialized: str
     member_ids: tuple[str, ...] = ()
     removal_checkpoint_digests: tuple[str, ...] = ()
+    posting: WorkspacePostingPolicy | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -3361,6 +3362,7 @@ def create_workspace_channel_record(
     previous_hash: str | None = None,
     visibility: str = "public",
     archived: bool = False,
+    posting: WorkspacePostingPolicy | str | None = None,
     now: int | None = None,
 ) -> str:
     if visibility not in {"public", "private"}:
@@ -3389,6 +3391,8 @@ def create_workspace_channel_record(
         "archived": bool(archived),
         "created_at": int(time.time()) if now is None else int(now),
     }
+    if posting is not None:
+        unsigned["posting"] = _coerce_posting(posting).value
     return _sign(manager_identity, unsigned)
 
 
@@ -3418,7 +3422,7 @@ def verify_workspace_channel_record(
             "archived",
             "created_at",
             "signature",
-        },
+        } | ({"posting"} if "posting" in value else set()),
     )
     if value["v"] != WORKSPACE_PROTOCOL_VERSION:
         raise ValidationError("Workspace document version is unsupported")
@@ -3470,6 +3474,7 @@ def verify_workspace_channel_record(
         created_at=_validate_timestamp(value["created_at"], now=current),
         digest=_digest(value),
         serialized=_canonical(value),
+        posting=(None if "posting" not in value else _coerce_posting(value["posting"])),
     )
 
 
@@ -3520,6 +3525,7 @@ def create_workspace_channel_manifest(
     previous_hash: str | None = None,
     archived: bool = False,
     removal_checkpoint_digests: Iterable[str] = (),
+    posting: WorkspacePostingPolicy | str | None = None,
     now: int | None = None,
 ) -> str:
     """Create a private-channel control.
@@ -3575,6 +3581,8 @@ def create_workspace_channel_manifest(
     }
     if checked_checkpoints:
         unsigned["removal_checkpoint_digests"] = checked_checkpoints
+    if posting is not None:
+        unsigned["posting"] = _coerce_posting(posting).value
     return _sign(manager_identity, unsigned)
 
 
@@ -3593,6 +3601,8 @@ def verify_workspace_channel_manifest(
         }
     if "removal_checkpoint_digests" in value:
         fields.add("removal_checkpoint_digests")
+    if "posting" in value:
+        fields.add("posting")
     _require_fields(
         value,
         fields,
@@ -3679,6 +3689,7 @@ def verify_workspace_channel_manifest(
         serialized=_canonical(value),
         member_ids=member_ids,
         removal_checkpoint_digests=removal_checkpoints,
+        posting=(None if "posting" not in value else _coerce_posting(value["posting"])),
     )
 
 

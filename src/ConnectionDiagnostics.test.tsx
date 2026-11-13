@@ -1,11 +1,26 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-const api = vi.hoisted(() => ({ serviceCommand: vi.fn(), appBuildInfo: vi.fn(), desktopServiceHealth: vi.fn() }));
-vi.mock("./api", () => api);
+const api = vi.hoisted(() => ({ serviceCommand: vi.fn(), coreApiConnectionSupport: vi.fn(), appBuildInfo: vi.fn(), desktopServiceHealth: vi.fn(), coreApiCapabilities: vi.fn(), coreApiProfile: vi.fn() }));
+vi.mock("./api", async () => {
+  const { admittedApiFixture } = await import("./test/admitted-api");
+  return admittedApiFixture(({
+  ...api,
+  coreApiConnectionSupport: async (action: string) =>
+    api.serviceCommand(action === "clear" ? "clear_connection_diagnostics" : "connection_diagnostics"),
+}));
+});
 import { ConnectionDiagnostics, currentWebRTCState, diagnosticReport, versionDetails } from "./ConnectionDiagnostics";
 import { closeWebRTCSession, setWebRTCSession, type WebRTCSession } from "./webrtc-session";
 import packageInfo from "../package.json";
-beforeEach(() => { api.serviceCommand.mockReset(); api.desktopServiceHealth.mockResolvedValue({ running: null, last_unexpected_exit: null }); api.appBuildInfo.mockResolvedValue({ installed_version: packageInfo.version, native_version: packageInfo.version, platform: "android", android_version_code: 2050 }); });
+beforeEach(() => {
+  api.serviceCommand.mockReset();
+  api.coreApiCapabilities.mockReset();
+  api.coreApiProfile.mockReset();
+  api.desktopServiceHealth.mockResolvedValue({ running: null, last_unexpected_exit: null });
+  api.appBuildInfo.mockResolvedValue({ installed_version: packageInfo.version, native_version: packageInfo.version, platform: "android", android_version_code: 2050 });
+  api.coreApiCapabilities.mockResolvedValue({ api_major: 1, api_minor: 0, stability: "experimental", operations: ["runtime.capabilities", "message.list"], profiles: ["p".repeat(64)] });
+  api.coreApiProfile.mockResolvedValue({ display_name: "Alex", destination: "ab".repeat(16), connections: [], peers: ["q".repeat(32)] });
+});
 afterEach(async () => { cleanup(); await closeWebRTCSession(); });
 
 it("copies desktop exit evidence even when the service diagnostics request fails", async () => {
@@ -22,6 +37,9 @@ it("copies desktop exit evidence even when the service diagnostics request fails
   expect(report.desktop_service).toEqual({ running: false, last_unexpected_exit: {
     reason: "protocol_error", exit_code: -1, signal: null, recorded_at: 1793119542,
   } });
+  expect(report.core_api).toEqual({
+    api_major: 1, api_minor: 0, stability: "experimental", operations: 2,
+  });
   expect(write.mock.calls[0][0]).not.toContain("secret-path");
 });
 
@@ -90,7 +108,9 @@ it("confirms copy only after clipboard success and keeps Android installed metad
   expect(screen.queryByText("Copied")).toBeNull();
   finish();
   expect(await screen.findByText("Copied")).toBeTruthy();
-  expect(JSON.parse(write.mock.calls[0][0] as string).android_version_code).toBe(2050);
+  const versionReport = JSON.parse(write.mock.calls[0][0] as string);
+  expect(versionReport.android_version_code).toBe(2050);
+  expect(versionReport.core_api.api_major).toBe(1);
 });
 
 it("reports component mismatch instead of relabeling an older native component", () => {
@@ -257,4 +277,18 @@ it("includes reconnect readiness reasons after restart without private pairing d
   expect(report.current_reconnect.reasons.consent_missing).toBe(1);
   expect(report.current_reconnect.reasons.local_capabilities_expired).toBe(1);
   expect(text).not.toContain("private-");
+});
+
+
+it("reports the core facade capabilities in the diagnostics panel", async () => {
+  render(<ConnectionDiagnostics />);
+  expect(await screen.findByText("Core API: available (1.0, 2 operations)")).toBeTruthy();
+  expect(api.coreApiCapabilities).toHaveBeenCalledTimes(1);
+});
+
+
+it("shows the facade profile and peer count", async () => {
+  render(<ConnectionDiagnostics />);
+  expect(await screen.findByText("Core API profile: Alex (1 peers)")).toBeTruthy();
+  expect(api.coreApiProfile).toHaveBeenCalledTimes(1);
 });

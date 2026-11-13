@@ -1,0 +1,1377 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mesh-chat:core-api:observation-result:1",
+  "title": "Experimental public observation results v1",
+  "type": "object",
+  "required": [
+    "api_version",
+    "request_id",
+    "ok",
+    "result"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "api_version": {
+      "const": 1
+    },
+    "request_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._:-]{1,80}$"
+    },
+    "ok": {
+      "const": true
+    },
+    "result": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/capabilities"
+        },
+        {
+          "$ref": "#/$defs/profile"
+        },
+        {
+          "$ref": "#/$defs/connection"
+        },
+        {
+          "$ref": "#/$defs/peer"
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "handle": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{16,128}$"
+    },
+    "handles": {
+      "type": "array",
+      "maxItems": 256,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/handle"
+      }
+    },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "api_major",
+        "api_minor",
+        "stability",
+        "operations",
+        "profiles",
+        "limits"
+      ],
+      "properties": {
+        "api_major": {
+          "const": 1
+        },
+        "api_minor": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "stability": {
+          "const": "experimental"
+        },
+        "operations": {
+          "type": "array",
+          "uniqueItems": true,
+          "minItems": 3,
+          "maxItems": 256,
+          "items": {
+            "enum": [
+              "application.snapshot",
+              "native.command",
+              "runtime.capabilities",
+              "profile.query",
+              "connection.snapshot",
+              "peer.query",
+              "message.enqueue",
+              "message.query",
+              "message.list",
+              "events.poll",
+              "events.ack",
+              "message.received",
+              "connection.start",
+              "connection.stop",
+              "peer.approve",
+              "peer.revoke",
+              "peer.unblock",
+              "peer.delete",
+              "peer.draft_get",
+              "peer.draft_set",
+              "call.settings_query",
+              "call.settings_update",
+              "call.ice_servers",
+              "call.control",
+              "call.media_query",
+              "settings.query",
+              "settings.update",
+              "message.reaction_set",
+              "group.query",
+              "group.create",
+              "group.message_enqueue",
+              "group.member_remove",
+              "group.invitation_decline",
+              "group.invitation_retry",
+              "group.invitation_accept",
+              "group.close",
+              "group.leave",
+              "peer.pairing_accept",
+              "peer.pairing_request",
+              "peer.pairing_create",
+              "runtime.stop",
+              "workspace.invitation_preview",
+              "workspace.join",
+              "workspace.query",
+              "workspace.join_requests",
+              "workspace.join_approve",
+              "workspace.join_decline",
+              "workspace.members",
+              "workspace.member_role",
+              "workspace.invitation_create",
+              "workspace.timeline_mutation",
+              "workspace.timeline_query",
+              "workspace.snapshot",
+              "runtime.mutate",
+              "runtime.query",
+              "workspace.access_recommendation",
+              "workspace.history",
+              "workspace.connection",
+              "workspace.admission_grant_end",
+              "workspace.admission_grant_accept",
+              "workspace.admission_grant_create",
+              "workspace.admission_grant_list",
+              "workspace.invitation_revoke",
+              "workspace.channels",
+              "workspace.channel_create",
+              "workspace.channel_members",
+              "workspace.channel_members_update",
+              "workspace.channel_update",
+              "workspace.channel_archive",
+              "workspace.channel_recover",
+              "workspace.channel_state",
+              "workspace.member_remove",
+              "group.draft_set",
+              "workspace.draft_set",
+              "remote_profile.mutate",
+              "workspace.display_name_decide",
+              "workspace.direct_open",
+              "route.update",
+              "peer.update",
+              "conversation.mutate",
+              "peer.decide",
+              "link.preview",
+              "contact.invitation",
+              "recovery.transfer",
+              "connection.support",
+              "remote_profile.query",
+              "connection.document",
+              "peer.pairing_preview",
+              "workspace.join_prompt",
+              "profile.create",
+              "workspace.create",
+              "workspace.device_link_create",
+              "workspace.device_link_preview",
+              "workspace.device_link_submit",
+              "workspace.device_links",
+              "workspace.device_link_approve",
+              "workspace.device_link_decline",
+              "workspace.channel_transfer_offer",
+              "workspace.channel_transfer_accept",
+              "workspace.policy_update",
+              "workspace.retention_update",
+              "workspace.admin_request_dismiss",
+              "workspace.admin_request_cancel",
+              "workspace.admin_request_decline",
+              "workspace.admin_request_approve",
+              "workspace.metadata_update",
+              "workspace.devices",
+              "workspace.device_remove",
+              "workspace.remove_data",
+              "workspace.authority_loss_report",
+              "workspace.authority_finalize",
+              "workspace.authority_accept",
+              "workspace.authority_offer",
+              "workspace.read_hint_sync",
+              "workspace.display_name_request",
+              "workspace.admin_request_submit",
+              "workspace.leave",
+              "workspace.close",
+              "workspace.device_removal_decline",
+              "workspace.device_removal_approve",
+              "workspace.device_removal_request",
+              "diagnostics.query",
+              "peer.composer_query",
+              "peer.composer_update",
+              "message.enqueue_draft",
+              "profile.catalog",
+              "profile.lock",
+              "profile.select",
+              "profile.unlock",
+              "group.composer_query",
+              "group.composer_update",
+              "group.message_enqueue_draft"
+            ]
+          }
+        },
+        "profiles": {
+          "$ref": "#/$defs/handles"
+        },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "frame_bytes",
+            "request_json_depth",
+            "request_json_structural_tokens",
+            "profiles",
+            "connections_per_profile"
+          ],
+          "properties": {
+            "frame_bytes": {
+              "const": 4194304
+            },
+            "request_json_depth": {
+              "const": 16
+            },
+            "request_json_structural_tokens": {
+              "const": 1024
+            },
+            "profiles": {
+              "const": 256
+            },
+            "connections_per_profile": {
+              "const": 256
+            },
+            "peers_per_profile": {
+              "const": 256
+            },
+            "text_utf8_bytes": {
+              "const": 16384
+            },
+            "idempotency_seconds": {
+              "const": 604800
+            },
+            "enqueue_keys_per_caller_profile": {
+              "const": 4096
+            },
+            "enqueue_keys_per_vault": {
+              "const": 65536
+            },
+            "event_batch_count": {
+              "const": 128
+            },
+            "event_batch_bytes": {
+              "const": 1048576
+            },
+            "event_retention_count": {
+              "const": 2048
+            },
+            "event_retention_seconds": {
+              "const": 604800
+            },
+            "recovery_scan_count": {
+              "const": 128
+            },
+            "cursor_bytes": {
+              "const": 1024
+            },
+            "acknowledgment_seconds": {
+              "const": 604800
+            },
+            "acknowledgment_keys_per_caller_profile": {
+              "const": 4096
+            },
+            "acknowledgment_keys_per_vault": {
+              "const": 65536
+            },
+            "received_scan_count": {
+              "const": 128
+            },
+            "received_batch_bytes": {
+              "const": 1048576
+            },
+            "diagnostic_count": {
+              "const": 256
+            },
+            "diagnostic_bytes": {
+              "const": 262144
+            },
+            "composer_text_utf8_bytes": {
+              "type": "integer",
+              "const": 16384
+            },
+            "composers_per_caller_profile": {
+              "type": "integer",
+              "const": 256
+            },
+            "composers_per_vault": {
+              "type": "integer",
+              "const": 4096
+            },
+            "composer_update_idempotency_seconds": {
+              "type": "integer",
+              "const": 3600
+            },
+            "composer_update_keys_per_caller_profile": {
+              "type": "integer",
+              "const": 8192
+            },
+            "composer_update_keys_per_vault": {
+              "type": "integer",
+              "const": 65536
+            },
+            "composer_send_idempotency_seconds": {
+              "type": "integer",
+              "const": 604800
+            },
+            "composer_send_keys_per_caller_profile": {
+              "type": "integer",
+              "const": 4096
+            },
+            "composer_send_keys_per_vault": {
+              "type": "integer",
+              "const": 65536
+            },
+            "profile_slots": {
+              "type": "integer",
+              "const": 8
+            },
+            "profile_lifecycle_keys_per_host": {
+              "type": "integer",
+              "const": 4096
+            },
+            "profile_lifecycle_keys_per_caller_profile": {
+              "type": "integer",
+              "const": 256
+            },
+            "profile_unlock_credentials": {
+              "type": "integer",
+              "const": 128
+            },
+            "optional_key_idempotency_seconds": {
+              "type": "integer",
+              "const": 604800
+            },
+            "optional_keys_per_caller_profile": {
+              "type": "integer",
+              "const": 4096
+            },
+            "optional_keys_per_vault": {
+              "type": "integer",
+              "const": 65536
+            },
+            "call_operations_per_caller_profile": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "call_operations_per_vault": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "call_operation_retention_seconds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "call_operation_keys_per_caller_profile": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "call_operation_keys_per_vault": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "pairing_intents_per_runtime": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "pairing_active_intents": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "pairing_intent_seconds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "pairing_code_utf8_bytes": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "pairing_key_idempotency_seconds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "pairing_keys_per_caller_profile": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "pairing_keys_per_vault": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "group_composer_text_utf8_bytes": {
+              "type": "integer",
+              "const": 16384
+            },
+            "group_composers_per_caller_profile": {
+              "type": "integer",
+              "const": 256
+            },
+            "group_composers_per_vault": {
+              "type": "integer",
+              "const": 4096
+            },
+            "group_composer_update_idempotency_seconds": {
+              "type": "integer",
+              "const": 3600
+            },
+            "group_composer_update_keys_per_caller_profile": {
+              "type": "integer",
+              "const": 8192
+            },
+            "group_composer_update_keys_per_vault": {
+              "type": "integer",
+              "const": 65536
+            },
+            "group_composer_send_idempotency_seconds": {
+              "type": "integer",
+              "const": 604800
+            },
+            "group_composer_send_keys_per_caller_profile": {
+              "type": "integer",
+              "const": 4096
+            },
+            "group_composer_send_keys_per_vault": {
+              "type": "integer",
+              "const": 65536
+            }
+          }
+        },
+        "optional_keyed_operations": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 256,
+          "items": {
+            "enum": [
+              "group.create",
+              "group.message_enqueue"
+            ]
+          },
+          "minItems": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "operations": {
+                "contains": {
+                  "const": "message.enqueue"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "limits": {
+                "required": [
+                  "peers_per_profile",
+                  "text_utf8_bytes",
+                  "idempotency_seconds",
+                  "enqueue_keys_per_caller_profile",
+                  "enqueue_keys_per_vault"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operations": {
+                "contains": {
+                  "const": "events.poll"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "limits": {
+                "required": [
+                  "event_batch_count",
+                  "event_batch_bytes",
+                  "event_retention_count",
+                  "event_retention_seconds",
+                  "recovery_scan_count",
+                  "cursor_bytes",
+                  "acknowledgment_seconds",
+                  "acknowledgment_keys_per_caller_profile",
+                  "acknowledgment_keys_per_vault"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operations": {
+                "contains": {
+                  "const": "message.received"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "limits": {
+                "required": [
+                  "received_scan_count",
+                  "received_batch_bytes"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operations": {
+                "contains": {
+                  "const": "diagnostics.query"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "limits": {
+                "required": [
+                  "diagnostic_count",
+                  "diagnostic_bytes"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operations": {
+                "contains": {
+                  "const": "peer.composer_query"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "api_minor": {
+                "minimum": 1
+              },
+              "operations": {
+                "allOf": [
+                  {
+                    "contains": {
+                      "const": "peer.composer_query"
+                    }
+                  },
+                  {
+                    "contains": {
+                      "const": "peer.composer_update"
+                    }
+                  },
+                  {
+                    "contains": {
+                      "const": "message.enqueue_draft"
+                    }
+                  }
+                ]
+              },
+              "limits": {
+                "required": [
+                  "composer_text_utf8_bytes",
+                  "composers_per_caller_profile",
+                  "composers_per_vault",
+                  "composer_update_idempotency_seconds",
+                  "composer_update_keys_per_caller_profile",
+                  "composer_update_keys_per_vault",
+                  "composer_send_idempotency_seconds",
+                  "composer_send_keys_per_caller_profile",
+                  "composer_send_keys_per_vault"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operations": {
+                "contains": {
+                  "const": "peer.composer_update"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "api_minor": {
+                "minimum": 1
+              },
+              "operations": {
+                "allOf": [
+                  {
+                    "contains": {
+                      "const": "peer.composer_query"
+                    }
+                  },
+                  {
+                    "contains": {
+                      "const": "peer.composer_update"
+                    }
+                  },
+                  {
+                    "contains": {
+                      "const": "message.enqueue_draft"
+                    }
+                  }
+                ]
+              },
+              "limits": {
+                "required": [
+                  "composer_text_utf8_bytes",
+                  "composers_per_caller_profile",
+                  "composers_per_vault",
+                  "composer_update_idempotency_seconds",
+                  "composer_update_keys_per_caller_profile",
+                  "composer_update_keys_per_vault",
+                  "composer_send_idempotency_seconds",
+                  "composer_send_keys_per_caller_profile",
+                  "composer_send_keys_per_vault"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operations": {
+                "contains": {
+                  "const": "message.enqueue_draft"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "api_minor": {
+                "minimum": 1
+              },
+              "operations": {
+                "allOf": [
+                  {
+                    "contains": {
+                      "const": "peer.composer_query"
+                    }
+                  },
+                  {
+                    "contains": {
+                      "const": "peer.composer_update"
+                    }
+                  },
+                  {
+                    "contains": {
+                      "const": "message.enqueue_draft"
+                    }
+                  }
+                ]
+              },
+              "limits": {
+                "required": [
+                  "composer_text_utf8_bytes",
+                  "composers_per_caller_profile",
+                  "composers_per_vault",
+                  "composer_update_idempotency_seconds",
+                  "composer_update_keys_per_caller_profile",
+                  "composer_update_keys_per_vault",
+                  "composer_send_idempotency_seconds",
+                  "composer_send_keys_per_caller_profile",
+                  "composer_send_keys_per_vault"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operations": {
+                "contains": {
+                  "const": "profile.catalog"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "api_minor": {
+                "minimum": 1
+              },
+              "operations": {
+                "allOf": [
+                  {
+                    "contains": {
+                      "const": "profile.catalog"
+                    }
+                  },
+                  {
+                    "contains": {
+                      "const": "profile.lock"
+                    }
+                  },
+                  {
+                    "contains": {
+                      "const": "profile.select"
+                    }
+                  },
+                  {
+                    "contains": {
+                      "const": "profile.unlock"
+                    }
+                  }
+                ]
+              },
+              "limits": {
+                "required": [
+                  "profile_slots",
+                  "profile_lifecycle_keys_per_host",
+                  "profile_lifecycle_keys_per_caller_profile",
+                  "profile_unlock_credentials"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "optional_keyed_operations"
+            ]
+          },
+          "then": {
+            "properties": {
+              "limits": {
+                "required": [
+                  "optional_key_idempotency_seconds",
+                  "optional_keys_per_caller_profile",
+                  "optional_keys_per_vault"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "optional_keyed_operations"
+            ],
+            "properties": {
+              "optional_keyed_operations": {
+                "contains": {
+                  "const": "group.create"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "api_minor": {
+                "minimum": 1
+              },
+              "operations": {
+                "contains": {
+                  "const": "group.create"
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "optional_keyed_operations"
+            ],
+            "properties": {
+              "optional_keyed_operations": {
+                "contains": {
+                  "const": "group.message_enqueue"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "api_minor": {
+                "minimum": 1
+              },
+              "operations": {
+                "contains": {
+                  "const": "group.message_enqueue"
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operations": {
+                "contains": {
+                  "const": "call.operation_list"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "api_minor": {
+                "minimum": 1
+              },
+              "limits": {
+                "required": [
+                  "call_operations_per_caller_profile",
+                  "call_operations_per_vault",
+                  "call_operation_retention_seconds",
+                  "call_operation_keys_per_caller_profile",
+                  "call_operation_keys_per_vault"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operations": {
+                "contains": {
+                  "const": "call.operation_query"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "api_minor": {
+                "minimum": 1
+              },
+              "limits": {
+                "required": [
+                  "call_operations_per_caller_profile",
+                  "call_operations_per_vault",
+                  "call_operation_retention_seconds",
+                  "call_operation_keys_per_caller_profile",
+                  "call_operation_keys_per_vault"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operations": {
+                "contains": {
+                  "const": "call.operation_abandon"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "api_minor": {
+                "minimum": 1
+              },
+              "limits": {
+                "required": [
+                  "call_operations_per_caller_profile",
+                  "call_operations_per_vault",
+                  "call_operation_retention_seconds",
+                  "call_operation_keys_per_caller_profile",
+                  "call_operation_keys_per_vault"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operations": {
+                "contains": {
+                  "const": "peer.pairing_begin"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "api_minor": {
+                "minimum": 1
+              },
+              "limits": {
+                "required": [
+                  "pairing_intents_per_runtime",
+                  "pairing_active_intents",
+                  "pairing_intent_seconds",
+                  "pairing_code_utf8_bytes",
+                  "pairing_key_idempotency_seconds",
+                  "pairing_keys_per_caller_profile",
+                  "pairing_keys_per_vault"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operations": {
+                "contains": {
+                  "const": "peer.pairing_query"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "api_minor": {
+                "minimum": 1
+              },
+              "limits": {
+                "required": [
+                  "pairing_intents_per_runtime",
+                  "pairing_active_intents",
+                  "pairing_intent_seconds",
+                  "pairing_code_utf8_bytes",
+                  "pairing_key_idempotency_seconds",
+                  "pairing_keys_per_caller_profile",
+                  "pairing_keys_per_vault"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operations": {
+                "contains": {
+                  "const": "peer.pairing_cancel"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "api_minor": {
+                "minimum": 1
+              },
+              "limits": {
+                "required": [
+                  "pairing_intents_per_runtime",
+                  "pairing_active_intents",
+                  "pairing_intent_seconds",
+                  "pairing_code_utf8_bytes",
+                  "pairing_key_idempotency_seconds",
+                  "pairing_keys_per_caller_profile",
+                  "pairing_keys_per_vault"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operations": {
+                "contains": {
+                  "const": "group.composer_query"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "api_minor": {
+                "minimum": 1
+              },
+              "operations": {
+                "allOf": [
+                  {
+                    "contains": {
+                      "const": "group.composer_query"
+                    }
+                  },
+                  {
+                    "contains": {
+                      "const": "group.composer_update"
+                    }
+                  },
+                  {
+                    "contains": {
+                      "const": "group.message_enqueue_draft"
+                    }
+                  }
+                ]
+              },
+              "limits": {
+                "required": [
+                  "group_composer_text_utf8_bytes",
+                  "group_composers_per_caller_profile",
+                  "group_composers_per_vault",
+                  "group_composer_update_idempotency_seconds",
+                  "group_composer_update_keys_per_caller_profile",
+                  "group_composer_update_keys_per_vault",
+                  "group_composer_send_idempotency_seconds",
+                  "group_composer_send_keys_per_caller_profile",
+                  "group_composer_send_keys_per_vault"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operations": {
+                "contains": {
+                  "const": "group.composer_update"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "api_minor": {
+                "minimum": 1
+              },
+              "operations": {
+                "allOf": [
+                  {
+                    "contains": {
+                      "const": "group.composer_query"
+                    }
+                  },
+                  {
+                    "contains": {
+                      "const": "group.composer_update"
+                    }
+                  },
+                  {
+                    "contains": {
+                      "const": "group.message_enqueue_draft"
+                    }
+                  }
+                ]
+              },
+              "limits": {
+                "required": [
+                  "group_composer_text_utf8_bytes",
+                  "group_composers_per_caller_profile",
+                  "group_composers_per_vault",
+                  "group_composer_update_idempotency_seconds",
+                  "group_composer_update_keys_per_caller_profile",
+                  "group_composer_update_keys_per_vault",
+                  "group_composer_send_idempotency_seconds",
+                  "group_composer_send_keys_per_caller_profile",
+                  "group_composer_send_keys_per_vault"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operations": {
+                "contains": {
+                  "const": "group.message_enqueue_draft"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "api_minor": {
+                "minimum": 1
+              },
+              "operations": {
+                "allOf": [
+                  {
+                    "contains": {
+                      "const": "group.composer_query"
+                    }
+                  },
+                  {
+                    "contains": {
+                      "const": "group.composer_update"
+                    }
+                  },
+                  {
+                    "contains": {
+                      "const": "group.message_enqueue_draft"
+                    }
+                  }
+                ]
+              },
+              "limits": {
+                "required": [
+                  "group_composer_text_utf8_bytes",
+                  "group_composers_per_caller_profile",
+                  "group_composers_per_vault",
+                  "group_composer_update_idempotency_seconds",
+                  "group_composer_update_keys_per_caller_profile",
+                  "group_composer_update_keys_per_vault",
+                  "group_composer_send_idempotency_seconds",
+                  "group_composer_send_keys_per_caller_profile",
+                  "group_composer_send_keys_per_vault"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "profile",
+        "display_name",
+        "destination",
+        "connections"
+      ],
+      "properties": {
+        "profile": {
+          "$ref": "#/$defs/handle"
+        },
+        "display_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "destination": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$"
+        },
+        "connections": {
+          "$ref": "#/$defs/handles"
+        },
+        "peers": {
+          "$ref": "#/$defs/handles"
+        }
+      }
+    },
+    "connection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "profile",
+        "connection",
+        "observation"
+      ],
+      "properties": {
+        "profile": {
+          "$ref": "#/$defs/handle"
+        },
+        "connection": {
+          "$ref": "#/$defs/handle"
+        },
+        "observation": {
+          "$ref": "#/$defs/observation"
+        }
+      }
+    },
+    "peer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "profile",
+        "peer",
+        "display_name",
+        "destination",
+        "trust"
+      ],
+      "properties": {
+        "profile": {
+          "$ref": "#/$defs/handle"
+        },
+        "peer": {
+          "$ref": "#/$defs/handle"
+        },
+        "display_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "destination": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$"
+        },
+        "trust": {
+          "enum": [
+            "awaiting_consent",
+            "pending_request",
+            "approved",
+            "verified",
+            "identity_changed",
+            "blocked"
+          ]
+        }
+      }
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runtime_epoch",
+        "sequence",
+        "desired",
+        "execution",
+        "negotiation",
+        "carrier",
+        "bridge",
+        "messaging_ready",
+        "reason",
+        "retry_in",
+        "evidence_age"
+      ],
+      "properties": {
+        "runtime_epoch": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "desired": {
+          "enum": [
+            "enabled",
+            "stopped"
+          ]
+        },
+        "execution": {
+          "enum": [
+            "available",
+            "paused",
+            "locked",
+            "shutting_down"
+          ]
+        },
+        "negotiation": {
+          "enum": [
+            "idle",
+            "discover",
+            "request",
+            "wait_request",
+            "wait_offer",
+            "gather_offer",
+            "gather_answer",
+            "publish_offer",
+            "publish_answer",
+            "wait_answer",
+            "apply_answer",
+            "checking",
+            "attach",
+            "path",
+            "inspect"
+          ]
+        },
+        "carrier": {
+          "enum": [
+            "absent",
+            "open",
+            "suspect",
+            "closing"
+          ]
+        },
+        "bridge": {
+          "enum": [
+            "detached",
+            "attaching",
+            "path_pending",
+            "ready",
+            "restoring"
+          ]
+        },
+        "messaging_ready": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string",
+          "pattern": "^[a-z][a-z_]{0,63}$"
+        },
+        "retry_in": {
+          "type": "number",
+          "minimum": 0
+        },
+        "evidence_age": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "messaging_ready": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "desired": {
+                "const": "enabled"
+              },
+              "execution": {
+                "const": "available"
+              },
+              "carrier": {
+                "const": "open"
+              },
+              "bridge": {
+                "const": "ready"
+              },
+              "evidence_age": {
+                "type": "number"
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

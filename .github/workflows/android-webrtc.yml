@@ -1,32 +1,31 @@
 name: Android WebRTC
 
 on:
+  workflow_call:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - 'plugins/tauri-plugin-mesh-runtime/**'
-      - 'service/**'
-      - 'src/**'
-      - 'src-tauri/**'
-      - 'scripts/build_android.py'
-      - 'scripts/test_android_webrtc.sh'
-      - 'scripts/test_android_signaling.sh'
-      - 'deploy/cloudflare-signal/**'
-      - 'scripts/verify_android_webrtc.py'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - '.github/workflows/android-webrtc.yml'
+    inputs:
+      network_inventory:
+        description: Read-only disposable emulator network inventory (not qualification)
+        type: boolean
+        required: false
+        default: false
+      gateway_probe:
+        description: Disposable host gateway capability probe (not qualification)
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: android-webrtc-${{ github.ref }}
+  group: android-webrtc-${{ github.ref }}${{ github.event_name == 'workflow_dispatch' && inputs.gateway_probe && '-gateway' || github.event_name == 'workflow_dispatch' && inputs.network_inventory && '-inventory' || '' }}
   cancel-in-progress: true
 
 jobs:
   android:
     name: Android build and optimized native Chromium interop
+    if: ${{ !(github.event_name == 'workflow_dispatch' && (inputs.network_inventory || inputs.gateway_probe)) }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -77,29 +76,118 @@ jobs:
         run: python scripts/verify_android_webrtc.py plugins/tauri-plugin-mesh-runtime/android/webrtc-smoke/build/outputs/apk/release/webrtc-smoke-release.apk
       - name: Build WebRTC instrumentation APK
         working-directory: src-tauri/gen/android
-        run: ./gradlew :webrtc-smoke:assembleReleaseAndroidTest -PmeshWebRtcSmoke=true -PmeshRuntimeAbis=x86_64 --no-configuration-cache
+        run: |
+          node ../../../scripts/build_desktop_transport_fixture.mjs
+          ./gradlew :webrtc-smoke:assembleReleaseAndroidTest -PmeshWebRtcSmoke=true -PmeshRuntimeAbis=x86_64 --no-configuration-cache
+      - name: Free disk for the emulator system image
+        run: |
+          df -h
+          rm -rf "$ANDROID_SDK_ROOT/ndk/28.2.13676358" || true
+          rm -rf "$HOME/.rustup" "$HOME/.npm" || true
+          rm -rf src-tauri/target node_modules src-tauri/gen/android/app/build || true
+          df -h
       - name: Test Chromium interop and Android signalling mailbox recovery
-        timeout-minutes: 35
+        timeout-minutes: 45
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
           arch: x86_64
           target: google_apis
           disable-animations: true
-          script: |
-            bash scripts/test_android_webrtc.sh
-            bash scripts/test_android_signaling.sh
+          script: bash scripts/test_android_qualification.sh
+      - name: Retain required run-bound Android evidence
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-qualification-${{ github.sha }}
+          path: dist/reports/android-qualification.json
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: android-webrtc-debug
           path: |
             dist/mobile/**
+            dist/android-core-consumer/**
+            dist/android-independent-consumer/**
+            plugins/tauri-plugin-mesh-runtime/android/runtime-host/build/repository/**
+            sdk/kotlin/build/repository/**
+            sdk/kotlin/build/test-results/**
+            sdk/kotlin/build/reports/tests/**
             dist/reports/**
+            plugins/tauri-plugin-mesh-runtime/android/webrtc-smoke/build/outputs/apk/release/webrtc-smoke-release.apk
+            plugins/tauri-plugin-mesh-runtime/android/webrtc-smoke/build/outputs/apk/androidTest/release/webrtc-smoke-release-androidTest.apk
+            plugins/tauri-plugin-mesh-runtime/android/build/outputs/apk/androidTest/debug/tauri-plugin-mesh-runtime-debug-androidTest.apk
             plugins/tauri-plugin-mesh-runtime/android/build/reports/androidTests/**
+            plugins/tauri-plugin-mesh-runtime/android/build/test-results/**
+            plugins/tauri-plugin-mesh-runtime/android/build/reports/tests/**
             plugins/tauri-plugin-mesh-runtime/android/build/outputs/androidTest-results/**
             plugins/tauri-plugin-mesh-runtime/android/webrtc-smoke/build/reports/androidTests/**
             plugins/tauri-plugin-mesh-runtime/android/webrtc-smoke/build/outputs/androidTest-results/**
             plugins/tauri-plugin-mesh-runtime/android/webrtc-smoke/build/outputs/mapping/**
           if-no-files-found: warn
+          retention-days: 14
+
+  network_inventory:
+    name: Read-only emulator network inventory (not qualification)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.network_inventory && !inputs.gateway_probe }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v4
+      - name: Enable KVM for the disposable diagnostic emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Install the configured native-peer system image
+        run: sdkmanager "emulator" "platform-tools" "system-images;android-35;google_apis;x86_64"
+      - name: Record read-only command and schema evidence
+        run: python -B scripts/native_interop_network_probe.py --output dist/reports/android-network-inventory.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-network-inventory-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist/reports/android-network-inventory.json
+          if-no-files-found: error
+          retention-days: 14
+
+  gateway_probe:
+    name: Disposable emulator host gateway capability (not qualification)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.gateway_probe }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v4
+      - name: Enable KVM for the disposable gateway emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Install the configured native-peer system image
+        run: sdkmanager "emulator" "platform-tools" "system-images;android-35;google_apis;x86_64"
+      - name: Probe the owned gateway with real emulator traffic
+        run: python -B scripts/native_interop_gateway_probe.py --output dist/reports/android-gateway-probe.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-gateway-probe-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist/reports/android-gateway-probe.json
+          if-no-files-found: error
           retention-days: 14

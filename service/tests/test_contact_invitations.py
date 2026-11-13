@@ -4,6 +4,7 @@ import base64
 import json
 import os
 import time
+from types import SimpleNamespace
 
 import pytest
 import RNS
@@ -15,11 +16,15 @@ from mesh_chat.vault import VaultStore
 
 
 @pytest.fixture
-def inbox(tmp_path):
+def inbox(tmp_path, monkeypatch):
+    from mesh_chat.direct_recovery import DirectRecovery
+    # Drive workers synchronously without pretending the service is shut down.
+    monkeypatch.setattr(MeshChatService, "_retry_loop", lambda _: None)
+    monkeypatch.setattr(MeshChatService, "_native_webrtc_event_loop", lambda _: None)
+    monkeypatch.setattr(DirectRecovery, "_run", lambda _: None)
     key = os.urandom(32)
     store = VaultStore(tmp_path, key, allow_unprotected_for_tests=True)
     service = MeshChatService(store, tmp_path, lambda _event: None)
-    service._shutdown.set()  # Drive this test synchronously, without network I/O.
     identity = RNS.Identity()
     service._identity = identity
     store.put("profile", "local", {
@@ -37,11 +42,16 @@ def inbox(tmp_path):
 
 def test_native_receipt_survives_reopen_without_a_renderer_or_accepting(inbox, tmp_path):
     service, document, destination, key = inbox
+    closed = []
+    # This fixture inserts a synthetic resource instead of allocating a native
+    # peer. Supply its matching cleanup boundary; no Android/JNI host exists.
+    service._native_host = SimpleNamespace(close=closed.append)
     service._native_webrtc_live.add("phone")
+    physical = service._native_resources.reserve("phone")
     service._native_webrtc_peers["phone"] = destination
     text = json.dumps({"type": "contact_invitation", "document": document})
     encoded = base64.b64encode(text.encode()).decode()
-    service._handle_native_webrtc_event("control", "phone", "mesh-onboarding:" + encoded)
+    service._handle_native_webrtc_event("control", physical, "mesh-onboarding:" + encoded)
     saved = service.snapshot()["contact_invitations"]
     assert len(saved) == 1
     assert saved[0]["preview"]["display_name"] == "Taylor"
@@ -49,6 +59,7 @@ def test_native_receipt_survives_reopen_without_a_renderer_or_accepting(inbox, t
     assert service.store.list("contact") == []
     assert service.store.list("message") == []
     service.close()
+    assert closed == [physical]
     reopened = VaultStore(tmp_path, key, allow_unprotected_for_tests=True)
     try:
         recovered = reopened.get("contact_invitation", saved[0]["id"])

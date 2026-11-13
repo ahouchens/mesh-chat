@@ -6,6 +6,18 @@ use rand::{rngs::OsRng, RngCore};
 use serde_json::json;
 use serde_json::Value;
 mod direct_native;
+#[cfg(windows)]
+mod core_api;
+#[cfg(desktop)]
+mod desktop_transport;
+#[cfg(desktop)]
+mod desktop_transport_broker;
+#[cfg(all(windows, feature = "transport-qualification"))]
+mod desktop_transport_qualification;
+#[cfg(all(windows, feature = "transport-qualification"))]
+mod packaged_transport_qualification;
+#[cfg(all(windows, feature = "transport-qualification"))]
+pub use desktop_transport_qualification::run as run_desktop_transport_qualification;
 #[cfg(desktop)]
 mod service_diagnostics;
 #[cfg(target_os = "android")]
@@ -41,7 +53,7 @@ use tokio::sync::{oneshot, Mutex as AsyncMutex};
 
 #[cfg(mobile)]
 use tauri_plugin_mesh_runtime::{
-    CommandRequest, InitializeRequest, MeshRuntimeExt, NativeResponse, ThemeRequest,
+    CommandRequest, CoreCommandRequest, InitializeRequest, MeshRuntimeExt, NativeResponse, ThemeRequest,
 };
 
 #[cfg(desktop)]
@@ -84,7 +96,7 @@ fn renderer_payload_maximum(command: &str) -> usize {
         MAX_WORKSPACE_DEVICE_LINK_PAYLOAD_BYTES
     } else if matches!(
         command,
-        "preview_workspace_invitation" | "submit_workspace_join" | "create_connection_reply"
+        "submit_workspace_join" | "create_connection_reply"
     ) {
         MAX_WORKSPACE_INVITATION_PAYLOAD_BYTES
     } else if matches!(command, "preview_connection_reply" | "connect_using_reply") {
@@ -102,15 +114,16 @@ fn renderer_payload_maximum(command: &str) -> usize {
             | "native_webrtc_apply_answer"
             | "native_webrtc_bind_onboarding"
             | "signal_publish"
+            | "signal_fetch"
+            | "start_call"
+            | "answer_call"
+            | "restart_call"
+            | "answer_call_restart"
             | "reconnect_offer_create"
             | "reconnect_answer_create"
             | "verify_reconnect_offer"
             | "verify_reconnect_answer"
             | "reconnect_publish"
-            | "start_call"
-            | "answer_call"
-            | "restart_call"
-            | "answer_call_restart"
     ) {
         MAX_WEBRTC_SIGNALING_PAYLOAD_BYTES
     } else {
@@ -121,6 +134,7 @@ fn renderer_payload_maximum(command: &str) -> usize {
 #[cfg(desktop)]
 #[derive(Clone, Default)]
 struct ServiceState {
+    desktop_transport: Arc<Mutex<Option<desktop_transport::RegisteredHost>>>,
     direct_native: Arc<Mutex<Option<direct_native::NativeHost>>>,
     child: Arc<Mutex<Option<CommandChild>>>,
     sidecar_pid: Arc<Mutex<Option<u32>>>,
@@ -130,6 +144,7 @@ struct ServiceState {
     closing: Arc<AtomicBool>,
     locked: Arc<AtomicBool>,
     last_unexpected_exit: Arc<Mutex<Option<Value>>>,
+    core_api_pipe: Arc<Mutex<Option<String>>>,
 }
 
 #[cfg(desktop)]
@@ -200,19 +215,35 @@ fn handle_sidecar_value(
     pid: u32,
     value: Value,
 ) {
+    if route_sidecar_value(app, state, native, pid, value).is_err() {
+        retire_service_process(state, Some(pid));
+    }
+}
+
+#[cfg(desktop)]
+fn route_sidecar_value(
+    app: &AppHandle,
+    state: &ServiceState,
+    native: &direct_native::NativeHost,
+    pid: u32,
+    value: Value,
+) -> Result<(), String> {
+    if value.get("type").and_then(Value::as_str) == Some("desktop_transport") {
+        return desktop_transport::admit(state, pid, value);
+    }
     if value.get("type").and_then(Value::as_str) == Some("direct_native") {
         let response = native.handle(value);
         if let Ok(frame) = frame(&response) {
             if let Ok(mut child) = state.child.lock() {
                 if let Some(child) = child.as_mut().filter(|child| child.pid() == pid) {
                     if child.write(&frame).is_ok() {
-                        return;
+                        return Ok(());
                     }
                 }
             }
         }
         native.close();
-        return;
+        return Ok(());
     }
     if value.get("type").and_then(Value::as_str) == Some("response") {
         if let Some(id) = value.get("id").and_then(Value::as_str) {
@@ -241,6 +272,7 @@ fn handle_sidecar_value(
     } else if value.get("type").and_then(Value::as_str) == Some("event") {
         let _ = app.emit("mesh-chat://service-event", value);
     }
+    Ok(())
 }
 
 #[cfg(desktop)]
@@ -251,6 +283,11 @@ fn consume_stdout(
     pid: u32,
     buffer: &mut Vec<u8>,
 ) -> Result<(), ()> {
+    consume_frames(buffer, |value| handle_sidecar_value(app, state, native, pid, value))
+}
+
+#[cfg(desktop)]
+fn consume_frames(buffer: &mut Vec<u8>, mut consume: impl FnMut(Value)) -> Result<(), ()> {
     loop {
         if buffer.len() < 4 {
             return Ok(());
@@ -265,7 +302,7 @@ fn consume_stdout(
         let body = buffer[4..4 + size].to_vec();
         buffer.drain(0..4 + size);
         let value: Value = serde_json::from_slice(&body).map_err(|_| ())?;
-        handle_sidecar_value(app, state, native, pid, value);
+        consume(value);
     }
 }
 
@@ -323,11 +360,6 @@ fn record_unexpected_service_exit(
     }
 }
 
-#[cfg(desktop)]
-fn take_sidecar_pid(state: &ServiceState) -> Option<u32> {
-    state.sidecar_pid.lock().ok().and_then(|mut pid| pid.take())
-}
-
 #[cfg(windows)]
 fn terminate_windows_process_tree(pid: u32) {
     // Use the operating-system binary directly, without cmd.exe, and target
@@ -374,37 +406,95 @@ fn terminate_windows_process_tree(pid: u32) {
 }
 
 #[cfg(desktop)]
-fn retire_service_child(state: &ServiceState) {
-    if let Ok(mut native) = state.direct_native.lock() {
-        if let Some(native) = native.take() {
+struct DetachedService {
+    pid: u32,
+    process_present: bool,
+    child: Option<CommandChild>,
+    native: Option<direct_native::NativeHost>,
+    transport: Option<desktop_transport::RegisteredHost>,
+}
+
+#[cfg(desktop)]
+impl DetachedService {
+    fn dispose(self, terminate: bool) {
+        if let Some(host) = self.transport {
+            host.close();
+        }
+        if let Some(native) = self.native {
             native.close();
         }
+        if terminate && self.process_present {
+            #[cfg(windows)]
+            terminate_windows_process_tree(self.pid);
+            if let Some(child) = self.child {
+                let _ = child.kill();
+            }
+        }
     }
-    // PID tracking is deliberately independent from the stdin writer mutex.
-    // A blocked writer must not prevent the host from retiring the exact
-    // sidecar process tree during shutdown.
-    let pid = take_sidecar_pid(state);
-    #[cfg(windows)]
-    if let Some(pid) = pid {
-        terminate_windows_process_tree(pid);
-    }
-    #[cfg(not(windows))]
-    let _ = pid;
+}
 
-    // Never let a synchronous pipe writer turn the retirement deadline into
-    // another hang. Windows has already received an exact PID-tree kill; on
-    // other desktops this remains a best-effort direct-child kill fallback.
+#[cfg(desktop)]
+fn detach_service(state: &ServiceState, expected_pid: Option<u32>) -> Option<DetachedService> {
+    detach_service_with_transport(state, expected_pid, false)
+}
+
+#[cfg(desktop)]
+fn detach_service_with_transport(state: &ServiceState, expected_pid: Option<u32>, preserve_transport: bool) -> Option<DetachedService> {
+    // This guard also protects publication in spawn_service. Detach everything
+    // before permitting a replacement, then dispose only the captured resources.
+    // Never wait for the stdin writer while holding the lifecycle guard.
+    let mut current = state.sidecar_pid.lock().ok()?;
+    let pid = match (*current).filter(|pid| expected_pid.is_none_or(|expected| *pid == expected)) {
+        Some(pid) => pid,
+        None if current.is_none() && expected_pid.is_none() => {
+            // Explicit lock/exit must also dispose a host retained after a crash.
+            // Never terminate a recycled OS PID belonging to that dead service.
+            let transport = desktop_transport::detach(state, None)?;
+            return Some(DetachedService { pid: transport.pid(), process_present: false,
+                child: None, native: None, transport: Some(transport) });
+        }
+        None => return None,
+    };
+    current.take();
+    let transport = if preserve_transport && desktop_transport::suspend(state, pid) { None }
+                    else { desktop_transport::detach(state, Some(pid)) };
+    let native = state.direct_native.lock().ok().and_then(|mut host| host.take());
     let child = state
         .child
         .try_lock()
         .ok()
-        .and_then(|mut child| child.take());
-    if let Some(child) = child {
-        // This is the process-handle fallback on non-Windows desktops and also
-        // covers a Windows host where taskkill could not be started.
-        let _ = child.kill();
-    }
+        .and_then(|mut child| {
+            if child.as_ref().is_some_and(|child| child.pid() == pid) { child.take() }
+            else { None }
+        });
     fail_all_pending(state, "service_stopped");
+    Some(DetachedService { pid, process_present: true, child, native, transport })
+}
+
+#[cfg(desktop)]
+fn retire_service_process(state: &ServiceState, expected_pid: Option<u32>) {
+    if let Some(retired) = detach_service(state, expected_pid) {
+        let pid = retired.pid;
+        let process_present = retired.process_present;
+        retired.dispose(true);
+        if !process_present { return; }
+        // A writer may have held the child handle during detachment. Reap only
+        // that handle after process termination releases its pipe; never hold up
+        // the shutdown deadline or take a replacement's handle.
+        let child = state.child.clone();
+        std::thread::spawn(move || {
+            if let Ok(mut child) = child.lock() {
+                if child.as_ref().is_some_and(|child| child.pid() == pid) {
+                    child.take();
+                }
+            }
+        });
+    }
+}
+
+#[cfg(desktop)]
+fn retire_service_child(state: &ServiceState) {
+    retire_service_process(state, None);
 }
 
 #[cfg(desktop)]
@@ -442,6 +532,22 @@ fn spawn_service(app: &AppHandle, state: &ServiceState) -> Result<(), String> {
         .map_err(|_| "service_binary_unavailable".to_string())?
         .set_raw_out(true);
     let mut command = command;
+    #[cfg(all(windows, feature = "experimental-shared-webview"))]
+    { command = command.args(["--shared-webview"]); }
+    #[cfg(all(windows, not(feature = "experimental-shared-webview")))]
+    { command = command.args(["--native-webrtc"]); }
+    #[cfg(windows)]
+    {
+        let pipe = format!("mesh-chat-core-{}", uuid::Uuid::new_v4().simple());
+        let image = std::env::current_exe()
+            .map_err(|_| "core_api_client_unavailable".to_string())?
+            .to_string_lossy()
+            .to_string();
+        command = command
+            .env("MESH_CHAT_CORE_API_PIPE", &pipe)
+            .env("MESH_CHAT_CORE_API_CLIENT_IMAGE", image);
+        *state.core_api_pipe.lock().map_err(|_| "service_lock_failed".to_string())? = Some(pipe);
+    }
     let i2pd = [
         "i2pd.exe",
         "vendor/i2pd.exe",
@@ -462,19 +568,22 @@ fn spawn_service(app: &AppHandle, state: &ServiceState) -> Result<(), String> {
         .map_err(|_| "service_start_failed".to_string())?;
     let sidecar_pid = child.pid();
     let native = direct_native::NativeHost::default();
-    if let Ok(mut current) = state.direct_native.lock() {
-        if let Some(old) = current.replace(native.clone()) {
-            old.close();
-        }
+    // Acquire the potentially busy writer before the lifecycle guard. Retirement
+    // uses try_lock for this handle and can always reach the exact PID-tree kill.
+    let mut writer = state.child.lock().map_err(|_| "service_lock_failed".to_string())?;
+    let mut process = state.sidecar_pid.lock().map_err(|_| "service_lock_failed".to_string())?;
+    let previous_native = state.direct_native.lock().ok().and_then(|mut current| current.replace(native.clone()));
+    *writer = Some(child);
+    *process = Some(sidecar_pid);
+    drop(process);
+    drop(writer);
+    if let Some(old) = previous_native { old.close(); }
+
+    #[cfg(all(windows, feature = "experimental-shared-webview"))]
+    if let Err(error) = desktop_transport::register(app, state, sidecar_pid) {
+        retire_service_process(state, Some(sidecar_pid));
+        return Err(error);
     }
-    *state
-        .child
-        .lock()
-        .map_err(|_| "service_lock_failed".to_string())? = Some(child);
-    *state
-        .sidecar_pid
-        .lock()
-        .map_err(|_| "service_lock_failed".to_string())? = Some(sidecar_pid);
 
     let app_handle = app.clone();
     let event_state = state.clone();
@@ -504,7 +613,7 @@ fn spawn_service(app: &AppHandle, state: &ServiceState) -> Result<(), String> {
                             .is_some_and(|pid| *pid == Some(sidecar_pid));
                         if is_current {
                             record_unexpected_service_exit(&app_handle, &event_state, "protocol_error", None, None, stderr.finish(), started.elapsed().as_millis() as u64);
-                            retire_service_child(&event_state);
+                            retire_service_process(&event_state, Some(sidecar_pid));
                             let _ = app_handle.emit(
                                 "mesh-chat://service-event",
                                 json!({"type":"event", "event":"service_error"}),
@@ -523,7 +632,7 @@ fn spawn_service(app: &AppHandle, state: &ServiceState) -> Result<(), String> {
                         .unwrap_or(false);
                     if is_current {
                         record_unexpected_service_exit(&app_handle, &event_state, "process_event_error", None, None, stderr.finish(), started.elapsed().as_millis() as u64);
-                        retire_service_child(&event_state);
+                        retire_service_process(&event_state, Some(sidecar_pid));
                         let _ = app_handle.emit(
                             "mesh-chat://service-event",
                             json!({"type":"event", "event":"service_error"}),
@@ -532,38 +641,22 @@ fn spawn_service(app: &AppHandle, state: &ServiceState) -> Result<(), String> {
                     break;
                 }
                 CommandEvent::Terminated(exit) => {
-                    let is_current = event_state
-                        .sidecar_pid
-                        .lock()
-                        .ok()
-                        .map(|mut current| {
-                            if *current == Some(sidecar_pid) {
-                                current.take();
-                                true
-                            } else {
-                                false
-                            }
-                        })
-                        .unwrap_or(false);
-                    if is_current {
+                    if let Some(retired) = detach_service_with_transport(&event_state, Some(sidecar_pid), true) {
+                        retired.dispose(false);
                         record_unexpected_service_exit(&app_handle, &event_state, "terminated", exit.code, exit.signal, stderr.finish(), started.elapsed().as_millis() as u64);
-                        fail_all_pending(&event_state, "service_stopped");
-                        if let Ok(mut child) = event_state.child.lock() {
-                            if child.as_ref().map(CommandChild::pid) == Some(sidecar_pid) {
-                                child.take();
-                            }
-                        }
                         let _ = app_handle.emit(
                             "mesh-chat://service-event",
                             json!({"type":"event", "event":"service_error"}),
                         );
                     }
-                    break;
+                    native.close();
+                    return;
                 }
                 _ => {}
             }
         }
         native.close();
+        desktop_transport::retire(&event_state, Some(sidecar_pid), false);
     });
     Ok(())
 }
@@ -584,56 +677,18 @@ fn contains_forbidden_key(value: &Value) -> bool {
 fn allowed_renderer_command(command: &str) -> bool {
     matches!(
         command,
-        "snapshot"
+        "workspace_snapshot"
             | "i2p_status"
-            | "workspace_snapshot"
-            | "create_profile"
-            | "create_invitation"
-            | "preview_invitation"
-            | "accept_invitation"
-            | "receive_contact_invitation"
-            | "decide_contact_invitation"
-            | "create_connection_reply"
-            | "preview_connection_reply"
             | "connect_using_reply"
-            | "create_route_update"
-            | "preview_route_update"
-            | "apply_route_update"
-            | "preview_remote_profile"
-            | "create_manual_remote_profile"
-            | "approve_remote_profile"
-            | "test_remote_profile"
-            | "list_remote_profiles"
-            | "retry_remote_profile"
-            | "remove_remote_profile"
-            | "approve_remote_propagation"
-            | "remove_remote_propagation"
             | "check_direct_connection"
             | "prepare_manual_participant_host"
             | "configure_participant_firewall"
             | "stop_participant_host"
-            | "approve_request"
-            | "decline_request"
-            | "send_message"
-            | "start_call"
-            | "answer_call"
-            | "add_call_candidate"
-            | "end_call"
             | "call_media"
-            | "restart_call"
-            | "answer_call_restart"
-            | "call_settings"
-            | "update_call_settings"
-            | "call_ice_servers"
-            | "link_preview"
-            | "signal_publish"
-            | "signal_fetch"
             | "reconnect_profiles"
             | "reconnect_consent_set"
-            | "reconnect_capabilities_create"
             | "reconnect_capabilities_store"
             | "reconnect_capabilities_get"
-            | "reconnect_replay_check"
             | "reconnect_status"
             | "reconnect_start"
             | "reconnect_stop"
@@ -660,38 +715,6 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "webrtc_onboarding_answer"
             | "verify_webrtc_onboarding_offer"
             | "verify_webrtc_onboarding_answer"
-            | "set_message_reaction"
-            | "save_draft"
-            | "delete_conversation"
-            | "restore_conversation"
-            | "retry_message"
-            | "verify_contact"
-            | "unverify_contact"
-            | "unblock_contact"
-            | "block_contact"
-            | "update_contact"
-            | "rename_contact"
-            | "delete_contact"
-            | "connection_help"
-            | "search"
-            | "update_settings"
-            | "create_group"
-            | "send_group_message"
-            | "save_group_draft"
-            | "accept_group_invitation"
-            | "decline_group_invitation"
-            | "retry_group_invitation"
-            | "remove_group_member"
-            | "leave_group"
-            | "close_group"
-            | "create_workspace"
-            | "create_workspace_invitation"
-            | "invite_contact_to_workspace"
-            | "dismiss_workspace_invitation_prompt"
-            | "preview_workspace_invitation_prompt"
-            | "submit_workspace_invitation_prompt"
-            | "preview_workspace_invitation"
-            | "preview_direct_connection"
             | "prepare_direct_offer"
             | "prepare_direct_answer"
             | "prepare_direct_ready"
@@ -699,121 +722,19 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "connect_direct_setup"
             | "configure_direct_firewall"
             | "direct_recovery_status"
-            | "export_recovery_update"
-            | "import_recovery_update"
             | "pause_direct_recovery"
             | "resume_direct_recovery"
             | "direct_setup_status"
             | "resume_direct_setup"
             | "check_direct_setup"
             | "retry_direct_setup"
-            | "connection_diagnostics"
-            | "clear_connection_diagnostics"
             | "cancel_direct_setup"
-            | "revoke_workspace_invitation"
-            | "submit_workspace_join"
-            | "approve_workspace_join"
-            | "decline_workspace_join"
-            | "create_workspace_device_link"
-            | "preview_workspace_device_link"
-            | "submit_workspace_device_link"
-            | "approve_workspace_device_link"
-            | "decline_workspace_device_link"
-            | "request_workspace_device_removal"
-            | "approve_workspace_device_removal"
-            | "decline_workspace_device_removal"
-            | "update_workspace_metadata"
-            | "update_workspace_policies"
-            | "update_workspace_retention"
-            | "prune_workspace_history"
-            | "get_workspace_history_status"
-            | "start_workspace_history"
-            | "cancel_workspace_history"
-            | "list_workspace_history_gaps"
-            | "remove_workspace_member"
-            | "change_workspace_role"
-            | "submit_workspace_admin_request"
-            | "submit_workspace_invitation_request"
-            | "submit_workspace_member_removal_request"
-            | "submit_workspace_role_change_request"
-            | "list_workspace_members"
             | "workspace_connectivity"
-            | "workspace_reconnect_status"
-            | "workspace_reconnect_consent_set"
             | "workspace_helper_status"
             | "workspace_helper_consent_set"
             | "relay_workspace_connection_update"
-            | "create_workspace_admission_grant"
-            | "accept_workspace_admission_grant"
-            | "list_workspace_admission_grants"
-            | "end_workspace_admission_grant"
             | "workspace_request_paths"
-            | "create_workspace_access_recommendation"
-            | "preview_workspace_access_recommendation"
-            | "apply_workspace_access_recommendation"
-            | "send_workspace_access_recommendation"
-            | "list_workspace_access_recommendations"
-            | "preview_workspace_access_recommendation_by_id"
-            | "apply_workspace_access_recommendation_by_id"
-            | "list_workspace_admin_requests"
-            | "list_workspace_admin_history"
-            | "get_workspace_admin_request"
-            | "approve_workspace_admin_request"
-            | "decline_workspace_admin_request"
-            | "cancel_workspace_admin_request"
-            | "dismiss_workspace_admin_request"
-            | "offer_workspace_authority_transition"
-            | "accept_workspace_authority_transition"
-            | "finalize_workspace_authority_transition"
-            | "list_workspace_authority_transitions"
-            | "report_workspace_authority_loss"
-            | "request_workspace_display_name"
-            | "decide_workspace_display_name"
-            | "create_workspace_channel"
-            | "update_workspace_channel"
-            | "update_workspace_private_channel_members"
-            | "leave_workspace_private_channel"
-            | "set_workspace_channel_subscription"
-            | "offer_workspace_channel_transfer"
-            | "accept_workspace_channel_transfer"
-            | "recover_workspace_channel"
-            | "sync_workspace_channels"
-            | "send_workspace_message"
-            | "open_workspace_direct"
-            | "hide_workspace_direct"
-            | "send_workspace_direct_message"
-            | "send_workspace_thread_reply"
-            | "edit_workspace_message"
-            | "delete_workspace_message"
-            | "set_workspace_reaction"
-            | "search_workspace"
-            | "list_workspace_messages"
-            | "list_workspace_direct_messages"
-            | "mark_workspace_read"
-            | "set_workspace_read_hint_sync"
-            | "mark_workspace_direct_read"
-            | "list_workspace_mentions"
-            | "list_workspace_threads"
-            | "list_workspace_thread_messages"
-            | "list_workspace_message_revisions"
-            | "list_workspace_tombstones"
-            | "mark_workspace_mentions_read"
-            | "mark_workspace_thread_read"
-            | "set_workspace_channel_mentions_muted"
-            | "hide_workspace_message"
-            | "save_workspace_draft"
-            | "save_workspace_direct_draft"
-            | "save_workspace_thread_draft"
-            | "leave_workspace"
-            | "close_workspace"
-            | "remove_workspace_data"
-            | "get_notification_state"
-            | "set_hide_notification_previews"
-            | "set_workspace_notification_preference"
-            | "open_notification_target"
             | "reconcile_mobile_lifecycle"
-            | "set_background_availability"
-            | "background_status"
     )
 }
 
@@ -1275,6 +1196,339 @@ async fn service_command(
     result
 }
 
+
+#[cfg(desktop)]
+#[tauri::command]
+fn core_api_capabilities(state: State<'_, ServiceState>) -> Result<Value, String> {
+    #[cfg(windows)]
+    {
+        let name = state
+            .core_api_pipe
+            .lock()
+            .map_err(|_| "core_api_unavailable".to_string())?
+            .clone()
+            .ok_or_else(|| "core_api_unavailable".to_string())?;
+        let mut client = core_api::CoreApiClient::connect(&name)?;
+        return client.capabilities();
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = state;
+        Err("core_api_unavailable".into())
+    }
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+async fn core_api_capabilities(app: AppHandle) -> Result<Value, String> {
+    mobile_core_command(&app, "capabilities", serde_json::json!({}))
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+fn core_api_profile(state: State<'_, ServiceState>) -> Result<Value, String> {
+    #[cfg(windows)]
+    {
+        let name = state
+            .core_api_pipe
+            .lock()
+            .map_err(|_| "core_api_unavailable".to_string())?
+            .clone()
+            .ok_or_else(|| "core_api_unavailable".to_string())?;
+        let mut client = core_api::CoreApiClient::connect(&name)?;
+        let capabilities = client.capabilities()?;
+        let profile = capabilities
+            .get("profiles")
+            .and_then(Value::as_array)
+            .and_then(|profiles| profiles.first())
+            .and_then(Value::as_str)
+            .ok_or_else(|| "core_api_unavailable".to_string())?;
+        return client.request("profile.query", json!({ "profile": profile }));
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = state;
+        Err("core_api_unavailable".into())
+    }
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+async fn core_api_profile(app: AppHandle) -> Result<Value, String> {
+    mobile_core_command(&app, "profile", serde_json::json!({}))
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+async fn core_api_send_message(
+    app: AppHandle,
+    destination: String,
+    text: String,
+    idempotency_key: String,
+) -> Result<Value, String> {
+    mobile_core_command(&app, "sendMessage", serde_json::json!({
+        "destination": destination, "text": text, "idempotencyKey": idempotency_key,
+    }))
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+fn core_api_request(
+    state: State<'_, ServiceState>,
+    operation: String,
+    params: Value,
+    idempotency_key: Option<String>,
+) -> Result<Value, String> {
+    #[cfg(windows)]
+    {
+        let name = state
+            .core_api_pipe
+            .lock()
+            .map_err(|_| "core_api_unavailable".to_string())?
+            .clone()
+            .ok_or_else(|| "core_api_unavailable".to_string())?;
+        let mut client = core_api::CoreApiClient::connect(&name)?;
+        let capabilities = client.capabilities()?;
+        let advertised = capabilities
+            .get("operations")
+            .and_then(Value::as_array)
+            .map(|items| items.iter().any(|item| item.as_str() == Some(operation.as_str())))
+            .unwrap_or(false);
+        if !advertised {
+            return Err(json!({"code":"unsupported_operation", "retry_after_ms":null}).to_string());
+        }
+        return match idempotency_key.as_deref() {
+            Some(key) => client.request_with_key(&operation, params, key),
+            None => client.request(&operation, params),
+        };
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (state, operation, params, idempotency_key);
+        Err("core_api_unavailable".into())
+    }
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+async fn core_api_request(
+    app: AppHandle,
+    operation: String,
+    params: Value,
+    idempotency_key: Option<String>,
+) -> Result<Value, String> {
+    #[cfg(target_os = "android")]
+    if operation == "profile.unlock" {
+        // Construction/retirement can require private native responses before
+        // the new service is published or its Core request returns.
+        mobile_direct::start(&app);
+    }
+    mobile_core_command(&app, "request", serde_json::json!({
+        "operation": operation, "params": params, "idempotencyKey": idempotency_key,
+    }))
+}
+
+#[cfg(windows)]
+fn resolve_core_peer(
+    client: &mut core_api::CoreApiClient,
+    profile: &str,
+    destination: &str,
+) -> Result<String, String> {
+    let observed = client.request("profile.query", json!({ "profile": profile }))?;
+    let peers = observed
+        .get("peers")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    for peer in peers.iter().filter_map(Value::as_str) {
+        let view = client.request("peer.query", json!({
+            "profile": profile,
+            "peer": peer,
+        }))?;
+        if view.get("destination").and_then(Value::as_str) == Some(destination) {
+            return Ok(peer.to_string());
+        }
+    }
+    Err("core_api_peer_unavailable".into())
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+fn core_api_peer_for_destination(
+    state: State<'_, ServiceState>,
+    destination: String,
+) -> Result<Value, String> {
+    #[cfg(windows)]
+    {
+        let name = state
+            .core_api_pipe
+            .lock()
+            .map_err(|_| "core_api_unavailable".to_string())?
+            .clone()
+            .ok_or_else(|| "core_api_unavailable".to_string())?;
+        let mut client = core_api::CoreApiClient::connect(&name)?;
+        let capabilities = client.capabilities()?;
+        let profile = capabilities
+            .get("profiles")
+            .and_then(Value::as_array)
+            .and_then(|profiles| profiles.first())
+            .and_then(Value::as_str)
+            .ok_or_else(|| "core_api_unavailable".to_string())?
+            .to_string();
+        let peer = resolve_core_peer(&mut client, &profile, &destination)?;
+        return Ok(json!({ "profile": profile, "peer": peer, "destination": destination }));
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (state, destination);
+        Err("core_api_unavailable".into())
+    }
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+async fn core_api_peer_for_destination(app: AppHandle, destination: String) -> Result<Value, String> {
+    mobile_core_command(&app, "peer", serde_json::json!({ "destination": destination }))
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+fn core_api_draft_get(state: State<'_, ServiceState>, destination: String) -> Result<Value, String> {
+    #[cfg(windows)]
+    {
+        let name = state
+            .core_api_pipe
+            .lock()
+            .map_err(|_| "core_api_unavailable".to_string())?
+            .clone()
+            .ok_or_else(|| "core_api_unavailable".to_string())?;
+        let mut client = core_api::CoreApiClient::connect(&name)?;
+        let capabilities = client.capabilities()?;
+        let profile = capabilities
+            .get("profiles")
+            .and_then(Value::as_array)
+            .and_then(|profiles| profiles.first())
+            .and_then(Value::as_str)
+            .ok_or_else(|| "core_api_unavailable".to_string())?
+            .to_string();
+        let peer = resolve_core_peer(&mut client, &profile, &destination)?;
+        return client.request("peer.draft_get", json!({
+            "profile": profile, "peer": peer,
+        }));
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (state, destination);
+        Err("core_api_unavailable".into())
+    }
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+async fn core_api_draft_get(app: AppHandle, destination: String) -> Result<Value, String> {
+    mobile_core_command(&app, "draftGet", serde_json::json!({ "destination": destination }))
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+fn core_api_draft_set(
+    state: State<'_, ServiceState>,
+    destination: String,
+    text: String,
+) -> Result<Value, String> {
+    #[cfg(windows)]
+    {
+        let name = state
+            .core_api_pipe
+            .lock()
+            .map_err(|_| "core_api_unavailable".to_string())?
+            .clone()
+            .ok_or_else(|| "core_api_unavailable".to_string())?;
+        let mut client = core_api::CoreApiClient::connect(&name)?;
+        let capabilities = client.capabilities()?;
+        let profile = capabilities
+            .get("profiles")
+            .and_then(Value::as_array)
+            .and_then(|profiles| profiles.first())
+            .and_then(Value::as_str)
+            .ok_or_else(|| "core_api_unavailable".to_string())?
+            .to_string();
+        let peer = resolve_core_peer(&mut client, &profile, &destination)?;
+        return client.request("peer.draft_set", json!({
+            "profile": profile, "peer": peer, "text": text,
+        }));
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (state, destination, text);
+        Err("core_api_unavailable".into())
+    }
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+async fn core_api_draft_set(app: AppHandle, destination: String, text: String) -> Result<Value, String> {
+    mobile_core_command(&app, "draftSet", serde_json::json!({ "destination": destination, "text": text }))
+}
+
+#[cfg(mobile)]
+fn mobile_core_command(app: &AppHandle, action: &str, payload: Value) -> PendingResult {
+    let response = app.mesh_runtime().core_command(CoreCommandRequest {
+        action: action.into(), payload,
+    }).map_err(|_| serde_json::json!({"code":"unavailable", "retry_after_ms":null}).to_string())?;
+    let value: Value = serde_json::from_str(&response.json)
+        .map_err(|_| "core_api_protocol".to_string())?;
+    match value.get("ok").and_then(Value::as_bool) {
+        Some(true) => value.get("result").cloned().ok_or_else(|| "core_api_protocol".into()),
+        Some(false) => {
+            let error = value.get("error").filter(|error|
+                error.get("code").and_then(Value::as_str).is_some())
+                .ok_or_else(|| "core_api_protocol".to_string())?;
+            Err(error.to_string())
+        }
+        None => Err("core_api_protocol".into()),
+    }
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+fn core_api_send_message(
+    state: State<'_, ServiceState>,
+    destination: String,
+    text: String,
+    idempotency_key: String,
+) -> Result<Value, String> {
+    #[cfg(windows)]
+    {
+        let name = state
+            .core_api_pipe
+            .lock()
+            .map_err(|_| "core_api_unavailable".to_string())?
+            .clone()
+            .ok_or_else(|| "core_api_unavailable".to_string())?;
+        let mut client = core_api::CoreApiClient::connect(&name)?;
+        let capabilities = client.capabilities()?;
+        let profile = capabilities
+            .get("profiles")
+            .and_then(Value::as_array)
+            .and_then(|profiles| profiles.first())
+            .and_then(Value::as_str)
+            .ok_or_else(|| "core_api_unavailable".to_string())?
+            .to_string();
+        let recipient = resolve_core_peer(&mut client, &profile, &destination)?;
+        return client.request_with_key("message.enqueue", json!({
+            "profile": profile,
+            "recipient": recipient,
+            "text": text,
+        }), &idempotency_key);
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (state, destination, text, idempotency_key);
+        Err("core_api_unavailable".into())
+    }
+}
+
 #[cfg(desktop)]
 #[tauri::command]
 async fn lock_service(state: State<'_, ServiceState>) -> Result<(), String> {
@@ -1341,14 +1595,18 @@ fn mobile_result(response: NativeResponse) -> PendingResult {
 #[cfg(mobile)]
 #[tauri::command]
 async fn initialize_service(app: AppHandle, display_name: Option<String>) -> PendingResult {
+    #[cfg(target_os = "android")]
+    mobile_direct::start(&app);
     let response = app
         .mesh_runtime()
         .initialize(InitializeRequest { display_name })
         .map_err(|_| "service_start_failed".to_string())?;
-    let result = mobile_result(response)?;
+    let result = mobile_result(response);
     #[cfg(target_os = "android")]
-    mobile_direct::start(&app);
-    Ok(result)
+    if result.is_ok() || result.as_ref().err().is_some_and(|error| error == "locked") {
+        mobile_direct::start(&app);
+    }
+    result
 }
 
 #[cfg(mobile)]
@@ -1374,13 +1632,40 @@ async fn service_command(app: AppHandle, command: String, payload: Value) -> Pen
 #[cfg(mobile)]
 #[tauri::command]
 async fn lock_service(app: AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    let response = app
+        .mesh_runtime()
+        .lock_profile()
+        .map_err(|_| "service_stopped".to_string())?;
+    #[cfg(not(target_os = "android"))]
     let response = app
         .mesh_runtime()
         .shutdown()
         .map_err(|_| "service_stopped".to_string())?;
+    // A retiring worker may still need native responses to release its vault.
+    // Preserve that pump until Python acknowledges completed cleanup.
+    mobile_result(response)?;
     #[cfg(target_os = "android")]
     mobile_direct::stop(&app);
-    mobile_result(response).map(|_| ())
+    Ok(())
+}
+
+#[tauri::command]
+async fn core_api_unlock_credential(app: AppHandle, profile: String) -> PendingResult {
+    if profile.is_empty() || profile.len() > 128 {
+        return Err(serde_json::json!({"code": "invalid_request"}).to_string());
+    }
+    #[cfg(target_os = "android")]
+    {
+        let response = app.mesh_runtime().authorize_profile_unlock(&profile).await
+            .map_err(|_| serde_json::json!({"code": "unavailable"}).to_string())?;
+        mobile_result(response)
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        Err(serde_json::json!({"code": "unsupported_operation"}).to_string())
+    }
 }
 
 #[cfg(mobile)]
@@ -1664,6 +1949,19 @@ fn app_build_info(app: AppHandle) -> serde_json::Value {
     info
 }
 
+#[cfg(desktop)]
+#[tauri::command]
+async fn desktop_transport_exchange(window: tauri::WebviewWindow, state: State<'_, ServiceState>,
+                                    token: String, frames: Vec<Value>, fault: bool) -> Result<Vec<Value>, String> {
+    desktop_transport::exchange(&window, &state, &token, frames, fault)
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+fn desktop_transport_exchange() -> Result<Vec<Value>, String> {
+    Err("transport_host_unavailable".into())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     #[cfg(desktop)]
@@ -1676,6 +1974,10 @@ pub fn run() {
     let instance_state = state.clone();
 
     let builder = tauri::Builder::default();
+    #[cfg(all(windows, feature = "experimental-shared-webview"))]
+    let builder = builder.append_invoke_initialization_script(
+        "Object.defineProperty(window, '__MESH_SERVICE_TRANSPORT__', {value:true});",
+    );
     #[cfg(target_os = "android")]
     let builder = builder.manage(mobile_direct::MobileDirect::default());
     #[cfg(desktop)]
@@ -1741,8 +2043,17 @@ pub fn run() {
 
     builder
         .invoke_handler(tauri::generate_handler![
+            desktop_transport_exchange,
             initialize_service,
             service_command,
+            core_api_capabilities,
+            core_api_unlock_credential,
+            core_api_profile,
+            core_api_peer_for_destination,
+            core_api_draft_get,
+            core_api_draft_set,
+            core_api_request,
+            core_api_send_message,
             lock_service,
             desktop_service_health,
             set_background_availability,
@@ -1849,13 +2160,53 @@ mod tests {
     }
 
     #[test]
-    fn sidecar_pid_tracking_does_not_depend_on_the_writer_mutex() {
+    fn stale_process_retirement_preserves_the_replacement_and_its_requests() {
         let state = ServiceState::default();
-        *state.sidecar_pid.lock().unwrap() = Some(4_242);
-        let guard = state.child.lock().unwrap();
-        assert_eq!(take_sidecar_pid(&state), Some(4_242));
-        assert_eq!(take_sidecar_pid(&state), None);
-        drop(guard);
+        *state.sidecar_pid.lock().unwrap() = Some(200);
+        *state.direct_native.lock().unwrap() = Some(direct_native::NativeHost::default());
+        let (sender, mut receiver) = oneshot::channel();
+        state.pending.lock().unwrap().insert("replacement".into(), sender);
+
+        assert!(detach_service(&state, Some(100)).is_none());
+
+        assert_eq!(*state.sidecar_pid.lock().unwrap(), Some(200));
+        assert!(state.direct_native.lock().unwrap().is_some());
+        assert!(matches!(receiver.try_recv(), Err(oneshot::error::TryRecvError::Empty)));
+    }
+
+    #[test]
+    fn exact_process_detachment_wakes_requests_even_when_the_writer_is_blocked() {
+        let state = ServiceState::default();
+        *state.sidecar_pid.lock().unwrap() = Some(100);
+        let (sender, mut receiver) = oneshot::channel();
+        state.pending.lock().unwrap().insert("old".into(), sender);
+        let writer = state.child.lock().unwrap();
+
+        let retired = detach_service(&state, Some(100)).unwrap();
+
+        assert_eq!(retired.pid, 100);
+        assert_eq!(*state.sidecar_pid.lock().unwrap(), None);
+        assert_eq!(receiver.try_recv().unwrap(), Err("service_stopped".into()));
+        assert!(detach_service(&state, Some(100)).is_none());
+        drop(writer);
+    }
+
+    #[test]
+    fn delayed_disposal_cannot_close_a_replacement_host_or_cancel_its_requests() {
+        let state = ServiceState::default();
+        *state.sidecar_pid.lock().unwrap() = Some(100);
+        *state.direct_native.lock().unwrap() = Some(direct_native::NativeHost::default());
+        let retired = detach_service(&state, Some(100)).unwrap();
+        *state.sidecar_pid.lock().unwrap() = Some(200);
+        *state.direct_native.lock().unwrap() = Some(direct_native::NativeHost::default());
+        let (sender, mut receiver) = oneshot::channel();
+        state.pending.lock().unwrap().insert("replacement".into(), sender);
+
+        retired.dispose(false);
+
+        assert_eq!(*state.sidecar_pid.lock().unwrap(), Some(200));
+        assert!(state.direct_native.lock().unwrap().is_some());
+        assert!(matches!(receiver.try_recv(), Err(oneshot::error::TryRecvError::Empty)));
     }
 
     #[test]
@@ -1873,30 +2224,21 @@ mod tests {
         ] {
             assert!(!allowed_renderer_command(command));
         }
-        assert!(allowed_renderer_command("delete_conversation"));
+        assert!(!allowed_renderer_command("delete_conversation"));
         assert!(allowed_renderer_command("i2p_status"));
-        assert!(allowed_renderer_command("restore_conversation"));
-        assert!(allowed_renderer_command("set_message_reaction"));
+        assert!(!allowed_renderer_command("restore_conversation"));
+        assert!(!allowed_renderer_command("set_message_reaction"));
         assert!(!allowed_renderer_command("delete_contact_identity"));
         for command in [
-            "preview_remote_profile",
-            "create_manual_remote_profile",
-            "test_remote_profile",
-            "list_remote_profiles",
-            "retry_remote_profile",
-            "remove_remote_profile",
-            "approve_remote_propagation",
-            "remove_remote_propagation",
             "stop_participant_host",
         ] {
-            assert!(allowed_renderer_command(command));
+            assert!(allowed_renderer_command(command), "{command}");
         }
     }
 
     #[test]
     fn renderer_workspace_commands_are_cross_platform_and_native_work_is_private() {
         let commands = [
-            "preview_direct_connection",
             "prepare_direct_offer",
             "prepare_direct_answer",
             "prepare_direct_ready",
@@ -1904,135 +2246,27 @@ mod tests {
             "connect_direct_setup",
             "configure_direct_firewall",
             "direct_recovery_status",
-            "export_recovery_update",
-            "import_recovery_update",
             "pause_direct_recovery",
             "resume_direct_recovery",
             "direct_setup_status",
             "resume_direct_setup",
             "check_direct_setup",
             "retry_direct_setup",
-            "connection_diagnostics",
-            "clear_connection_diagnostics",
             "cancel_direct_setup",
-            "workspace_snapshot",
-            "create_workspace",
-            "create_workspace_invitation",
-            "invite_contact_to_workspace",
-            "dismiss_workspace_invitation_prompt",
-            "offer_workspace_authority_transition",
-            "accept_workspace_authority_transition",
-            "finalize_workspace_authority_transition",
-            "list_workspace_authority_transitions",
-            "report_workspace_authority_loss",
-            "preview_workspace_invitation",
-            "revoke_workspace_invitation",
-            "submit_workspace_join",
-            "approve_workspace_join",
-            "decline_workspace_join",
-            "create_workspace_device_link",
-            "preview_workspace_device_link",
-            "submit_workspace_device_link",
-            "approve_workspace_device_link",
-            "decline_workspace_device_link",
-            "request_workspace_device_removal",
-            "approve_workspace_device_removal",
-            "decline_workspace_device_removal",
-            "update_workspace_metadata",
-            "update_workspace_policies",
-            "update_workspace_retention",
-            "prune_workspace_history",
-            "get_workspace_history_status",
-            "start_workspace_history",
-            "cancel_workspace_history",
-            "list_workspace_history_gaps",
-            "remove_workspace_member",
-            "change_workspace_role",
-            "submit_workspace_admin_request",
-            "submit_workspace_invitation_request",
-            "submit_workspace_member_removal_request",
-            "submit_workspace_role_change_request",
-            "list_workspace_members",
             "workspace_connectivity",
-            "workspace_reconnect_status",
-            "workspace_reconnect_consent_set",
             "workspace_helper_status",
             "workspace_helper_consent_set",
             "relay_workspace_connection_update",
-            "create_workspace_admission_grant",
-            "accept_workspace_admission_grant",
-            "list_workspace_admission_grants",
-            "end_workspace_admission_grant",
             "workspace_request_paths",
-            "create_workspace_access_recommendation",
-            "preview_workspace_access_recommendation",
-            "apply_workspace_access_recommendation",
-            "send_workspace_access_recommendation",
-            "list_workspace_access_recommendations",
-            "preview_workspace_access_recommendation_by_id",
-            "apply_workspace_access_recommendation_by_id",
-            "list_workspace_admin_requests",
-            "list_workspace_admin_history",
-            "get_workspace_admin_request",
-            "approve_workspace_admin_request",
-            "decline_workspace_admin_request",
-            "cancel_workspace_admin_request",
-            "dismiss_workspace_admin_request",
-            "request_workspace_display_name",
-            "decide_workspace_display_name",
-            "create_workspace_channel",
-            "update_workspace_channel",
-            "update_workspace_private_channel_members",
-            "leave_workspace_private_channel",
-            "set_workspace_channel_subscription",
-            "offer_workspace_channel_transfer",
-            "accept_workspace_channel_transfer",
-            "recover_workspace_channel",
-            "sync_workspace_channels",
-            "send_workspace_message",
-            "open_workspace_direct",
-            "hide_workspace_direct",
-            "send_workspace_direct_message",
-            "send_workspace_thread_reply",
-            "edit_workspace_message",
-            "delete_workspace_message",
-            "set_workspace_reaction",
-            "search_workspace",
-            "list_workspace_messages",
-            "list_workspace_direct_messages",
-            "mark_workspace_read",
-            "set_workspace_read_hint_sync",
-            "mark_workspace_direct_read",
-            "list_workspace_mentions",
-            "list_workspace_threads",
-            "list_workspace_thread_messages",
-            "list_workspace_message_revisions",
-            "list_workspace_tombstones",
-            "mark_workspace_mentions_read",
-            "mark_workspace_thread_read",
-            "set_workspace_channel_mentions_muted",
-            "hide_workspace_message",
-            "save_workspace_draft",
-            "save_workspace_direct_draft",
-            "save_workspace_thread_draft",
-            "leave_workspace",
-            "close_workspace",
-            "remove_workspace_data",
-            "get_notification_state",
-            "set_hide_notification_previews",
-            "set_workspace_notification_preference",
-            "open_notification_target",
             "reconcile_mobile_lifecycle",
-            "set_background_availability",
-            "background_status",
         ];
         for command in commands {
-            assert!(allowed_renderer_command(command));
+            assert!(allowed_renderer_command(command), "{command}");
         }
-        assert!(!allowed_renderer_command("native_notification_state"));
-        assert!(!allowed_renderer_command("mobile_lifecycle_transition"));
-        assert!(!allowed_renderer_command("drain_native_notification_work"));
-        assert!(!allowed_renderer_command("acknowledge_native_notification"));
+        assert!(!allowed_renderer_command("native_notification_state"), "native_notification_state");
+        assert!(!allowed_renderer_command("mobile_lifecycle_transition"), "mobile_lifecycle_transition");
+        assert!(!allowed_renderer_command("drain_native_notification_work"), "drain_native_notification_work");
+        assert!(!allowed_renderer_command("acknowledge_native_notification"), "acknowledge_native_notification");
     }
 
     #[test]

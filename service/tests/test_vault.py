@@ -11,6 +11,37 @@ from mesh_chat import vault
 from mesh_chat.vault import ProfileLock, VaultStore
 
 
+def test_conditional_batch_checks_original_read_set_before_format_or_write(tmp_path):
+    from mesh_chat.vault import RecordConflict
+
+    with VaultStore(tmp_path, os.urandom(32), allow_unprotected_for_tests=True) as store:
+        store.put("source", "one", {"revision": 1})
+        expected = {("source", "one"): {"revision": 1}}
+        store.put("source", "one", {"revision": 2})
+        with pytest.raises(RecordConflict):
+            store.conditional_put_and_delete(expected,
+                [("source", "one", {"revision": 3})], write_fences=[("legacy", "one")], schema_floor=2)
+        assert store.get("source", "one") == {"revision": 2}
+        assert store.list("record_write_fence") == []
+        assert store._db.execute("SELECT value FROM meta WHERE name='schema_version'").fetchone()[0] == "1"
+
+
+def test_persistent_generic_fence_survives_reopen_without_domain_registration(tmp_path):
+    from mesh_chat.vault import RecordConflict
+
+    key = os.urandom(32)
+    with VaultStore(tmp_path, key, allow_unprotected_for_tests=True) as store:
+        store.put("legacy", "one", {"text": "source"})
+        store.conditional_put_and_delete({("legacy", "one"): {"text": "source"}},
+            [("current", "one", {"text": "migrated"})], [("legacy", "one")],
+            write_fences=[("legacy", "one")], schema_floor=2)
+    with VaultStore(tmp_path, key, allow_unprotected_for_tests=True) as store:
+        with pytest.raises(RecordConflict):
+            store.put("legacy", "one", {"text": "late writer"})
+        store.delete("legacy", "one")
+        assert store.get("current", "one") == {"text": "migrated"}
+
+
 def test_transaction_begin_failure_releases_the_vault_lock() -> None:
     begin_error = RuntimeError("begin failed")
 
@@ -234,3 +265,57 @@ def test_unknown_platform_still_fails_closed(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(vault.sys, "platform", "plan9")
     with pytest.raises(StorageUnavailable, match="No verified"):
         vault.protect_workspace(tmp_path / "profile")
+
+
+@pytest.mark.parametrize("mobile", [False, True])
+def test_completed_close_drops_crypto_references_and_refuses_late_use(tmp_path, mobile):
+    store = VaultStore(tmp_path, os.urandom(32), allow_unprotected_for_tests=True,
+                       native_mobile_protection="android" if mobile else None)
+    sealed = store._seal("test", "one", {"value": 1})
+    cursor = store.seal_cursor({"value": 1})
+    private = store.seal_private_cursor("scope", {"value": 1})
+    store.close()
+    assert store._key is None and store._cipher is None and store._token_type is None
+    for action in [lambda: store.opaque_id("test", "one"), lambda: store.seal_cursor({}),
+                   lambda: store.open_cursor(cursor), lambda: store.seal_private_cursor("scope", {}),
+                   lambda: store.open_private_cursor("scope", private),
+                   lambda: store._seal("test", "one", {}), lambda: store._open("test", "one", sealed)]:
+        with pytest.raises(StorageUnavailable, match="closed"):
+            action()
+    store.close()  # Idempotent completion also remains fenced.
+
+
+def test_failed_database_close_retains_exact_key_until_retry_completes(tmp_path):
+    key = os.urandom(32)
+    store = VaultStore(tmp_path, key, allow_unprotected_for_tests=True)
+    original = store._db
+    class FailClose:
+        def close(self):
+            raise OSError("injected close failure")
+    store._db = FailClose()
+    with pytest.raises(OSError):
+        store.close()
+    assert store._key is key
+    assert store.opaque_id("test", "one")
+    store._db = original
+    store.close()
+    assert store._key is None and store._cipher is None
+
+
+def test_collection_cas_refuses_phantom_insert_without_partial_record_or_schema_changes(tmp_path):
+    with VaultStore(tmp_path, os.urandom(32), allow_unprotected_for_tests=True) as store:
+        store.put("contact_invitation", "first", {"state": "pending"})
+        expected = dict(store.items("contact_invitation"))
+        store.put("contact_invitation", "concurrent", {"state": "pending"})
+        with pytest.raises(vault.RecordConflict, match="collection"):
+            store.conditional_put_and_delete({}, [("test", "result", {"done": True})],
+                [("contact_invitation", "first")], schema_floor=2,
+                expected_collections={"contact_invitation": expected})
+        assert store.get("test", "result") is None
+        assert store.get("contact_invitation", "first") == {"state": "pending"}
+        assert store._db.execute("SELECT value FROM meta WHERE name='schema_version'").fetchone()[0] == "1"
+        expected = dict(store.items("contact_invitation"))
+        store.conditional_put_and_delete({}, [("test", "result", {"done": True})],
+            [("contact_invitation", "first")], expected_collections={"contact_invitation": expected})
+        assert store.get("test", "result") == {"done": True}
+        assert store.get("contact_invitation", "first") is None

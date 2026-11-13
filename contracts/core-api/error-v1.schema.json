@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mesh-chat:core-api:error:1",
+  "title": "Experimental Core API error v1",
+  "type": "object",
+  "required": ["api_version", "request_id", "ok", "error"],
+  "additionalProperties": false,
+  "properties": {
+    "api_version": {"const": 1},
+    "request_id": {"type": ["string", "null"], "maxLength": 80},
+    "ok": {"const": false},
+    "error": {
+      "type": "object",
+      "required": ["code", "retry_after_ms"],
+      "additionalProperties": false,
+      "properties": {
+        "code": {"enum": ["invalid_request", "incompatible_version", "negotiation_required", "unsupported_operation", "unauthenticated", "forbidden", "not_found", "locked", "conflict", "idempotency_conflict", "idempotency_expired", "resync_required", "resource_exhausted", "rate_limited", "unavailable", "internal"]},
+        "retry_after_ms": {"type": ["integer", "null"], "minimum": 0, "maximum": 3600000}
+      }
+    }
+  }
+}

@@ -1,0 +1,204 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mesh-chat:core-api:call-operation-result:1",
+  "title": "Experimental scoped call-operation recovery",
+  "type": "object",
+  "properties": {
+    "api_version": {
+      "const": 1
+    },
+    "request_id": {
+      "type": "string"
+    },
+    "ok": {
+      "const": true
+    },
+    "result": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "profile": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "operations": {
+              "type": "array",
+              "maxItems": 256,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "operation": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  "call": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  "runtime": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  "action": {
+                    "enum": [
+                      "start",
+                      "answer",
+                      "restart",
+                      "answer_restart"
+                    ]
+                  },
+                  "accepted_at": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "expires_at": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "expired": {
+                    "type": "boolean"
+                  },
+                  "current_runtime": {
+                    "type": "boolean"
+                  },
+                  "state": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 32
+                  },
+                  "disposition": {
+                    "enum": [
+                      "live",
+                      "terminal_unretired",
+                      "unknown_runtime",
+                      "cleanup_pending",
+                      "retired"
+                    ]
+                  },
+                  "replacement_safe": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "operation",
+                  "call",
+                  "runtime",
+                  "action",
+                  "accepted_at",
+                  "expires_at",
+                  "expired",
+                  "current_runtime",
+                  "state",
+                  "disposition",
+                  "replacement_safe"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "profile",
+            "operations"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "profile": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "operation": {
+              "type": "object",
+              "properties": {
+                "operation": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "call": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "runtime": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "action": {
+                  "enum": [
+                    "start",
+                    "answer",
+                    "restart",
+                    "answer_restart"
+                  ]
+                },
+                "accepted_at": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "expires_at": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "expired": {
+                  "type": "boolean"
+                },
+                "current_runtime": {
+                  "type": "boolean"
+                },
+                "state": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "maxLength": 32
+                },
+                "disposition": {
+                  "enum": [
+                    "live",
+                    "terminal_unretired",
+                    "unknown_runtime",
+                    "cleanup_pending",
+                    "retired"
+                  ]
+                },
+                "replacement_safe": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "operation",
+                "call",
+                "runtime",
+                "action",
+                "accepted_at",
+                "expires_at",
+                "expired",
+                "current_runtime",
+                "state",
+                "disposition",
+                "replacement_safe"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "profile",
+            "operation"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    }
+  },
+  "required": [
+    "api_version",
+    "request_id",
+    "ok",
+    "result"
+  ],
+  "additionalProperties": false
+}

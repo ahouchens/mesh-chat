@@ -11,6 +11,9 @@ from __future__ import annotations
 
 import time
 import json
+import hashlib
+import uuid
+from contextlib import nullcontext
 from typing import Any
 
 from .errors import ValidationError
@@ -65,13 +68,20 @@ class BackgroundAvailabilityMixin:
         state: str,
         reason: str,
     ) -> dict[str, Any]:
+        record = self._prepare_background_availability(enabled=enabled, state=state, reason=reason)
+        self.store.put(KIND, self._background_availability_id(), record)
+        return record
+
+    def _prepare_background_availability(
+        self, *, enabled: bool, state: str, reason: str,
+    ) -> dict[str, Any]:
         if not isinstance(enabled, bool) or state not in STATES:
             raise ValidationError("Background availability state is invalid")
         if not isinstance(reason, str) or not 1 <= len(reason) <= MAX_REASON:
             raise ValidationError("Background availability reason is invalid")
         now = int(time.time())
         current = self._background_availability_record()
-        record = {
+        return {
             "v": VERSION,
             "enabled": enabled,
             "mode": "native_webrtc",
@@ -83,8 +93,6 @@ class BackgroundAvailabilityMixin:
             "last_reason": reason,
             "updated_at": now,
         }
-        self.store.put(KIND, self._background_availability_id(), record)
-        return record
 
     def background_availability_status(self) -> dict[str, Any]:
         record = self._background_availability_record()
@@ -99,7 +107,7 @@ class BackgroundAvailabilityMixin:
         }
         native = self._native_background_status()
         if native is not None:
-            if native.get("enabled") and not status["enabled"]:
+            if native.get("enabled") and not status["enabled"] and status["reason"] == "not_configured":
                 # Android's first-unlock migration establishes the default
                 # before its foreground service persists the runtime state.
                 status.update(enabled=True, state="enabled", reason="default_enabled")
@@ -128,6 +136,9 @@ class BackgroundAvailabilityMixin:
             return None
 
     def _sync_background_reconnect(self) -> None:
+        if getattr(self, "_connection_policy", "legacy") == "shared-native":
+            # Foreground/background are observations of the same policy owner.
+            return
         supervisor = getattr(self, "_background_reconnect_supervisor", None)
         if not self._background_availability_enabled():
             if supervisor is not None:
@@ -157,22 +168,58 @@ class BackgroundAvailabilityMixin:
             # background thread could not start.
             self._background_reconnect_supervisor = None
 
-    def set_background_availability(self, enabled: Any) -> dict[str, Any]:
+    def set_background_availability(
+        self, enabled: Any, *, operation_id: str | None = None,
+    ) -> dict[str, Any]:
+        with getattr(self, "_dispatch_lock", nullcontext()):
+            return self._set_background_availability(enabled, operation_id)
+
+    def _set_background_availability(self, enabled: Any, operation_id: str | None) -> dict[str, Any]:
         if not isinstance(enabled, bool):
             raise ValidationError("Background availability value is invalid")
+        digest = None
+        if operation_id is not None:
+            if self._identity is None or self._shutdown.is_set():
+                raise ValidationError("Local profile is unavailable")
+            self._require_profile()
+            try:
+                if not isinstance(operation_id, str) or str(uuid.UUID(operation_id)) != operation_id:
+                    raise ValueError
+            except (ValueError, AttributeError) as error:
+                raise ValidationError("Operation ID is invalid") from error
+            material = json.dumps({"command": "set_background_availability", "enabled": enabled},
+                                  sort_keys=True, ensure_ascii=True, separators=(",", ":"))
+            digest = hashlib.sha256(material.encode("ascii")).hexdigest()
+            if self.store.operation_result(operation_id, digest) is not None:
+                # A receipt proves only committed intent. A newer preference,
+                # lock or runtime failure must remain visible on replay.
+                self._sync_background_reconnect()
+                return self.background_availability_status()
         record = self._background_availability_record()
-        if record.get("enabled") is not enabled:
-            self._write_background_availability(
+        changed = record.get("enabled") is not enabled or (
+            operation_id is not None and record.get("last_reason") in {"not_configured", "invalid_record"})
+        if changed:
+            record = self._prepare_background_availability(
                 enabled=enabled,
                 state="enabled" if enabled else "disabled",
                 reason="user_enabled" if enabled else "user_disabled",
             )
+        if operation_id is not None:
+            self.store.commit_operation(operation_id, digest, {"enabled": enabled},
+                [(KIND, self._background_availability_id(), record)] if changed else ())
+        elif changed:
+            self.store.put(KIND, self._background_availability_id(), record)
+        if changed:
             self._changed()
         self._sync_background_reconnect()
         return self.background_availability_status()
 
     def lock_background_availability(self) -> dict[str, Any]:
         """Lock always wins over a persisted opt-in."""
+        with getattr(self, "_dispatch_lock", nullcontext()):
+            return self._lock_background_availability()
+
+    def _lock_background_availability(self) -> dict[str, Any]:
         self._write_background_availability(
             enabled=False,
             state="locked",

@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mesh-chat:core-api:workspace-channel-create-result:1",
+  "title": "Experimental workspace channel creation v1",
+  "description": "Created public channel with a caller-scoped handle.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "api_version",
+    "request_id",
+    "ok",
+    "result"
+  ],
+  "properties": {
+    "api_version": {
+      "const": 1
+    },
+    "request_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._:-]{1,80}$"
+    },
+    "ok": {
+      "const": true
+    },
+    "result": {
+      "$ref": "#/$defs/created"
+    }
+  },
+  "$defs": {
+    "handle": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{16,128}$"
+    },
+    "created": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "profile",
+        "workspace",
+        "channel",
+        "name",
+        "visibility"
+      ],
+      "properties": {
+        "profile": {
+          "$ref": "#/$defs/handle"
+        },
+        "workspace": {
+          "$ref": "#/$defs/handle"
+        },
+        "channel": {
+          "$ref": "#/$defs/handle"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "visibility": {
+          "enum": [
+            "public",
+            "private"
+          ]
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mesh-chat:core-api:pairing-request-result:1",
+  "title": "Experimental outbound pairing request v1",
+  "description": "The peer's signed request is queued or already pending; no document is returned.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "api_version",
+    "request_id",
+    "ok",
+    "result"
+  ],
+  "properties": {
+    "api_version": {
+      "const": 1
+    },
+    "request_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._:-]{1,80}$"
+    },
+    "ok": {
+      "const": true
+    },
+    "result": {
+      "$ref": "#/$defs/request"
+    }
+  },
+  "$defs": {
+    "handle": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{16,128}$"
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "profile",
+        "peer",
+        "state",
+        "document"
+      ],
+      "properties": {
+        "profile": {
+          "$ref": "#/$defs/handle"
+        },
+        "peer": {
+          "$ref": "#/$defs/handle"
+        },
+        "state": {
+          "const": "requested"
+        },
+        "document": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 65536
+        }
+      }
+    }
+  }
+}

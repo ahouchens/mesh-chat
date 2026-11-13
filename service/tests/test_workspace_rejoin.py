@@ -234,3 +234,19 @@ def test_android_reviews_and_submits_fresh_contact_invitation_after_removal(pair
     owner.approve_workspace_join(wid, pending["id"], _op(98504))
     exchange(owner, onet, member)
     assert member._require_workspace(wid)["state"] == "active"
+
+
+def test_channel_posting_override_restricts_regular_members(pair):
+    owner, onet, _, member, mnet, _, workspace, key, identity = pair
+    wid = workspace["id"]
+    general = owner._require_workspace(wid)["general_channel_id"]
+    owner.update_workspace_channel(
+        wid, general, "general", "", False, _op(98500), posting="owner_and_admins")
+    exchange(owner, onet, member)
+    owner.send_workspace_message(wid, general, "Owner can post", _op(98501), _op(98502))
+    with pytest.raises(ContactNotApproved):
+        member.send_workspace_message(wid, general, "Member cannot post", _op(98503), _op(98504))
+    owner.update_workspace_channel(
+        wid, general, "general", "", False, _op(98505), posting="inherit")
+    exchange(owner, onet, member)
+    member.send_workspace_message(wid, general, "Member can post again", _op(98506), _op(98507))

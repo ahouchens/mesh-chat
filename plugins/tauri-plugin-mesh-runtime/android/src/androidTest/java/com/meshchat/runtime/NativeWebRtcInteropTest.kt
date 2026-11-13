@@ -66,6 +66,8 @@ class NativeWebRtcInteropTest {
     @Test(timeout = 180_000) fun chromiumOfferSurvivesEarlyIceFailureDuringManualAnswerExchange() =
         exchange(nativeOffers = false, earlyIceFailure = true)
     @Test(timeout = 180_000) fun nativeOfferCanConnectToChromiumWithReconnectControl() = exchange(nativeOffers = true)
+    @Test(timeout = 180_000) fun productionDesktopTransportOffersToNative() = exchange(nativeOffers = false, desktopTransport = true)
+    @Test(timeout = 180_000) fun productionDesktopTransportAnswersNative() = exchange(nativeOffers = true, desktopTransport = true)
     @Test(timeout = 180_000) fun repeatedChromiumMediaCallsPreserveNativeMessaging() =
         exchange(nativeOffers = false, repeatedMedia = true)
     @Test(timeout = 180_000) fun repeatedChromiumMediaCallsPreserveNativeOfferedMessaging() =
@@ -230,6 +232,7 @@ class NativeWebRtcInteropTest {
         val ice = JSONObject().put("iceTransportPolicy", "all").put("iceServers", JSONArray().put(
             JSONObject().put("urls", JSONArray().put("stun:192.0.2.1:3478"))))
         val pending = worker.submit<String> { NativeWebRtcHost.createOffer(id, ice.toString(), channels.toString()) }
+        var failure: Throwable? = null
         try {
             // Observe registration without waiting for stats(), which shares
             // the SDP lifetime lock. No production-only testing hook is used.
@@ -238,19 +241,109 @@ class NativeWebRtcInteropTest {
             val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
             while (!sessions.containsKey(id) && System.nanoTime() < deadline) Thread.sleep(10)
             assertTrue("Native cancellation test did not create a session", sessions.containsKey(id))
+            val original = sessions[id]
+            val duplicate = JSONObject(NativeWebRtcHost.createOffer(id, ice.toString(), channels.toString()))
+            assertFalse("Duplicate creation replaced a live native resource", duplicate.optBoolean("ok"))
+            assertSame(original, sessions[id])
+            assertFalse("Cancellation must overlap native creation", pending.isDone)
             val started = System.nanoTime()
-            instrumentation.runOnMainSync { NativeWebRtcHost.close(id) }
+            instrumentation.runOnMainSync {
+                try {
+                    NativeWebRtcHost.close(id)
+                } catch (pendingCleanup: IllegalStateException) {
+                    // Main-thread cancellation is nonblocking, but outstanding
+                    // native custody must not be reported as successful close.
+                    assertEquals("native_webrtc_cleanup_pending", pendingCleanup.message)
+                }
+            }
             assertTrue("Closing during ICE gathering blocked the Android main thread",
                 System.nanoTime() - started < TimeUnit.SECONDS.toNanos(1))
-            pending.get(35, TimeUnit.SECONDS)
-            assertFalse(JSONObject(NativeWebRtcHost.stats(id)).optBoolean("ok"))
-        } finally {
+            assertFalse("Cancelled creation reported success",
+                JSONObject(pending.get(35, TimeUnit.SECONDS)).optBoolean("ok"))
+            // Creation unwinding and absence from stats are not disposal ACKs.
             NativeWebRtcHost.close(id)
-            worker.shutdownNow()
+            val accounting = JSONObject(NativeWebRtcHost.resourceAccounting()).getJSONObject("result")
+            assertTrue(accounting.getBoolean("complete"))
+            for (name in listOf("reserved_count", "creating_count", "allocated_count", "retiring_count")) {
+                assertEquals("Cancellation retained native custody: $name", 0, accounting.getInt(name))
+            }
+            assertFalse(JSONObject(NativeWebRtcHost.stats(id)).optBoolean("ok"))
+        } catch (error: Throwable) {
+            failure = error
+            throw error
+        } finally {
+            try {
+                NativeWebRtcHost.close(id)
+            } catch (cleanupError: Throwable) {
+                if (failure == null) throw cleanupError
+                failure.addSuppressed(cleanupError)
+            } finally {
+                worker.shutdownNow()
+            }
         }
     }
 
-    private fun exchange(nativeOffers: Boolean, earlyIceFailure: Boolean = false, repeatedMedia: Boolean = false) {
+    private fun desktopTransportDocument(control: String): String {
+        val bundle = instrumentation.context.assets.open("desktop-transport.js").bufferedReader().use { it.readText() }
+        return """
+            <script>$bundle</script>
+            <script>
+            const report = (kind, value) => TestResults.result(kind, String(value));
+            const decode = text => Uint8Array.from(atob(text), character => character.charCodeAt(0));
+            const states = {};
+            const host = new MeshDesktopTransport.DesktopTransport(event => {
+              if (event.event === 'message') report('mesh-reticulum', Array.from(decode(event.data)).join(','));
+              if (event.event === 'control') {
+                const separator = event.data.indexOf(':');
+                report(event.data.slice(0, separator), new TextDecoder().decode(decode(event.data.slice(separator + 1))));
+              }
+              if (event.event === 'channel') {
+                const [label, state] = event.data.split(':'); states[label] = state;
+              }
+              return true;
+            });
+            const options = {resource:'instrumented-browser-peer', ice:{iceServers:[], iceTransportPolicy:'all'},
+              channels:[{label:'mesh-reticulum',binary:true,ordered:true},{label:'$control',binary:false,ordered:true}]};
+            const epoch = 'a'.repeat(32);
+            const protocol = new MeshDesktopTransport.DesktopTransportProtocol(epoch, host);
+            let sequence = 0;
+            const perform = async request => {
+              const reply = await protocol.handle({v:1,type:'desktop_transport',epoch,id:String(++sequence),request});
+              if (!reply.ok) throw new Error('Production desktop protocol rejected operation');
+              return reply.result;
+            };
+            window.offer = async () => report('sdp', (await perform({op:'createOffer',options})).sdp);
+            window.answer = async sdp => report('sdp', (await perform({op:'acceptOffer',options,offer:sdp})).sdp);
+            window.finish = sdp => perform({op:'applyAnswer',resource:options.resource,answer:sdp});
+            window.probe = async () => {
+              const deadline = Date.now() + 20000;
+              while (host.inspect(options.resource)?.data_channel_state !== 'open' || states['$control'] !== 'open') {
+                if (Date.now() > deadline) throw new Error('Production browser transport did not open');
+                await new Promise(resolve => setTimeout(resolve, 50));
+              }
+              if (!await perform({op:'send',resource:options.resource,packet:'CQgH'}) ||
+                  !await perform({op:'sendControl',resource:options.resource,label:'$control',text:'probe'})) {
+                throw new Error('Production browser transport refused traffic');
+              }
+              const inventory = await perform({op:'inventory'});
+              const observed = inventory.resources[0];
+              if (inventory.v !== 1 || !/^[a-f0-9]{32}$/.test(inventory.adapter_epoch) ||
+                  inventory.resources.length !== 1 || observed.resource !== options.resource ||
+                  observed.pending || observed.data_channel_state !== 'open' ||
+                  !/^[a-f0-9]{64}$/.test(observed.local_sdp_sha256) ||
+                  !/^[a-f0-9]{64}$/.test(observed.remote_sdp_sha256) || 'sdp' in observed) {
+                throw new Error('Production browser inventory is incomplete');
+              }
+              report('sent', 'yes');
+            };
+            window.pc = {close: () => perform({op:'reset'})};
+            report('ready', 'yes');
+            </script>
+        """.trimIndent()
+    }
+
+    private fun exchange(nativeOffers: Boolean, earlyIceFailure: Boolean = false, repeatedMedia: Boolean = false,
+                         desktopTransport: Boolean = false) {
         val id = "interop-${UUID.randomUUID()}"
         val control = if (nativeOffers) "meshchat-reconnect" else "mesh-onboarding"
         val results = BrowserResults()
@@ -267,11 +360,14 @@ class NativeWebRtcInteropTest {
         if (JSONObject(initialized).getJSONObject("result").optJSONObject("profile") == null) {
             command("create_profile", JSONObject().put("display_name", "WebRTC CI"))
         }
+        // Test-only private host access. Public commands continue to use id.
+        fun physicalId(): String = module.get("_service")!!.get("_native_resources")!!
+            .callAttr("require", id).toString()
         fun injectEarlyIceFailure() {
             // Deterministic callback ordering regression: the production queue
             // must preserve this real peer until the signed answer is returned.
             // The test injects the notification, not a carrier/network failure.
-            module.callAttr("native_webrtc_event", "ice", id, "failed")
+            module.callAttr("native_webrtc_event", "ice", physicalId(), "failed")
             val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
             while (System.nanoTime() < deadline) {
                 val events = JSONObject(module.callAttr("drain_events").toString()).getJSONArray("result")
@@ -285,13 +381,14 @@ class NativeWebRtcInteropTest {
             }
             fail("The native ICE failure callback was not processed")
         }
+        var failure: Throwable? = null
         try {
             instrumentation.runOnMainSync {
                 browser = WebView(context)
                 browser.settings.javaScriptEnabled = true
                 if (repeatedMedia) browser.settings.mediaPlaybackRequiresUserGesture = false
                 browser.addJavascriptInterface(results, "TestResults")
-                browser.loadDataWithBaseURL("https://meshchat.invalid/", """
+                browser.loadDataWithBaseURL("https://meshchat.invalid/", if (desktopTransport) desktopTransportDocument(control) else """
                     <script>
                     const channels = {};
                     const report = (k,v) => TestResults.result(k, String(v));
@@ -434,12 +531,13 @@ class NativeWebRtcInteropTest {
                 js("return finish(${JSONObject.quote(verified.getString("sdp"))})")
             }
             awaitStats(id) { it.optBoolean("attached") && it.optString("ice_connection_state") in setOf("connected", "completed") }
+            val nativeHandle = physicalId()
             js("return probe()")
             results.await("sent")
             awaitStats(id) { it.optLong("received_packets") >= 1 && it.optLong("received_controls") >= 1 }
-            assertTrue(NativeWebRtcHost.send(id, byteArrayOf(4, 5, 6)))
-            assertEquals("4,5,6", results.await("mesh-reticulum"))
-            assertTrue(NativeWebRtcHost.sendControl(id, control, "probe-reply"))
+            assertTrue(NativeWebRtcHost.send(nativeHandle, byteArrayOf(4, 5, 6)))
+            assertEquals("4,5,6", results.await("mesh-reticulum", "4,5,6"))
+            assertTrue(NativeWebRtcHost.sendControl(nativeHandle, control, "probe-reply"))
             assertEquals("probe-reply", results.await(control, "probe-reply"))
             if (repeatedMedia) {
                 for ((cycle, media) in listOf("audio", "video", "audio", "video").withIndex()) {
@@ -447,28 +545,43 @@ class NativeWebRtcInteropTest {
                     js("return mediaCycle(${JSONObject.quote(media)}, $cycle)")
                     results.await("media-active", cycle.toString())
                     awaitStats(id) { it.optBoolean("attached") && it.optLong("received_packets") > before }
-                    assertTrue(NativeWebRtcHost.send(id, byteArrayOf(40, cycle.toByte())))
+                    assertTrue(NativeWebRtcHost.send(nativeHandle, byteArrayOf(40, cycle.toByte())))
                     assertEquals("40,$cycle", results.await("mesh-reticulum", "40,$cycle"))
                     js("finishMedia()")
                     results.await("media-closed", cycle.toString())
                     awaitStats(id) { it.optBoolean("attached") && it.optLong("received_packets") >= before + 2 &&
                         it.optString("ice_connection_state") in setOf("connected", "completed") }
-                    assertTrue(NativeWebRtcHost.send(id, byteArrayOf(50, cycle.toByte())))
+                    assertTrue(NativeWebRtcHost.send(nativeHandle, byteArrayOf(50, cycle.toByte())))
                     assertEquals("50,$cycle", results.await("mesh-reticulum", "50,$cycle"))
                 }
             }
             command("native_webrtc_close", JSONObject().put("session_id", id))
-            assertFalse(JSONObject(NativeWebRtcHost.stats(id)).optBoolean("ok"))
+            assertFalse(JSONObject(NativeWebRtcHost.stats(nativeHandle)).optBoolean("ok"))
             Thread.sleep(300) // Let late close/state callbacks drain before leaving the test.
             command("snapshot")
             if (nativeOffers) assertCloseDoesNotBlockTheMainThread(channels)
             js("pc.close()")
+        } catch (error: Throwable) {
+            failure = error
+            throw error
         } finally {
-            NativeWebRtcHost.closeAll()
-            module.callAttr("shutdown")
-            instrumentation.runOnMainSync {
-                try { browser.destroy() } catch (_: UninitializedPropertyAccessException) { }
+            var cleanupFailure: Throwable? = failure
+            fun clean(operation: () -> Unit) {
+                try {
+                    operation()
+                } catch (error: Throwable) {
+                    val previous = cleanupFailure
+                    if (previous == null) cleanupFailure = error else previous.addSuppressed(error)
+                }
             }
+            clean { NativeWebRtcHost.closeAll() }
+            clean { module.callAttr("shutdown") }
+            clean {
+                instrumentation.runOnMainSync {
+                    try { browser.destroy() } catch (_: UninitializedPropertyAccessException) { }
+                }
+            }
+            if (failure == null) cleanupFailure?.let { throw it }
         }
     }
 }

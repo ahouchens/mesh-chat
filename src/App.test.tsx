@@ -1,11 +1,217 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ComposerHostFixture } from "./test/composer-host";
+import { callRecovery } from "./call-operation";
 
 import packageInfo from "../package.json";
 import type { ChatMessage, Contact, Group, GroupInvitation, GroupMessage, Snapshot, Workspace, WorkspaceAdminRequest, WorkspaceChannel, WorkspaceDirect, WorkspaceJoinRequest, WorkspaceMentionPage, WorkspaceMessage, WorkspaceMessagePage, WorkspaceSearchPage, WorkspaceThreadActivityPage, WorkspaceThreadPage } from "./types";
 
-const api = vi.hoisted(() => ({
+const api = vi.hoisted(() => {
+  const serviceCommand = vi.fn();
+  // Older presentation fixtures use service command names. Translate only in
+  // this test adapter; App.core.test.tsx asserts the production Core envelopes.
+  const fixtureParams = ({ conversation, thread_root, ...params }: Record<string, unknown>) => ({
+    ...params,
+    ...(conversation !== undefined ? { conversation_id: conversation } : {}),
+    ...(thread_root !== undefined ? { thread_root_id: thread_root } : {}),
+  });
+  return {
   beginCallAudio: vi.fn(async () => ({ granted: true })),
+  coreApiCapabilities: vi.fn(async () => ({ api_major: 1, api_minor: 0, stability: "experimental", operations: [], profiles: [] })),
+  coreApiBootstrapPreview: vi.fn(async (kind: string, document: string): Promise<unknown> =>
+    serviceCommand(kind === "personal" ? "preview_invitation" : kind === "workspace" ? "preview_workspace_invitation" : "preview_workspace_device_link",
+      kind === "device_link" ? { device_link: document } : { invitation: document })),
+  coreApiAcceptInvitation: vi.fn(async (invitation: string, i2pConsent = false): Promise<unknown> => serviceCommand("accept_invitation", { invitation, ...(i2pConsent ? { i2p_consent: true } : {}) })),
+  coreApiCreateGroup: vi.fn(async (name: string, policy: string, destinations: string[]): Promise<{ group: string; name: string; posting_policy: string }> => {
+    const memberIds = destinations.map((destination) => destination === approved.destination_hash ? approved.id : destination);
+    const created = await serviceCommand("create_group", { title: name, member_ids: memberIds, posting_policy: policy }) as { id?: string; title?: string; posting_policy?: string };
+    return { group: created.id ?? "group", name: created.title ?? name, posting_policy: created.posting_policy ?? policy };
+  }),
+  coreApiCreateProfile: vi.fn(async (name: string): Promise<unknown> => serviceCommand("create_profile", { display_name: name })),
+  coreApiCreateWorkspace: vi.fn(async (name: string, description: string, key: string): Promise<unknown> => serviceCommand("create_workspace", { operation_id: key, name, description })),
+  coreApiCreateInvitation: vi.fn(async (payload: Record<string, unknown>): Promise<unknown> => serviceCommand("create_invitation", payload)),
+  coreApiPeerForDestination: vi.fn(async (_destination: string): Promise<{ profile: string; peer: string; destination: string }> => { throw new Error("core_api_unavailable"); }),
+  coreApiProfile: vi.fn(async () => ({ profile: "presentation-profile" })),
+  coreApiRequest: vi.fn(async (operation: string, params?: Record<string, unknown>): Promise<unknown> => {
+    if (operation === "runtime.mutate" && params) {
+      const { profile: _profile, action, ...payload } = params;
+      return { result: await api.coreApiRuntimeMutate(String(action), payload) };
+    }
+    if (operation === "call.control" && params) {
+      const { profile: _profile, action, ...payload } = params;
+      return { result: await api.coreApiCallControl(String(action), payload) };
+    }
+    throw new Error("core_api_unavailable");
+  }),
+  coreApiCallControl: vi.fn(async (action: string, params: Record<string, unknown>): Promise<unknown> => {
+    const command = action === "start" ? "start_call"
+      : action === "answer" ? "answer_call"
+      : action === "restart" ? "restart_call"
+      : action === "answer_restart" ? "answer_call_restart"
+      : "end_call";
+    const result = await serviceCommand(command, params) as Record<string, unknown>;
+    return { ...result, ...(typeof result?.id === "string" ? { core_handle: `call-${result.id}` } : {}) };
+  }),
+  coreApiCallMedia: vi.fn(async (handle: string): Promise<unknown> => serviceCommand("call_media", { call_id: handle.slice(5) })),
+  coreApiSubmitDeviceLink: vi.fn(async (..._args: unknown[]): Promise<never> => { throw new Error("core_api_unavailable"); }),
+  coreApiCreateWorkspaceDeviceLink: vi.fn(async (..._args: unknown[]): Promise<{ id: string; workspace_id: string; link: string; text: string; value: string; expires_at: number }> => { throw new Error("core_api_unavailable"); }),
+  coreApiWorkspaceInvitationRevoke: vi.fn(async (_handle: string, invitationHandle: string, key: string): Promise<unknown> => serviceCommand("revoke_workspace_invitation", { workspace_id: workspace.id, invitation_id: invitationHandle, operation_id: key })),
+  coreApiAdmissionGrantList: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiAdmissionGrantCreate: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiAdmissionGrantAccept: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiAdmissionGrantEnd: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiTimelineQuery: vi.fn(async (_handle: string, view: string, params: Record<string, unknown>): Promise<unknown> => {
+    if (view === "channel_messages" || view === "direct_messages") {
+      const direct = view === "direct_messages";
+      return serviceCommand(direct ? "list_workspace_direct_messages" : "list_workspace_messages", {
+        workspace_id: workspace.id,
+        ...(direct ? { conversation_id: params.conversation }
+                   : { channel_id: params.channel }),
+        cursor: params.cursor, limit: params.limit,
+      });
+    }
+    const command = view === "threads" ? "list_workspace_threads"
+      : view === "thread_messages" ? "list_workspace_thread_messages"
+      : view === "mentions" ? "list_workspace_mentions" : "search_workspace";
+    return serviceCommand(command, { workspace_id: workspace.id, ...fixtureParams(params) });
+  }),
+  coreApiTimelineMutation: vi.fn(async (_handle: string, action: string, params: Record<string, unknown>, key: string): Promise<unknown> => {
+    if (action === "message_edit" || action === "message_delete" || action === "reaction_set") {
+      const command = action === "message_edit" ? "edit_workspace_message"
+        : action === "message_delete" ? "delete_workspace_message" : "set_workspace_reaction";
+      return serviceCommand(command, { workspace_id: workspace.id, operation_id: key,
+        event_id: params.event_id, mutation_event_id: params.mutation_event_id,
+        ...(params.text !== undefined ? { text: params.text } : {}),
+        ...(params.mention_member_ids ? { mention_member_ids: params.mention_member_ids } : {}),
+        ...(params.emoji !== undefined ? { emoji: params.emoji } : {}),
+        ...(params.active !== undefined ? { active: params.active } : {}) });
+    }
+    if (action === "channel_message" || action === "direct_message") {
+      const direct = action === "direct_message";
+      const conversation = params.conversation;
+      return serviceCommand(direct ? "send_workspace_direct_message" : "send_workspace_message", {
+        workspace_id: workspace.id, operation_id: key, event_id: params.event_id,
+        text: params.text, mention_member_ids: params.mention_member_ids,
+        ...(direct ? { conversation_id: conversation } : { channel_id: conversation }),
+      });
+    }
+    const command = action === "thread_reply" ? "send_workspace_thread_reply"
+      : action === "thread_read" ? "mark_workspace_thread_read"
+      : action === "mentions_read" ? "mark_workspace_mentions_read"
+      : action === "workspace_read" ? "mark_workspace_read"
+      : action === "direct_read" ? "mark_workspace_direct_read"
+      : "set_workspace_notification_preference";
+    return serviceCommand(command, { workspace_id: workspace.id, operation_id: key, ...fixtureParams(params) });
+  }),
+  coreApiWorkspaceSnapshot: vi.fn(async (): Promise<unknown> => serviceCommand("workspace_snapshot")),
+  coreApiWorkspaceAccessRecommendation: vi.fn(async (_handle: string, action: string, params: Record<string, unknown>, key?: string): Promise<unknown> => {
+    const command = action === "list" ? "list_workspace_access_recommendations"
+      : action === "create" ? "create_workspace_access_recommendation"
+      : action === "send" ? "send_workspace_access_recommendation"
+      : action === "preview" ? "preview_workspace_access_recommendation"
+      : action === "apply" ? "apply_workspace_access_recommendation"
+      : action === "preview_by_id" ? "preview_workspace_access_recommendation_by_id"
+      : "apply_workspace_access_recommendation_by_id";
+    const raw = action === "preview" || action === "apply";
+    return serviceCommand(command, raw ? params : { workspace_id: workspace.id, ...params, ...(key ? { operation_id: key } : {}) });
+  }),
+  coreApiWorkspaceHistory: vi.fn(async (_handle: string, action: string, params: Record<string, unknown>, key?: string): Promise<unknown> => {
+    const command = action === "status" ? "get_workspace_history_status"
+      : action === "prune" ? "prune_workspace_history"
+      : action === "revisions" ? "list_workspace_message_revisions"
+      : action === "tombstones" ? "list_workspace_tombstones"
+      : "hide_workspace_direct";
+    return serviceCommand(command, { workspace_id: workspace.id, ...fixtureParams(params), ...(key ? { operation_id: key } : {}) });
+  }),
+  coreApiWorkspaceConnection: vi.fn(async (handle: string | null, action: string, params: Record<string, unknown>, key?: string): Promise<unknown> => {
+    const command = action === "reconnect_status" ? "workspace_reconnect_status"
+      : action === "reconnect_consent" ? "workspace_reconnect_consent_set"
+      : action === "invite_contact" ? "invite_contact_to_workspace"
+      : action === "prompt_preview" ? "preview_workspace_invitation_prompt"
+      : action === "prompt_submit" ? "submit_workspace_invitation_prompt"
+      : action === "prompt_dismiss" ? "dismiss_workspace_invitation_prompt"
+      : "preview_workspace_device_link";
+    return serviceCommand(command, { ...(handle ? { workspace_id: workspace.id } : {}), ...params, ...(key ? { operation_id: key } : {}) });
+  }),
+  coreApiRuntimeQuery: vi.fn(async (action: string): Promise<unknown> =>
+    serviceCommand(action === "background" ? "background_status" : "get_notification_state")),
+  coreApiRuntimeMutate: vi.fn(async (action: string, params: Record<string, unknown>): Promise<unknown> =>
+    serviceCommand(action === "background_set" ? "set_background_availability"
+      : action === "notification_previews" ? "set_hide_notification_previews"
+      : "open_notification_target", params)),
+  coreApiWorkspaceAdminSubmit: vi.fn(async (_handle: string, kind: string, memberHandle: string | null, role: string | null, _note: string, key: string): Promise<unknown> =>
+    serviceCommand("submit_workspace_admin_request", { workspace_id: workspace.id, request_kind: kind, ...(memberHandle ? { target_member_id: memberHandle } : {}), ...(role ? { requested_role: role } : {}), note: _note, operation_id: key })),
+  coreApiContactInvitation: vi.fn(async (action: string, params: Record<string, unknown>): Promise<unknown> => serviceCommand(action === "decide" ? "decide_contact_invitation" : "receive_contact_invitation", action === "decide" ? { invitation_id: params.invitation, accept: params.accept } : { document: params.document, peer_destination: params.peer, ...(params.workspace_document ? { workspace_document: params.workspace_document } : {}) })),
+  coreApiDecidePeerRequest: vi.fn(async (_destination: string, accept: boolean): Promise<unknown> =>
+    api.serviceCommand(accept ? "approve_request" : "decline_request", { contact_id: approved.id })),
+  coreApiConversationReaction: vi.fn(async (kind: string, _target: string, messageId: string, emoji: string, active: boolean): Promise<unknown> => serviceCommand("set_message_reaction", { kind, message_id: messageId, emoji, active })),
+  coreApiConversation: vi.fn(async (action: string, kind: string, targetId: string): Promise<unknown> => serviceCommand(action === "delete" ? "delete_conversation" : "restore_conversation", { kind, id: targetId })),
+  coreApiUpdatePeer: vi.fn(async (destination: string, action: string, displayName?: string): Promise<unknown> => {
+    const target = await api.coreApiPeerForDestination(destination);
+    return api.coreApiRequest("peer.update", { profile: target.profile, peer: target.peer, action, ...(displayName !== undefined ? { display_name: displayName } : {}) });
+  }),
+  coreApiRouteUpdate: vi.fn(async (action: string, params: Record<string, unknown>, key?: string): Promise<unknown> => serviceCommand(action === "preview" ? "preview_route_update" : action === "apply" ? "apply_route_update" : "create_route_update", { ...params, ...(key ? { operation_id: key } : {}) })),
+  coreApiOpenWorkspaceDirect: vi.fn(async (_handle: string, memberHandle: string, key: string): Promise<unknown> => serviceCommand("open_workspace_direct", { workspace_id: workspace.id, member_id: memberHandle, operation_id: key })),
+  coreApiWorkspaceDisplayNameDecision: vi.fn(async (_handle: string, request: string, approve: boolean, key: string): Promise<unknown> => serviceCommand("decide_workspace_display_name", { workspace_id: workspace.id, request_id: request, approve, operation_id: key })),
+  coreApiWorkspaceDisplayNameRequest: vi.fn(async (_handle: string, displayName: string, key: string): Promise<unknown> => serviceCommand("request_workspace_display_name", { workspace_id: workspace.id, display_name: displayName, operation_id: key })),
+  coreApiWorkspaceReadHintSync: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiWorkspaceAuthorityOffer: vi.fn(async (_handle: string, kind: string, memberHandle: string, deviceHandle: string, outgoing: string | null, key: string): Promise<unknown> => serviceCommand("offer_workspace_authority_transition", { workspace_id: workspace.id, transition_kind: kind, successor_member_id: memberHandle, successor_device_id: deviceHandle, ...(outgoing ? { outgoing_owner_role: outgoing } : {}), operation_id: key })),
+  coreApiWorkspaceAuthority: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiReportAuthorityLoss: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiWorkspaceLifecycle: vi.fn(async (_handle: string, action: string, key: string, confirmation?: string): Promise<unknown> =>
+    serviceCommand(action === "close" ? "close_workspace" : action === "leave" ? "leave_workspace" : "remove_workspace_data",
+      { workspace_id: workspace.id, operation_id: key, ...(confirmation ? { confirmation } : {}) })),
+  coreApiWorkspaceAdminRequest: vi.fn(async (_handle: string, requestHandle: string, action: string, key: string): Promise<unknown> => serviceCommand(action === "approve" ? "approve_workspace_admin_request" : action === "decline" ? "decline_workspace_admin_request" : action === "cancel" ? "cancel_workspace_admin_request" : "dismiss_workspace_admin_request", { workspace_id: workspace.id, request_id: requestHandle, operation_id: key })),
+  coreApiWorkspaceMetadata: vi.fn(async (_handle: string, name: string, description: string, key: string): Promise<unknown> =>
+    serviceCommand("update_workspace_metadata", { workspace_id: workspace.id, name, description, operation_id: key })),
+  coreApiWorkspaceRetention: vi.fn(async (_handle: string, retentionDays: number | null, key: string): Promise<unknown> =>
+    serviceCommand("update_workspace_retention", { workspace_id: workspace.id, retention_days: retentionDays, operation_id: key })),
+  coreApiRequestDeviceRemoval: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiDecideDeviceRemoval: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiWorkspaceDeviceLinkDecision: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiUpdateChannelMembers: vi.fn(async (_handle: string, channelHandle: string, members: string[], key: string): Promise<unknown> => serviceCommand("update_workspace_private_channel_members", { workspace_id: workspace.id, channel_id: channelHandle === "workspace-channel-handle" ? "77777777-7777-4777-8777-777777777777" : channelHandle, member_ids: members, operation_id: key })),
+  coreApiOfferChannelTransfer: vi.fn(async (_handle: string, channelHandle: string, memberHandle: string, key: string): Promise<unknown> =>
+    serviceCommand("offer_workspace_channel_transfer", { workspace_id: workspace.id, channel_id: channelHandle === "channel-handle-field" ? "55555555-5555-4555-8555-555555555555" : workspaceChannel.id, successor_member_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", operation_id: key })),
+  coreApiAcceptChannelTransfer: vi.fn(async (_handle: string, channelHandle: string, key: string): Promise<unknown> =>
+    serviceCommand("accept_workspace_channel_transfer", { workspace_id: workspace.id, channel_id: channelHandle, transfer_id: "transfer-local", operation_id: key })),
+  coreApiUpdateWorkspaceChannel: vi.fn(async (_handle: string, channelHandle: string, name: string, topic: string, archived: boolean, key: string): Promise<unknown> =>
+    serviceCommand("update_workspace_channel", { workspace_id: workspace.id, channel_id: channelHandle === "channel-handle-field" ? "55555555-5555-4555-8555-555555555555" : workspaceChannel.id, name, topic, archived, operation_id: key })),
+  coreApiSnapshot: vi.fn(async (): Promise<unknown> => {
+    const result = await serviceCommand("snapshot") as Snapshot;
+    return { ...result, calls: result?.calls?.map((call) => ({ ...call, core_handle: `call-${call.id}` })) };
+  }),
+  coreApiPreviewInvitation: vi.fn(async (document: string): Promise<unknown> => serviceCommand("preview_invitation", { invitation: document })),
+  coreApiPreviewWorkspaceInvitation: vi.fn(async (document: string): Promise<unknown> => serviceCommand("preview_workspace_invitation", { invitation: document })),
+  coreApiRemoteProfiles: vi.fn(async (): Promise<unknown> => serviceCommand("list_remote_profiles")),
+  coreApiRemoteProfile: vi.fn(async (action: string, params: Record<string, unknown>): Promise<unknown> => serviceCommand(action === "create" ? "create_manual_remote_profile" : action === "test" ? "test_remote_profile" : action === "retry" ? "retry_remote_profile" : action === "remove" ? "remove_remote_profile" : action === "approve_propagation" ? "approve_remote_propagation" : "remove_remote_propagation", params)),
+  coreApiConnectionDocument: vi.fn(async (action: string, params: Record<string, unknown>): Promise<unknown> => serviceCommand(action === "preview_reply" ? "preview_connection_reply" : action === "create_reply" ? "create_connection_reply" : "preview_direct_connection", params)),
+  coreApiConnectionSupport: vi.fn(async (action: string, params: Record<string, unknown>): Promise<unknown> => serviceCommand(action === "clear" ? "clear_connection_diagnostics" : action === "help" ? "connection_help" : "connection_diagnostics", params)),
+  coreApiSubmitWorkspacePrompt: vi.fn(async (promptId: string, key: string): Promise<unknown> => serviceCommand("submit_workspace_invitation_prompt", { operation_id: key, prompt_id: promptId })),
+  coreApiJoinWorkspace: vi.fn(async (document: string, key: string, i2pConsent = false): Promise<unknown> => serviceCommand("submit_workspace_join", { operation_id: key, invitation: document, ...(i2pConsent ? { i2p_consent: true } : {}) })),
+  coreApiCreateWorkspaceInvitation: vi.fn(async (_handle: string, connection: Record<string, unknown>, key: string): Promise<unknown> => serviceCommand("create_workspace_invitation", { workspace_id: workspace.id, lifetime_days: 7, ...connection, operation_id: key })),
+  coreApiCreateWorkspaceChannel: vi.fn(async (_handle: string, name: string, topic: string, visibility: string, members: string[], key: string): Promise<{ channel: string; name: string }> => serviceCommand("create_workspace_channel", { workspace_id: workspace.id, name, topic, visibility, member_ids: members, operation_id: key }) as Promise<{ channel: string; name: string }>),
+  coreApiWorkspaceChannelState: vi.fn(async (_handle: string, action: string, params: Record<string, unknown>, key: string): Promise<unknown> => {
+    const command = action === "subscribe" ? "set_workspace_channel_subscription"
+      : action === "mute" ? "set_workspace_channel_mentions_muted"
+      : action === "leave" ? "leave_workspace_private_channel" : "sync_workspace_channels";
+    return serviceCommand(command, { workspace_id: workspace.id, ...(params.channel ? { channel_id: params.channel === "workspace-channel-handle" ? workspaceChannel.id : params.channel } : {}), ...(typeof params.subscribed === "boolean" ? { subscribed: params.subscribed } : {}), ...(typeof params.muted === "boolean" ? { muted: params.muted } : {}), operation_id: key });
+  }),
+  coreApiRemoveWorkspaceMember: vi.fn(async (_handle: string, memberHandle: string, key: string): Promise<unknown> => serviceCommand("remove_workspace_member", { workspace_id: workspace.id, member_id: memberHandle, operation_id: key })),
+  coreApiRecoverWorkspaceChannel: vi.fn(async (_handle: string, channelHandle: string, key: string): Promise<unknown> =>
+    serviceCommand("recover_workspace_channel", { workspace_id: workspace.id, channel_id: channelHandle === "channel-handle-field" ? "55555555-5555-4555-8555-555555555555" : "55555555-5555-4555-8555-555555555555", operation_id: key })),
+  coreApiWorkspacePolicy: vi.fn(async (_handle: string, channelCreation: string, posting: string, invitationRequests: string, key: string): Promise<unknown> =>
+    serviceCommand("update_workspace_policies", { workspace_id: workspace.id, channel_creation: channelCreation, posting, invitation_requests: invitationRequests, operation_id: key })),
+  coreApiWorkspaceMemberRole: vi.fn(async (_handle: string, memberHandle: string, role: string, key: string): Promise<unknown> => serviceCommand("change_workspace_role", { workspace_id: workspace.id, member_id: memberHandle, role, operation_id: key })),
+  coreApiWorkspaceJoinDecision: vi.fn(async (_handle: string, requestHandle: string, accept: boolean, key: string): Promise<unknown> => serviceCommand(accept ? "approve_workspace_join" : "decline_workspace_join", { workspace_id: workspace.id, request_id: requestHandle, operation_id: key })),
+  coreApiGroupInvitation: vi.fn(async (_handle: string, accept: boolean): Promise<unknown> => serviceCommand(accept ? "accept_group_invitation" : "decline_group_invitation", { invitation_id: groupInvitation.id })),
+  coreApiGroupDraftSet: vi.fn(async (_handle: string, text: string): Promise<unknown> => serviceCommand("save_group_draft", { group_id: group.id, text })),
+  coreApiWorkspaceDraftSet: vi.fn(async (_handle: string, conversation: string, text: string, key: string, extra: { threadRoot?: string; mentions?: string[] } = {}): Promise<unknown> =>
+    serviceCommand(extra.threadRoot ? "save_workspace_thread_draft" : "save_workspace_draft", { workspace_id: workspace.id, channel_id: conversation, conversation_id: conversation, text, operation_id: key, ...(extra.threadRoot ? { thread_root_id: extra.threadRoot } : {}), ...(extra.mentions?.length ? { mention_member_ids: extra.mentions } : {}) })),
+  coreApiRetryGroupInvitation: vi.fn(async (_handle: string, destinationHash: string): Promise<unknown> => serviceCommand("retry_group_invitation", { group_id: group.id, destination_hash: destinationHash })),
+  coreApiLeaveGroup: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiCloseGroup: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiRemoveGroupMember: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
+  coreApiSendGroupMessage: vi.fn(async (_handle: string, text: string): Promise<unknown> => serviceCommand("send_group_message", { group_id: group.id, text })),
   endCallAudio: vi.fn(async () => ({ active: false })),
   initializeService: vi.fn(),
   lockService: vi.fn(),
@@ -22,10 +228,45 @@ const api = vi.hoisted(() => ({
   runtimePlatform: vi.fn(),
   setNativeBackgroundAvailability: vi.fn(async () => ({ enabled: true })),
   setNativeTheme: vi.fn(async () => undefined),
-  serviceCommand: vi.fn(),
-}));
+  serviceCommand,
+  loadCallIceServers: vi.fn(async () => serviceCommand("call_ice_servers")),
+  loadCallSettings: vi.fn(async () => serviceCommand("call_settings")),
+  saveCallSettings: vi.fn(async (settings: Record<string, unknown>) => serviceCommand("update_call_settings", settings)),
+  saveNetworkSettings: vi.fn(async (settings: Record<string, unknown>) => serviceCommand("update_settings", { settings })),
+  };
+});
 
-vi.mock("./api", () => api);
+vi.mock("./api", async () => {
+  const { admittedApiFixture } = await import("./test/admitted-api");
+  return admittedApiFixture(api);
+});
+
+// Presentation fixtures use the new composer protocol directly. App.core.test
+// and D's independent boundary suite retain the actual native/API serializer.
+const composerUi = vi.hoisted(() => ({
+  fixture: null as unknown as import("./test/composer-host").ComposerHostFixture,
+  query: vi.fn(), update: vi.fn(), enqueue: vi.fn(),
+}));
+vi.mock("./core-composer", () => ({
+  openCoreComposer: vi.fn(async () => {
+    const fixture = composerUi.fixture;
+    const scope = { profile: "profile-handle", peer: "peer-handle" };
+    return { textUtf8Bytes: 16384, port: {
+      query: (revision?: string) => {
+        composerUi.query(revision);
+        return fixture.request("peer.composer_query", { ...scope, ...(revision ? { send_revision: revision } : {}) });
+      },
+      update: (revision: string | null, text: string, key: string) => {
+        composerUi.update(revision, text, key);
+        return fixture.request("peer.composer_update", { ...scope, expected_revision: revision, text }, key);
+      },
+      enqueue: (revision: string) => {
+        composerUi.enqueue(revision);
+        return fixture.request("message.enqueue_draft", { profile: scope.profile, recipient: scope.peer, draft_revision: revision }, revision);
+      },
+    } };
+  }),
+}));
 
 import App from "./App";
 import { ReconnectCoordinator } from "./reconnect-coordinator";
@@ -140,6 +381,7 @@ const firstMessage: ChatMessage = {
 
 const group: Group = {
   id: "farm-group",
+  core_handle: "group-handle-farm",
   title: "Farm Operations",
   owner_destination: profile.destination_hash,
   posting_policy: "members",
@@ -187,6 +429,7 @@ const groupMessage: GroupMessage = {
 
 const groupInvitation: GroupInvitation = {
   id: "group-invitation-one",
+  core_handle: "group-invitation-handle",
   group_id: group.id,
   title: group.title,
   owner_display_name: "Taylor",
@@ -199,6 +442,7 @@ const groupInvitation: GroupInvitation = {
 
 const workspace: Workspace = {
   id: "11111111-1111-4111-8111-111111111111",
+  core_handle: "workspace-handle-1111",
   name: "Lakewatcher",
   description: "Field coordination",
   state: "active",
@@ -232,6 +476,7 @@ const workspace: Workspace = {
 
 const workspaceChannel: WorkspaceChannel = {
   id: workspace.general_channel_id!,
+  core_handle: "workspace-channel-handle",
   workspace_id: workspace.id,
   name: "general",
   name_key: "general",
@@ -265,9 +510,35 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-afterEach(() => {
+beforeEach(() => { composerUi.fixture = new ComposerHostFixture(); });
+
+async function directComposerInput(): Promise<HTMLTextAreaElement> {
+  await waitFor(() => expect(screen.getByRole("textbox", { name: "Message Taylor" })).toHaveProperty("readOnly", false));
+  return screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Taylor" });
+}
+
+function expectNoLegacyDirectWrites(): void {
+  expect(api.serviceCommand.mock.calls.filter(([command]) => command === "send_message" || command === "save_draft")).toEqual([]);
+}
+
+afterEach(async () => {
   cleanup();
+  await waitFor(() => expect(callRecovery.getSnapshot()).toHaveLength(0));
   vi.clearAllMocks();
+  api.coreApiAcceptInvitation.mockImplementation(async (invitation: string, i2pConsent = false) => api.serviceCommand("accept_invitation", { invitation, ...(i2pConsent ? { i2p_consent: true } : {}) }));
+  api.coreApiCreateInvitation.mockImplementation(async (payload: Record<string, unknown>) => api.serviceCommand("create_invitation", payload));
+  api.coreApiPeerForDestination.mockImplementation(async () => { throw new Error("core_api_unavailable"); });
+  api.coreApiRequest.mockImplementation(async (operation: string, params?: Record<string, unknown>) => {
+    if (operation === "runtime.mutate" && params) {
+      const { profile: _profile, action, ...payload } = params;
+      return { result: await api.coreApiRuntimeMutate(String(action), payload) };
+    }
+    if (operation === "call.control" && params) {
+      const { profile: _profile, action, ...payload } = params;
+      return { result: await api.coreApiCallControl(String(action), payload) };
+    }
+    throw new Error("core_api_unavailable");
+  });
   vi.unstubAllGlobals();
   window.localStorage.clear();
   document.documentElement.removeAttribute("data-theme");
@@ -692,6 +963,8 @@ describe("first-run remote invitation consent", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "Your display name" }), { target: { value: "Alex" } });
     expect((submit as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText(/cannot decrypt or forge/i)).toBeTruthy();
+    fireEvent.submit(submit.closest("form")!);
+    expect(api.coreApiCreateProfile).not.toHaveBeenCalled();
     expect(api.serviceCommand).not.toHaveBeenCalledWith("accept_invitation", expect.anything());
 
     fireEvent.click(screen.getByRole("checkbox", { name: /Connect to this access point/ }));
@@ -702,6 +975,37 @@ describe("first-run remote invitation consent", () => {
       "accept_invitation",
       { invitation: "MESHCHAT2:first-run" },
     ));
+  });
+
+  it("requires explicit first-run I2P consent even if a disabled form is submitted", async () => {
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue({ ...snapshot(), profile: null });
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "preview_invitation") return {
+        display_name: "Taylor", identity_hash: "11".repeat(16), destination_hash: approved.destination_hash,
+        fingerprint: "AAAA BBBB", hints: [], expires_at: 2_000_000_000,
+        i2p_access_point: { b32: B32, label: "Approved relay", relay: "i2p" },
+      };
+      if (command === "create_profile") return profile;
+      if (command === "snapshot") return snapshot([approved]);
+      return {};
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Join a chat" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Invitation" }), { target: { value: "MESHI2P1:first-run" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    const consent = await screen.findByRole("checkbox", { name: /Use this I2P access point/ });
+    fireEvent.change(screen.getByRole("textbox", { name: "Your display name" }), { target: { value: "Alex" } });
+    const submit = screen.getByRole("button", { name: "Connect to Taylor" });
+    fireEvent.submit(submit.closest("form")!);
+    expect(api.coreApiCreateProfile).not.toHaveBeenCalled();
+    expect(api.coreApiAcceptInvitation).not.toHaveBeenCalled();
+    fireEvent.click(consent);
+    fireEvent.click(submit);
+    await waitFor(() => expect(api.coreApiAcceptInvitation).toHaveBeenCalledWith("MESHI2P1:first-run", true));
+    expect(api.coreApiCreateProfile).toHaveBeenCalledWith("Alex", expect.any(String));
   });
 
   it("offers WebRTC join from the first-run welcome and opens it after profile creation", async () => {
@@ -1440,6 +1744,32 @@ describe("new chat invitations", () => {
     expect(api.serviceCommand.mock.calls.filter(([command]) => command === "create_invitation")).toHaveLength(2);
   });
 
+  it("creates a personal invitation through the Core facade", async () => {
+    const current = snapshot();
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.coreApiCreateInvitation.mockResolvedValue({
+      profile: "profile-handle",
+      link: "meshchat://invite/example",
+      text: "MESHCHAT1:example",
+      file: "{}",
+      expires_at: 2_000_000_000,
+    });
+    api.serviceCommand.mockImplementation(async (command: string) => command === "snapshot" ? current : {});
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Your private conversations" });
+    fireEvent.click(screen.getAllByRole("button", { name: "Connect" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Invite someone" }));
+    await screen.findByRole("heading", { name: "New chat" });
+    fireEvent.click(screen.getByRole("button", { name: "Prepare direct Internet invitation" }));
+    expect(await screen.findByText("Invitation details to share")).toBeTruthy();
+    expect(api.coreApiCreateInvitation).toHaveBeenCalled();
+    expect(api.serviceCommand).not.toHaveBeenCalledWith("create_invitation", expect.anything());
+  });
+
   it("creates a remote-ready invitation only after selecting an approved profile", async () => {
     const current: Snapshot = { ...snapshot(), remote_profiles: [remoteProfile] };
     api.runtimePlatform.mockResolvedValue("desktop");
@@ -1830,9 +2160,10 @@ describe("remote connection settings", () => {
     expect(within(dialog).getByText("Connected · 1/1 endpoints")).toBeTruthy();
     expect(within(dialog).queryByText(/relay\.example/i)).toBeNull();
     fireEvent.click(within(dialog).getByRole("button", { name: "Approve offline delivery" }));
-    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith(
-      "approve_remote_propagation",
-      { profile_id: remoteProfile.id },
+    await waitFor(() => expect(api.coreApiRemoteProfile).toHaveBeenCalledWith(
+      "approve_propagation",
+      { remote_profile_id: remoteProfile.id },
+      expect.any(String),
     ));
   });
 });
@@ -1892,6 +2223,33 @@ describe("incoming connection requests", () => {
     });
     await screen.findByRole("heading", { name: "Taylor" });
     expect(screen.queryByRole("heading", { name: "Connection request" })).toBeNull();
+  });
+
+  it("uses the facade peer handle to accept a contact request", async () => {
+    let current = snapshot([incoming]);
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.coreApiPeerForDestination.mockResolvedValue({
+      profile: "profile-handle", peer: "peer-handle", destination: incoming.destination_hash,
+    });
+    api.coreApiRequest.mockImplementation(async () => {
+      current = snapshot([{ ...incoming, trust: "approved" }]);
+      return { trust: "approved" };
+    });
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      return {};
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Accept and open chat" }));
+    await waitFor(() => expect(api.coreApiRequest).toHaveBeenCalledWith("peer.approve", {
+      profile: "profile-handle", peer: "peer-handle",
+    }));
+    expect(api.serviceCommand).not.toHaveBeenCalledWith("approve_request", expect.anything());
+    await screen.findByRole("heading", { name: "Taylor" });
   });
 
   it("reconciles a timed-out approval that committed in the service", async () => {
@@ -2125,7 +2483,7 @@ describe("Settings page navigation and saved state", () => {
       return {};
     });
     render(<App />);
-    const composer = await screen.findByRole("textbox", { name: "Message Taylor" });
+    const composer = await directComposerInput();
     fireEvent.change(composer, { target: { value: "Draft stays in this conversation" } });
     const settingsButton = screen.getByRole("button", { name: "Settings" });
     settingsButton.focus();
@@ -2348,7 +2706,7 @@ describe("contact management", () => {
 
   it("shows and reviews an incoming call above Settings while its conversation pane is hidden", async () => {
     const call = {
-      id: "c".repeat(32), contact_id: approved.id, role: "callee" as const,
+      id: "c".repeat(32), core_handle: "call-incoming", contact_id: approved.id, role: "callee" as const,
       media: "audio" as const, state: "ringing" as const, direction: "inbound" as const,
       created_at: 1, updated_at: 1, expires_at: 2_000_000_000,
       candidate_count: 1, has_local_sdp: false, has_remote_sdp: true,
@@ -2362,7 +2720,7 @@ describe("contact management", () => {
       listener = callback;
       return () => undefined;
     });
-    api.serviceCommand.mockImplementation(async (command: string) => command === "snapshot" ? current : {});
+    api.serviceCommand.mockImplementation(async (command: string) => command === "snapshot" ? current : command === "call_media" ? call : {});
     render(<App />);
     await screen.findByLabelText("Conversation with Taylor");
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
@@ -2384,7 +2742,7 @@ describe("contact management", () => {
 
   it.each(["audio", "video"] as const)("preserves an accepted %s call through an early connection and failed refresh", async (media) => {
     const call = {
-      id: "c".repeat(32), contact_id: approved.id, role: "callee" as const,
+      id: "c".repeat(32), core_handle: "call-incoming", contact_id: approved.id, role: "callee" as const,
       media, state: "ringing" as const, direction: "inbound" as const,
       created_at: 1, updated_at: 1, expires_at: 2_000_000_000,
       candidate_count: 1, has_local_sdp: false, has_remote_sdp: true,
@@ -2687,6 +3045,19 @@ describe("contact management", () => {
 
   it("renames, verifies, blocks, and restores a saved contact", async () => {
     let current = snapshot([approved]);
+    api.coreApiPeerForDestination.mockResolvedValue({
+      profile: "profile-handle", peer: "peer-handle", destination: approved.destination_hash,
+    });
+    api.coreApiRequest.mockImplementation(async (operation: string, params?: Record<string, unknown>) => {
+      if (operation === "peer.update") {
+        const action = String(params?.action);
+        const command = action === "rename" ? "update_contact" : action === "verify" ? "verify_contact" : "unverify_contact";
+        return api.serviceCommand(command, { contact_id: approved.id, ...(params?.display_name ? { display_name: params.display_name } : {}) });
+      }
+      if (operation === "peer.revoke") return api.serviceCommand("block_contact", { contact_id: approved.id });
+      if (operation === "peer.unblock") return api.serviceCommand("unblock_contact", { contact_id: approved.id });
+      throw new Error("core_api_unavailable");
+    });
     api.runtimePlatform.mockResolvedValue("desktop");
     api.initializeService.mockResolvedValue(current);
     api.onInvitation.mockResolvedValue(() => undefined);
@@ -2733,12 +3104,46 @@ describe("contact management", () => {
     expect(await within(dialog).findByRole("button", { name: "Remove verification" })).toBeTruthy();
   });
 
+  it("blocks a contact through the facade peer handle", async () => {
+    let current = snapshot([approved]);
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.coreApiPeerForDestination.mockResolvedValue({
+      profile: "profile-handle", peer: "peer-handle", destination: approved.destination_hash,
+    });
+    api.coreApiRequest.mockImplementation(async () => {
+      current = { ...current, contacts: [{ ...current.contacts[0], trust: "blocked", trust_before_block: "approved" }] };
+      return { trust: "blocked" };
+    });
+    api.serviceCommand.mockImplementation(async (command: string) => command === "snapshot" ? current : {});
+
+    render(<App />);
+    await screen.findByLabelText("Conversation with Taylor");
+    fireEvent.click(screen.getByRole("button", { name: "Contacts" }));
+    const dialog = await screen.findByRole("dialog", { name: "Contacts" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Block" }));
+    fireEvent.click(within(within(dialog).getByRole("alertdialog", { name: "Block contact" }))
+      .getByRole("button", { name: "Block" }));
+    await waitFor(() => expect(api.coreApiRequest).toHaveBeenCalledWith("peer.revoke", {
+      profile: "profile-handle", peer: "peer-handle",
+    }));
+    expect(api.serviceCommand).not.toHaveBeenCalledWith("block_contact", expect.anything());
+    expect(await within(dialog).findByRole("button", { name: "Unblock contact" })).toBeTruthy();
+  });
+
   it("permanently removes a contact after an explicit confirmation", async () => {
     let current = { ...snapshot([approved]), messages: [firstMessage] };
     api.runtimePlatform.mockResolvedValue("desktop");
     api.initializeService.mockResolvedValue(current);
     api.onInvitation.mockResolvedValue(() => undefined);
     api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.coreApiPeerForDestination.mockResolvedValue({ profile: "profile-handle", peer: "peer-handle", destination: approved.destination_hash });
+    api.coreApiRequest.mockImplementation(async (operation: string) => {
+      if (operation === "peer.delete") return api.serviceCommand("delete_contact", { contact_id: approved.id });
+      throw new Error("core_api_unavailable");
+    });
     api.serviceCommand.mockImplementation(async (command: string) => {
       if (command === "snapshot") return current;
       if (command === "delete_contact") {
@@ -3568,6 +3973,24 @@ describe("connected conversation", () => {
     };
   }
 
+  it("loads and saves a direct draft through the facade", async () => {
+    const current = snapshot([approved]);
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    composerUi.fixture.replace("Saved facade draft");
+    api.serviceCommand.mockImplementation(async (command: string) => command === "snapshot" ? current : {});
+
+    render(<App />);
+    const composer = await directComposerInput();
+    expect(composer.value).toBe("Saved facade draft");
+    fireEvent.change(composer, { target: { value: "typed draft" } });
+    await waitFor(() => expect(composerUi.update).toHaveBeenCalledWith(
+      expect.any(String), "typed draft", expect.any(String)), { timeout: 2000 });
+    expectNoLegacyDirectWrites();
+  });
+
   it.each([true, false])("sends pending approval only to its verified transport identity (matching: %s)", async (matches) => {
     let current = snapshot([incoming]);
     api.initializeService.mockResolvedValue(current);
@@ -3652,6 +4075,7 @@ describe("connected conversation", () => {
     });
     const start = vi.spyOn(ReconnectCoordinator.prototype, "start");
     const stop = vi.spyOn(ReconnectCoordinator.prototype, "stop");
+    const detach = vi.spyOn(ReconnectCoordinator.prototype, "detach");
     const online = vi.spyOn(ReconnectCoordinator.prototype, "setOnline");
     const wake = vi.spyOn(ReconnectCoordinator.prototype, "wake");
     const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
@@ -3660,7 +4084,7 @@ describe("connected conversation", () => {
       await screen.findByLabelText("Conversation with Taylor");
       const manual = pairingSession(approved.destination_hash);
       act(() => setWebRTCSession(manual));
-      expect(start).toHaveBeenCalledTimes(1);
+      await waitFor(() => expect(start).toHaveBeenCalledTimes(1));
       expect(online).toHaveBeenCalledWith(true);
       act(() => window.dispatchEvent(new Event("offline")));
       expect(online).toHaveBeenLastCalledWith(false);
@@ -3678,7 +4102,8 @@ describe("connected conversation", () => {
       act(() => window.dispatchEvent(new Event("pageshow")));
       expect(wake).toHaveBeenCalledTimes(3);
       view.unmount();
-      expect(stop).toHaveBeenCalledTimes(1);
+      expect(detach).toHaveBeenCalledOnce();
+      expect(stop).not.toHaveBeenCalled();
       expect(getWebRTCSessionCount()).toBe(0);
       expect(manual.pc.close).toHaveBeenCalledTimes(1);
       wake.mockClear();
@@ -3690,6 +4115,7 @@ describe("connected conversation", () => {
     } finally {
       start.mockRestore();
       stop.mockRestore();
+      detach.mockRestore();
       online.mockRestore();
       wake.mockRestore();
       visibility.mockRestore();
@@ -3714,7 +4140,7 @@ describe("connected conversation", () => {
 
     render(<App />);
     const conversation = await screen.findByLabelText("Conversation with Taylor");
-    fireEvent.change(screen.getByRole("textbox", { name: "Message Taylor" }), { target: { value: "Keep this draft" } });
+    fireEvent.change(await directComposerInput(), { target: { value: "Keep this draft" } });
     fireEvent.click(within(conversation).getByRole("button", { name: "Connection settings" }));
     const dialog = await screen.findByRole("dialog", { name: "Contacts" });
     expect(within(dialog).getByRole("option", { name: /Taylor/ }).getAttribute("aria-selected")).toBe("true");
@@ -3829,225 +4255,123 @@ describe("connected conversation", () => {
     expect((await screen.findAllByText("Unknown time")).length).toBeGreaterThan(0);
   });
 
-  it("restores the draft and shows an error if sending fails", async () => {
-    const current = snapshot([approved]);
-    api.runtimePlatform.mockResolvedValue("desktop");
+  async function renderDirect(current: Snapshot, platform: "desktop" | "android" = "desktop") {
+    api.runtimePlatform.mockResolvedValue(platform);
     api.initializeService.mockResolvedValue(current);
     api.onInvitation.mockResolvedValue(() => undefined);
     api.onServiceEvent.mockResolvedValue(() => undefined);
-    api.serviceCommand.mockImplementation(async (command: string) => {
-      if (command === "snapshot") return current;
-      if (command === "send_message") throw new Error("test send failure");
-      return {};
-    });
-
+    api.serviceCommand.mockImplementation(async (command: string) => command === "snapshot" ? { ...current } : {});
     render(<App />);
-    const composer = await screen.findByRole("textbox", { name: "Message Taylor" });
+    return directComposerInput();
+  }
+
+  it("keeps recoverable text and the same send identity when a committed reply is lost", async () => {
+    const composer = await renderDirect(snapshot([approved]));
+    composerUi.fixture.loseNextSendReply = true;
     fireEvent.change(composer, { target: { value: "Please keep this draft" } });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-
-    const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toContain("Your text is still in the composer.");
-    expect(alert.textContent).toContain("Check the conversation before sending it again.");
-    expect((composer as HTMLTextAreaElement).value).toBe("Please keep this draft");
+    await screen.findByRole("button", { name: "Retry previous send" });
+    expect(composer.value).toBe("Please keep this draft");
+    expect(composerUi.fixture.messageCount).toBe(1);
+    fireEvent.click(screen.getByRole("button", { name: "Retry previous send" }));
+    await waitFor(() => expect(composer.value).toBe(""));
+    expect(composerUi.enqueue.mock.calls[1]).toEqual(composerUi.enqueue.mock.calls[0]);
+    expect(composerUi.fixture.messageCount).toBe(1);
   });
 
-  it.each([
-    ["service_timeout", "did not respond in time"],
-    ["service_busy", "finishing earlier delivery work"],
-    ["service_stopped", "messaging service stopped"],
-  ])("keeps a direct draft and explains %s", async (code, guidance) => {
-    const current = snapshot([approved]);
-    api.runtimePlatform.mockResolvedValue("desktop");
-    api.initializeService.mockResolvedValue(current);
-    api.onInvitation.mockResolvedValue(() => undefined);
-    api.onServiceEvent.mockResolvedValue(() => undefined);
-    api.serviceCommand.mockImplementation(async (command: string) => {
-      if (command === "snapshot") return current;
-      if (command === "send_message") throw new Error(code);
-      return {};
-    });
-
-    render(<App />);
-    const composer = await screen.findByRole("textbox", { name: "Message Taylor" });
+  it.each(["unavailable", "rate_limited", "internal"])("keeps the direct draft recoverable after %s without legacy resend", async (code) => {
+    const original = composerUi.fixture.request.bind(composerUi.fixture);
+    composerUi.fixture.request = async (operation, ...args) => {
+      if (operation === "message.enqueue_draft") throw Object.assign(new Error(code), { code });
+      return original(operation, ...args);
+    };
+    const composer = await renderDirect(snapshot([approved]));
     fireEvent.change(composer, { target: { value: "Keep this exact reply" } });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-
-    const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toContain(guidance);
-    expect(alert.textContent).toContain("Your text is still in the composer.");
-    expect(alert.textContent).toContain("Check the conversation before sending it again.");
-    expect((composer as HTMLTextAreaElement).value).toBe("Keep this exact reply");
+    expect((await screen.findByRole("alert")).textContent).toContain("send outcome is uncertain");
+    expect(composer.value).toBe("Keep this exact reply");
+    expect(composerUi.enqueue).toHaveBeenCalledTimes(1);
+    expectNoLegacyDirectWrites();
   });
 
-  it("shows a sent direct message after a stale refresh was already in flight on mobile", async () => {
+  it("shows a sent message after a stale mobile snapshot already in flight", async () => {
     const stale = snapshot([approved]);
     let current = stale;
     let serviceEvent: ((event: { type: "event"; event: "state_changed" }) => void) | undefined;
-    let snapshotCalls = 0;
     const staleRefresh = deferred<Snapshot>();
-    const outbound: ChatMessage = {
-      ...firstMessage,
-      id: "outbound-after-stale-refresh",
-      contact_id: approved.id,
-      direction: "outbound",
-      text: "The message remains visible",
-      state: "queued",
-    };
+    const outbound: ChatMessage = { ...firstMessage, id: "after-stale-refresh", contact_id: approved.id,
+      direction: "outbound", text: "The message remains visible", state: "queued" };
+    let snapshots = 0;
     api.runtimePlatform.mockResolvedValue("android");
     api.initializeService.mockResolvedValue(stale);
     api.onInvitation.mockResolvedValue(() => undefined);
-    api.onServiceEvent.mockImplementation(async (callback: typeof serviceEvent) => {
-      serviceEvent = callback;
-      return () => undefined;
-    });
+    api.onServiceEvent.mockImplementation(async (callback) => { serviceEvent = callback; return () => undefined; });
     api.serviceCommand.mockImplementation(async (command: string) => {
-      if (command === "snapshot") {
-        snapshotCalls += 1;
-        return snapshotCalls === 1 ? staleRefresh.promise : current;
-      }
-      if (command === "send_message") {
-        current = { ...current, messages: [outbound] };
-        return outbound;
-      }
+      if (command === "snapshot") return ++snapshots === 1 ? staleRefresh.promise : current;
       return {};
     });
-
+    composerUi.fixture.onEnqueue = async () => { current = { ...current, messages: [outbound] }; };
     render(<App />);
-    const composer = await screen.findByRole("textbox", { name: "Message Taylor" });
-    expect(serviceEvent).toBeTypeOf("function");
+    const composer = await directComposerInput();
     act(() => serviceEvent?.({ type: "event", event: "state_changed" }));
-    await waitFor(() => expect(snapshotCalls).toBe(1));
-
+    await waitFor(() => expect(snapshots).toBe(1));
     fireEvent.change(composer, { target: { value: outbound.text } });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("send_message", {
-      contact_id: approved.id,
-      text: outbound.text,
-    }));
+    await waitFor(() => expect(composerUi.enqueue).toHaveBeenCalledTimes(1));
     await act(async () => staleRefresh.resolve(stale));
-
-    const conversation = screen.getByLabelText("Conversation with Taylor");
-    expect(await within(conversation).findByText(outbound.text)).toBeTruthy();
-    expect(screen.getByText("Saved on this device")).toBeTruthy();
-    expect(snapshotCalls).toBe(2);
+    expect(await within(screen.getByLabelText("Conversation with Taylor")).findByText(outbound.text, { selector: ".message-content__text" })).toBeTruthy();
+    expect(snapshots).toBe(2);
   });
 
-  it("shows the durable mobile send result before draft cleanup or snapshot refresh finishes", async () => {
+  it("uses atomic draft enqueue and refreshes the authoritative message", async () => {
     const current = snapshot([approved]);
-    const draftCleanup = deferred<unknown>();
-    const outbound: ChatMessage = {
-      ...firstMessage,
-      id: "outbound-before-mobile-cleanup",
-      contact_id: approved.id,
-      direction: "outbound",
-      text: "Visible as soon as it is saved",
-      state: "sending",
-    };
-    let snapshotCalls = 0;
-    api.runtimePlatform.mockResolvedValue("android");
-    api.initializeService.mockResolvedValue(current);
-    api.onInvitation.mockResolvedValue(() => undefined);
-    api.onServiceEvent.mockResolvedValue(() => undefined);
-    api.serviceCommand.mockImplementation(async (command: string, payload: Record<string, unknown>) => {
-      if (command === "send_message") return outbound;
-      if (command === "save_draft" && payload.text === "") return draftCleanup.promise;
-      if (command === "snapshot") {
-        snapshotCalls += 1;
-        return current;
-      }
-      return {};
-    });
-
-    render(<App />);
-    const composer = await screen.findByRole("textbox", { name: "Message Taylor" });
+    const outbound: ChatMessage = { ...firstMessage, id: "atomic-draft-send", contact_id: approved.id,
+      direction: "outbound", text: "Facade send", state: "queued" };
+    composerUi.fixture.onEnqueue = async () => { current.messages = [outbound]; };
+    const composer = await renderDirect(current);
     fireEvent.change(composer, { target: { value: outbound.text } });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-
-    const conversation = screen.getByLabelText("Conversation with Taylor");
-    expect(await within(conversation).findByText(outbound.text)).toBeTruthy();
-    expect(within(conversation).getByText("Sending…")).toBeTruthy();
-    expect(snapshotCalls).toBe(0);
-
-    await act(async () => draftCleanup.resolve({}));
+    expect(await within(screen.getByLabelText("Conversation with Taylor")).findByText(outbound.text, { selector: ".message-content__text" })).toBeTruthy();
+    expect(composerUi.enqueue).toHaveBeenCalledWith(expect.stringMatching(/^[0-9a-f]{64}$/));
+    expectNoLegacyDirectWrites();
   });
 
-  it("coalesces a rapid Android draft burst and sends the latest text exactly once", async () => {
+  it("shows accepted mobile text before snapshot refresh finishes without another draft clear", async () => {
     const current = snapshot([approved]);
-    const outbound: ChatMessage = {
-      ...firstMessage,
-      id: "outbound-after-rapid-input",
-      contact_id: approved.id,
-      direction: "outbound",
-      text: "Latest mobile text",
-      state: "queued",
-    };
-    api.runtimePlatform.mockResolvedValue("android");
-    api.initializeService.mockResolvedValue(current);
-    api.onInvitation.mockResolvedValue(() => undefined);
-    api.onServiceEvent.mockResolvedValue(() => undefined);
-    api.serviceCommand.mockImplementation(async (command: string) => {
-      if (command === "send_message") return outbound;
-      if (command === "snapshot") return { ...current, messages: [outbound] };
-      return {};
-    });
-
-    render(<App />);
-    const composer = await screen.findByRole("textbox", { name: "Message Taylor" });
-    fireEvent.input(composer, { target: { value: "Latest" } });
-    fireEvent.input(composer, { target: { value: "Latest mobile" } });
-    fireEvent.input(composer, { target: { value: outbound.text } });
+    const refresh = deferred<Snapshot>();
+    const composer = await renderDirect(current, "android");
+    api.serviceCommand.mockImplementation(async (command: string) => command === "snapshot" ? refresh.promise : {});
+    fireEvent.change(composer, { target: { value: "Visible as soon as saved" } });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-    // A second submit can arrive before React paints the disabled button. The
-    // synchronous in-flight guard must still prevent a duplicate native send.
-    fireEvent.submit(composer.closest("form") as HTMLFormElement);
-
-    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("send_message", {
-      contact_id: approved.id,
-      text: outbound.text,
-    }));
-    await new Promise((resolve) => window.setTimeout(resolve, 275));
-
-    expect(api.serviceCommand.mock.calls.filter(([command]) => command === "send_message")).toHaveLength(1);
-    const draftWrites = api.serviceCommand.mock.calls
-      .filter(([command]) => command === "save_draft")
-      .map(([, payload]) => payload);
-    expect(draftWrites).toEqual([{ contact_id: approved.id, text: "" }]);
+    await waitFor(() => expect(composer.value).toBe(""));
+    expect(screen.getByDisplayValue("Visible as soon as saved")).toHaveProperty("readOnly", true);
+    expect(composerUi.update).toHaveBeenCalledTimes(1);
+    expectNoLegacyDirectWrites();
+    await act(async () => refresh.resolve(current));
   });
 
-  it("does not submit an Android IME composition as a premature Enter send", async () => {
-    const current = snapshot([approved]);
-    const outbound: ChatMessage = {
-      ...firstMessage,
-      id: "outbound-after-ime-composition",
-      contact_id: approved.id,
-      direction: "outbound",
-      text: "Composed mobile text",
-      state: "queued",
-    };
-    api.runtimePlatform.mockResolvedValue("android");
-    api.initializeService.mockResolvedValue(current);
-    api.onInvitation.mockResolvedValue(() => undefined);
-    api.onServiceEvent.mockResolvedValue(() => undefined);
-    api.serviceCommand.mockImplementation(async (command: string) => {
-      if (command === "send_message") return outbound;
-      if (command === "snapshot") return { ...current, messages: [outbound] };
-      return {};
-    });
+  it("coalesces rapid Android typing and synchronous submit into one durable send", async () => {
+    const composer = await renderDirect(snapshot([approved]), "android");
+    for (const text of ["Latest", "Latest mobile", "Latest mobile text"]) fireEvent.input(composer, { target: { value: text } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    fireEvent.submit(composer.closest("form")!);
+    await waitFor(() => expect(composerUi.enqueue).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => window.setTimeout(resolve, 275));
+    expect(composerUi.fixture.messageCount).toBe(1);
+    expect(composerUi.update).toHaveBeenCalledTimes(1);
+    expect(composerUi.update.mock.calls[0][1]).toBe("Latest mobile text");
+  });
 
-    render(<App />);
-    const composer = await screen.findByRole("textbox", { name: "Message Taylor" });
+  it("does not send an Android IME composition on a premature Enter", async () => {
+    const composer = await renderDirect(snapshot([approved]), "android");
     fireEvent.compositionStart(composer);
-    fireEvent.input(composer, { target: { value: outbound.text }, isComposing: true });
+    fireEvent.input(composer, { target: { value: "Composed mobile text" }, isComposing: true });
     fireEvent.keyDown(composer, { key: "Enter", isComposing: true });
-    expect(api.serviceCommand.mock.calls.filter(([command]) => command === "send_message")).toHaveLength(0);
-
+    expect(composerUi.enqueue).not.toHaveBeenCalled();
     fireEvent.compositionEnd(composer);
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("send_message", {
-      contact_id: approved.id,
-      text: outbound.text,
-    }));
+    await waitFor(() => expect(composerUi.enqueue).toHaveBeenCalledTimes(1));
+    expect(composerUi.fixture.messageCount).toBe(1);
   });
 
   it("queues a trailing mobile snapshot when a service event arrives during refresh", async () => {
@@ -4122,42 +4446,20 @@ describe("connected conversation", () => {
     expect(snapshotCalls).toBe(1);
   });
 
-  it("does not call an already-saved message unsent when draft cleanup fails", async () => {
-    let current = snapshot([approved]);
-    const outbound: ChatMessage = {
-      ...firstMessage,
-      id: "outbound-with-draft-cleanup-failure",
-      contact_id: approved.id,
-      direction: "outbound",
-      text: "Send this only once",
-      state: "queued",
-    };
-    api.runtimePlatform.mockResolvedValue("android");
-    api.initializeService.mockResolvedValue(current);
-    api.onInvitation.mockResolvedValue(() => undefined);
-    api.onServiceEvent.mockResolvedValue(() => undefined);
-    api.serviceCommand.mockImplementation(async (command: string, payload: Record<string, unknown>) => {
-      if (command === "snapshot") return current;
-      if (command === "send_message") {
-        current = { ...current, messages: [outbound] };
-        return outbound;
-      }
-      if (command === "save_draft" && payload.text === "") throw new Error("draft cleanup failed");
+  it("keeps accepted text cleared after refresh failure with no separate draft cleanup", async () => {
+    const composer = await renderDirect(snapshot([approved]), "android");
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") throw new Error("snapshot unavailable");
       return {};
     });
-
-    render(<App />);
-    const composer = await screen.findByRole("textbox", { name: "Message Taylor" });
-    fireEvent.change(composer, { target: { value: outbound.text } });
+    fireEvent.change(composer, { target: { value: "Send this only once" } });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-
-    const conversation = screen.getByLabelText("Conversation with Taylor");
-    expect(await within(conversation).findByText(outbound.text)).toBeTruthy();
-    const warning = await screen.findByRole("alert");
-    expect(warning.textContent).toContain("Your message was saved");
-    expect(warning.textContent).not.toContain("unsent text");
-    expect((composer as HTMLTextAreaElement).value).toBe("");
-    expect(api.serviceCommand.mock.calls.filter(([command]) => command === "send_message")).toHaveLength(1);
+    expect((await screen.findByRole("alert")).textContent).toContain("Your message was saved");
+    expect(composer.value).toBe("");
+    expect(screen.getByDisplayValue("Send this only once")).toHaveProperty("readOnly", true);
+    expect(composerUi.fixture.messageCount).toBe(1);
+    expect(composerUi.update).toHaveBeenCalledTimes(1);
+    expectNoLegacyDirectWrites();
   });
 });
 
@@ -4432,7 +4734,7 @@ describe("small private groups", () => {
   });
 
   it.each(["desktop", "android"] as const)("shows removal failures and updates member status after retry on %s", async (platform) => {
-    const member = { ...workspace.members[0], id: "member-to-remove", display_name: "Android member", role: "member" as const, status: "active" as const };
+    const member = { ...workspace.members[0], id: "member-to-remove", core_handle: "member-to-remove", display_name: "Android member", role: "member" as const, status: "active" as const };
     const current: Snapshot = { ...snapshot(), workspaces: [{ ...workspace, members: [...workspace.members, member] }], workspace_channels: [workspaceChannel] };
     let rejectRemoval = true;
     api.runtimePlatform.mockResolvedValue(platform);
@@ -4601,6 +4903,7 @@ describe("desktop workspaces", () => {
   it("alerts the owner when a workspace join request actually reaches this device", async () => {
     const request: WorkspaceJoinRequest = {
       id: "join-request-one",
+      core_handle: "join-request-handle-one",
       workspace_id: workspace.id,
       member_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       display_name: "Bailey",
@@ -4611,7 +4914,11 @@ describe("desktop workspaces", () => {
       state: "pending",
       created_at: 5,
     };
-    const ownerWorkspace: Workspace = { ...workspace, pending_owner_review_count: 1 };
+    const ownerWorkspace: Workspace = { ...workspace, pending_owner_review_count: 1,
+      members: [...workspace.members, { id: request.member_id, core_handle: request.member_id,
+        display_name: request.display_name, role: "member", status: "active",
+        short_id: "aaaaaa", device: { id: request.device_id, destination_hash: request.destination_hash,
+          fingerprint: request.fingerprint } }] };
     let current: Snapshot = {
       ...snapshot(),
       workspaces: [workspace],
@@ -4633,7 +4940,7 @@ describe("desktop workspaces", () => {
       if (command === "snapshot" || command === "workspace_snapshot") return current;
       if (command === "list_workspace_messages") return { messages: [], next_cursor: null, high_water: 0 } satisfies WorkspaceMessagePage;
       if (command === "approve_workspace_join") {
-        current = { ...current, workspaces: [workspace], workspace_join_requests: [] };
+        current = { ...current, workspaces: [{ ...ownerWorkspace, pending_owner_review_count: 0 }], workspace_join_requests: [] };
       }
       return {};
     });
@@ -4655,7 +4962,7 @@ describe("desktop workspaces", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Approve as administrator" }));
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith(
       "approve_workspace_join",
-      expect.objectContaining({ workspace_id: workspace.id, request_id: request.id, operation_id: expect.any(String) }),
+      expect.objectContaining({ workspace_id: workspace.id, request_id: request.core_handle, operation_id: expect.any(String) }),
     ));
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith(
       "change_workspace_role",
@@ -4742,12 +5049,13 @@ describe("desktop workspaces", () => {
   it("requires explicit ownership-transfer confirmation and binds the exact successor device", async () => {
     const successor = {
       id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      core_handle: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       display_name: "Bailey",
       role: "member" as const,
       status: "active" as const,
       short_id: "aaaaaa",
-      device: { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", destination_hash: "99".repeat(16), fingerprint: "BBBB CCCC DDDD EEEE" },
-      devices: [{ id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", destination_hash: "99".repeat(16), fingerprint: "BBBB CCCC DDDD EEEE" }],
+      device: { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", core_handle: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", destination_hash: "99".repeat(16), fingerprint: "BBBB CCCC DDDD EEEE" },
+      devices: [{ id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", core_handle: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", destination_hash: "99".repeat(16), fingerprint: "BBBB CCCC DDDD EEEE" }],
     };
     const owner = workspace.members[0];
     const authorityWorkspace: Workspace = {
@@ -4801,6 +5109,7 @@ describe("desktop workspaces", () => {
   it("shows effective administrator authority and submits owner-reviewed requests", async () => {
     const administrator = {
       id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      core_handle: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       display_name: "Bailey",
       role: "admin" as const,
       status: "active" as const,
@@ -4809,6 +5118,7 @@ describe("desktop workspaces", () => {
     };
     const member = {
       id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      core_handle: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
       display_name: "Casey",
       role: "member" as const,
       status: "active" as const,
@@ -4853,6 +5163,7 @@ describe("desktop workspaces", () => {
   it("presents current authority separately from a pending owner review", async () => {
     const member = {
       id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      core_handle: "channel-member-handle",
       display_name: "Bailey",
       role: "member" as const,
       status: "active" as const,
@@ -4861,6 +5172,7 @@ describe("desktop workspaces", () => {
     };
     const request: WorkspaceAdminRequest = {
       id: "request-one",
+      core_handle: "admin-request-handle-one",
       workspace_id: workspace.id,
       direction: "incoming",
       request_kind: "role_change",
@@ -4896,12 +5208,13 @@ describe("desktop workspaces", () => {
     expect(within(dialog).getByText(/Effective state is unchanged/i)).toBeTruthy();
     expect(within(dialog).getByText(/Change Bailey from member to admin/)).toBeTruthy();
     fireEvent.click(within(dialog).getByRole("button", { name: "Approve" }));
-    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("approve_workspace_admin_request", expect.objectContaining({ workspace_id: workspace.id, request_id: request.id, operation_id: expect.any(String) })));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("approve_workspace_admin_request", expect.objectContaining({ workspace_id: workspace.id, request_id: request.core_handle, operation_id: expect.any(String) })));
   });
 
   it("opens, sends, hides, and reopens a workspace DM without creating a Contact", async () => {
     const member = {
       id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      core_handle: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       display_name: "Bailey",
       role: "member" as const,
       status: "active" as const,
@@ -5663,8 +5976,8 @@ describe("desktop workspaces", () => {
 
   it("manages multiple concurrent workspace invitations independently", async () => {
     const invitations = [
-      { id: "invite-one", workspace_id: workspace.id, offered_manifest_digest: workspace.manifest_hash, state: "active" as const, created_at: 10, expires_at: 2_000_000_000 },
-      { id: "invite-two", workspace_id: workspace.id, offered_manifest_digest: workspace.manifest_hash, state: "active" as const, created_at: 11, expires_at: 2_000_000_100 },
+      { id: "invite-one", core_handle: "invite-one-handle", workspace_id: workspace.id, offered_manifest_digest: workspace.manifest_hash, state: "active" as const, created_at: 10, expires_at: 2_000_000_000 },
+      { id: "invite-two", core_handle: "invite-two-handle", workspace_id: workspace.id, offered_manifest_digest: workspace.manifest_hash, state: "active" as const, created_at: 11, expires_at: 2_000_000_100 },
     ];
     const current: Snapshot = { ...snapshot(), workspaces: [workspace], workspace_channels: [workspaceChannel], workspace_join_requests: [], workspace_invitations: invitations, workspace_drafts: [] };
     api.runtimePlatform.mockResolvedValue("desktop");
@@ -5689,7 +6002,7 @@ describe("desktop workspaces", () => {
     expect(within(dialog).getByText(/Direct participant hosting stays on this owner device/i)).toBeTruthy();
     expect(within(dialog).getAllByText(/expires /i)).toHaveLength(2);
     fireEvent.click(within(dialog).getAllByRole("button", { name: "Revoke" })[0]);
-    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("revoke_workspace_invitation", expect.objectContaining({ workspace_id: workspace.id, invitation_id: "invite-one", operation_id: expect.any(String) })));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("revoke_workspace_invitation", expect.objectContaining({ workspace_id: workspace.id, invitation_id: "invite-one-handle", operation_id: expect.any(String) })));
     expect(within(dialog).getAllByText(/expires /i)).toHaveLength(1);
     fireEvent.click(within(dialog).getByRole("button", { name: "Prepare direct Internet invitation" }));
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("create_workspace_invitation", expect.objectContaining({ workspace_id: workspace.id, operation_id: expect.any(String), connection_mode: "participant" })));
@@ -5927,6 +6240,7 @@ describe("desktop workspaces", () => {
   it("exposes owner administration, name requests, and explicit propagation consent", async () => {
     const member = {
       id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      core_handle: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       display_name: "Bailey",
       role: "member" as const,
       status: "active" as const,
@@ -6051,8 +6365,8 @@ describe("desktop workspaces", () => {
     };
     const memberWorkspace: Workspace = { ...workspace, local_role: "member", local_member_id: member.id, local_device_id: member.device.id, channel_discovery: "incomplete", members: [...workspace.members, member] };
     const duplicateChannels: WorkspaceChannel[] = [
-      { ...workspaceChannel, id: "55555555-5555-4555-8555-555555555555", name: "Ops", name_key: "ops", display_name: "Ops · 555555", short_id: "555555", is_general: false, subscribed: false, duplicate_name: true, topic: "North team" },
-      { ...workspaceChannel, id: "66666666-6666-4666-8666-666666666666", name: "ops", name_key: "ops", display_name: "ops · 666666", short_id: "666666", is_general: false, subscribed: false, duplicate_name: true, topic: "South team" },
+      { ...workspaceChannel, id: "55555555-5555-4555-8555-555555555555", core_handle: "55555555-5555-4555-8555-555555555555", name: "Ops", name_key: "ops", display_name: "Ops · 555555", short_id: "555555", is_general: false, subscribed: false, duplicate_name: true, topic: "North team" },
+      { ...workspaceChannel, id: "66666666-6666-4666-8666-666666666666", core_handle: "66666666-6666-4666-8666-666666666666", name: "ops", name_key: "ops", display_name: "ops · 666666", short_id: "666666", is_general: false, subscribed: false, duplicate_name: true, topic: "South team" },
     ];
     const created = { ...duplicateChannels[0], id: "77777777-7777-4777-8777-777777777777", name: "Field notes", name_key: "field notes", display_name: "Field notes", short_id: "777777", duplicate_name: false, subscribed: true };
     const current: Snapshot = { ...snapshot(), workspaces: [memberWorkspace], workspace_channels: [workspaceChannel, ...duplicateChannels], workspace_channel_transfers: [], workspace_join_requests: [], workspace_invitations: [], workspace_drafts: [] };
@@ -6095,7 +6409,10 @@ describe("desktop workspaces", () => {
       short_id: "aaaaaa",
       device: { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", destination_hash: "99".repeat(16), fingerprint: "BBBB CCCC DDDD EEEE" },
     };
-    const withMember: Workspace = { ...workspace, members: [...workspace.members, member] };
+    const withMember: Workspace = { ...workspace, members: [
+      ...workspace.members.map((item) => ({ ...item, core_handle: item.id })),
+      { ...member, core_handle: member.id },
+    ] };
     const privateChannel: WorkspaceChannel = {
       ...workspaceChannel,
       id: "77777777-7777-4777-8777-777777777777",
@@ -6194,6 +6511,7 @@ describe("desktop workspaces", () => {
   it("exposes manager update, transfer, terminal archive, and owner recovery commands", async () => {
     const member = {
       id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      core_handle: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       display_name: "Bailey",
       role: "member" as const,
       status: "active" as const,
@@ -6201,7 +6519,7 @@ describe("desktop workspaces", () => {
       device: { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", destination_hash: "99".repeat(16), fingerprint: "BBBB CCCC DDDD EEEE" },
     };
     const expanded: Workspace = { ...workspace, members: [...workspace.members, member] };
-    const channel: WorkspaceChannel = { ...workspaceChannel, id: "55555555-5555-4555-8555-555555555555", name: "field-reports", name_key: "field-reports", display_name: "field-reports", short_id: "555555", is_general: false, subscribed: true, topic: "Daily notes" };
+    const channel: WorkspaceChannel = { ...workspaceChannel, id: "55555555-5555-4555-8555-555555555555", core_handle: "channel-handle-field", name: "field-reports", name_key: "field-reports", display_name: "field-reports", short_id: "555555", is_general: false, subscribed: true, topic: "Daily notes" };
     let current: Snapshot = { ...snapshot(), workspaces: [expanded], workspace_channels: [workspaceChannel, channel], workspace_channel_transfers: [], workspace_join_requests: [], workspace_invitations: [], workspace_drafts: [] };
     api.runtimePlatform.mockResolvedValue("desktop");
     api.initializeService.mockResolvedValue(current);

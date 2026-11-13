@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mesh-chat:core-api:workspace-channel-members-result:1",
+  "title": "Experimental private channel membership v1",
+  "description": "Caller-scoped member handles for one private channel.",
+  "type": "object", "additionalProperties": false,
+  "required": ["api_version", "request_id", "ok", "result"],
+  "properties": {
+    "api_version": {"const": 1},
+    "request_id": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,80}$"},
+    "ok": {"const": true},
+    "result": {"$ref": "#/$defs/membership"}
+  },
+  "$defs": {
+    "handle": {"type": "string", "pattern": "^[A-Za-z0-9_-]{16,128}$"},
+    "membership": {
+      "type": "object", "additionalProperties": false,
+      "required": ["profile", "workspace", "channel", "members"],
+      "properties": {
+        "profile": {"$ref": "#/$defs/handle"},
+        "workspace": {"$ref": "#/$defs/handle"},
+        "channel": {"$ref": "#/$defs/handle"},
+        "members": {"type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true,
+          "items": {"$ref": "#/$defs/handle"}}
+      }
+    }
+  }
+}

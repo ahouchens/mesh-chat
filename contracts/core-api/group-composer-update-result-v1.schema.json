@@ -1,0 +1,323 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mesh-chat:core-api:group-composer-update-result:1",
+  "title": "Experimental group-composer-update-result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "api_version",
+    "request_id",
+    "ok",
+    "result"
+  ],
+  "properties": {
+    "api_version": {
+      "const": 1
+    },
+    "request_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._:-]{1,80}$"
+    },
+    "ok": {
+      "const": true
+    },
+    "result": {
+      "$ref": "#/$defs/composer_update"
+    }
+  },
+  "$defs": {
+    "handle": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{16,128}$"
+    },
+    "timestamp": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "acceptance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "profile",
+        "message",
+        "accepted",
+        "accepted_at",
+        "idempotency_expires_at"
+      ],
+      "properties": {
+        "profile": {
+          "$ref": "#/$defs/handle"
+        },
+        "message": {
+          "$ref": "#/$defs/handle"
+        },
+        "accepted": {
+          "const": true
+        },
+        "accepted_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "idempotency_expires_at": {
+          "$ref": "#/$defs/timestamp"
+        }
+      }
+    },
+    "message": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "profile",
+        "message",
+        "group",
+        "kind",
+        "text",
+        "state",
+        "created_at"
+      ],
+      "properties": {
+        "profile": {
+          "$ref": "#/$defs/handle"
+        },
+        "message": {
+          "$ref": "#/$defs/handle"
+        },
+        "group": {
+          "$ref": "#/$defs/handle"
+        },
+        "kind": {
+          "const": "text"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "state": {
+          "enum": [
+            "waiting_for_keys",
+            "queued",
+            "sending",
+            "stored_for_delivery",
+            "received_by_endpoint",
+            "delivered",
+            "expired",
+            "failed",
+            "cancelled"
+          ]
+        },
+        "created_at": {
+          "$ref": "#/$defs/timestamp"
+        }
+      }
+    },
+    "token": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "disposition": {
+      "enum": [
+        "cleared",
+        "superseded"
+      ]
+    },
+    "accepted_send": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "revision": {
+          "$ref": "#/$defs/token"
+        },
+        "status": {
+          "const": "accepted"
+        },
+        "acceptance": {
+          "$ref": "#/$defs/acceptance"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "draft_disposition": {
+          "$ref": "#/$defs/disposition"
+        }
+      },
+      "required": [
+        "revision",
+        "status",
+        "acceptance",
+        "text",
+        "draft_disposition"
+      ]
+    },
+    "expired_send": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "revision": {
+          "$ref": "#/$defs/token"
+        },
+        "status": {
+          "const": "expired"
+        },
+        "accepted_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "idempotency_expires_at": {
+          "$ref": "#/$defs/timestamp"
+        }
+      },
+      "required": [
+        "revision",
+        "status",
+        "accepted_at",
+        "idempotency_expires_at"
+      ]
+    },
+    "not_accepted": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "revision": {
+          "$ref": "#/$defs/token"
+        },
+        "status": {
+          "const": "not_accepted"
+        }
+      },
+      "required": [
+        "revision",
+        "status"
+      ]
+    },
+    "composer": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "profile": {
+          "$ref": "#/$defs/handle"
+        },
+        "group": {
+          "$ref": "#/$defs/handle"
+        },
+        "revision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/token"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 16384
+        },
+        "update_key": {
+          "$ref": "#/$defs/token"
+        },
+        "last_send": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/accepted_send"
+            },
+            {
+              "$ref": "#/$defs/expired_send"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "send_lookup": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/accepted_send"
+            },
+            {
+              "$ref": "#/$defs/not_accepted"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "profile",
+        "group",
+        "revision",
+        "text",
+        "update_key",
+        "last_send",
+        "send_lookup"
+      ]
+    },
+    "composer_update": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "applied_revision": {
+          "$ref": "#/$defs/token"
+        },
+        "changed": {
+          "type": "boolean"
+        },
+        "composer": {
+          "$ref": "#/$defs/composer"
+        }
+      },
+      "required": [
+        "applied_revision",
+        "changed",
+        "composer"
+      ]
+    },
+    "enqueue_draft": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "profile": {
+          "$ref": "#/$defs/handle"
+        },
+        "message": {
+          "$ref": "#/$defs/handle"
+        },
+        "accepted": {
+          "const": true
+        },
+        "accepted_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "idempotency_expires_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "group": {
+          "$ref": "#/$defs/handle"
+        },
+        "draft_revision": {
+          "$ref": "#/$defs/token"
+        },
+        "draft_disposition": {
+          "$ref": "#/$defs/disposition"
+        },
+        "composer": {
+          "$ref": "#/$defs/composer"
+        }
+      },
+      "required": [
+        "profile",
+        "message",
+        "accepted",
+        "accepted_at",
+        "idempotency_expires_at",
+        "group",
+        "draft_revision",
+        "draft_disposition",
+        "composer"
+      ]
+    }
+  }
+}

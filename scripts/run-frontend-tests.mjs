@@ -14,6 +14,7 @@ const context = await startVitest(
       ".venv/**",
       "src-tauri/**",
       "plugins/**",
+      "sdk/**",
       // A sandboxed pytest run can leave these cache directories with ACLs
       // this user cannot traverse. They never contain frontend tests, and an
       // EPERM during the directory scan aborts the whole Vitest run.

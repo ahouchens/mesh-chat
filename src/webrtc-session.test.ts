@@ -82,6 +82,16 @@ describe("WebRTC session registry", () => {
     expect(getWebRTCSessionCount()).toBe(1);
   });
 
+  it("closing a messaging session never stops tracks owned by a media call", async () => {
+    const track = { stop: vi.fn() };
+    const messaging = session("messaging-peer");
+    Object.assign(messaging.pc, { getSenders: () => [{ track }] });
+    setWebRTCSession(messaging);
+    await closeWebRTCSession("messaging-peer");
+    expect(messaging.pc.close).toHaveBeenCalledTimes(1);
+    expect(track.stop).not.toHaveBeenCalled();
+  });
+
   it("binds contacts to one session and supports per-contact lookup", () => {
     const a = session("peer-a", 1);
     const b = session("peer-b", 2);

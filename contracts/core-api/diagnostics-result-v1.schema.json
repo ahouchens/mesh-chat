@@ -1,0 +1,250 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mesh-chat:core-api:diagnostics-result:1",
+  "title": "Experimental current policy diagnostics v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "api_version",
+    "request_id",
+    "ok",
+    "result"
+  ],
+  "properties": {
+    "api_version": {
+      "const": 1
+    },
+    "request_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._:-]{1,80}$"
+    },
+    "ok": {
+      "const": true
+    },
+    "result": {
+      "$ref": "#/$defs/diagnostics"
+    }
+  },
+  "$defs": {
+    "handle": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{16,128}$"
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runtime_epoch",
+        "sequence",
+        "desired",
+        "execution",
+        "negotiation",
+        "carrier",
+        "bridge",
+        "messaging_ready",
+        "reason",
+        "retry_in",
+        "evidence_age"
+      ],
+      "properties": {
+        "runtime_epoch": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "desired": {
+          "enum": [
+            "enabled",
+            "stopped"
+          ]
+        },
+        "execution": {
+          "enum": [
+            "available",
+            "paused",
+            "locked",
+            "shutting_down"
+          ]
+        },
+        "negotiation": {
+          "enum": [
+            "idle",
+            "discover",
+            "request",
+            "wait_request",
+            "wait_offer",
+            "gather_offer",
+            "gather_answer",
+            "publish_offer",
+            "publish_answer",
+            "wait_answer",
+            "apply_answer",
+            "checking",
+            "attach",
+            "path",
+            "inspect"
+          ]
+        },
+        "carrier": {
+          "enum": [
+            "absent",
+            "open",
+            "suspect",
+            "closing"
+          ]
+        },
+        "bridge": {
+          "enum": [
+            "detached",
+            "attaching",
+            "path_pending",
+            "ready",
+            "restoring"
+          ]
+        },
+        "messaging_ready": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string",
+          "pattern": "^[a-z][a-z_]{0,63}$"
+        },
+        "retry_in": {
+          "type": "number",
+          "minimum": 0
+        },
+        "evidence_age": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "messaging_ready": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "desired": {
+                "const": "enabled"
+              },
+              "execution": {
+                "const": "available"
+              },
+              "carrier": {
+                "const": "open"
+              },
+              "bridge": {
+                "const": "ready"
+              },
+              "evidence_age": {
+                "type": "number"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "diagnostics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "profile",
+        "captured_at",
+        "available",
+        "runtime_failure",
+        "connections",
+        "total_connections",
+        "truncated"
+      ],
+      "properties": {
+        "profile": {
+          "$ref": "#/$defs/handle"
+        },
+        "captured_at": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "available": {
+          "type": "boolean"
+        },
+        "runtime_failure": {
+          "enum": [
+            null,
+            "adapter_quarantined",
+            "cleanup_failed",
+            "unknown"
+          ]
+        },
+        "connections": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "connection",
+              "observation"
+            ],
+            "properties": {
+              "connection": {
+                "$ref": "#/$defs/handle"
+              },
+              "observation": {
+                "$ref": "#/$defs/observation"
+              }
+            }
+          }
+        },
+        "total_connections": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 256
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "available": {
+                "const": false
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "runtime_failure": {
+                "type": "null"
+              },
+              "connections": {
+                "maxItems": 0
+              },
+              "total_connections": {
+                "const": 0
+              },
+              "truncated": {
+                "const": false
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

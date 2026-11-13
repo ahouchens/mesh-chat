@@ -1,8 +1,10 @@
 import type { WebRTCBridge } from "./webrtc-onboarding";
+import type { CoreEffectScope } from "./core-admission";
 
 export type WebRTCSessionPath = "direct" | "relayed" | "unknown";
 
 export interface WebRTCSession {
+  readonly effects?: CoreEffectScope;
   /** Stable per-peer/device key. Reconnect uses the profile ID. */
   key: string;
   bridge: WebRTCBridge;

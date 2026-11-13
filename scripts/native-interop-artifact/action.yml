@@ -1,0 +1,16 @@
+name: Packaged native peer qualification
+description: Run one source-bound native role with the Actions artifact runtime.
+inputs:
+  role:
+    description: windows or android
+    required: true
+  workload:
+    description: Source-bound quick or full native workload
+    required: true
+  python:
+    description: Selected installed Python interpreter
+    required: false
+    default: python
+runs:
+  using: node24
+  main: action.mjs

@@ -7,6 +7,8 @@ apk_dir="$task_root/plugins/tauri-plugin-mesh-runtime/android/webrtc-smoke/build
 app_id="com.meshchat.runtime.smoke"
 mkdir -p "$report_dir"
 cd "$task_root"
+run_id="$(python scripts/android_qualification.py prepare --suite signaling)"
+python scripts/android_qualification.py list --suite signaling > "$report_dir/cases.tsv"
 setsid pnpm dlx wrangler@4.154.0 dev --local --ip 127.0.0.1 --port 8789 \
   --log-level error --config deploy/cloudflare-signal/wrangler.toml > "$report_dir/worker.txt" 2>&1 &
 worker_pid=$!
@@ -27,17 +29,16 @@ timeout 90s adb install -r "$apk_dir/androidTest/release/webrtc-smoke-release-an
 adb reverse tcp:8789 tcp:8789
 result=0
 run_test() {
-  local method="$1" phase="${2:-none}" report="$report_dir/$1-${2:-none}.txt"
+  local method="$1" phase="${2:-none}" test_class="$3" report="$report_dir/$1-${2:-none}.txt"
   timeout 15s adb shell am force-stop "$app_id"
+  printf 'MESH_QUALIFICATION_RUN=%s\n' "$run_id" > "$report"
   if ! timeout --signal=INT --kill-after=10s 480s adb shell am instrument -w -r \
-    -e class "com.meshchat.runtime.SignalMailboxAndroidTest#$method" \
+    -e class "com.meshchat.runtime.$test_class#$method" \
     -e mailboxUrl http://127.0.0.1:8789 -e restartPhase "$phase" \
-    "$app_id.test/androidx.test.runner.AndroidJUnitRunner" | tee "$report"; then result=1; fi
+    "$app_id.test/androidx.test.runner.AndroidJUnitRunner" | tee -a "$report"; then result=1; fi
   if ! grep -Fq 'OK (1 test)' "$report"; then result=1; fi
 }
-run_test embeddedDefaultAndChoicesSurviveProcessRestart seed
-run_test embeddedDefaultAndChoicesSurviveProcessRestart verify
-run_test packagedAndroidCryptoExchangesCiphertextWithWorker
-run_test personalMailboxRecoversAfterLossRestartAndLifecycleChanges
-run_test workspaceMailboxRecoversAfterLossRestartAndLifecycleChanges
+while IFS=$'\t' read -r method test_class phase; do
+  run_test "$method" "$phase" "$test_class" </dev/null
+done < "$report_dir/cases.tsv"
 exit "$result"

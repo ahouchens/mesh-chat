@@ -5,10 +5,15 @@ const mocks = vi.hoisted(() => ({
   onServiceEvent: vi.fn(),
 }));
 
-vi.mock("./api", () => ({
+vi.mock("./api", async () => { const { admittedApiFixture } = await import("./test/admitted-api"); return admittedApiFixture({
+  coreApiAcceptInvitation: async () => { throw new Error("core_api_unavailable"); },
+  coreApiCreateInvitation: async () => { throw new Error("core_api_unavailable"); },
   serviceCommand: mocks.serviceCommand,
+  loadCallIceServers: async () => mocks.serviceCommand("call_ice_servers"),
+  loadCallSettings: async () => mocks.serviceCommand("call_settings"),
+  saveCallSettings: async (settings: Record<string, unknown>) => mocks.serviceCommand("update_call_settings", settings),
   onServiceEvent: mocks.onServiceEvent,
-}));
+}); });
 
 const serviceCommand = mocks.serviceCommand;
 const onServiceEvent = mocks.onServiceEvent;

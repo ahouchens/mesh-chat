@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
+from dataclasses import dataclass
 import time
 import uuid
 from typing import Any, Callable
@@ -28,6 +30,47 @@ RING_SECONDS = 45
 CALLS_PER_MINUTE = 3
 CALLS_PER_HOUR = 20
 CALL_HISTORY_SECONDS = 24 * 60 * 60
+
+
+class CallOutcomeRequiresResync(ValidationError):
+    """A durable command receipt cannot establish current media resources."""
+
+
+class CallOperationCapacityExceeded(ValidationError):
+    """Bounded ephemeral operation slots must not evict uncertain outcomes."""
+
+
+@dataclass(frozen=True)
+class PreparedCallMutation:
+    result: dict[str, Any]
+    records: tuple[dict[str, Any], ...]
+    deletions: tuple[str, ...]
+    documents: tuple[tuple[str, str], ...]
+
+
+class _CallDraftStore:
+    """Isolated write set for preparing an existing CallManager use case."""
+
+    def __init__(self, records):
+        self.records = {record["id"]: deepcopy(record) for record in records}
+        self.changes = {}
+        self.deletions = set()
+
+    def get(self, kind, identifier):
+        return deepcopy(self.records.get(identifier))
+
+    def list(self, kind):
+        return deepcopy(list(self.records.values()))
+
+    def put(self, kind, identifier, record):
+        self.records[identifier] = deepcopy(record)
+        self.changes[identifier] = deepcopy(record)
+        self.deletions.discard(identifier)
+
+    def delete(self, kind, identifier):
+        self.records.pop(identifier, None)
+        self.changes.pop(identifier, None)
+        self.deletions.add(identifier)
 
 
 class CallManager:
@@ -70,6 +113,57 @@ class CallManager:
         if enabled and not was_enabled:
             for record in self._memory.values():
                 self.store.put("call", record["id"], record)
+
+    def prepare_control(self, identity, contact, action, params, operation_id):
+        """Run domain validation/signing on an isolated snapshot, without I/O."""
+        records = self._list() if action == "start" else [self._get(params["call_id"])]
+        draft = _CallDraftStore(record for record in records if record is not None)
+        documents = []
+        now = self.now()
+        manager = CallManager(draft, lambda target, document: documents.append((target, document)),
+                              now=lambda: now,
+                              new_id=lambda: uuid.uuid5(uuid.UUID(operation_id), "call").hex)
+        if action == "start":
+            result = manager.start(identity, contact, media=params["media"], sdp=params["sdp"],
+                                   dtls_fingerprint=params["dtls_fingerprint"])
+        elif action in {"answer", "restart", "answer_restart"}:
+            result = getattr(manager, action)(identity, params["call_id"], sdp=params["sdp"],
+                                              dtls_fingerprint=params["dtls_fingerprint"])
+        elif action == "end":
+            result = manager.end(identity, params["call_id"], params["reason"])
+        elif action == "candidate":
+            result = manager.add_candidate(identity, params["call_id"], params["candidate"])
+        else:
+            raise ValidationError("Unsupported call mutation")
+        return PreparedCallMutation(result, tuple(draft.changes.values()),
+                                    tuple(sorted(draft.deletions)), tuple(documents))
+
+    def apply_prepared(self, mutation):
+        """Publish the already committed write set to the in-memory view."""
+        for identifier in mutation.deletions:
+            self._memory.pop(identifier, None)
+        for record in mutation.records:
+            self._memory[record["id"]] = deepcopy(record)
+
+    def reload_committed(self, call_id):
+        """Refresh a signaling cache after an uncertain durable commit return."""
+        if not self.persist:
+            return self._get(call_id)
+        record = self.store.get("call", call_id)
+        if record is None:
+            self._memory.pop(call_id, None)
+        else:
+            self._memory[call_id] = deepcopy(record)
+        return record
+
+    def reconcile_abandonment(self, call_id, accepted_at):
+        """Apply a committed cleanup intent to memory without another signal."""
+        record = self.reload_committed(call_id)
+        if record is not None:
+            record = deepcopy(record)
+            record["state"] = "ended"
+            record["updated_at"] = max(record.get("updated_at", 0), accepted_at)
+            self._memory[call_id] = record
 
     def _write(self, record: dict[str, Any]) -> None:
         self._memory[record["id"]] = record

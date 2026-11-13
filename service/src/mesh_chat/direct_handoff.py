@@ -70,6 +70,24 @@ class AdmissionHandoff:
             prepared.close()
             raise
 
+    def _await_main_ready(self, admitted, *, deadline, announce_interval=1):
+        """Confirm main RNS keys and selected admitted path within handoff time."""
+        next_announce = time.monotonic() + announce_interval
+        while not admitted._stop.is_set():
+            if time.monotonic() >= deadline:
+                return False
+            if admitted.main_rns_ready():
+                return time.monotonic() < deadline and not admitted._stop.is_set()
+            now = time.monotonic()
+            if now >= deadline:
+                return False
+            if now >= next_announce:
+                self.service.network.router.announce(self.service.network.destination_hash)
+                admitted.refresh_path()
+                next_announce = now + announce_interval
+            admitted._stop.wait(.05)
+        return False
+
     def _run(self):
         prepared = None
         promoted = False
@@ -129,19 +147,10 @@ class AdmissionHandoff:
                             # the bootstrap control carrier. Repeat standard
                             # announces to tolerate unreliable DATAGRAM loss.
                             end = min(time.monotonic()+10, self.authority.transition_deadline)
-                            next_announce = time.monotonic()+1
-                            # The peer may retire bootstrap as soon as it sees
-                            # our admitted announce. That is independent of our
-                            # confirmation in the opposite direction.
-                            while not admitted.peer_seen.is_set():
-                                if admitted._stop.is_set() or time.monotonic() >= end:
-                                    admitted.close()
-                                    raise ValidationError("Admitted peer adapter was not confirmed")
-                                if time.monotonic() >= next_announce:
-                                    self.service.network.router.announce(self.service.network.destination_hash)
-                                    next_announce = time.monotonic()+1
-                                admitted._stop.wait(.05)
-                            if not admitted.peer_seen.is_set() or admitted._stop.is_set():
+                            # A signature-only native sighting does not install
+                            # the main interpreter's recipient ratchet or route.
+                            if not self._await_main_ready(admitted, deadline=end):
+                                admitted.close()
                                 raise ValidationError("Admitted path retired before confirmation")
                             from .direct_relationship import record_success
                             with self.service._dispatch_lock:

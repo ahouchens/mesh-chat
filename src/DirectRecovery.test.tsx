@@ -1,7 +1,14 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 const api = vi.hoisted(() => ({ serviceCommand: vi.fn() }));
-vi.mock("./api", () => api);
+vi.mock("./api", async () => {
+  const { admittedApiFixture } = await import("./test/admitted-api");
+  return admittedApiFixture(({
+  ...api,
+  coreApiRecoveryTransfer: async (action: string, params: Record<string, unknown>) =>
+    api.serviceCommand(action === "import" ? "import_recovery_update" : "export_recovery_update", params),
+}));
+});
 import { DirectRecovery } from "./DirectRecovery";
 const peer = { relationship_id: "opaque-peer", workspace_id: "workspace", peer_device_id: "device1234",
   state: "connection_update_needed", native_engine_healthy: false, authenticated_peer_live: false, rns_ready: false };

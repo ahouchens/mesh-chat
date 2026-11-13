@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Private application host command envelope v1",
+  "description": "Authenticated application bootstrap only. Ordinary public owner grants never bind the native port.",
+  "type": "object",
+  "properties": {
+    "api_version": {
+      "const": 1
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "operation": {
+      "const": "native.command"
+    },
+    "params": {
+      "type": "object",
+      "properties": {
+        "command": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9_]+$"
+        },
+        "payload": {
+          "type": "object",
+          "maxProperties": 256
+        }
+      },
+      "required": [
+        "command",
+        "payload"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "api_version",
+    "request_id",
+    "operation",
+    "params"
+  ],
+  "additionalProperties": false
+}

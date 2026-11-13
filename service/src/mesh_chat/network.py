@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import ipaddress
+import signal
 import socket
+import sys
 import threading
 import time
 from collections import deque
@@ -48,6 +50,30 @@ CALLBACK_CANCEL_TIMEOUT = 0.1
 
 class EmbeddedRuntimeTermination(RuntimeError):
     """A process-level RNS exit converted into an embedded-runtime failure."""
+
+
+class _EmbeddedSignals:
+    """Keep worker-thread constructors from claiming process signal handlers."""
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(signal, name)
+
+    def signal(self, number: int, handler: Any) -> Any:
+        if (number in {signal.SIGINT, signal.SIGTERM} and callable(handler)
+                and threading.current_thread() is not threading.main_thread()):
+            return signal.getsignal(number)
+        return signal.signal(number, handler)
+
+
+def _install_embedded_signal_guards() -> None:
+    # These pinned constructors unconditionally register SIGINT/SIGTERM. A
+    # fresh profile is created on an IPC worker, where Python rejects that
+    # registration. Scope the adapter to the two upstream module references;
+    # never replace the host's process-global signal.signal function.
+    for runtime in (RNS.Reticulum, LXMF.LXMRouter):
+        module = sys.modules[runtime.__module__]
+        if getattr(module, "signal", None) is signal:
+            module.signal = _EmbeddedSignals()
 
 
 def _local_ipv4_entries(rns_module: Any = RNS) -> list[tuple[str, int]]:
@@ -236,6 +262,9 @@ def install_embedded_runtime_guards(rns_module: Any = RNS) -> None:
     entire app. A failed interface is isolated and marked unavailable; other
     fatal exits become catchable startup errors.
     """
+
+    if rns_module is RNS:
+        _install_embedded_signal_guards()
 
     # Upstream TCP clients synchronously wait for their first connection by
     # default. Invitations can contain several signed return routes, so adding
@@ -508,10 +537,22 @@ class ReticulumNetwork:
         bootstrap = getattr(self, "_direct_bootstrap", None)
         if bootstrap is not None and bootstrap.peer == destination_hash and bootstrap.ready:
             return True
+        return self._main_recipient_ready(destination_hash)
+
+    def _main_recipient_ready(self, destination_hash: bytes) -> bool:
         return (
             RNS.Identity.recall(destination_hash) is not None
             and RNS.Identity.get_ratchet(destination_hash) is not None
         )
+
+    def recipient_ready_for_fields(
+        self, destination_hash: bytes, fields: dict[int, Any], text: str = ""
+    ) -> bool:
+        """Check readiness for the carrier that can send this exact payload."""
+        bootstrap = getattr(self, "_direct_bootstrap", None)
+        if bootstrap is not None and bootstrap.ready and bootstrap.handles(destination_hash, fields, text):
+            return True
+        return self._main_recipient_ready(destination_hash)
 
     def path_known(self, destination_hash: bytes) -> bool:
         return bool(RNS.Transport.has_path(destination_hash))
@@ -940,13 +981,9 @@ class ReticulumNetwork:
             return bootstrap.send(logical_id=logical_id, recipient_public_key=recipient_public_key,
                 recipient_destination=recipient_destination, text=text, fields=fields, propagated=propagated)
         with self._send_lock:
-            ready = self.recipient_ready(recipient_destination)
-            if bootstrap is not None and bootstrap.peer == recipient_destination:
-                # A ratchet in the isolated engine cannot authorize a send in
-                # this interpreter, particularly an ordinary workspace message.
-                ready = (RNS.Identity.recall(recipient_destination) is not None
-                         and RNS.Identity.get_ratchet(recipient_destination) is not None)
-            if not ready:
+            # Delegation was not selected. A newly ready bootstrap carrier
+            # cannot provide the main interpreter's LXMF ratchet.
+            if not self._main_recipient_ready(recipient_destination):
                 self.request_path(recipient_destination)
                 raise RecipientKeysUnavailable("Recipient ratchet is not available")
             recipient_identity = RNS.Identity.recall(recipient_destination)

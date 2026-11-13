@@ -26,9 +26,11 @@ ANDROID_ACTIVITY = (
 
 
 def _rule(css: str, selector: str) -> str:
-    match = re.search(rf"{re.escape(selector)}\s*\{{([^}}]*)\}}", css)
-    assert match is not None, f"Missing {selector} rule"
-    return match.group(1)
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.DOTALL)
+    for match in re.finditer(r"([^{}]+)\{([^{}]*)\}", css):
+        if selector in (value.strip() for value in match.group(1).split(",")):
+            return match.group(2)
+    raise AssertionError(f"Missing {selector} rule")
 
 
 def test_conversation_layout_keeps_messages_flexible_without_optional_banner() -> None:
@@ -55,6 +57,29 @@ def test_shell_bounds_independent_conversation_and_message_scrollers() -> None:
     assert "overflow-y: auto" in _rule(css, ".message-list")
     assert "height: 100dvh" in css
     assert "max-height: 100dvh" in css
+
+
+def test_profile_catalog_shell_preserves_the_available_scroll_height() -> None:
+    css = STYLES.read_text(encoding="utf-8")
+    wrapper = _rule(css, ".runtime-profile-shell")
+    child = _rule(css, ".runtime-profile-shell > .app-shell")
+    assert "display: flex" in wrapper
+    assert "flex-direction: column" in wrapper
+    assert "height: 100%" in wrapper
+    assert "max-height: 100%" in wrapper
+    for rule in (wrapper, child):
+        assert "min-height: 0" in rule
+        assert "overflow: hidden" in rule
+    assert "flex: 1" in child
+    assert "height: auto" in child
+    assert "min-height: 0" in _rule(css, ".main-pane")
+    assert "overflow: hidden" in _rule(css, ".main-pane")
+
+
+def test_rule_lookup_does_not_confuse_a_descendant_with_the_base_shell() -> None:
+    css = ".runtime-profile-shell > .app-shell { height: auto; } .app-shell { min-height: 0; overflow: hidden; }"
+    assert "min-height: 0" in _rule(css, ".app-shell")
+    assert "height: auto" not in _rule(css, ".app-shell")
 
 
 def test_dark_theme_defines_an_explicit_dark_surface_palette() -> None:
@@ -110,7 +135,7 @@ def test_desktop_close_exits_and_second_launch_restores_main_window() -> None:
     assert 'tauri::async_runtime::spawn(async move {' in source
     deadline = re.search(
         r"std::thread::spawn\(move \|\| \{"
-        r".*?std::thread::sleep\(Duration::from_secs\(2\)\);"
+        r"\s*std::thread::sleep\(Duration::from_secs\(2\)\);"
         r".*?retire_service_child\(&deadline_state\);"
         r".*?deadline_app\.exit\(0\);"
         r".*?\}\);",
@@ -122,7 +147,7 @@ def test_desktop_close_exits_and_second_launch_restores_main_window() -> None:
     assert 'let _ = request(' in source
     assert '.child\n        .try_lock()' in source
     assert 'sidecar_pid: Arc<Mutex<Option<u32>>>' in source
-    assert 'terminate_windows_process_tree(pid);' in source
+    assert 'terminate_windows_process_tree(self.pid);' in source
     assert '.join("taskkill.exe")' in source
     assert '.arg("/PID")' in source
     assert '.arg("/T")' in source
@@ -145,12 +170,29 @@ def test_desktop_close_exits_and_second_launch_restores_main_window() -> None:
 
 def test_workspace_history_settings_expose_honest_accessible_states() -> None:
     source = APP.read_text(encoding="utf-8")
-    for command in (
-        "get_workspace_history_status",
-        "start_workspace_history",
-        "cancel_workspace_history",
-    ):
-        assert command in source
+    history = source.split("export function WorkspaceHistorySettingsContent(", 1)[1].split(
+        "\nfunction CreateWorkspaceChannelDialog(", 1
+    )[0]
+    labels = source.split("function workspaceHistoryStateLabel(", 1)[1].split(
+        "export function WorkspaceHistorySettingsContent(", 1
+    )[0]
+    adapter = source.split("async function fetchWorkspaceHistory(", 1)[1].split(
+        "\nasync function fetchWorkspaceConnection(", 1
+    )[0]
+    api = APP.with_name("api.ts").read_text(encoding="utf-8").split(
+        "export async function coreApiWorkspaceHistory(", 1
+    )[1].split("\nexport async function coreApiWorkspaceAccessRecommendation(", 1)[0]
+
+    assert "fetchWorkspaceHistory(" in history
+    for action in ('"status"', '"start"', '"cancel"'):
+        assert action in history
+    assert "conversation: conversationId" in history
+    assert "coreApiWorkspaceHistory(" in adapter
+    assert "workspace.core_handle" in adapter
+    assert 'coreApiRequest("workspace.history",' in api
+    assert "profile: profile.profile, workspace, action, ...params" in api
+    assert "idempotencyKey: string = newOperationId()" in api
+    assert "serviceCommand(" not in history
     for state in (
         "Requesting history",
         "Waiting for an eligible peer or route",
@@ -162,7 +204,7 @@ def test_workspace_history_settings_expose_honest_accessible_states() -> None:
         "Fork-suspended",
         "Up to date with known history",
     ):
-        assert state in source
-    assert 'aria-live="polite"' in source
-    assert "{history.notice}" in source
-    assert "Cancel local job" in source
+        assert state in labels
+    assert 'role="status" aria-live="polite"' in history
+    assert "{history.notice}" in history
+    assert "Cancel local job" in history

@@ -15,7 +15,8 @@ vi.mock("@tauri-apps/plugin-deep-link", () => ({
 }));
 vi.mock("@tauri-apps/api/app", () => ({ onBackButtonPress: vi.fn() }));
 
-import { beginCallAudio, lockService, onInvitation, pickInvitationFile, requestMediaPermission, type ServiceEvent } from "./api";
+import { beginCallAudio, coreApiBootstrapPreview, coreApiCreateProfile, coreApiRequest, initializeService, lockService, onInvitation, pickInvitationFile, requestMediaPermission, serviceCommand, type ServiceEvent } from "./api";
+import { composerRequests } from "./core-composer";
 import { loadPairingResume, savePairingResume } from "./pairing-resume";
 
 it("forgets encrypted pairing secrets when locking the service", async () => {
@@ -30,6 +31,130 @@ afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   vi.clearAllMocks();
+});
+
+it("loads the initial display snapshot from Core after native initialization", async () => {
+  const scoped = { calls: [{ id: "call-id", core_handle: "original-call-handle" }] };
+  tauri.invoke.mockResolvedValueOnce({ calls: [{ id: "call-id" }] }).mockResolvedValueOnce(scoped);
+  await expect(initializeService()).resolves.toEqual(scoped);
+  expect(tauri.invoke.mock.calls).toEqual([
+    ["initialize_service", { displayName: null }],
+    ["core_api_request", { operation: "application.snapshot", params: {}, idempotencyKey: null }],
+  ]);
+});
+
+it.each(["request", "composer enqueue"] as const)("preserves typed %s errors and retry metadata without a legacy resend", async (kind) => {
+  tauri.invoke.mockRejectedValue(JSON.stringify({ code: "rate_limited", retry_after_ms: 250 }));
+  const revision = "a".repeat(64);
+  const request = kind === "composer enqueue"
+    ? composerRequests({ profile: "profile-handle", peer: "peer-handle" }).enqueue(revision)
+    : coreApiRequest("workspace.timeline_mutation", {}, "operation");
+  await expect(request).rejects.toMatchObject({ name: "ServiceCommandError", code: "rate_limited", retry_after_ms: 250 });
+  expect(tauri.invoke.mock.calls).toEqual([["core_api_request", kind === "composer enqueue" ? {
+    operation: "message.enqueue_draft",
+    params: { profile: "profile-handle", recipient: "peer-handle", draft_revision: revision },
+    idempotencyKey: revision,
+  } : { operation: "workspace.timeline_mutation", params: {}, idempotencyKey: "operation" }]]);
+});
+
+it("preserves unavailable as a Core outcome without treating it as a missing host", async () => {
+  tauri.invoke.mockRejectedValue(JSON.stringify({ code: "unavailable", retry_after_ms: null }));
+  await expect(serviceCommand("native_status")).rejects.toMatchObject({ code: "unavailable", retry_after_ms: null });
+  expect(tauri.invoke).toHaveBeenCalledTimes(1);
+});
+
+it("serializes the caller's retained profile-create key without inventing profile authority", async () => {
+  tauri.invoke.mockResolvedValue({ display_name: "Alex" });
+  await coreApiCreateProfile("Alex", "profile-creation-operation");
+  expect(tauri.invoke).toHaveBeenCalledTimes(1);
+  expect(tauri.invoke).toHaveBeenCalledWith("core_api_request", {
+    operation: "profile.create", params: { display_name: "Alex" }, idempotencyKey: "profile-creation-operation",
+  });
+});
+
+it.each([
+  ["personal", { display_name: "Taylor", identity_hash: "11".repeat(16), destination_hash: "22".repeat(16), fingerprint: "AAAA BBBB", hints: [], expires_at: 2_000_000_000 }],
+  ["workspace", { name: "Lakewatcher", description: "Field coordination", owner_fingerprint: "AAAA BBBB", member_count: 1, retention_days: 90, expires_at: 2_000_000_000 }],
+  ["device_link", { name: "Lakewatcher", member_display_name: "Alex", sponsor_fingerprint: "AAAA BBBB", device_count: 1, expires_at: 2_000_000_000 }],
+] as const)("serializes trusted pre-profile %s verification without profile or mutation key", async (kind, preview) => {
+  tauri.invoke.mockResolvedValue({ kind, preview });
+  await expect(coreApiBootstrapPreview(kind, "signed-document")).resolves.toEqual(preview);
+  expect(tauri.invoke).toHaveBeenCalledTimes(1);
+  expect(tauri.invoke).toHaveBeenCalledWith("core_api_request", {
+    operation: "bootstrap.preview", params: { kind, document: "signed-document" }, idempotencyKey: null,
+  });
+});
+
+it.each([
+  { kind: "workspace", preview: {} },
+  { kind: "personal", preview: null },
+  { kind: "personal", preview: {} },
+])("rejects an invalid bootstrap preview result without falling back", async (result) => {
+  tauri.invoke.mockResolvedValue(result);
+  await expect(coreApiBootstrapPreview("personal", "signed-document")).rejects.toMatchObject({ code: "core_api_protocol" });
+  expect(tauri.invoke).toHaveBeenCalledTimes(1);
+});
+
+describe("workspace composite operation envelopes", () => {
+  it.each([
+    ["coreApiWorkspaceHistory", "workspace.history", "status", { conversation: "conversation-uuid" }],
+    ["coreApiWorkspaceHistory", "workspace.history", "start", { conversation: "conversation-uuid" }],
+    ["coreApiWorkspaceHistory", "workspace.history", "cancel", { conversation: "conversation-uuid" }],
+    ["coreApiWorkspaceHistory", "workspace.history", "tombstones", { conversation: "conversation-uuid", cursor: null, limit: 50 }],
+    ["coreApiWorkspaceConnection", "workspace.connection", "reconnect_status", {}],
+    ["coreApiWorkspaceAccessRecommendation", "workspace.access_recommendation", "list", {}],
+  ] as const)("serializes %s %s %s with its required key", async (method, operation, action, params) => {
+    const api = await import("./api");
+    tauri.invoke.mockImplementation(async (command: string) => command === "core_api_profile"
+      ? { profile: "profile-handle" } : { result: {} });
+    const request = api[method] as (workspace: string, action: string, params: Record<string, unknown>, key?: string) => Promise<unknown>;
+    await request("workspace-handle", action, params);
+    expect(tauri.invoke).toHaveBeenLastCalledWith("core_api_request", {
+      operation, params: { profile: "profile-handle", workspace: "workspace-handle", action, ...params },
+      idempotencyKey: expect.any(String),
+    });
+    const generated = tauri.invoke.mock.calls.at(-1)![1].idempotencyKey;
+    expect(generated).toMatch(/^[0-9a-f-]{36}$/);
+    await request("workspace-handle", action, params, "retained-operation-key");
+    expect(tauri.invoke.mock.calls.at(-1)![1].idempotencyKey).toBe("retained-operation-key");
+  });
+});
+
+it("routes snapshot reads through the application facade", async () => {
+  const state = { profile: { display_name: "Alex" }, contacts: [], messages: [] };
+  tauri.invoke.mockResolvedValue(state);
+  await expect(serviceCommand("snapshot")).resolves.toEqual(state);
+  expect(tauri.invoke).toHaveBeenCalledWith("core_api_request", {
+    operation: "application.snapshot",
+    params: {},
+    idempotencyKey: null,
+  });
+  expect(tauri.invoke).not.toHaveBeenCalledWith("service_command", expect.anything());
+});
+
+it("routes other service commands through the application adapter", async () => {
+  const saved = { id: "message-1", text: "hello" };
+  tauri.invoke.mockResolvedValue(saved);
+  await expect(serviceCommand("send_message", { contact_id: "contact-1", text: "hello" }))
+    .resolves.toEqual(saved);
+  expect(tauri.invoke).toHaveBeenCalledWith("core_api_request", {
+    operation: "native.command",
+    params: { command: "send_message", payload: { contact_id: "contact-1", text: "hello" } },
+    idempotencyKey: null,
+  });
+  expect(tauri.invoke).not.toHaveBeenCalledWith("service_command", expect.anything());
+});
+
+it("falls back to the legacy snapshot only when the facade is unavailable", async () => {  const state = { profile: { display_name: "Alex" }, contacts: [], messages: [] };
+  tauri.invoke.mockImplementation(async (command: string) => {
+    if (command === "core_api_request") throw new Error("core_api_unavailable");
+    return state;
+  });
+  await expect(serviceCommand("snapshot")).resolves.toEqual(state);
+  expect(tauri.invoke).toHaveBeenCalledWith("service_command", {
+    command: "snapshot",
+    payload: {},
+  });
 });
 
 it("passes the chosen call media to Android permission and foreground-service commands", async () => {

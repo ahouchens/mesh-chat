@@ -16,16 +16,22 @@ import org.webrtc.NetworkMonitor
 import org.webrtc.PeerConnection
 import org.webrtc.PeerConnectionFactory
 import org.webrtc.RtpReceiver
+import org.webrtc.RTCStats
 import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
 import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.Executors
-import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.RejectedExecutionException
+import java.security.MessageDigest
+import java.net.InetAddress
+import java.util.UUID
 
 /**
  * Native WebRTC data-channel ownership for the background availability mode.
@@ -51,21 +57,44 @@ object NativeWebRtcHost {
     )
 
     private class Session(
-        val pc: PeerConnection,
-        val role: String,
+        val lease: NativeSessionReservations.Lease,
     ) {
+        val id get() = lease.id
+        lateinit var pc: PeerConnection
         val channels = ConcurrentHashMap<String, DataChannel>()
         @Volatile var expectedChannels: Set<String> = emptySet()
         @Volatile var gathering: CountDownLatch? = null
         @Volatile var closed = false
+        val disposed = CountDownLatch(1)
         val receivedPackets = AtomicLong()
         val receivedControls = AtomicLong()
-        val callbacks = Executors.newSingleThreadExecutor { runnable ->
-            Thread(runnable, "mesh-webrtc-channel-events").apply { isDaemon = true }
-        }
+        val receivedBytes = AtomicLong()
+        val enqueuedPackets = AtomicLong()
+        val enqueuedControls = AtomicLong()
+        val enqueuedBytes = AtomicLong()
+        val sampleSequence = AtomicLong()
+        val sampling = AtomicReference<Any?>(null)
+        val retirement = Any()
+        val registeredChannels = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<DataChannel, Boolean>())
+        val disposal = NativePeerDisposal<DataChannel>(
+            closeChannel = { channel ->
+                if (registeredChannels.contains(channel)) channel.unregisterObserver()
+                channel.close()
+            }, disposeChannel = { it.dispose() }, closePeer = { pc.close() }, disposePeer = { pc.dispose() })
+        val callbacksDrained = AtomicBoolean()
+        val disposing = AtomicBoolean()
+        val callbacks = NativeCallbackQueue({ notifyPython("overflow", id, "") })
     }
 
     private val sessions = ConcurrentHashMap<String, Session>()
+    private val retiringSessions = ConcurrentHashMap<String, Session>()
+    private val disposalExecutor = ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS,
+        ArrayBlockingQueue<Runnable>(MAX_SESSIONS), { task ->
+            Thread(task, "mesh-webrtc-disposal").apply { isDaemon = true }
+        })
+    private val reservations = NativeSessionReservations(MAX_SESSIONS)
+    private val adapterEpoch = UUID.randomUUID().toString().replace("-", "")
+    private val sampleClockOriginNanos = System.nanoTime()
     private val mainHandler = Handler(Looper.getMainLooper())
     @Volatile private var factory: PeerConnectionFactory? = null
     @Volatile private var initialized = false
@@ -107,27 +136,28 @@ object NativeWebRtcHost {
 
     @JvmStatic
     fun createOffer(sessionId: String, iceJson: String, channelsJson: String): String {
-        return retryEmptyDescription(sessionId) { createOfferAttempt(sessionId, iceJson, channelsJson) }
+        return createReserved(sessionId) { lease ->
+            retryEmptyDescription(lease) { createOfferAttempt(lease, iceJson, channelsJson) }
+        }
     }
 
-    private fun createOfferAttempt(sessionId: String, iceJson: String, channelsJson: String): String {
+    private fun createOfferAttempt(lease: NativeSessionReservations.Lease, iceJson: String, channelsJson: String): String {
+        val sessionId = lease.id
         return try {
             val factory = requireFactory()
-            if (sessions.size >= MAX_SESSIONS) return error("native_webrtc_session_limit")
             val specs = parseChannels(channelsJson)
             if (specs.none { it.label == "mesh-reticulum" && it.binary }) {
                 return error("native_webrtc_missing_data_channel")
             }
-            val pc = createPeerConnection(factory, iceJson, sessionId, "offer")
-            val session = Session(pc, "offer")
-            sessions[sessionId] = session
+            val session = allocateSession(factory, iceJson, lease)
+            val pc = session.pc
             synchronized(session) {
                 for (spec in specs) {
                     val channel = pc.createDataChannel(spec.label, dataChannelInit(spec))
                         ?: throw IllegalStateException("native_webrtc_channel_failed")
-                    registerChannel(sessionId, session, spec.label, channel)
+                    registerChannel(session, spec.label, channel)
                 }
-                val offer = createLocalOffer(sessionId, session)
+                val offer = createLocalOffer(session)
                 val description = offer.description
                 check(!session.closed) { "native_webrtc_session_closed" }
                 check(description.isNotBlank()) { "native_webrtc_offer_empty" }
@@ -135,7 +165,7 @@ object NativeWebRtcHost {
             }
         } catch (error: Throwable) {
             Log.e(TAG, "createOffer failed (${error.javaClass.simpleName})")
-            close(sessionId)
+            cancelSession(sessionId)
             error("native_webrtc_offer_failed")
         }
     }
@@ -147,28 +177,29 @@ object NativeWebRtcHost {
         iceJson: String,
         expectedChannelsJson: String,
     ): String {
-        return retryEmptyDescription(sessionId) {
-            acceptOfferAttempt(sessionId, offerSdp, iceJson, expectedChannelsJson)
+        return createReserved(sessionId) { lease ->
+            retryEmptyDescription(lease) {
+                acceptOfferAttempt(lease, offerSdp, iceJson, expectedChannelsJson)
+            }
         }
     }
 
     private fun acceptOfferAttempt(
-        sessionId: String,
+        lease: NativeSessionReservations.Lease,
         offerSdp: String,
         iceJson: String,
         expectedChannelsJson: String,
     ): String {
+        val sessionId = lease.id
         return try {
             val factory = requireFactory()
-            if (sessions.size >= MAX_SESSIONS) return error("native_webrtc_session_limit")
             val specs = parseChannels(expectedChannelsJson)
             if (specs.none { it.label == "mesh-reticulum" && it.binary }) {
                 return error("native_webrtc_missing_data_channel")
             }
             val expected = specs.map { it.label }.toSet()
-            val pc = createPeerConnection(factory, iceJson, sessionId, "answer")
-            val session = Session(pc, "answer")
-            sessions[sessionId] = session
+            val session = allocateSession(factory, iceJson, lease)
+            val pc = session.pc
             session.expectedChannels = expected
             synchronized(session) {
                 awaitSetRemote(pc, SessionDescription(SessionDescription.Type.OFFER, offerSdp))
@@ -182,7 +213,7 @@ object NativeWebRtcHost {
             }
         } catch (error: Throwable) {
             Log.e(TAG, "acceptOffer failed (${error.javaClass.simpleName})")
-            close(sessionId)
+            cancelSession(sessionId)
             error("native_webrtc_answer_failed")
         }
     }
@@ -208,7 +239,7 @@ object NativeWebRtcHost {
             val session = sessions[sessionId] ?: return error("native_webrtc_session_missing")
             synchronized(session) {
                 check(!session.closed) { "native_webrtc_session_closed" }
-                val offer = createLocalOffer(sessionId, session)
+                val offer = createLocalOffer(session)
                 success(offer.description ?: "")
             }
         } catch (error: Throwable) {
@@ -225,7 +256,12 @@ object NativeWebRtcHost {
             synchronized(session) {
                 if (session.closed) return false
                 val channel = session.channels["mesh-reticulum"] ?: return false
-                channel.send(DataChannel.Buffer(ByteBuffer.wrap(packet), true))
+                channel.send(DataChannel.Buffer(ByteBuffer.wrap(packet), true)).also { accepted ->
+                    if (accepted) {
+                        session.enqueuedPackets.incrementAndGet()
+                        session.enqueuedBytes.addAndGet(packet.size.toLong())
+                    }
+                }
             }
         } catch (error: Throwable) {
             Log.e(TAG, "send failed (${error.javaClass.simpleName})")
@@ -242,7 +278,13 @@ object NativeWebRtcHost {
             synchronized(session) {
                 if (session.closed) return false
                 val channel = session.channels[label] ?: return false
-                channel.send(DataChannel.Buffer(ByteBuffer.wrap(text.toByteArray(Charsets.UTF_8)), false))
+                val bytes = text.toByteArray(Charsets.UTF_8)
+                channel.send(DataChannel.Buffer(ByteBuffer.wrap(bytes), false)).also { accepted ->
+                    if (accepted) {
+                        session.enqueuedControls.incrementAndGet()
+                        session.enqueuedBytes.addAndGet(bytes.size.toLong())
+                    }
+                }
             }
         } catch (error: Throwable) {
             Log.e(TAG, "sendControl failed (${error.javaClass.simpleName})")
@@ -252,29 +294,101 @@ object NativeWebRtcHost {
 
     @JvmStatic
     fun close(sessionId: String) {
-        val session = sessions.remove(sessionId) ?: return
-        session.closed = true
-        // Retire routing immediately. Disposal may wait for an in-flight SDP
-        // operation, so it must never block Android's UI/Service thread.
-        session.callbacks.execute {
-          synchronized(session) {
-            for (channel in session.channels.values) {
-                // Fence callbacks before disposing their native pointer.
-                try { channel.unregisterObserver() } catch (_: Throwable) { }
-                disposeUnusedChannel(channel)
+        val lease = cancelSession(sessionId) ?: return
+        val remaining = if (Looper.myLooper() == Looper.getMainLooper()) 0L else 5_000L
+        check(lease.awaitRetired(remaining)) { "native_webrtc_cleanup_pending" }
+        if (lease.claimRetirementNotification()) notifyPython("closed", sessionId, "")
+    }
+
+    private fun cancelSession(sessionId: String): NativeSessionReservations.Lease? {
+        val lease = reservations.cancel(sessionId) ?: return null
+        (sessions[sessionId] ?: retiringSessions[sessionId])?.let(::retireSession)
+        return lease
+    }
+
+    private fun retireSession(session: Session) {
+        synchronized(session.retirement) {
+            if (session.disposed.count == 0L) return
+            retiringSessions.putIfAbsent(session.id, session)
+            sessions.remove(session.id, session)
+            session.closed = true
+            // Drain callbacks before disposing pointers they may still observe.
+            session.callbacks.close {
+                session.callbacksDrained.set(true)
+                scheduleDisposal(session)
             }
-            session.channels.clear()
-            try { session.pc.close() } catch (_: Throwable) { }
-            try { session.pc.dispose() } catch (_: Throwable) { }
-          }
+            if (session.callbacksDrained.get()) scheduleDisposal(session)
         }
-        session.callbacks.shutdown()
-        notifyPython("closed", sessionId, "")
+    }
+
+    private fun scheduleDisposal(session: Session) {
+        synchronized(session.retirement) {
+            if (session.closed && !session.callbacksDrained.get()) return
+            if (session.disposed.count == 0L && session.disposal.pendingChannels() == 0) return
+            if (!session.closed && session.disposal.pendingDiscards() == 0) return
+            if (!session.disposing.compareAndSet(false, true)) return
+        }
+        try {
+            disposalExecutor.execute {
+                var completed = false
+                try {
+                    synchronized(session) {
+                        if (session.closed && session.callbacksDrained.get()) disposeSession(session)
+                        else if (!session.closed) session.disposal.disposeDiscards()
+                        completed = true
+                    }
+                } catch (_: Throwable) {
+                    // Failed discarded channels also remain owned by this peer.
+                    cancelSession(session.id)
+                    notifyPython("overflow", session.id, "")
+                } finally {
+                    session.disposing.set(false)
+                    if (completed && ((session.closed && session.callbacksDrained.get() && session.disposed.count != 0L)
+                        || session.disposal.pendingDiscards() > 0)) scheduleDisposal(session)
+                }
+            }
+        } catch (_: RejectedExecutionException) {
+            try {
+                cancelSession(session.id)
+                notifyPython("overflow", session.id, "")
+            } finally { session.disposing.set(false) }
+        }
+    }
+
+    private fun disposeSession(session: Session) {
+        if (!session.disposal.dispose()) return
+        session.channels.clear()
+        session.registeredChannels.clear()
+        synchronized(session.retirement) {
+            reservations.disposed(session.lease)
+            retiringSessions.remove(session.id, session)
+            session.disposed.countDown()
+        }
     }
 
     @JvmStatic
     fun closeAll() {
-        for (sessionId in sessions.keys.toList()) close(sessionId)
+        val leases = reservations.ids().mapNotNull(::cancelSession)
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        for (lease in leases) {
+            val remaining = if (Looper.myLooper() == Looper.getMainLooper()) 0L else
+                TimeUnit.NANOSECONDS.toMillis((deadline - System.nanoTime()).coerceAtLeast(0))
+            check(lease.awaitRetired(remaining)) { "native_webrtc_cleanup_pending" }
+            if (lease.claimRetirementNotification()) notifyPython("closed", lease.id, "")
+        }
+    }
+
+    /** Private qualification accounting includes asynchronous disposal leases. */
+    @JvmStatic
+    fun resourceAccounting(): String {
+        val counts = reservations.accounting()
+        val result = JSONObject().put("v", 1).put("complete", true)
+            .put("semantics", "native_allocation_leases")
+            .put("availability", JSONObject().apply {
+                for (name in counts.keys) put(name, true)
+            })
+        for ((name, count) in counts) result.put(name, count)
+        return JSONObject().put("ok", true).put("result", result).toString()
     }
 
     @JvmStatic
@@ -293,11 +407,61 @@ object NativeWebRtcHost {
         }
     }
 
+    /** Trusted qualification only; absent stats never imply a selected path. */
+    @JvmStatic
+    fun pathEvidence(sessionId: String, sampleRequest: String): String {
+        if (!NativePathEvidence.validRequest(sampleRequest)) return error("native_webrtc_inspection_failed")
+        val startedNanos = System.nanoTime()
+        if (Looper.myLooper() == Looper.getMainLooper()) return error("native_webrtc_inspection_wrong_thread")
+        val session = sessions[sessionId] ?: return error("native_webrtc_session_missing")
+        if (!isCurrent(session)) return error("native_webrtc_session_missing")
+        val samplingToken = Any()
+        if (!session.sampling.compareAndSet(null, samplingToken)) return error("native_webrtc_inspection_busy")
+        val invocation = NativePathEvidence.SamplingInvocation(sampleRequest, sampleClockOriginNanos,
+            startedNanos, session.sampling, samplingToken, { isCurrent(session) }, { System.nanoTime() })
+        try {
+            synchronized(session) {
+                if (!isCurrent(session)) {
+                    session.sampling.compareAndSet(samplingToken, null)
+                    return error("native_webrtc_session_missing")
+                }
+                session.pc.getStats { report ->
+                    invocation.collect { capturedNanos ->
+                        synchronized(session) {
+                            check(isCurrent(session) && session.sampling.get() === samplingToken)
+                            val sequence = session.sampleSequence.incrementAndGet()
+                            val application = JSONObject()
+                                .put("enqueued_packets", session.enqueuedPackets.get())
+                                .put("enqueued_controls", session.enqueuedControls.get())
+                                .put("enqueued_bytes", session.enqueuedBytes.get())
+                                .put("received_packets", session.receivedPackets.get())
+                                .put("received_controls", session.receivedControls.get())
+                                .put("received_bytes", session.receivedBytes.get())
+                            val value = NativePathEvidence.sample(sessionId, adapterEpoch, sequence,
+                                NativePathEvidence.sampledAt(sampleClockOriginNanos, capturedNanos), sampleRequest,
+                                session.pc.iceConnectionState().name.lowercase(),
+                                session.channels["mesh-reticulum"]?.state()?.name?.lowercase() ?: "missing",
+                                report.statsMap, application)
+                            check(value.opt("resource") == sessionId && value.opt("adapter_epoch") == adapterEpoch &&
+                                value.opt("sample_sequence") == sequence)
+                            value
+                        }
+                    }
+                }
+            }
+            // Timeout leaves custody with the original callback until it finishes.
+            if (!invocation.await()) return error("native_webrtc_inspection_timeout")
+            if (!isCurrent(session)) return error("native_webrtc_session_missing")
+            return invocation.response() ?: error("native_webrtc_inspection_failed")
+        } catch (_: Throwable) {
+            return error("native_webrtc_inspection_failed")
+        }
+    }
+
     private fun createPeerConnection(
         factory: PeerConnectionFactory,
         iceJson: String,
-        sessionId: String,
-        role: String,
+        session: Session,
     ): PeerConnection {
         val ice = JSONObject(iceJson)
         val configuration = PeerConnection.RTCConfiguration(iceServers(ice))
@@ -314,8 +478,55 @@ object NativeWebRtcHost {
         } else {
             PeerConnection.IceTransportsType.ALL
         }
-        return factory.createPeerConnection(configuration, observer(sessionId, role))
+        return factory.createPeerConnection(configuration, observer(session))
             ?: throw IllegalStateException("native_webrtc_peer_failed")
+    }
+
+    private fun createReserved(sessionId: String, create: (NativeSessionReservations.Lease) -> String): String {
+        val lease = reservations.reserve(sessionId) ?: return error("native_webrtc_session_limit")
+        try {
+            val result = create(lease)
+            if (!JSONObject(result).optBoolean("ok")) {
+                cancelSession(sessionId)
+                return result
+            }
+            if (!reservations.active(lease)) return error("native_webrtc_session_closed")
+            return result
+        } catch (_: Throwable) {
+            cancelSession(sessionId)
+            return error("native_webrtc_creation_failed")
+        } finally {
+            reservations.finishCreation(lease)
+        }
+    }
+
+    private fun allocateSession(
+        factory: PeerConnectionFactory,
+        iceJson: String,
+        lease: NativeSessionReservations.Lease,
+    ): Session {
+        check(reservations.beginAllocation(lease)) { "native_webrtc_session_closed" }
+        val session = Session(lease)
+        try {
+            session.pc = createPeerConnection(factory, iceJson, session)
+        } catch (failure: Throwable) {
+            reservations.disposed(lease)
+            session.callbacks.close { }
+            throw failure
+        }
+        sessions[lease.id] = session
+        if (!reservations.active(lease)) {
+            retireSession(session)
+            throw IllegalStateException("native_webrtc_session_closed")
+        }
+        return session
+    }
+
+    private fun isCurrent(session: Session): Boolean =
+        !session.closed && sessions[session.id] === session && reservations.active(session.lease)
+
+    private fun notifyCurrent(session: Session, event: String, data: String) {
+        if (isCurrent(session)) notifyPython(event, session.id, data)
     }
 
     private fun iceServers(ice: JSONObject): List<PeerConnection.IceServer> {
@@ -336,22 +547,22 @@ object NativeWebRtcHost {
         return servers
     }
 
-    private fun observer(sessionId: String, role: String): PeerConnection.Observer =
+    private fun observer(session: Session): PeerConnection.Observer =
         object : PeerConnection.Observer {
             override fun onSignalingChange(state: PeerConnection.SignalingState) {
-                notifyPython("signaling", sessionId, state.name.lowercase())
+                notifyCurrent(session, "signaling", state.name.lowercase())
             }
 
             override fun onIceConnectionChange(state: PeerConnection.IceConnectionState) {
-                notifyPython("ice", sessionId, state.name.lowercase())
+                notifyCurrent(session, "ice", state.name.lowercase())
             }
 
             override fun onIceConnectionReceivingChange(receiving: Boolean) = Unit
 
             override fun onIceGatheringChange(state: PeerConnection.IceGatheringState) {
-                notifyPython("gathering", sessionId, state.name.lowercase())
+                notifyCurrent(session, "gathering", state.name.lowercase())
                 if (state == PeerConnection.IceGatheringState.COMPLETE) {
-                    sessions[sessionId]?.gathering?.countDown()
+                    session.gathering?.countDown()
                 }
             }
 
@@ -364,17 +575,21 @@ object NativeWebRtcHost {
             override fun onRemoveStream(stream: MediaStream) = Unit
 
             override fun onDataChannel(channel: DataChannel) {
-                val session = sessions[sessionId] ?: run {
-                    disposeUnusedChannel(channel)
+                if (!session.disposal.own(channel)) {
+                    cancelSession(session.id)
+                    notifyPython("overflow", session.id, "")
+                }
+                if (!isCurrent(session)) {
+                    discardChannel(session, channel)
                     return
                 }
-                enqueueChannelEvent(session, { disposeUnusedChannel(channel) }) {
+                enqueueChannelEvent(session, { discardChannel(session, channel) }) {
                     val label = channel.label()
                     if (label !in session.expectedChannels || label !in setOf("mesh-reticulum", "mesh-onboarding", "meshchat-reconnect")) {
-                        disposeUnusedChannel(channel)
+                        discardChannel(session, channel)
                         return@enqueueChannelEvent
                     }
-                    registerChannel(sessionId, session, label, channel)
+                    registerChannel(session, label, channel)
                 }
             }
 
@@ -384,15 +599,19 @@ object NativeWebRtcHost {
         }
 
     private fun registerChannel(
-        sessionId: String,
         session: Session,
         label: String,
         channel: DataChannel,
     ) {
+        if (!session.disposal.own(channel)) {
+            cancelSession(session.id)
+            throw IllegalStateException("native_webrtc_channel_limit")
+        }
         if (session.channels.putIfAbsent(label, channel) != null) {
-            disposeUnusedChannel(channel)
+            discardChannel(session, channel)
             return
         }
+        session.registeredChannels.add(channel)
         channel.registerObserver(object : DataChannel.Observer {
             override fun onBufferedAmountChange(previousAmount: Long) = Unit
 
@@ -403,37 +622,38 @@ object NativeWebRtcHost {
                 enqueueChannelEvent(session) {
                     if (session.channels[label] !== channel) return@enqueueChannelEvent
                     val state = channel.state()
-                    notifyPython("channel", sessionId, "$label:${state.name.lowercase()}")
+                    notifyCurrent(session, "channel", "$label:${state.name.lowercase()}")
                     if (label == "mesh-reticulum" && state == DataChannel.State.OPEN) {
-                        notifyPython("open", sessionId, label)
+                        notifyCurrent(session, "open", label)
                     }
                 }
             }
 
             override fun onMessage(buffer: DataChannel.Buffer) {
-                if (session.closed) return
+                if (!isCurrent(session)) return
                 val data = buffer.data
                 val limit = if (label == "mesh-reticulum") MESSAGE_LIMIT else CONTROL_LIMIT
                 if (!data.hasRemaining() || data.remaining() > limit) return
                 val bytes = ByteArray(data.remaining())
                 data.get(bytes)
+                session.receivedBytes.addAndGet(bytes.size.toLong())
                 val encoded = Base64.encodeToString(bytes, Base64.NO_WRAP)
                 if (label == "mesh-reticulum") {
                     session.receivedPackets.incrementAndGet()
-                    notifyPython("message", sessionId, encoded)
+                    notifyCurrent(session, "message", encoded)
                 } else {
                     session.receivedControls.incrementAndGet()
-                    notifyPython("control", sessionId, "$label:$encoded")
+                    notifyCurrent(session, "control", "$label:$encoded")
                 }
             }
         })
         if (channel.state() == DataChannel.State.OPEN) {
-            notifyPython("channel", sessionId, "$label:open")
-            if (label == "mesh-reticulum") notifyPython("open", sessionId, label)
+            notifyCurrent(session, "channel", "$label:open")
+            if (label == "mesh-reticulum") notifyCurrent(session, "open", label)
         }
     }
 
-    private fun createLocalOffer(sessionId: String, session: Session): SessionDescription {
+    private fun createLocalOffer(session: Session): SessionDescription {
         val pc = session.pc
         val constraints = MediaConstraints()
         val offer = awaitSdp { observer -> pc.createOffer(observer, constraints) }
@@ -442,22 +662,16 @@ object NativeWebRtcHost {
         return pc.localDescription ?: offer
     }
 
-    private fun disposeUnusedChannel(channel: DataChannel) {
-        try { channel.close() } catch (_: Throwable) { }
-        try { channel.dispose() } catch (_: Throwable) { }
+    private fun discardChannel(session: Session, channel: DataChannel) {
+        session.disposal.discard(channel)
+        scheduleDisposal(session)
     }
-
     private fun enqueueChannelEvent(session: Session, discarded: () -> Unit = {}, block: () -> Unit) {
-        if (session.closed) { discarded(); return }
-        try {
-            session.callbacks.execute {
-                synchronized(session) {
-                    if (!session.closed) block() else discarded()
-                }
+        if (!isCurrent(session)) { discarded(); return }
+        session.callbacks.submit(discarded) {
+            synchronized(session) {
+                if (isCurrent(session)) block() else discarded()
             }
-        } catch (_: RejectedExecutionException) {
-            // Closing owns disposal; queued state callbacks have no JNI work.
-            discarded()
         }
     }
 
@@ -541,7 +755,7 @@ object NativeWebRtcHost {
         latch.await(GATHER_TIMEOUT_SECONDS, TimeUnit.SECONDS)
     }
 
-    private fun retryEmptyDescription(sessionId: String, create: () -> String): String {
+    private fun retryEmptyDescription(lease: NativeSessionReservations.Lease, create: () -> String): String {
         // Android's network monitor can still be initializing when one-shot
         // gathering completes without candidates. Such SDP cannot bootstrap
         // our non-trickle exchange. Recreate the peer after a short bounded
@@ -557,12 +771,19 @@ object NativeWebRtcHost {
         try {
             val retryUntil = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
             repeat(3) { attempt ->
+                if (!reservations.active(lease)) return error("native_webrtc_session_closed")
                 val result = create()
                 val value = JSONObject(result)
                 if (!value.optBoolean("ok") || value.optString("sdp").lineSequence().any { it.startsWith("a=candidate:") }) {
                     return result
                 }
-                close(sessionId)
+                val session = sessions[lease.id] ?: return error("native_webrtc_session_closed")
+                retireSession(session)
+                // The same reservation is retained across this bounded
+                // gathering fallback. Cancellation cannot resurrect it.
+                if (!session.disposed.await(2, TimeUnit.SECONDS)) {
+                    return error("native_webrtc_disposal_timeout")
+                }
                 // Do not multiply the full gathering timeout when an unavailable
                 // TURN server or network genuinely has no usable candidates.
                 if (System.nanoTime() >= retryUntil) return error("native_webrtc_no_candidates")
@@ -570,7 +791,7 @@ object NativeWebRtcHost {
             }
             return error("native_webrtc_no_candidates")
         } catch (_: InterruptedException) {
-            close(sessionId)
+            cancelSession(lease.id)
             Thread.currentThread().interrupt()
             return error("native_webrtc_session_closed")
         } finally {
@@ -652,4 +873,145 @@ object NativeWebRtcHost {
         failure.get()?.let { throw it }
         return result.get() as T
     }
+}
+
+/** Pure conversion of current libwebrtc statistics, also used by JVM tests. */
+internal object NativePathEvidence {
+    private const val MAX_INTEGER = 9007199254740991L
+
+    class SamplingInvocation(private val request: String, private val originNanos: Long,
+                             private val startedNanos: Long, private val slot: AtomicReference<Any?>,
+                             private val token: Any, private val current: () -> Boolean,
+                             private val clock: () -> Long) {
+        private val claimed = AtomicBoolean()
+        private val done = CountDownLatch(1)
+        private val result = AtomicReference<String>()
+        private val capture = AtomicReference<Long>()
+
+        fun collect(build: (Long) -> JSONObject) {
+            if (!claimed.compareAndSet(false, true)) return
+            try {
+                check(current() && slot.get() === token)
+                val captured = clock()
+                val value = build(captured)
+                val raw = JSONObject().put("ok", true).put("result", value).toString()
+                check(current() && slot.get() === token &&
+                    NativePathEvidence.fresh(value, request, originNanos, startedNanos, captured, clock()))
+                capture.set(captured)
+                result.set(raw)
+            } catch (_: Throwable) {
+                // A failed original capture never publishes a successful sample.
+            } finally {
+                slot.compareAndSet(token, null)
+                done.countDown()
+            }
+        }
+
+        fun isComplete(): Boolean = done.count == 0L
+        fun await(): Boolean = done.await(2, TimeUnit.SECONDS)
+
+        fun response(): String? {
+            if (!isComplete() || !current()) return null
+            val captured = capture.get() ?: return null
+            val raw = result.get() ?: return null
+            return if (NativePathEvidence.fresh(JSONObject(raw).getJSONObject("result"), request, originNanos,
+                    startedNanos, captured, clock())) raw else null
+        }
+    }
+
+    fun validRequest(request: String): Boolean = request.length == 32 &&
+        request.all { it in '0'..'9' || it in 'a'..'f' }
+
+    fun sampledAt(originNanos: Long, capturedNanos: Long): Long {
+        val relative = capturedNanos - originNanos
+        require(relative >= 0)
+        return relative / 1_000_000
+    }
+
+    fun fresh(value: JSONObject, request: String, originNanos: Long, startedNanos: Long,
+              capturedNanos: Long, nowNanos: Long): Boolean {
+        val timestamp = value.opt("sampled_at_ms")
+        val echoed = value.opt("sample_request")
+        if (!validRequest(request) || echoed !is String || echoed != request ||
+            (timestamp !is Long && timestamp !is Int)) return false
+        val sampled = (timestamp as Number).toLong()
+        val relative = capturedNanos - originNanos
+        return relative >= 0 && capturedNanos - startedNanos in 0..2_000_000_000L &&
+            sampled in 0..MAX_INTEGER && sampled == relative / 1_000_000 &&
+            nowNanos - capturedNanos in 0..2_000_000_000L && nowNanos - startedNanos in 0..2_000_000_000L
+    }
+
+    fun sample(resource: String, epoch: String, sequence: Long, sampledAt: Long, sampleRequest: String,
+               ice: String, channel: String, stats: Map<String, RTCStats>, application: JSONObject): JSONObject {
+        require(validRequest(sampleRequest) && sampledAt in 0..MAX_INTEGER)
+        val transports = stats.values.filter { it.type == "transport" }
+        val selected = transports.mapNotNull { it.members["selectedCandidatePairId"] as? String }.toSet()
+        val transport = transports.singleOrNull { it.members["selectedCandidatePairId"] == selected.singleOrNull() }
+        var status = if (ice in setOf("connected", "completed") && selected.size != 1) "unsupported" else "not_selected"
+        val pair = if (selected.size == 1 && ice in setOf("connected", "completed")) {
+            runCatching {
+                selectedPair(resource, epoch, stats.getValue(selected.single()), stats)
+            }.getOrNull().also { status = if (it != null) "selected" else "unavailable" }
+        } else null
+        val availability = JSONObject().put("selected_pair", pair != null)
+            .put("relay_protocol", pair != null && pair.optString("relay_protocol") != "unknown")
+            .put("relay_socket", false)
+            .put("pair_bytes", pair != null && !pair.isNull("bytes_sent") && !pair.isNull("bytes_received"))
+            .put("rtt", pair != null && !pair.isNull("rtt_ms"))
+        val dtls = (transport?.members?.get("dtlsState") as? String)?.lowercase()
+            ?.takeIf { it in setOf("new", "connecting", "connected", "closed", "failed") } ?: "unknown"
+        return JSONObject().put("v", 1).put("resource", resource).put("adapter_epoch", epoch)
+            .put("sample_sequence", sequence).put("sampled_at_ms", sampledAt).put("sample_request", sampleRequest)
+            .put("status", status).put("ice_state", ice).put("dtls_state", dtls).put("channel_state", channel)
+            .put("pair", pair ?: JSONObject.NULL).put("application", application).put("availability", availability)
+            .also { require(it.toString().toByteArray(Charsets.UTF_8).size <= 16 * 1024) }
+    }
+
+    private fun selectedPair(resource: String, epoch: String, pair: RTCStats, stats: Map<String, RTCStats>): JSONObject {
+        require(pair.type == "candidate-pair" && pair.members["state"] == "succeeded")
+        val localStats = stats.getValue(pair.members["localCandidateId"] as String)
+        val remoteStats = stats.getValue(pair.members["remoteCandidateId"] as String)
+        require(localStats.type == "local-candidate" && remoteStats.type == "remote-candidate")
+        val local = candidate(localStats)
+        val remote = candidate(remoteStats)
+        // relayProtocol is the actual selected candidate statistic. A URL,
+        // configured policy or candidate.protocol cannot substitute for it.
+        val relay = if (local.getString("type") != "relay") "not_applicable" else {
+            (localStats.members["relayProtocol"] as? String)?.lowercase()
+                ?.takeIf { it in setOf("udp", "tcp", "tls") } ?: "unknown"
+        }
+        val material = "[${JSONObject.quote(epoch)},${JSONObject.quote(resource)},${canonical(local)},${canonical(remote)}]"
+        val token = MessageDigest.getInstance("SHA-256").digest(material.toByteArray(Charsets.US_ASCII))
+            .take(16).joinToString("") { "%02x".format(it.toInt() and 255) }
+        val rtt = (pair.members["currentRoundTripTime"] as? Number)?.toDouble()?.times(1000)
+            ?.takeIf { it.isFinite() && it in 0.0..3600000.0 }
+        return JSONObject().put("token", token).put("local", local).put("remote", remote)
+            .put("nominated", pair.members["nominated"] as? Boolean ?: JSONObject.NULL)
+            .put("relay_protocol", relay)
+            // Native RTCStats does not expose the actual client-to-TURN socket
+            // endpoints. Relayed ICE candidate endpoints are NOT that socket.
+            .put("relay_socket", JSONObject.NULL)
+            .put("bytes_sent", counter(pair.members["bytesSent"]) ?: JSONObject.NULL)
+            .put("bytes_received", counter(pair.members["bytesReceived"]) ?: JSONObject.NULL)
+            .put("rtt_ms", rtt ?: JSONObject.NULL)
+    }
+
+    private fun counter(value: Any?): Long? =
+        (value as? Number)?.toString()?.toLongOrNull()?.takeIf { it in 0..MAX_INTEGER }
+
+    private fun candidate(stat: RTCStats): JSONObject {
+        val address = (stat.members["address"] ?: stat.members["ip"]) as String
+        // Permit only literal IPs; getByName must never trigger DNS here.
+        require(address.matches(Regex("[0-9.]+")) || (':' in address && address.matches(Regex("[0-9A-Fa-f:.%_-]+"))))
+        InetAddress.getByName(address)
+        val port = counter(stat.members["port"])?.takeIf { it in 1..65535 } ?: error("invalid_port")
+        val kind = stat.members["candidateType"] as String
+        val protocol = (stat.members["protocol"] as String).lowercase()
+        require(kind in setOf("host", "srflx", "prflx", "relay") && protocol in setOf("udp", "tcp"))
+        return JSONObject().put("address", address).put("port", port).put("type", kind).put("protocol", protocol)
+    }
+
+    private fun canonical(candidate: JSONObject): String =
+        "{\"address\":${JSONObject.quote(candidate.getString("address"))},\"port\":${candidate.getLong("port")}," +
+        "\"protocol\":${JSONObject.quote(candidate.getString("protocol"))},\"type\":${JSONObject.quote(candidate.getString("type"))}}"
 }
