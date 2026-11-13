@@ -18,7 +18,9 @@ impaired restored-delivery failure was not exercised and remains unresolved.
 The successor retains exact-workspace, bounded admission failure observations
 and optional fixed labels from already-captured ADB root errors. Original
 failures, admission/root deadlines, one root attempt and WebRTC are unchanged.
-Local combined boundary/diagnostic checks passed 2,170 cases; 6,037 policy cases
+Delivery and pending controls must share one exact General channel ID; missing
+or conflicting channel bindings produce unavailable evidence.
+Local combined boundary/diagnostic checks passed 2,180 cases; 6,047 policy cases
 were collected, not executed locally. One actual two-worker source-mode setup
 case verified diagnostic wiring. Full native and aggregate acceptance remain
 open, and helper-retirement implementation remains gated.
