@@ -1,5 +1,34 @@
 # Private packaged qualification control
 
+Full run [43468072180](https://github.com/ahouchens/mesh-chat/actions/runs/43468072180)
+at `4cf7e0b` is **failed**: ten jobs passed, both native peers failed, and the
+aggregate rejected incomplete qualification. Policy passed 6,445 cases with no
+failures or skips; UI boundary passed 2,309 Python and 12 rendered cases; Android
+passed 56 emulator and 83 exact JVM cases. Both Direct platforms passed 25 fabric,
+10 recovery and 12 setup cases. Windows `address_loss` passed in 162.455 seconds
+with the scoped shared fixture deadline and unchanged production backoff. Eight
+Windows desktop/native reports, nine pipe cases and 72 layout cases also passed.
+These component results do not establish full native acceptance.
+
+Both peers completed all six direct/TURN/impaired path scenarios. Android then
+failed in the first cold-start iteration at `restart`, with zero cycles complete,
+a `CalledProcessError`, and `cleanup_failed=true`. The report and job log retain
+neither the failing command nor a cleanup-site label. The gateway reported no
+operation or cleanup failure. Source inspection identifies the possible escaping
+ADB lifecycle operations but cannot select the failed command, distinguish an
+original error from one replacing it during cleanup, or establish emulator exit,
+memory pressure, a missing forward, or a WebRTC defect. Windows reached
+`cold_started_0` and timed out waiting for Android's corresponding checkpoint.
+The cold exact-path checks and new final-evidence attribution were not reached.
+
+The next diagnostic slice records fixed Android lifecycle command labels,
+bounded exit status and owned process state for the exact caught error before
+final cleanup. Existing commands, deadlines, startup error wrapping, cleanup
+ordering and error replacement remain unchanged. It introduces no retry, extra
+ADB/RPC, production policy or WebRTC change. The exact Android restart cause,
+full native/aggregate acceptance, helper retirement and later roadmap gates
+remain open.
+
 Full run [43457917143](https://github.com/ahouchens/mesh-chat/actions/runs/43457917143)
 at `c7e1704` is **failed**: nine jobs passed, Windows direct recovery and both
 native peers failed, and the aggregate rejected the incomplete qualification.
