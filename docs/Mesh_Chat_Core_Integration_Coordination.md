@@ -32,9 +32,23 @@ changed identities, malformed or unavailable inventory, other errors and the
 post-receipt exact-resource read remain failures. The original 120-second readiness
 and 3,000-second global budgets remain; late results cannot qualify. Fixed,
 bounded cycle/stage and recheck diagnostics retain no private resource identifiers.
+A separate controller ordering gap is also demonstrated: a faster peer could
+start its next scheduled process kill while the other was still checking the
+previous cycle's exact path or resource accounting. Fixed sealed checkpoints now
+require both peers to finish each ten-cycle evidence block before the next kill,
+and both to finish restarting before readiness/exchange begins. The final
+completion checkpoint precedes cleanup. Quick smoke uses its five-cycle final
+checkpoint. These Boolean controls carry no product messages or receipts.
+The conservative full-run artifact bound is 87, below the unchanged 100-item
+inventory limit. Original global and bounded artifact-wait budgets remain.
+
+The checkpoints enforce controller ordering; they do not themselves establish
+native recovery, cross-peer quiescent accounting or the cause of the failed run.
+The narrow readiness candidate at `8d636f0` passed all 6,358 required local tests;
+the combined checkpoint successor requires its own exact-source validation.
 No WebRTC, product service, policy, consent or dependency change is selected.
-This correction is not yet qualified; helper retirement and later roadmap gates
-remain held pending full native/aggregate acceptance.
+These corrections are not yet natively qualified; helper retirement and later
+roadmap gates remain held pending full native/aggregate acceptance.
 
 Full run [43427814301](https://github.com/ahouchens/mesh-chat/actions/runs/43427814301)
 at `522d2c5` is **failed**: ten component jobs passed; both native peers and the
