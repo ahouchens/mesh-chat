@@ -261,14 +261,21 @@ class Peers:
     def command(self, index, command_name, **payload):
         return self.call(index,"command",command=command_name,payload=payload)
 
-    def wait(self, index, name, predicate, *, timeout=45, **payload):
-        deadline=time.monotonic()+timeout
+    def wait(self, index, name, predicate, *, timeout=45, deadline=None, **payload):
+        stop=(time.monotonic()+timeout) if timeout is not None else deadline
+        if stop is None: raise ValueError("A wait needs a timeout or deadline")
+        if deadline is not None: stop=min(stop,deadline)
+        if deadline is not None and time.monotonic()>=deadline:
+            raise AssertionError((index,name,{"shared_deadline":"expired"}))
         last=None
-        while time.monotonic()<deadline:
+        while time.monotonic()<stop:
             last=self.command(index,name,**payload)
+            if time.monotonic()>=stop: break
             result=predicate(last)
             if result: return result
             time.sleep(.2)
+        if deadline is not None and time.monotonic()>=deadline:
+            raise AssertionError((index,name,{"shared_deadline":"expired"}))
         # The original timeout remains authoritative. Optional test-only
         # snapshots use at most one second per queue operation on each peer.
         diagnostics=[]
@@ -298,17 +305,22 @@ class Peers:
                 failure = (index,name,{"available":False},{"observation":"unavailable"})
         raise AssertionError(failure)
 
-    def connected(self, index, previous_certificate=None, *, route_before=None):
+    def connected(self, index, previous_certificate=None, *, route_before=None, deadline=None):
         # One total bound includes the configured native attempt and retry window.
         # A usable old Phase 2/path is not evidence that recovery has completed.
         # The specification allows 240 seconds for post-partition recovery.
         # Windows CI can be heavily loaded; 180 seconds stays inside that bound
         # while avoiding a false product failure when recovery is merely slow.
-        deadline=time.monotonic()+180
+        stop=time.monotonic()+180
+        if deadline is not None: stop=min(stop,deadline)
+        if deadline is not None and time.monotonic()>=deadline:
+            raise AssertionError({"failed_peer":index,"shared_deadline":"expired"})
         evidence=None
-        while time.monotonic()<deadline:
+        while time.monotonic()<stop:
             rows=self.command(index,"direct_recovery_status")
+            if time.monotonic()>=stop: break
             evidence=self.call(index,"recovery_diagnostic")
+            if time.monotonic()>=stop: break
             if (rows and all(r["state"]=="connected" and r["authenticated_peer_live"] and r["rns_ready"] for r in rows)
                     and evidence["pending"]==0 and len(evidence["paths"])==1
                     and evidence["paths"][0]["recovery"]
@@ -323,6 +335,8 @@ class Peers:
                     continue
                 return evidence
             time.sleep(.2)
+        if deadline is not None and time.monotonic()>=deadline:
+            raise AssertionError({"failed_peer":index,"shared_deadline":"expired"})
         raise AssertionError({"failed_peer":index,"peers":[self.call(i,"recovery_diagnostic") for i in range(2)]})
 
     def admit(self):
@@ -346,11 +360,12 @@ class Peers:
         return self.command(index,"send_workspace_message",operation_id=str(uuid.uuid4()),event_id=str(uuid.uuid4()),
             workspace_id=self.workspace["id"],channel_id=self.workspace["general_channel_id"],text=text)
 
-    def delivered(self, sender, sent):
+    def delivered(self, sender, sent, *, deadline=None):
         args=dict(workspace_id=self.workspace["id"],channel_id=self.workspace["general_channel_id"],limit=50)
-        self.wait(1-sender,"list_workspace_messages",lambda page:len([m for m in page["messages"] if m["id"]==sent["id"]])==1,**args)
+        wait_options={} if deadline is None else {"timeout":None,"deadline":deadline}
+        self.wait(1-sender,"list_workspace_messages",lambda page:len([m for m in page["messages"] if m["id"]==sent["id"]])==1,**wait_options,**args)
         self.wait(sender,"list_workspace_messages",lambda page:any(m["id"]==sent["id"] and
-            m.get("delivery_summary",{}).get("devices_reached")==1 for m in page["messages"]),**args)
+            m.get("delivery_summary",{}).get("devices_reached")==1 for m in page["messages"]),**wait_options,**args)
 
     def crash(self,index):
         self.commands[index].put(("crash",{}),timeout=2)
@@ -413,11 +428,15 @@ def test_production_durable_recovery(tmp_path,scenario):
                     identifier=peers.command(i,"direct_recovery_status")[0]["relationship_id"]
                     documents.append(peers.wait(i,"export_recovery_update",lambda value:value.get("text"),identifier=identifier))
                 for i in range(2): peers.command(i,"import_recovery_update",document=documents[1-i],workspace_id=peers.workspace["id"])
+                # One compound fixture ceiling covers recovery and all receipts
+                # after the explicit restoration action. It is not a product SLA.
+                delivery_deadline=time.monotonic()+225
         else:
             for i in range(2): peers.call(i,"force_recovery")
         if scenario=="replacement": time.sleep(2)
         after=[peers.connected(i,before[i]["paths"][0]["certificate"] if i in changed else None,
-                              route_before=before[i] if i==changed_peer else None) for i in range(2)]
+                              route_before=before[i] if i==changed_peer else None,
+                              deadline=delivery_deadline if scenario=="address_loss" else None) for i in range(2)]
         if scenario=="replacement":
             assert all(after[i]["controls"]["received"]>before[i]["controls"]["received"] for i in range(2))
         if scenario in {"route_change","server_route_change"}:
@@ -436,8 +455,14 @@ def test_production_durable_recovery(tmp_path,scenario):
             evidence=peers.call(i,"relationship_evidence")
             assert len(evidence)==1 and evidence[0]["last_success"]["generation"]<=evidence[0]["accepted"]["generation"]
             assert after[i]["native_count"]==1
-        if "queued" in locals(): peers.delivered(*queued)
-        for i in range(2): peers.delivered(i,peers.send(i,"Bidirectional message after "+scenario))
+        if "queued" in locals(): peers.delivered(*queued,deadline=delivery_deadline if scenario=="address_loss" else None)
+        for i in range(2):
+            if scenario=="address_loss" and time.monotonic()>=delivery_deadline:
+                raise AssertionError({"shared_deadline":"expired","stage":"bidirectional_send"})
+            sent=peers.send(i,"Bidirectional message after "+scenario)
+            if scenario=="address_loss" and time.monotonic()>=delivery_deadline:
+                raise AssertionError({"shared_deadline":"expired","stage":"bidirectional_send"})
+            peers.delivered(i,sent,deadline=delivery_deadline if scenario=="address_loss" else None)
         for i in range(2):
             identifier=peers.command(i,"direct_recovery_status")[0]["relationship_id"]
             peers.command(i,"pause_direct_recovery",identifier=identifier)
