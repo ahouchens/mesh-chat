@@ -187,6 +187,32 @@ def test_failure_projection_drops_private_fields_and_caps_numeric_evidence():
     assert "PRIVATE" not in json.dumps(projected)
 
 
+def test_admission_failure_retains_bounded_main_key_readiness_trace():
+    entry = {"stage": "preflight", "outcome": "waiting", "bootstrap_ready": True,
+        "bootstrap_handles": False, "main_identity": True, "main_ratchet": False,
+        "main_path": True, "destination": "PRIVATE_DESTINATION"}
+    projected = recovery._admission_failure_snapshot({"available": True,
+        "channel_send_trace": [entry] * 20})
+    trace = projected["channel_send_trace"]
+    assert len(trace["entries"]) == 16 and trace["truncated"] is True
+    assert trace["entries"][0]["main_ratchet"] is False
+    assert trace["entries"][0]["bootstrap_ready"] is True
+    assert trace["entries"][0]["bootstrap_handles"] is False
+    assert "PRIVATE" not in json.dumps(projected)
+
+
+def test_admission_trace_rejects_non_boolean_readiness_and_unknown_outcomes():
+    projected = recovery._admission_failure_snapshot({"available": True,
+        "channel_send_trace": [{"stage": "preflight", "outcome": "waiting",
+                                "main_ratchet": "PRIVATE_KEY"},
+                               {"stage": "preflight", "outcome": "PRIVATE_ERROR"}]})
+    trace = projected["channel_send_trace"]
+    assert trace["malformed"] is True
+    assert len(trace["entries"]) == 1
+    assert trace["entries"][0]["main_ratchet"] is None
+    assert "PRIVATE" not in json.dumps(projected)
+
+
 @pytest.mark.parametrize("has_reference", [False, True])
 @pytest.mark.parametrize("table", ["workspace_delivery", "workspace_pending_control"])
 @pytest.mark.parametrize("document_channel", [None, "PRIVATE_UNRELATED"])

@@ -1,4 +1,4 @@
-"""Admitted handoff requires main RNS acceptance, not a native sighting alone."""
+"""Required handoff checks for main RNS acceptance and bounded confirmation."""
 import threading
 import time
 from types import SimpleNamespace
@@ -43,6 +43,18 @@ def test_initial_admitted_carrier_keeps_announcing_for_other_handoff():
     assert carrier._announce_active(130) is False
     carrier.recovery = True
     assert carrier._announce_active(130) is True
+
+
+@pytest.mark.parametrize("ready_duration", [0, 1])
+def test_handoff_rejects_readiness_at_or_after_deadline(monkeypatch, ready_duration):
+    clock = [10 if ready_duration == 0 else 9.5]
+    monkeypatch.setattr(direct_handoff.time, "monotonic", lambda: clock[0])
+    def ready():
+        clock[0] += ready_duration
+        return True
+    carrier = SimpleNamespace(_stop=threading.Event(), main_rns_ready=ready)
+    handoff = object.__new__(AdmissionHandoff)
+    assert handoff._await_main_ready(carrier, deadline=10) is False
 
 
 def test_handoff_keeps_announcing_until_main_acceptance_or_existing_deadline():

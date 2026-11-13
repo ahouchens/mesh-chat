@@ -404,7 +404,7 @@ def test_server_migration_failure_schedules_reconnection_instead_of_retrying_reb
     assert identifier not in recovery._pending
 
 
-@pytest.mark.parametrize("fault",[None,"delayed_update","renewed_same_key","newer_other_key","wrong_leaf","success_commit","winner_commit","stale_callback","bootstrap_only"])
+@pytest.mark.parametrize("fault",[None,"delayed_update","renewed_same_key","newer_other_key","wrong_leaf","success_commit","winner_commit","stale_callback","bootstrap_only","late_main_ready"])
 def test_replacement_requires_current_authentication_and_durable_winner_before_old_retirement(pair,monkeypatch,fault):
     from mesh_chat import direct_recovery as module
     owner,_,record,authority,document=pair
@@ -416,6 +416,10 @@ def test_replacement_requires_current_authentication_and_durable_winner_before_o
     record=owner.store.get("direct_relationship",identifier)
     peer_raw,peer_cert,_=document(2,b"fresh peer key")
     events=[]
+    elapsed = [0]
+    if fault == "late_main_ready":
+        monkeypatch.setattr(module, "time", SimpleNamespace(time=time.time,
+            monotonic=lambda: time.monotonic() + elapsed[0]))
     class Prepared:
         handle=7
         expires_at=time.time()+300
@@ -453,6 +457,8 @@ def test_replacement_requires_current_authentication_and_durable_winner_before_o
             self.peer_seen.set(); self.lease=kwargs["runtime_lease"]
         def main_rns_ready(self, *, require_selected_path=True):
             assert require_selected_path is False
+            if fault == "late_main_ready":
+                elapsed[0] += 13
             if fault == "bootstrap_only":
                 self._stop.set()
                 return False

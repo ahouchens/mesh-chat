@@ -349,9 +349,13 @@ class DirectRecovery:
                     deadline = time.monotonic()+12
                     # The authenticated old route stays selected until the
                     # winner commits; refresh the new route after retiring it.
-                    while not admitted.main_rns_ready(require_selected_path=False) and time.monotonic()<deadline and self._valid(identifier,token):
+                    confirmed = False
+                    while time.monotonic()<deadline and self._valid(identifier,token):
+                        if admitted.main_rns_ready(require_selected_path=False):
+                            confirmed = time.monotonic()<deadline
+                            break
                         if admitted._stop.wait(.05): break
-                    if not admitted.main_rns_ready(require_selected_path=False) or admitted._stop.is_set():
+                    if not confirmed or admitted._stop.is_set():
                         raise ValidationError("Recovered RNS peer is not ready")
                     with self.service._dispatch_lock:
                         if not self._valid(identifier,token): return

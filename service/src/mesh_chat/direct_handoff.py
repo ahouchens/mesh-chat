@@ -74,8 +74,10 @@ class AdmissionHandoff:
         """Confirm main RNS keys and selected admitted path within handoff time."""
         next_announce = time.monotonic() + announce_interval
         while not admitted._stop.is_set():
+            if time.monotonic() >= deadline:
+                return False
             if admitted.main_rns_ready():
-                return True
+                return time.monotonic() < deadline and not admitted._stop.is_set()
             now = time.monotonic()
             if now >= deadline:
                 return False

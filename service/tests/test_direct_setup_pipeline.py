@@ -768,6 +768,9 @@ def _service_worker(root, incoming, outgoing, commands, replies, native_binary=N
                                 record_id, channel_id, admission_deliveries.get(workspace_id, ()),
                                 admission_pending.get(workspace_id, ()), now=time.time(),
                                 native_network=service.network, expected_channel_id=channel)
+                            # First sixteen process-wide channel attempts, already
+                            # observed by the fixture; no additional send or RPC.
+                            result["channel_send_trace"] = list(channel_trace)
                     elif operation == "recovery_diagnostic":
                         from mesh_chat.invitations import canonical_bytes
                         result = {"peers":service._direct_recovery.status(),

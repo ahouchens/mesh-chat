@@ -1,5 +1,46 @@
 # Acceptance reconciliation: specification invariants and scenarios
 
+Full run [43494402594](https://github.com/ahouchens/mesh-chat/actions/runs/43494402594)
+at `5c54739` is **failed**: nine jobs passed, Windows Direct, both native peers
+and the aggregate failed; two optional jobs were skipped. Policy passed 6,589
+cases without failures or skips. UI passed 2,309 Python and 12 rendered cases;
+Android passed 56 emulator and 83 exact JVM cases; desktop SDK pairing, eight
+reports, nine pipe cases and 72 layout cases passed. Linux Direct passed its
+complete fabric, ten recovery and twelve setup cases.
+
+Windows Direct passed nine recovery cases. The blocked case failed during
+initial admission, before blocking the path: the receiver had no general
+channel after the original 45-second wait. The owner control was
+`waiting_for_keys`, with zero native send attempts and a future retry schedule.
+This was not the previous worker reply timeout. The report did not retain
+which main key was missing. A later local run passed; that does not establish
+a cause or Windows Direct acceptance for this CI source.
+
+Both native peers completed all six direct/TURN/impaired path cases. Windows
+completed the first restart and identity checks, then exhausted the partner's
+started barrier. Android failed during startup rollback in the first restart:
+ADB reported `device_offline` on forward removal, after a force-stop error.
+The original startup failure was masked. A successful old stop had cleared the
+old forward; removal during rollback therefore indicates a new forward had
+been assigned during startup. The later instrumentation exit 255/EOF does not
+prove that no startup port marker was previously received. The emulator process
+was running; guest/ADB health and the cause of disconnection remain unknown.
+Both reports flagged cleanup failure. Zero cold receipt cycles completed;
+neither the native 100-cycle gate nor aggregate acceptance passed.
+
+The successor corrects a source-level initial handoff gap: signature-only
+announce observation can precede main RNS identity/ratchet and path acceptance.
+Initial confirmation now requires main keys and the selected admitted interface;
+bounded standard announces continue for the opposite peer. Recovery keeps its
+old authenticated route until durable winner commit and requires main keys,
+without claiming that cached keys prove a new announce was processed. The
+existing 10/12-second confirmation windows reject readiness observed too late.
+This is a demonstrated source gap, not proof of the particular CI failure's
+cause. The admission report also retains the existing first sixteen process-wide
+channel attempts through a fixed-field sanitizer; that trace is not a complete
+or workspace-specific history. Full acceptance, helper retirement and later
+roadmap gates remain open. WebRTC stays at the pinned dependency.
+
 Full run [43484445188](https://github.com/ahouchens/mesh-chat/actions/runs/43484445188)
 at `24494b3` is **failed**: eight jobs passed, both Direct jobs, both native
 interop jobs and the aggregate failed; two optional jobs were skipped. Policy

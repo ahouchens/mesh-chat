@@ -222,6 +222,8 @@ def _admission_failure_snapshot(value):
         "general_channel_record": _fixed_label(value.get("general_channel_record"),
             {"present", "absent", "unknown", "unavailable"}),
         "channel_control": control_result, "pending_control": pending_result}
+    if "channel_send_trace" in value:
+        result["channel_send_trace"] = _event_trace_snapshot(value["channel_send_trace"])
     if "native_failure" in value:
         result["native_failure"] = _native_failure_snapshot(value["native_failure"])
     return result
