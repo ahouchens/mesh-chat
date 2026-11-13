@@ -1,5 +1,23 @@
 # Core integration coordination — 2026-11-09
 
+Full run [43365547066](https://github.com/ahouchens/mesh-chat/actions/runs/43365547066)
+at `a21646c` is **failed**: all ten non-native jobs passed; both native peers
+and the aggregate gate failed. Policy executed and passed 6,047 cases; UI boundary
+passed 2,105 Python and 12 rendered cases. Android passed 83 exact JVM identities
+and 56 emulator cases; both direct platforms passed 25 transport, 10 recovery
+and 12 setup cases. Windows `address_loss` passed, so the previous admission
+timeout did not recur; its cause remains unproven. Installed Windows pairing
+and lifecycle passed, as did all 72 browser layout cases.
+
+Native Windows failed during TURN/TLS pairing at `path_read` with
+`contact_not_approved`. This code also denotes native carrier authority denial;
+it does not establish that human contact approval changed. Android timed out
+at `adopted_observation` in the same scenario, with no gateway operation or
+cleanup failure reported. The reports omit the exact owner/readiness state
+needed to distinguish pending adoption from lost authority. The earlier impaired
+restored-delivery failure was not exercised. Full native and aggregate acceptance
+remain open, and helper-retirement implementation remains gated.
+
 Full run [43360865677](https://github.com/ahouchens/mesh-chat/actions/runs/43360865677)
 at `4cf6cab` is **failed**: nine jobs passed, four failed and two optional probes
 were skipped. Policy passed 6,013 cases; UI boundary passed 2,091 Python and 12

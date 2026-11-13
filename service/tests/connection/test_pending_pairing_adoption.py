@@ -192,6 +192,9 @@ def test_fresh_direct_claim_waits_for_owner_commit(native_pairing, monkeypatch):
     profile_id = first._native_webrtc_controls[session]['profile_id']
     assert first._native_pairing_ready(first_context)
     assert not first._native_webrtc_profile_sessions
+    before_claim = next(row for row in first.native_webrtc_inspection_resources()['resources']
+                        if row['logical_session'] == session)
+    assert before_claim['adopted'] is False and before_claim['owner_state'] == 'unadopted'
     claimed, release = Event(), Event()
     from mesh_chat.connection import composition
     original_claim = composition._claim_carrier
@@ -267,6 +270,11 @@ def test_fresh_direct_claim_waits_for_owner_commit(native_pairing, monkeypatch):
         with pytest.raises(ContactNotApproved, match='authority is unavailable') as caught:
             first.native_webrtc_path_evidence(session, physical, REQUEST)
         assert caught.value.code == 'contact_not_approved'
+        # An inventory read before claim is already stale while owner commit is
+        # pending; it cannot make a subsequent path read safe or authoritative.
+        assert before_claim['logical_session'] == session
+        assert before_claim['physical_resource'] == physical
+        assert before_claim['owner_state'] == 'unadopted'
         assert native_calls == []
         assert first.store.get('contact', 'contact-second')['trust'] == 'approved'
         assert first_context['state'] == 'transferred'

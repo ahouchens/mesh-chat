@@ -621,6 +621,10 @@ class Controller:
                 return None
             if ready and len(resources) == 1:
                 owner_state = resources[0].get("owner_state")
+                if (type(owner_state) is str and owner_state == "unadopted"
+                        and resources[0].get("adopted") is False):
+                    record_final_path_skip(missing_reasons, "adopted_not_true")
+                    return None
                 if type(owner_state) is str and owner_state == "pending_adoption":
                     record_final_path_skip(missing_reasons, "pending_adoption")
                     return None
