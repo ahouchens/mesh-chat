@@ -146,7 +146,7 @@ NEGATIVE_CONTROL_REASONS = {
     "fault_cleanup": frozenset({"cleanup_incomplete"}),
 }
 
-FINAL_PATH_MISSING_REASONS = frozenset({"no_resource", "pending_adoption", "adopted_not_true",
+FINAL_PATH_MISSING_REASONS = frozenset({"no_resource", "pending_adoption", "pending_negotiation", "adopted_not_true",
     "attached_not_true", "messaging_ready_not_true", "nonselected", "mixed", "unavailable"})
 FINAL_PATH_SKIP_REASONS = FINAL_PATH_MISSING_REASONS - {"mixed", "unavailable"}
 

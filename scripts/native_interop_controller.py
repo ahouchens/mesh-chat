@@ -53,8 +53,8 @@ PAIRING_OPEN_LABELS = {
     "channel": frozenset({"unread", "connecting", "open", "closing", "closed", "unknown"}),
 }
 READINESS_STAGES = frozenset({"adopted_observation", "post_cancel_observation"})
-READINESS_OWNER_STATES = frozenset({"authorized", "pending_adoption", "unadopted", "unavailable"})
-READINESS_SKIPS = frozenset({"none", "no_resource", "pending_adoption", "adopted_not_true",
+READINESS_OWNER_STATES = frozenset({"authorized", "pending_adoption", "pending_negotiation", "unadopted", "unavailable"})
+READINESS_SKIPS = frozenset({"none", "no_resource", "pending_adoption", "pending_negotiation", "adopted_not_true",
     "attached_not_true", "messaging_ready_not_true", "nonselected"})
 
 
@@ -810,6 +810,11 @@ class Controller:
                 if type(owner_state) is str and owner_state == "pending_adoption":
                     record_final_path_skip(missing_reasons, "pending_adoption")
                     self._readiness_skip(observation, "pending_adoption")
+                    return None
+                if (type(owner_state) is str and owner_state == "pending_negotiation"
+                        and resources[0].get("adopted") is True):
+                    record_final_path_skip(missing_reasons, "pending_negotiation")
+                    self._readiness_skip(observation, "pending_negotiation")
                     return None
         for resource in resources:
             with self._substage("path_read"):

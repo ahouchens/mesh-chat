@@ -1,5 +1,29 @@
 # Connection runtime qualification ledger
 
+Full run [43389512594](https://github.com/ahouchens/mesh-chat/actions/runs/43389512594)
+at `b583f25` is **failed**: ten component jobs passed; both native peers and
+the aggregate gate failed. Policy passed 6,163 cases, UI boundary 2,208 Python
+and 12 rendered cases, Android 56 emulator and 83 exact JVM cases. Both direct
+platforms passed 25 transport, 10 recovery and 12 setup cases. Layout passed
+72 cases with zero overflow. These component scopes do not grant native acceptance.
+
+Both controllers reached `cold_start_receipts` after the sequential direct,
+TURN/UDP, TURN/TCP, TURN/TLS and impaired path cases. Android then failed at
+`path_read` with `contact_not_approved`; Windows reported `scenario_deadline`
+in the same phase. Android gateway teardown reported no operation or cleanup
+failure. The failure reports omit the iteration, resource ownership snapshot
+and specific authority check. Human consent revocation and a product defect
+are therefore unproven. Earlier path failures did not recur on this run;
+completion markers cannot replace a complete passing native report.
+
+The separate manual Linux gateway capability run
+[43389004149](https://github.com/ahouchens/mesh-chat/actions/runs/43389004149)
+passed at the same source, including synthetic egress STUN request and ingress
+response capture and cleanup. It proves that observer capability, not native
+ICE success. WebRTC and qualification thresholds remain unchanged.
+Restart authority diagnosis, full native and aggregate acceptance, helper
+retirement and the remaining lifecycle/distribution roadmap remain open.
+
 Full run [43379098108](https://github.com/ahouchens/mesh-chat/actions/runs/43379098108)
 at `2af0009` is **failed**: ten component jobs passed; both native peers and
 the aggregate gate failed. Policy passed 6,126 cases, UI boundary 2,176 Python
