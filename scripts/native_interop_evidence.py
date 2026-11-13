@@ -243,8 +243,15 @@ def verify_report(record, source, tree, role, *, workload="full"):
         _require(set(artifacts) == {path.relative_to(ROOT).as_posix() for path in (*APKS, *CORE_APKS, *CONSUMER_ARTIFACTS, *INDEPENDENT_ARTIFACTS)},
                  "Android interop does not identify all previously qualified APK/AAR inputs")
     execution = record["execution"]
-    _require(isinstance(execution, dict) and set(execution) == {"identity", "scenarios", "receipt_iterations", "processes_started", "forced_exits", "clean_exits", "webview_processes", "cleanup", "final_host_accounting"}
+    execution_fields = {"identity", "scenarios", "receipt_iterations", "processes_started", "forced_exits", "clean_exits", "webview_processes", "cleanup", "final_host_accounting"}
+    if role == "android": execution_fields.add("host_gateway")
+    _require(isinstance(execution, dict) and set(execution) == execution_fields
         and token(execution["identity"], 64) and execution["cleanup"] == "passed", "Native execution or exact cleanup is incomplete")
+    if role == "android":
+        gateway = execution["host_gateway"]
+        _require(type(gateway) is dict and set(gateway) == {"kind", "cleanup", "helpers_retired"}
+            and gateway["kind"] == "owned_linux_network_namespace" and gateway["cleanup"] == "passed"
+            and gateway["helpers_retired"] is True, "Native host gateway cleanup is incomplete")
     cold_starts = (plan["iterations"] - 1) // plan["cold_start_every"] + 1
     for field, count in (("processes_started", cold_starts + 1), ("forced_exits", cold_starts), ("clean_exits", 1), ("webview_processes", 0)):
         _require(type(execution[field]) is int and execution[field] == count, "Periodic process restart/clean exit inventory differs")
@@ -289,28 +296,19 @@ def verify_report(record, source, tree, role, *, workload="full"):
         else: _require(negative is None, "Unexpected negative-control claim")
         impairment = case["impairment"]
         if scenario == "impaired" and role == "android":
-            _require(isinstance(impairment, dict) and set(impairment) == {"kind", "delay_ms_each_way", "jitter_ms_each_way", "loss_percent_each_way", "added_nominal_rtt_ms", "link_scope", "loss_observed", "counters", "link_coverage"}
-                and impairment["kind"] == "android_emulator_linux_kernel_tc_netem" and impairment["delay_ms_each_way"] == 75
+            _require(isinstance(impairment, dict) and set(impairment) == {"kind", "delay_ms_each_way", "jitter_ms_each_way", "loss_percent_each_way", "added_nominal_rtt_ms", "link_scope", "loss_observed", "counters", "gateway_coverage"}
+                and impairment["kind"] == "android_emulator_host_gateway_tc_netem" and impairment["delay_ms_each_way"] == 75
                 and impairment["jitter_ms_each_way"] == 10 and impairment["loss_percent_each_way"] == 0.1 and impairment["added_nominal_rtt_ms"] == 150
-                and impairment["link_scope"] == "isolated_emulator_route", "Declared Linux-kernel impairment profile differs")
-            coverage = impairment["link_coverage"]
-            _require(type(coverage) is dict and set(coverage) == {"admitted_links", "impaired_links",
-                "excluded_sink_links", "disjoint_paths", "current", "guard_current",
-                "group_identity_guard", "allowed_output_packets", "allowed_input_packets",
-                "uncovered_udp_drops"}
-                and type(coverage["admitted_links"]) is int and 1 <= coverage["admitted_links"] <= 4
-                and type(coverage["impaired_links"]) is int
-                and coverage["impaired_links"] == coverage["admitted_links"]
-                and type(coverage["excluded_sink_links"]) is int
-                and 0 <= coverage["excluded_sink_links"] <= 3
-                and coverage["admitted_links"] + coverage["excluded_sink_links"] <= 4
-                and all(coverage[key] is True for key in ("disjoint_paths", "current",
-                    "guard_current", "group_identity_guard"))
-                and all(type(coverage[key]) is int and coverage[key] > 0
-                    for key in ("allowed_output_packets", "allowed_input_packets"))
-                and type(coverage["uncovered_udp_drops"]) is int
-                and coverage["uncovered_udp_drops"] == 0,
-                "Impaired link coverage lacks exact guarded identity and actual packets")
+                and impairment["link_scope"] == "owned_host_namespace_veth", "Declared Linux-kernel impairment profile differs")
+            coverage = impairment["gateway_coverage"]
+            _require(type(coverage) is dict and set(coverage) == {"external_links", "namespace_bound",
+                "ipv6_disabled", "veth_identity_current", "directional_veth_packets"}
+                and type(coverage["external_links"]) is int and coverage["external_links"] == 1
+                and all(coverage[key] is True for key in ("namespace_bound", "ipv6_disabled", "veth_identity_current"))
+                and type(coverage["directional_veth_packets"]) is dict
+                and set(coverage["directional_veth_packets"]) == {"egress", "ingress"}
+                and all(type(value) is int and value > 0 for value in coverage["directional_veth_packets"].values()),
+                "Impaired gateway lacks exclusive topology and actual directional packets")
             counters = impairment["counters"]
             _require(isinstance(counters, dict) and set(counters) == {"egress", "ingress"}, "Kernel impairment lacks both directions")
             for values in counters.values():

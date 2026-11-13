@@ -14,7 +14,8 @@ try {
       || !/^[a-f0-9]{40}$/.test(process.env.GITHUB_SHA ?? "")
       || !process.env.ACTIONS_RUNTIME_TOKEN || !process.env.GITHUB_TOKEN) throw new Error();
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-  const controller = path.join(root, "scripts/native_interop_controller.py");
+  const controller = path.join(root, role === "android"
+    ? "scripts/native_interop_gateway_runtime.py" : "scripts/native_interop_controller.py");
   const output = path.join(root, `dist/reports/native-interop-${role}.json`);
   const child = spawn(process.env.INPUT_PYTHON || "python", [controller, "--role", role,
     "--expected-source", process.env.GITHUB_SHA, "--workload", workload, "--output", output], {

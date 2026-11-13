@@ -1,5 +1,17 @@
 # Acceptance reconciliation: specification invariants and scenarios
 
+Host gateway capability [43332384324](https://github.com/ahouchens/mesh-chat/actions/runs/43332384324)
+at `bc064e9` passed on the same API 35 emulator image, including exact helper,
+namespace, veth and firewall cleanup. The real guest completed three impaired
+UDP echoes, both netem directions recorded positive packet/byte deltas, one
+blocked packet produced no echo, and delivery recovered after unblock. ADB
+forwarding and namespace DNS/HTTPS also passed. This is **capability evidence**,
+not Windows–Android authenticated-receipt qualification or Spec 9.3 acceptance.
+The native integration now uses the owned host namespace/veth for impairment
+and retains the guest app-UID IPv4/IPv6 UDP negative control; Android's existing
+`clsact` and the WebRTC dependency remain unchanged. Full native qualification
+and the subsequent helper-retirement refactoring remain open.
+
 Full qualification [43312523571](https://github.com/ahouchens/mesh-chat/actions/runs/43312523571)
 at `2971c32` is closed **failed**: 10 successful, three failed and one
 intentionally skipped diagnostic job. Android fails at

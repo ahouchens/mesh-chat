@@ -169,6 +169,7 @@ class Gateway:
         self.netns_inode = None
         self.dns_path = Path("/etc/netns") / self.ns
         self.handles = {self.host: "a101:", self.guest: "a102:"}
+        self.impaired_links = []
 
     def run(self, *args):
         return self.commands.run(*args, privileged=True)
@@ -316,8 +317,23 @@ class Gateway:
             command = self.inside if name == self.guest else self.run
             baseline = command("tc", "qdisc", "show", "dev", name)
             require(re.fullmatch(r"qdisc noqueue 0: root(?: refcnt [0-9]+)?\s*", baseline) is not None, "unexpected_owned_veth_qdisc")
+            self.impaired_links.append(name)
             command("tc", "qdisc", "add", "dev", name, "root", "handle", self.handles[name], "netem",
                     "delay", "75ms", "10ms", "distribution", "normal", "loss", "0.1%")
+
+    def clear_impairment(self):
+        self.check_links()
+        for name in reversed(self.impaired_links[:]):
+            command = self.inside if name == self.guest else self.run
+            current = command("tc", "qdisc", "show", "dev", name)
+            if not re.fullmatch(r"qdisc noqueue 0: root(?: refcnt [0-9]+)?\s*", current):
+                parse_netem(command("tc", "-s", "qdisc", "show", "dev", name), self.handles[name])
+                require(len(re.findall(r"(?m)^qdisc ", current)) == 1, "foreign_owned_veth_qdisc")
+                command("tc", "qdisc", "del", "dev", name, "root", "handle", self.handles[name])
+            restored = command("tc", "qdisc", "show", "dev", name)
+            require(re.fullmatch(r"qdisc noqueue 0: root(?: refcnt [0-9]+)?\s*", restored) is not None,
+                    "owned_veth_qdisc_remains")
+            self.impaired_links.remove(name)
 
     def counters(self):
         self.check_links()
@@ -570,13 +586,13 @@ def child_main():
 
 
 class Child:
-    def __init__(self, gateway):
+    def __init__(self, gateway, *, entry=None):
         environment = {name: os.environ[name] for name in
                        ("PATH", "JAVA_HOME", "ANDROID_HOME", "ANDROID_SDK_ROOT", "RUNNER_TEMP", "GITHUB_ACTIONS", "HOME")
                        if name in os.environ}
         command = ["sudo", "-n", "ip", "netns", "exec", gateway.ns, "setpriv", "--reuid", str(os.getuid()),
                    "--regid", str(os.getgid()), "--clear-groups", "env", *(key + "=" + value for key, value in environment.items()),
-                   sys.executable, "-B", str(Path(__file__).resolve()), "--child"]
+                   sys.executable, "-B", *(entry or [str(Path(__file__).resolve()), "--child"])]
         self.process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         self.selector = None
         try:

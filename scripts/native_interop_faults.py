@@ -705,7 +705,7 @@ class _BoundedUdpLinks:
 class AndroidKernelPath:
     """Only the explicitly booted rootable CI emulator may execute these rules."""
     def __init__(self, peer, observation, turn_url, *, resolver=socket.getaddrinfo, diagnostics=None,
-                 path_diagnostics=None, resource_check=None, control_urls=()):
+                 path_diagnostics=None, resource_check=None, control_urls=(), coverage_factory=None):
         self.peer, self._blocked = peer, False
         self._negative_diagnostics = diagnostics
         self._path_diagnostics = path_diagnostics
@@ -786,7 +786,7 @@ class AndroidKernelPath:
                 self._check_scope()
             with path_stage(path_diagnostics, "kernel_link_coverage"):
                 try:
-                    self.coverage = _BoundedUdpLinks(self)
+                    self.coverage = (coverage_factory or _BoundedUdpLinks)(self)
                 except LinkScopeError as error:
                     try: path_diagnostics.observe(error, "kernel_link_coverage", error.reason)
                     except Exception: pass

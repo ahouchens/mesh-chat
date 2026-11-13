@@ -149,8 +149,9 @@ def binding(role, source, tree):
 
 
 class Controller:
-    def __init__(self, role, peer, transport, rendezvous, context, *, workload="full"):
+    def __init__(self, role, peer, transport, rendezvous, context, *, workload="full", coverage_factory=None):
         self.role, self.peer, self.transport, self.rendezvous, self.context = role, peer, transport, rendezvous, context
+        self.coverage_factory = coverage_factory
         self.partner = "android" if role == "windows" else "windows"
         self.samples = Samples()
         self.deadline = time.monotonic() + 3000
@@ -788,7 +789,9 @@ class Controller:
                 fault = AndroidKernelPath(self.peer, before, url, diagnostics=self._negative_diagnostics,
                                           path_diagnostics=self._path_diagnostics,
                                           resource_check=lambda: self.endpoint_resource_current(before),
-                                          control_urls=(DEFAULT_SIGNAL_MAILBOX_URL,))
+                                          control_urls=(DEFAULT_SIGNAL_MAILBOX_URL,),
+                                          **({"coverage_factory": self.coverage_factory}
+                                             if getattr(self, "coverage_factory", None) is not None else {}))
             if scenario == "impaired":
                 if self.role == "android":
                     fault.install()
@@ -975,7 +978,7 @@ class Controller:
                 "final_host_accounting": final_accounting, "cleanup": "passed"}
 
 
-def main():
+def main(*, gateway=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--role", required=True, choices=("windows", "android"))
     parser.add_argument("--expected-source", required=True)
@@ -1000,6 +1003,8 @@ def main():
             from android_qualification import APKS
             emulator = AndroidEmulator()
             emulator.start(APKS, diagnostics=preflight_diagnostics)
+            if gateway is not None:
+                gateway.ready(emulator)
         platform = {"windows": True} if args.role == "windows" else android_environment(diagnostics=preflight_diagnostics)
         preflight = outbound_services()
         key = os.urandom(32)
@@ -1011,7 +1016,8 @@ def main():
             peer = AndroidPeer(key)
         transport = GithubArtifacts(context, args.role, ROOT / ".test-tmp/native-interop-rendezvous")
         rendezvous = Rendezvous(context, args.role)
-        controller = Controller(args.role, peer, transport, rendezvous, context, workload=args.workload)
+        controller = Controller(args.role, peer, transport, rendezvous, context, workload=args.workload,
+                                **({"coverage_factory": gateway.coverage} if gateway is not None else {}))
         execution = controller.run()
         if source_identity(source) != (source, tree): raise ValueError("Source changed during native qualification")
         result.update(passed=True, context=context, source_commit=source, source_tree=tree,
@@ -1053,6 +1059,9 @@ def main():
         if rendezvous is not None: rendezvous.close()
         if transport is not None: transport.close()
         if emulator is not None:
+            if gateway is not None:
+                try: gateway.before_cleanup()
+                except Exception: result.update(passed=False, cleanup_failed=True)
             try: emulator.close()
             except Exception:
                 result.update(passed=False, cleanup_failed=True)

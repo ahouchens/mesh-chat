@@ -2569,14 +2569,13 @@ def interop_reports(source="a" * 40, tree="b" * 40, android_artifacts=None, *, w
                     "outbound": message("negative:" + name, role)["outbound"], "inbound": message("negative:" + name, role)["inbound"]}
             impairment = None
             if name == "impaired" and role == "android":
-                impairment = {"kind": "android_emulator_linux_kernel_tc_netem", "delay_ms_each_way": 75,
+                impairment = {"kind": "android_emulator_host_gateway_tc_netem", "delay_ms_each_way": 75,
                     "jitter_ms_each_way": 10, "loss_percent_each_way": 0.1, "added_nominal_rtt_ms": 150,
-                    "link_scope": "isolated_emulator_route", "loss_observed": False,
+                    "link_scope": "owned_host_namespace_veth", "loss_observed": False,
                     "counters": {direction: {"bytes": 1000, "packets": 10, "dropped": 0} for direction in ("egress", "ingress")},
-                    "link_coverage": {"admitted_links": 1, "impaired_links": 1, "excluded_sink_links": 0,
-                        "disjoint_paths": True, "current": True, "guard_current": True,
-                        "group_identity_guard": True, "allowed_output_packets": 10,
-                        "allowed_input_packets": 10, "uncovered_udp_drops": 0}}
+                    "gateway_coverage": {"external_links": 1, "namespace_bound": True,
+                        "ipv6_disabled": True, "veth_identity_current": True,
+                        "directional_veth_packets": {"egress": 10, "ingress": 10}}}
             cases.append({"scenario": name, "initiator": initiator, "supervisor_pairing": {
                 "operation": evidence.digest([role, case_id, "operation"]), "role": "offer" if role == initiator else "answer",
                 "state": "transferred", "transferred_cancel_preserves_carrier": True}, "before": before, "after": after,
@@ -2605,6 +2604,9 @@ def interop_reports(source="a" * 40, tree="b" * 40, android_artifacts=None, *, w
                 "processes_started": (plan["iterations"] - 1) // 10 + 2, "forced_exits": (plan["iterations"] - 1) // 10 + 1,
                 "clean_exits": 1, "webview_processes": 0, "cleanup": "passed"}})
         result[-1]["execution"]["final_host_accounting"] = counts()
+        if role == "android":
+            result[-1]["execution"]["host_gateway"] = {"kind": "owned_linux_network_namespace",
+                "cleanup": "passed", "helpers_retired": True}
     return tuple(result)
 
 
@@ -2703,21 +2705,21 @@ def test_pair_cannot_mix_runs_peers_or_impairment_profiles(fault):
     with pytest.raises(ValueError): evidence.verify_pair(windows, android, "a" * 40, "b" * 40)
 
 
-@pytest.mark.parametrize("change", ["missing", "extra", "overbound", "wrong_count", "non_disjoint",
-                                    "guard_false", "group_false", "zero_allowed", "drop"])
-def test_impaired_report_requires_exact_bounded_guarded_link_coverage(change):
+@pytest.mark.parametrize("change", ["missing", "extra", "overbound", "wrong_count", "unbound",
+                                    "ipv6", "identity", "zero_packets", "missing_direction"])
+def test_impaired_report_requires_exact_exclusive_gateway_coverage(change):
     windows, android = interop_reports()
-    coverage = android["execution"]["scenarios"][-1]["impairment"]["link_coverage"]
+    coverage = android["execution"]["scenarios"][-1]["impairment"]["gateway_coverage"]
     if change == "missing":
-        del android["execution"]["scenarios"][-1]["impairment"]["link_coverage"]
+        del android["execution"]["scenarios"][-1]["impairment"]["gateway_coverage"]
     elif change == "extra": coverage["raw_device"] = "PRIVATE_NETDEV"
-    elif change == "overbound": coverage["admitted_links"] = 5
-    elif change == "wrong_count": coverage["impaired_links"] = 0
-    elif change == "non_disjoint": coverage["disjoint_paths"] = False
-    elif change == "guard_false": coverage["guard_current"] = False
-    elif change == "group_false": coverage["group_identity_guard"] = False
-    elif change == "zero_allowed": coverage["allowed_input_packets"] = 0
-    else: coverage["uncovered_udp_drops"] = 1
+    elif change == "overbound": coverage["external_links"] = 2
+    elif change == "wrong_count": coverage["external_links"] = True
+    elif change == "unbound": coverage["namespace_bound"] = False
+    elif change == "ipv6": coverage["ipv6_disabled"] = False
+    elif change == "identity": coverage["veth_identity_current"] = False
+    elif change == "zero_packets": coverage["directional_veth_packets"]["ingress"] = 0
+    else: del coverage["directional_veth_packets"]["egress"]
     with pytest.raises(ValueError):
         evidence.verify_pair(windows, android, "a" * 40, "b" * 40)
 
