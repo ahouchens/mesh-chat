@@ -151,6 +151,16 @@ def test_real_pairing_terminal_checking_timeout_retains_exact_sdp_once(native_pa
         assert context["ice_diagnostic_snapshot"] == unavailable_ice_diagnostic()
         context[field] = original
         assert service.native_pairing_qualification_status(operation)["ice_diagnostic"] == unavailable_ice_diagnostic()
+        original_check = service._native_pairing_ice_bound_source
+        def failed_check(_):
+            raise RuntimeError("Injected optional binding observer failure")
+        service._native_pairing_ice_bound_source = failed_check
+        try:
+            failed_projection = service.native_pairing_qualification_status(operation)
+        finally:
+            service._native_pairing_ice_bound_source = original_check
+        assert failed_projection["retirement"] == {"phase": "checking", "event": "tick", "reason": "phase_timeout"}
+        assert failed_projection["ice_diagnostic"] == unavailable_ice_diagnostic()
 
 
 def test_private_status_projects_only_valid_exact_timeout_summary():

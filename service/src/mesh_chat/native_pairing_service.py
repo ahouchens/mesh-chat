@@ -455,7 +455,11 @@ class NativePairingServiceMixin:
             result = self.native_pairing_status(operation_id)
             if result["state"] in {"retiring", "retired"}:
                 context = self._native_pairing_contexts[operation_id]
-                if not self._native_pairing_ice_bound_source(context):
+                try:
+                    bound_source = self._native_pairing_ice_bound_source(context)
+                except Exception:
+                    bound_source = False
+                if not bound_source:
                     context["ice_diagnostic_snapshot"] = unavailable_ice_diagnostic()
                 key = connection_key({"id": context["id"], "scope_kind": "pairing",
                                       "local_device_id": context["identity_hash"]})
