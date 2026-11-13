@@ -1,5 +1,20 @@
 # Independent public consumer qualification proposal
 
+Native run [43342460513](https://github.com/ahouchens/mesh-chat/actions/runs/43342460513)
+at `10365b3` passed all ten non-native jobs but remains **failed**. Android
+published `impaired_ready`; Windows then failed at receipt-inbound polling with
+`CoreClientError: protocol`, and Android timed out awaiting delivery. Android
+reported no gateway operation or cleanup failures. Completed impairment,
+negative-control recovery and the 100-iteration native workload are not claimed.
+
+A real framed-facade regression reproduced a valid 30-message snapshot rejected
+by the Python client's request-only JSON structure limit. Response decoding is
+now separate in the in-tree Python, standalone Python and TypeScript clients;
+request depth/token limits and response byte, JSON, envelope and correlation
+validation remain in force. A 256-message real-facade snapshot also passes.
+The actual rejected CI frame was not retained; full native CI on this exact
+correction remains required before helper-retirement work.
+
 Native gateway integration [43337130170](https://github.com/ahouchens/mesh-chat/actions/runs/43337130170)
 at `aa75c1f` remains **unaccepted**. Its Windows direct recovery test sampled
 an attempted migration before a completed outcome; a condition-based wait now

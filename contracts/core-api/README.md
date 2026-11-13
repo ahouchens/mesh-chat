@@ -214,6 +214,12 @@ outside strings). The structural check precedes JSON object allocation. Quoted
 brackets, commas and escaped quotes do not consume this budget. Frame, depth and
 structural-token limits are included in capability negotiation.
 
+Those structural limits apply to requests, not response history or snapshot
+collections. Clients validate response framing, portable JSON values, duplicate
+members, envelope and correlation within the same 4,194,304-byte ceiling.
+The shared `response-framing-vectors-v1.json` covers responses above the request
+width/depth limits and malformed responses; request limits remain unchanged.
+
 Malformed encoding or framing produces one bounded `invalid_request` response with
 null correlation and permanently detaches the session. The adapter stops reading
 that stream; it never drains untrusted trailing bytes to find another command.

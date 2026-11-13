@@ -8,7 +8,7 @@ tooling can use the same versioned frames as any other consumer.
 from .compatibility import check_capabilities
 import re
 from .limits import MAX_FRAME_BYTES
-from .wire_codec import decode_frame, encode_frame
+from .wire_codec import decode_response, encode_frame
 
 
 class CoreClientError(Exception):
@@ -93,7 +93,7 @@ class CoreClient:
             self.close()
             raise CoreClientError("transport_closed", request_id)
         try:
-            response = decode_frame(reply)
+            response = decode_response(reply)
             if (not isinstance(response, dict) or type(response.get("api_version")) is not int
                     or response["api_version"] != 1 or type(response.get("ok")) is not bool):
                 raise ValueError("Invalid response envelope")

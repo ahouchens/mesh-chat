@@ -52,9 +52,9 @@ export function decodeResponse(line: string): ResponseEnvelope {
   }
   let value: unknown;
   try {
-    checkStructure(body);
+    checkStructure(body, false);
     value = JSON.parse(body);
-    checkValues(value);
+    checkValues(value, false);
   } catch {
     throw new ProtocolError("response frame is not JSON");
   }
@@ -98,21 +98,27 @@ export function decodeResponse(line: string): ResponseEnvelope {
   throw new ProtocolError("response outcome is not a boolean");
 }
 
-function checkValues(value: unknown, depth = 0): void {
-  if (depth > 16) throw new ProtocolError("JSON depth exceeds limit");
-  if (typeof value === "number" && (!Number.isFinite(value) || (Number.isInteger(value) && !Number.isSafeInteger(value)))) {
-    throw new ProtocolError("JSON number is outside portable range");
-  }
-  if (typeof value === "string" && /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u.test(value)) {
-    throw new ProtocolError("JSON string contains an unpaired surrogate");
-  }
-  if (Array.isArray(value)) for (const child of value) checkValues(child, depth + 1);
-  else if (value !== null && typeof value === "object") {
-    for (const [key, child] of Object.entries(value)) { checkValues(key); checkValues(child, depth + 1); }
+function checkValues(value: unknown, request = true): void {
+  const pending: { value: unknown; depth: number }[] = [{ value, depth: 0 }];
+  while (pending.length) {
+    const { value, depth } = pending.pop()!;
+    if (request && depth > 16) throw new ProtocolError("JSON depth exceeds limit");
+    if (typeof value === "number" && (!Number.isFinite(value) || (Number.isInteger(value) && !Number.isSafeInteger(value)))) {
+      throw new ProtocolError("JSON number is outside portable range");
+    }
+    if (typeof value === "string" && /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u.test(value)) {
+      throw new ProtocolError("JSON string contains an unpaired surrogate");
+    }
+    if (Array.isArray(value)) for (const child of value) pending.push({ value: child, depth: depth + 1 });
+    else if (value !== null && typeof value === "object") {
+      for (const [key, child] of Object.entries(value)) {
+        pending.push({ value: key, depth: 0 }, { value: child, depth: depth + 1 });
+      }
+    }
   }
 }
 
-function checkStructure(text: string): void {
+function checkStructure(text: string, request = true): void {
   const stack: ({ keys: Set<string>; expectingKey: boolean } | null)[] = [];
   let tokens = 0;
   for (let index = 0; index < text.length; index++) {
@@ -130,12 +136,12 @@ function checkStructure(text: string): void {
         top.keys.add(key); top.expectingKey = false;
       }
     } else if ("{}[]:,".includes(character)) {
-      if (++tokens > 1024) throw new ProtocolError("JSON structural budget exceeded");
+      if (++tokens > 1024 && request) throw new ProtocolError("JSON structural budget exceeded");
       if (character === "{") stack.push({ keys: new Set(), expectingKey: true });
       else if (character === "[") stack.push(null);
       else if (character === "}" || character === "]") stack.pop();
       else if (character === "," && stack.at(-1)) stack.at(-1)!.expectingKey = true;
-      if (stack.length > 16) throw new ProtocolError("JSON depth exceeds limit");
+      if (request && stack.length > 16) throw new ProtocolError("JSON depth exceeds limit");
     }
   }
 }

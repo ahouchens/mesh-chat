@@ -7,13 +7,25 @@ from .limits import MAX_FRAME_BYTES, MAX_REQUEST_JSON_DEPTH, MAX_REQUEST_JSON_TO
 
 
 def decode_frame(frame):
+    return _decode_frame(frame, request=True)
+
+
+def decode_response(frame):
+    """Responses share the byte ceiling, not request-only structure limits."""
+    return _decode_frame(frame, request=False)
+
+
+def _decode_frame(frame, *, request):
     if (not isinstance(frame, bytes) or not frame or len(frame) > MAX_FRAME_BYTES
             or not frame.endswith(b"\n") or b"\n" in frame[:-1]):
         raise ValueError("Invalid frame boundary")
     payload = frame[:-1].decode("utf-8", errors="strict")
-    _check_structure(payload)
-    value = json.loads(payload, object_pairs_hook=_unique_object,
-                       parse_constant=_invalid_number, parse_int=_integer, parse_float=_number)
+    _check_structure(payload, request=request)
+    try:
+        value = json.loads(payload, object_pairs_hook=_unique_object,
+                           parse_constant=_invalid_number, parse_int=_integer, parse_float=_number)
+    except RecursionError as error:
+        raise ValueError("JSON exceeds parser capacity") from error
     _check_unicode(value)
     return value
 
@@ -25,7 +37,7 @@ def encode_frame(value):
     return frame
 
 
-def _check_structure(payload):
+def _check_structure(payload, *, request):
     depth = tokens = 0
     quoted = escaped = False
     for character in payload:
@@ -43,7 +55,7 @@ def _check_structure(payload):
             tokens += 1
             if character in "{[": depth += 1
             elif character in "}]": depth -= 1
-            if not 0 <= depth <= MAX_REQUEST_JSON_DEPTH or tokens > MAX_REQUEST_JSON_TOKENS:
+            if depth < 0 or (request and (depth > MAX_REQUEST_JSON_DEPTH or tokens > MAX_REQUEST_JSON_TOKENS)):
                 raise ValueError("Request JSON exceeds its structural budget")
     if depth or quoted:
         raise ValueError("Incomplete JSON structure")

@@ -31,6 +31,18 @@ class Scripted:
         self.closed = True
 
 
+@pytest.mark.parametrize("shape", ["wide", "deep"])
+def test_large_valid_response_does_not_use_request_structure_limits(shape):
+    vectors = json.loads((Path(__file__).resolve().parents[3] /
+        "contracts/core-api/response-framing-vectors-v1.json").read_text())
+    result = vectors["valid_results"][shape]
+    stream = Scripted(response("client:1", CAP), response("client:2", result), response("client:3", {}))
+    client = CoreClient.open(stream.read, stream.write, stream.close)
+    assert client.application_snapshot() == result
+    assert client.request("runtime.capabilities") == {}
+    assert not stream.closed
+
+
 def test_missing_feature_and_missing_caller_keys_never_write_a_mutation():
     stream = Scripted(response("client:1", CAP))
     client = CoreClient.open(stream.read, stream.write, stream.close)

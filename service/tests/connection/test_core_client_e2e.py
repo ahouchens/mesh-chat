@@ -255,6 +255,25 @@ def test_facade_application_snapshot_returns_ui_state(host):
         owner.close()
 
 
+@pytest.mark.parametrize("message_count", [30, 256])
+def test_client_accepts_real_message_history_above_request_token_budget(host, message_count):
+    service = host()
+    owner = HostedClient(service, frozenset({"observe", "read", "send", "approve"}))
+    try:
+        client = CoreClient.open(owner.reader.readline, owner.writer.write)
+        profile = client.capabilities["profiles"][0]
+        peer = client.profile(profile)["peers"][0]
+        texts = {f"Impaired receipt {index}:" + "x" * 1024 for index in range(message_count)}
+        for index, text in enumerate(sorted(texts)):
+            assert client.enqueue(profile, peer, text, f"history-receipt-{index:04d}")["accepted"]
+        snapshot = client.application_snapshot()
+        assert {item["text"] for item in snapshot["messages"]} == texts
+        assert len(json.dumps(snapshot).encode()) < 4 * 1024 * 1024
+        assert client.request("runtime.capabilities")["api_major"] == 1
+    finally:
+        owner.close()
+
+
 def test_call_control_executes_real_signed_invite_and_hangup_through_core(host):
     service = host()
     owner = HostedClient(service)

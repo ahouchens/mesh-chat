@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { readFileSync } from "node:fs";
 
 import { CoreClient } from "./client.js";
 import { CoreError, ProtocolError, TimeoutError, TransportClosedError } from "./errors.js";
@@ -9,6 +10,18 @@ import type { LineTransport } from "./transport.js";
 const PROFILE = "p".repeat(64);
 const PEER = "q".repeat(64);
 const MESSAGE = "m".repeat(64);
+
+test("valid response vectors exceed request structure limits without relaxing requests", () => {
+  const vectors = JSON.parse(readFileSync(new URL("../../../contracts/core-api/response-framing-vectors-v1.json", import.meta.url), "utf8"));
+  for (const result of Object.values(vectors.valid_results)) {
+    assert.deepEqual(decodeResponse(success("client:1", result)),
+      { api_version: 1, request_id: "client:1", ok: true, result });
+    assert.throws(() => encodeRequest({ api_version: 1, request_id: "client:1",
+      operation: "example", params: { value: result } }), ProtocolError);
+  }
+  for (const frame of vectors.invalid_frames) assert.throws(() => decodeResponse(frame), ProtocolError);
+  assert.throws(() => decodeResponse(success("client:1", "x".repeat(MAX_FRAME_BYTES))), ProtocolError);
+});
 
 const CAPABILITIES = {
   api_major: 1,

@@ -74,6 +74,30 @@ def test_brackets_and_commas_inside_strings_do_not_consume_structure_budget():
     assert session.requests == [value]
 
 
+def test_response_vectors_do_not_relax_request_or_malformed_json_limits():
+    from mesh_chat.core_api.wire_codec import decode_frame, decode_response
+    vectors = json.loads((Path(__file__).resolve().parents[3] /
+        "contracts/core-api/response-framing-vectors-v1.json").read_text())
+    for value in vectors["valid_results"].values():
+        wire = frame(value)
+        assert decode_response(wire) == value
+        with pytest.raises(ValueError): decode_frame(wire)
+    for wire in vectors["invalid_frames"]:
+        with pytest.raises(ValueError): decode_response(wire.encode())
+
+
+def test_response_decoder_retains_byte_bound_and_contains_parser_overflow(monkeypatch):
+    from mesh_chat.core_api import wire_codec
+    from mesh_chat.core_api.limits import MAX_FRAME_BYTES
+    from mesh_chat.core_api.wire_codec import decode_response
+    exact = b'{}' + b' ' * (MAX_FRAME_BYTES - 3) + b'\n'
+    assert decode_response(exact) == {}
+    with pytest.raises(ValueError): decode_response(exact[:-1] + b' \n')
+    def exhausted(*args, **kwargs): raise RecursionError("parser capacity")
+    monkeypatch.setattr(wire_codec.json, "loads", exhausted)
+    with pytest.raises(ValueError, match="parser capacity"): decode_response(b'{}\n')
+
+
 def test_crlf_is_accepted_without_permitting_multiline_json():
     session = Session()
     wire = FramedSession(session)
