@@ -3,7 +3,8 @@
 import re
 
 
-STAGES = frozenset({"restart", "identity_receipt", "readiness", "exchange", "exact_path", "accounting", "evidence"})
+STAGES = frozenset({"restart", "identity_receipt", "started_barrier", "readiness", "exchange",
+                    "exact_path", "accounting", "evidence", "complete_barrier"})
 RELATIONS = frozenset({"unread", "retired", "current", "changed", "invalid", "unavailable", "deadline"})
 OWNERS = frozenset({"authorized", "unadopted", "pending_adoption", "pending_negotiation", "unavailable"})
 
@@ -53,7 +54,8 @@ def failure_snapshot(value):
     if type(value) is not dict or set(value) != fields:
         return None
     if (type(value["iteration"]) is not int or not 1 <= value["iteration"] <= 100
-            or type(value["completed"]) is not int or value["completed"] != value["iteration"] - 1
+            or type(value["completed"]) is not int or value["completed"] != value["iteration"] - (
+                0 if value["stage"] == "complete_barrier" else 1)
             or type(value["stage"]) is not str or value["stage"] not in STAGES
             or type(value["restarted"]) is not bool
             or type(value["path_recheck"]) is not str or value["path_recheck"] not in RELATIONS

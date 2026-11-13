@@ -8,6 +8,7 @@ import re
 import subprocess
 import sys
 import textwrap
+import threading
 from types import ModuleType, SimpleNamespace
 import urllib.request
 
@@ -17,7 +18,8 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 import native_interop_controller as controller
 import native_interop_evidence as evidence
-from native_interop_rendezvous import APPROVAL_PHASES, OFFER_PHASES, checked_payload
+from native_interop_rendezvous import (APPROVAL_PHASES, COLD_COMPLETE_PHASES, COLD_STARTED_PHASES,
+                                       OFFER_PHASES, Rendezvous, checked_payload)
 from test_ui_core_boundary_interop_peers import (
     ANDROID_ENVIRONMENT_SITES, ANDROID_START_SITES, assert_android_cleaned, scripted_android,
 )
@@ -106,8 +108,10 @@ def cold_setup_controller(monkeypatch, *, role="windows", consent=None, imported
     instance.contact = {"id": "PRIVATE_CONTACT", "destination_hash": "a" * 32}
     instance.default_call_settings = {"signal_mailbox_url": "https://synthetic.invalid"}
     def publish(phase, value): state.events.append(("publish", phase, copy.deepcopy(value)))
-    def receive(phase):
+    def receive(phase, *, timeout=None):
         state.events.append(("receive", phase))
+        if phase.startswith("cold_started_"): return {"started": True}
+        if phase.startswith("cold_complete_"): return {"completed": True}
         return state.received
     monkeypatch.setattr(instance, "publish", publish)
     monkeypatch.setattr(instance, "receive", receive)
@@ -250,7 +254,188 @@ def test_cold_setup_keeps_actual_loop_schedule_receipt_checks_and_native_deltas(
         assert cycle["native_resources"] == cycle["warm_baseline_resources"] == 1
         assert cycle["host_accounting"] == cycle["warm_baseline_host_accounting"]
     assert "PRIVATE" not in json.dumps(instance.cycles)
-    assert len([event for event in state.events if isinstance(event, tuple) and event[0] == "publish"]) == 1
+    markers = [event[1] for event in state.events if isinstance(event, tuple) and event[0] == "publish"]
+    expected = ["reconnect_capabilities"]
+    for index in range(iterations):
+        if index % 10 == 0: expected.append(f"cold_started_{index}")
+        if (index + 1) % 10 == 0 or index + 1 == iterations:
+            expected.append(f"cold_complete_{index + 1}")
+    assert markers == expected
+
+
+def test_two_cold_controllers_wait_for_reciprocal_start_and_completion(monkeypatch, sample):
+    """The actual loop cannot exchange before both starts or crash before both evidence blocks."""
+    states = {role: cold_setup_controller(monkeypatch, role=role) for role in ("windows", "android")}
+    documents = {}
+    condition = threading.Condition()
+    windows_started = threading.Event()
+    windows_complete = threading.Event()
+    android_start_paused = threading.Event()
+    release_android_start = threading.Event()
+    android_tenth_paused = threading.Event()
+    release_android_tenth = threading.Event()
+    android_final_paused = threading.Event()
+    release_android_final = threading.Event()
+    windows_final_complete = threading.Event()
+    windows_returned = threading.Event()
+    failures = []
+    for role, state in states.items():
+        instance, peer = state.controller, state.controller.peer
+        instance.workload = {**controller.required_workload("full"), "iterations": 20}
+        instance.identity = evidence.digest("PRIVATE_DURABLE_IDENTITY")
+        state.incarnation, state.stops, state.exchanges, state.observations = 1, [], [], 0
+        original_core = peer.core
+        def core_call(operation, params, key=None, *, state=state, instance=instance, original_core=original_core):
+            if operation == "runtime.capabilities": return {"profiles": [instance.profile]}
+            return original_core(operation, params, key)
+        def inventory(*, state=state):
+            return {"service_incarnation": str(state.incarnation), "resources": ["PRIVATE_RESOURCE"]}
+        def stop(*, state=state, **kwargs):
+            state.stops.append(len(state.exchanges))
+        def start(*, state=state, role=role):
+            if role == "android" and state.incarnation == 1:
+                android_start_paused.set()
+                assert release_android_start.wait(10)
+            state.incarnation += 1
+            return inventory(state=state)
+        def publish(phase, value, *, role=role):
+            with condition:
+                documents[role, phase] = copy.deepcopy(value)
+                condition.notify_all()
+            if role == "windows" and phase == "cold_started_0": windows_started.set()
+            if role == "windows" and phase == "cold_complete_10": windows_complete.set()
+            if role == "windows" and phase == "cold_complete_20": windows_final_complete.set()
+        def receive(phase, *, timeout=180, role=role):
+            partner = "android" if role == "windows" else "windows"
+            with condition:
+                assert condition.wait_for(lambda: (partner, phase) in documents, timeout=10)
+                return copy.deepcopy(documents[partner, phase])
+        def ready(*, state=state):
+            state.observations += 1
+            result = copy.deepcopy(sample[0])
+            result["sample_sequence"] = state.observations
+            result["application"] = dict.fromkeys(evidence.APPLICATION, state.observations)
+            return result
+        def exchange(scenario, index, *, state=state, role=role):
+            state.exchanges.append(index)
+            return {"outbound": "a" * 64, "inbound": "b" * 64}, f"PRIVATE_MESSAGE_{index}"
+        def exact_observe(*_args, state=state, role=role, **_kwargs):
+            if role == "android" and state.exchanges and state.exchanges[-1] == 9:
+                android_tenth_paused.set()
+                assert release_android_tenth.wait(10)
+            if role == "android" and state.exchanges and state.exchanges[-1] == 19:
+                android_final_paused.set()
+                assert release_android_final.wait(10)
+            return ready(state=state)
+        monkeypatch.setattr(peer, "core", core_call)
+        monkeypatch.setattr(peer, "inventory", inventory)
+        monkeypatch.setattr(peer, "stop", stop)
+        monkeypatch.setattr(peer, "start", start, raising=False)
+        monkeypatch.setattr(instance, "publish", publish)
+        monkeypatch.setattr(instance, "receive", receive)
+        monkeypatch.setattr(instance, "approved_contact", lambda instance=instance: instance.contact)
+        monkeypatch.setattr(instance, "snapshot", lambda: {"profile": {"destination_hash": "PRIVATE_DURABLE_IDENTITY"}})
+        monkeypatch.setattr(instance, "delivered", lambda _: True)
+        monkeypatch.setattr(instance, "cold_ready_observation", ready)
+        monkeypatch.setattr(instance, "exchange", exchange)
+        monkeypatch.setattr(instance, "observe", exact_observe)
+        monkeypatch.setattr(instance, "warm_counts", lambda: {"leases": 1})
+        monkeypatch.setattr(instance, "wait", lambda callback, **_kwargs: callback())
+    def run(role):
+        try:
+            states[role].controller.cold_starts()
+            if role == "windows": windows_returned.set()
+        except BaseException as error: failures.append(error)
+    threads = [threading.Thread(target=run, args=(role,), daemon=True) for role in states]
+    for thread in threads: thread.start()
+    try:
+        assert android_start_paused.wait(10) and windows_started.wait(10)
+        assert states["windows"].exchanges == []
+        release_android_start.set()
+        assert android_tenth_paused.wait(10) and windows_complete.wait(10)
+        assert states["windows"].stops == [0]
+        release_android_tenth.set()
+        assert android_final_paused.wait(10) and windows_final_complete.wait(10)
+        assert not windows_returned.is_set()
+    finally:
+        release_android_start.set()
+        release_android_tenth.set()
+        release_android_final.set()
+        for thread in threads: thread.join(10)
+    assert not any(thread.is_alive() for thread in threads)
+    assert not failures
+    assert windows_returned.is_set()
+    assert [len(states[role].controller.cycles) for role in states] == [20, 20]
+    assert states["windows"].stops == [0, 10]
+
+
+def test_cold_barrier_preserves_original_missing_error_and_rejects_invalid_payload(monkeypatch):
+    instance = controller.Controller("windows", None, None, None, {}, workload="quick")
+    sent = []
+    monkeypatch.setattr(instance, "publish", lambda phase, payload: sent.append((phase, payload)))
+    missing = controller.RendezvousUnavailable("missing")
+    def absent(*_args, **_kwargs): raise missing
+    monkeypatch.setattr(instance, "receive", absent)
+    with pytest.raises(controller.RendezvousUnavailable) as caught:
+        instance.cold_barrier("cold_started_0", {"started": True})
+    assert caught.value is missing and sent == [("cold_started_0", {"started": True})]
+    monkeypatch.setattr(instance, "receive", lambda *_args, **_kwargs: {"started": False})
+    with pytest.raises(ValueError): instance.cold_barrier("cold_started_0", {"started": True})
+
+
+def test_cold_barrier_obeys_original_deadline_before_and_after_io(monkeypatch):
+    instance = controller.Controller("windows", None, None, None, {}, workload="quick")
+    calls = []
+    def publish(*_args): calls.append("publish")
+    def receive(*_args, **_kwargs):
+        calls.append("receive")
+        return {"started": True}
+    monkeypatch.setattr(instance, "publish", publish)
+    monkeypatch.setattr(instance, "receive", receive)
+    instance.deadline = controller.time.monotonic() - 1
+    with pytest.raises(controller.PeerFailure): instance.cold_barrier("cold_started_0", {"started": True})
+    assert calls == []
+    def late_publish(*_args):
+        calls.append("publish")
+        instance.deadline = controller.time.monotonic() - 1
+    instance.deadline = controller.time.monotonic() + 30
+    monkeypatch.setattr(instance, "publish", late_publish)
+    with pytest.raises(controller.PeerFailure): instance.cold_barrier("cold_started_0", {"started": True})
+    assert calls == ["publish"]
+    instance.deadline = controller.time.monotonic() + 30
+    monkeypatch.setattr(instance, "publish", publish)
+    def late_receive(*_args, **_kwargs):
+        calls.append("receive")
+        instance.deadline = controller.time.monotonic() - 1
+        return {"started": True}
+    monkeypatch.setattr(instance, "receive", late_receive)
+    with pytest.raises(controller.PeerFailure): instance.cold_barrier("cold_started_0", {"started": True})
+    assert calls == ["publish", "publish", "receive"]
+
+
+def test_cold_barrier_phases_reject_replayed_stale_or_mixed_markers():
+    from test_ui_core_boundary_interop_artifacts import CONTEXT
+    now = [1000]
+    windows = Rendezvous(CONTEXT, "windows", clock=lambda: now[0])
+    android = Rendezvous(CONTEXT, "android", clock=lambda: now[0])
+    try:
+        windows.bind_partner(android.public_manifest())
+        android.bind_partner(windows.public_manifest())
+        assert len(COLD_STARTED_PHASES) == 10 and len(COLD_COMPLETE_PHASES) == 11
+        for phase, invalid in (("cold_started_0", {"started": False}),
+                               ("cold_complete_5", {"completed": 1}),
+                               ("cold_complete_10", {"completed": True, "receipt": "PRIVATE"})):
+            with pytest.raises(ValueError): checked_payload(phase, invalid)
+        marker = windows.seal("cold_started_0", {"started": True})
+        with pytest.raises(ValueError): android.open("cold_started_10", marker)
+        assert android.open("cold_started_0", marker) == {"started": True}
+        with pytest.raises(ValueError): android.open("cold_started_0", marker)
+        stale = windows.seal("cold_complete_5", {"completed": True})
+        now[0] += 600
+        with pytest.raises(ValueError): android.open("cold_complete_5", stale)
+    finally:
+        windows.close()
+        android.close()
 
 
 @pytest.mark.parametrize("mode", ["quick", "full"])
@@ -2954,10 +3139,15 @@ def test_fixed_plan_and_phase_inventory_keep_explicit_bounded_setup_uploads():
     windows = {"key", "reconnect_capabilities", *OFFER_PHASES, *CASE_COMPLETION_PHASES}
     android = {"key", "reconnect_capabilities", "offer", "approved", "impaired_ready", *NEGATIVE_CONTROL_PHASES, *CASE_COMPLETION_PHASES}
     assert len(windows) == 13 and len(android) == 14
+    # The calling qualification workflow and its components can upload at most
+    # 20 other artifacts (including both native reports and the aggregate gate).
+    assert len(windows) + len(android) + 2 * (10 + 10) + 20 == 87 <= 100
     assert len(windows) + 1 == 14 and len(android) + 1 == 15
     quick = {"case_complete_direct_windows", "case_complete_direct_android", "case_complete_turn_udp_windows"}
     assert len({"key", "offer", "offer_turn_udp", "reconnect_capabilities", *quick}) + 1 == 8
     assert len({"key", "offer", "approved", "reconnect_capabilities", *quick}) + 1 == 8
+    assert len({"key", "offer", "offer_turn_udp", "reconnect_capabilities", *quick}) + 2 + 1 == 10
+    assert len({"key", "offer", "approved", "reconnect_capabilities", *quick}) + 2 + 1 == 10
     assert all(name in NEGATIVE_CONTROL_PHASES for name in windows | android if name.startswith("negative"))
 
 

@@ -1371,6 +1371,18 @@ class Controller:
             pass
         return {}
 
+    def cold_barrier(self, phase, payload):
+        """Exchange a fixed, sealed progress marker within the original scenario deadline."""
+        if time.monotonic() >= self.deadline:
+            raise PeerFailure("scenario_deadline")
+        self.publish(phase, payload)
+        remaining = min(180, self.deadline - time.monotonic())
+        if remaining <= 0:
+            raise PeerFailure("scenario_deadline")
+        checked_payload(phase, self.receive(phase, timeout=remaining))
+        if time.monotonic() >= self.deadline:
+            raise PeerFailure("scenario_deadline")
+
     def cold_starts(self):
         self.phase = "cold_start_receipts"
         self.core("call.settings_update", {"profile": self.profile, "settings": self.default_call_settings})
@@ -1410,6 +1422,9 @@ class Controller:
                     raise ValueError("Cold start replaced the durable profile identity")
                 if previous_message is not None and not self.delivered(previous_message):
                     raise ValueError("Authenticated receipt did not survive the real process restart")
+            if restarted:
+                with self._cold_step(index, restarted, "started_barrier"):
+                    self.cold_barrier(f"cold_started_{index}", {"started": True})
             with self._cold_step(index, restarted, "readiness"):
                 before = self.cold_ready_observation()
             with self._cold_step(index, restarted, "exchange"):
@@ -1432,6 +1447,10 @@ class Controller:
                     "host_accounting": host_counts, "warm_baseline_host_accounting": warm_host,
                     "current_service": digest(current["service_incarnation"]), "identity": self.identity,
                     "before": selection(before), "after": selection(after), "native_delta": traffic(before, after), "message": message})
+            completed = index + 1
+            if completed % self.workload["cold_start_every"] == 0 or completed == self.workload["iterations"]:
+                with self._cold_step(index, restarted, "complete_barrier"):
+                    self.cold_barrier(f"cold_complete_{completed}", {"completed": True})
 
     def run(self):
         self.initialize()
@@ -1441,8 +1460,8 @@ class Controller:
             partner_key = self.transport.wait(self.partner, "key", timeout=900)
         with self._failure_scope("initialize_key_bind"):
             self.rendezvous.bind_partner(partner_key)
-        # Both roles execute this fixed source-bound inventory. Keep bootstrap
-        # uploads bounded at Windows 16 / Android 14 (quick 7 each), plus one final report.
+        # Fixed source-bound inventory: full Windows 33 / Android 34, quick 9
+        # each, plus one final report per role.
         for scenario, initiator in self.workload["paths"]: self.path_case(scenario, initiator)
         self.cold_starts()
         self.phase = "clean_host_retirement"
