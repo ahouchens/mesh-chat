@@ -24,12 +24,13 @@ ROLES = {"windows", "android"}
 PRODUCER_JOBS = {"windows": "native_windows_peer", "android": "native_android_peer"}
 OFFER_PHASES = {"offer", "offer_turn_udp", "offer_turn_tcp", "offer_turn_tls", "offer_impaired"}
 NEGATIVE_CASES = {"turn_tcp", "turn_tls", "impaired"}
+NEGATIVE_CONTROL_PHASES = {"negative_control_" + scenario for scenario in NEGATIVE_CASES}
 APPROVAL_PHASES = {"approved", "impaired_ready"} | {
     prefix + scenario for prefix in ("negative_ready_", "negative_checked_") for scenario in NEGATIVE_CASES}
 CASE_COMPLETION_PHASES = frozenset({"case_complete_direct_windows", "case_complete_direct_android",
     "case_complete_turn_udp_windows", "case_complete_turn_tcp_windows", "case_complete_turn_tls_windows",
     "case_complete_impaired_windows"})
-PHASES = OFFER_PHASES | APPROVAL_PHASES | CASE_COMPLETION_PHASES | {"answer", "control", "result", "reconnect_capabilities"}
+PHASES = OFFER_PHASES | APPROVAL_PHASES | CASE_COMPLETION_PHASES | NEGATIVE_CONTROL_PHASES | {"answer", "control", "result", "reconnect_capabilities"}
 KEY_TTL = 7200
 MESSAGE_TTL = 600
 MAX_BLOB = 96 * 1024
@@ -76,6 +77,11 @@ def checked_payload(phase, value):
         valid = (set(value) == {"capabilities"} and type(value["capabilities"]) is str
                  and 0 < len(value["capabilities"].encode("utf-8")) <= MAX_CAPABILITY_BYTES
                  and len(canonical(value)) <= MAX_SHAREABLE)
+    elif phase in NEGATIVE_CONTROL_PHASES:
+        capability = value.get("capability")
+        valid = (set(value) == {"capability"} and type(capability) is str
+                 and 10 < len(capability) <= 2048
+                 and re.fullmatch(r"MESHPAIR2\.[A-Za-z0-9_-]+", capability) is not None)
     elif phase == "control":
         valid = (set(value) == {"scenarios", "iterations", "cold_start_every"}
                  and isinstance(value["scenarios"], list) and 0 < len(value["scenarios"]) <= 8
