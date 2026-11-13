@@ -418,8 +418,8 @@ class ConnectionSupervisor:
         event_name = {Tick: "tick", Failed: "failed", Result: "result", Adopted: "adopted",
                       ContextChanged: "context_changed"}.get(type(event), "unknown")
         gather = trace.last_work
-        exact_work = bool(step.phase is Phase.GATHER_ANSWER and gather is not None
-            and gather.phase is Phase.GATHER_ANSWER and gather.operation == operation
+        exact_work = bool(step.phase in {Phase.GATHER_OFFER, Phase.GATHER_ANSWER} and gather is not None
+            and gather.phase is step.phase and gather.operation == operation
             and gather.resource == step.resource == anchor.resource
             and gather.deadline == step.deadline)
         exact_deadline = bool(exact_work and isinstance(event, Tick)
@@ -461,7 +461,7 @@ class ConnectionSupervisor:
             anchor, cause = trace.source, trace.retirement
             work = cause.gather_work
             if (work is None or cause.gather_deadline is None
-                    or cause.phase is not Phase.GATHER_ANSWER or cause.event != "tick"
+                    or cause.phase not in {Phase.GATHER_OFFER, Phase.GATHER_ANSWER} or cause.event != "tick"
                     or cause.reason != "phase_timeout" or key.scope != "pairing"
                     or runtime_epoch != self.runtime_epoch or source != anchor.resource
                     or cause.source != source or anchor.operation.key != key
@@ -470,7 +470,7 @@ class ConnectionSupervisor:
                     or work.operation.runtime_epoch != runtime_epoch
                     or work.operation.generation != anchor.operation.generation
                     or work.operation.policy_revision != anchor.operation.policy_revision
-                    or work.resource != source or work.phase is not Phase.GATHER_ANSWER
+                    or work.resource != source or work.phase is not cause.phase
                     or work.deadline != cause.gather_deadline):
                 return None
             return work, cause.gather_deadline
@@ -484,7 +484,7 @@ class ConnectionSupervisor:
             anchor, cause = trace.source, trace.retirement
             work, cutoff = cause.gather_work, cause.gather_failed_at
             if (work is None or cutoff is None or not isfinite(cutoff)
-                    or cause.phase is not Phase.GATHER_ANSWER or cause.event != "failed"
+                    or cause.phase not in {Phase.GATHER_OFFER, Phase.GATHER_ANSWER} or cause.event != "failed"
                     or cause.reason != "invalid_document" or key.scope != "pairing"
                     or runtime_epoch != self.runtime_epoch or source != anchor.resource
                     or cause.source != source or anchor.operation.key != key
@@ -493,7 +493,7 @@ class ConnectionSupervisor:
                     or work.operation.runtime_epoch != runtime_epoch
                     or work.operation.generation != anchor.operation.generation
                     or work.operation.policy_revision != anchor.operation.policy_revision
-                    or work.resource != source or work.phase is not Phase.GATHER_ANSWER
+                    or work.resource != source or work.phase is not cause.phase
                     or not cutoff < work.deadline):
                 return None
             return work, cutoff

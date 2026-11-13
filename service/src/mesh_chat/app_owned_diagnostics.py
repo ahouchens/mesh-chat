@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from .connection.diagnostics import validated_pairing_retirement
+from .connection.diagnostics import validated_gather_for_retirement, validated_pairing_retirement
 from .connection.model import Resource
 from .connection.reconcile import connection_key
 
@@ -114,6 +114,7 @@ def _observe_pairing(service):
         context = proof.context
         state = context["state"]
         retirement = None
+        gather = None
         if state in {"retiring", "retired"}:
             owner = service._connection_runtime.owner
             if not _acquire(owner._lock):
@@ -125,12 +126,22 @@ def _observe_pairing(service):
                                       "local_device_id": proof.identity_hash})
                 retirement = validated_pairing_retirement(owner.pairing_retirement_diagnostic(
                     key=key, runtime_epoch=proof.runtime_epoch, source=context["source"]))
+                if (proof.role == "offer" and retirement is not None
+                        and retirement["phase"] == "gather_offer"):
+                    try:
+                        provider = getattr(service, "_native_pairing_gather_failure_snapshot", None)
+                        gather = validated_gather_for_retirement(
+                            retirement, provider(context, retirement)) if callable(provider) else None
+                    except Exception:
+                        pass  # Optional evidence cannot replace the proven retirement row.
             finally:
                 owner._lock.release()
             if retirement is None or "unknown" in retirement.values():
                 return unavailable(total)
-        return {"status": "observed", "total_intents": total, "intents": [{
-            "role": proof.role, "state": state, "retirement": retirement}]}
+        intent = {"role": proof.role, "state": state, "retirement": retirement}
+        if gather is not None:
+            intent["gather_failure"] = gather
+        return {"status": "observed", "total_intents": total, "intents": [intent]}
     finally:
         service._dispatch_lock.release()
 

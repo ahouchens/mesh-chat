@@ -46,6 +46,56 @@ def service_with_one_public_intent(*, capture=True, caller=diagnostics.APP_CALLE
     return service, context, row, calls
 
 
+@pytest.mark.parametrize("mode", ["valid", "malformed", "throwing", "wrong_phase"])
+def test_trusted_owner_offer_gather_failure_is_optional_and_phase_bound(mode):
+    service, context, _, _ = service_with_one_public_intent()
+    retirement = {"phase": "gather_offer", "event": "failed", "reason": "invalid_document"}
+    if mode == "wrong_phase":
+        retirement["phase"] = "gather_answer"
+    service._connection_runtime.owner.pairing_retirement_diagnostic = lambda **_: retirement
+    gather = {"as_of": "failed_result", "worker": "started", "stage": "native_offer",
+        "stage_state": "entered", "last_completed": "ice_config", "queue_age": "lt1s",
+        "stage_age": "lt1s", "exception_kind": "native_unavailable", "native_code": "no_candidates"}
+    calls = []
+
+    def observed(*args):
+        calls.append(args)
+        if mode == "throwing":
+            raise RuntimeError("PRIVATE_FAILURE")
+        return {**gather, "sdp": "PRIVATE_SDP"} if mode == "malformed" else gather
+
+    service._native_pairing_gather_failure_snapshot = observed
+    value = diagnostics.observe_pairing(service)
+    assert value["status"] == "observed"
+    intent = value["intents"][0]
+    assert intent["retirement"] == retirement
+    if mode == "valid":
+        assert intent["gather_failure"] == gather
+        assert calls == [(context, retirement)]
+    else:
+        assert "gather_failure" not in intent
+        assert calls == ([] if mode == "wrong_phase" else [(context, retirement)])
+    assert "PRIVATE" not in str(value)
+
+
+def test_offer_gather_snapshot_stays_inside_bounded_owner_lock():
+    service, context, _, _ = service_with_one_public_intent()
+    owner = service._connection_runtime.owner
+    retirement = {"phase": "gather_offer", "event": "failed", "reason": "invalid_document"}
+    owner.pairing_retirement_diagnostic = lambda **_: retirement
+    gather = {"as_of": "failed_result", "worker": "started", "stage": "native_offer",
+        "stage_state": "entered", "last_completed": "ice_config", "queue_age": "lt1s",
+        "stage_age": "lt1s", "exception_kind": "native_unavailable", "native_code": "no_candidates"}
+
+    def snapshot(selected_context, selected_retirement):
+        assert owner._lock._is_owned()
+        assert selected_context is context and selected_retirement == retirement
+        return gather
+
+    service._native_pairing_gather_failure_snapshot = snapshot
+    assert diagnostics.observe_pairing(service)["intents"][0]["gather_failure"] == gather
+
+
 def test_actual_public_admission_captures_vault_and_supervisor_proof(native_pairing):
     from mesh_chat.errors import ValidationError
     from test_core_pairing_intents import public_client
@@ -83,6 +133,46 @@ def test_actual_public_admission_captures_vault_and_supervisor_proof(native_pair
     assert service.store._db.execute(
         "SELECT kind,record_id,sealed FROM records ORDER BY kind,record_id").fetchall() == before
     assert len(created) == 1 and "PRIVATE" not in str(observation)
+
+
+def test_actual_public_offer_failure_reaches_trusted_owner_with_fixed_gather_fields(native_pairing):
+    from test_core_pairing_intents import public_client
+
+    create, _ = native_pairing
+    service, native, created, *_ = create()
+    calls = []
+
+    def fail_offer(*args):
+        calls.append(1)
+        return '{"ok":false,"error":"native_webrtc_no_candidates"}'
+
+    native.createOffer = fail_offer
+    invoke, _, profile = public_client(service, caller=diagnostics.APP_CALLER)
+    begun = invoke("peer.pairing_begin", {"profile": profile, "role": "offer"},
+                   "owner-gather-offer-key")
+    assert begun["ok"]
+    pairing = begun["result"]["pairing"]
+
+    def state():
+        reply = invoke("peer.pairing_query", {"profile": profile, "pairing": pairing})
+        assert reply["ok"]
+        return reply["result"]["state"]
+
+    run_until(service, lambda: state() == "retired")
+    before = service.store._db.execute(
+        "SELECT kind,record_id,sealed FROM records ORDER BY kind,record_id").fetchall()
+    observed = diagnostics.observe_pairing(service)
+    intent = observed["intents"][0]
+    assert intent["role"] == "offer" and intent["state"] == "retired"
+    assert intent["retirement"] == {"phase": "gather_offer", "event": "failed", "reason": "invalid_document"}
+    gather = intent["gather_failure"]
+    assert (gather["as_of"], gather["stage"], gather["last_completed"],
+            gather["exception_kind"], gather["native_code"]) == (
+                "failed_result", "native_offer", "ice_config", "native_unavailable", "no_candidates")
+    assert calls == [1] and len(created) == 0
+    assert service.store._db.execute(
+        "SELECT kind,record_id,sealed FROM records ORDER BY kind,record_id").fetchall() == before
+    assert "PRIVATE" not in str(observed)
 
 
 def test_capture_failure_does_not_change_public_admission(native_pairing, monkeypatch):

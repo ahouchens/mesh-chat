@@ -35,6 +35,10 @@ FAILED_GATHER = {**GATHER, "as_of": "failed_result", "exception_kind": "native_u
                  "native_code": "no_candidates"}
 FAILED_RETIREMENT = {"phase": "gather_answer", "event": "failed", "reason": "invalid_document"}
 TICK_RETIREMENT = {"phase": "gather_answer", "event": "tick", "reason": "phase_timeout"}
+OFFER_FAILED_RETIREMENT = {"phase": "gather_offer", "event": "failed", "reason": "invalid_document"}
+OFFER_GATHER = {**GATHER, "stage": "native_offer", "last_completed": "ice_config"}
+OFFER_FAILED_GATHER = {**OFFER_GATHER, "as_of": "failed_result",
+                       "exception_kind": "native_unavailable", "native_code": "no_candidates"}
 
 
 @pytest.fixture(autouse=True)
@@ -103,6 +107,21 @@ def test_failed_gather_schema_requires_exact_triplet_shape_and_exception_code_pa
                                      "native_code": "unknown"}) is not None
     assert validated_gather_failure({**FAILED_GATHER, "exception_kind": "validation_error",
                                      "native_code": "not_applicable"}) is not None
+
+
+def test_offer_gather_schema_accepts_only_matching_phase_and_offer_stages():
+    assert validated_gather_for_retirement(OFFER_FAILED_RETIREMENT, OFFER_FAILED_GATHER) == OFFER_FAILED_GATHER
+    assert validated_gather_for_retirement(FAILED_RETIREMENT, OFFER_FAILED_GATHER) is None
+    assert validated_gather_for_retirement(OFFER_FAILED_RETIREMENT, FAILED_GATHER) is None
+    assert validated_gather_for_retirement(OFFER_FAILED_RETIREMENT,
+        {**OFFER_FAILED_GATHER, "last_completed": "native_accept"}) is None
+    assert gather_failure_at_result(10.0, (("queued", 0.0), ("started", 1.0)),
+        (("ice_config", "entered", 1.0), ("ice_config", "completed", 2.0),
+         ("native_offer", "entered", 3.0)), "native_unavailable", "no_candidates",
+        phase="gather_offer")["stage"] == "native_offer"
+    assert gather_failure_at_result(10.0, (("queued", 0.0), ("started", 1.0)),
+        (("ice_config", "completed", 2.0), ("native_accept", "entered", 3.0)),
+        "native_unavailable", "no_candidates", phase="gather_offer") is None
 
 
 @pytest.mark.parametrize("raw,label", [
@@ -195,9 +214,9 @@ def test_missing_stage_entry_never_reuses_previous_stage_age():
             late_observer_error["stage_state"]) == ("started", "native_accept", "entered")
 
 
-def start(owner, name):
+def start(owner, name, *, preferred=False):
     key = ConnectionKey("pairing", name, "PRIVATE_IDENTITY", None)
-    owner.register(ConnectionState(key, owner.runtime_epoch, Authority(1, True, True, False), Desired.ENABLED))
+    owner.register(ConnectionState(key, owner.runtime_epoch, Authority(1, True, True, preferred), Desired.ENABLED))
     owner.dispatch(key, Tick(0))
     return next(effect for effect in owner.drain() if isinstance(effect, Work))
 
@@ -211,6 +230,37 @@ def observation(owner, work, **changes):
     return owner.pairing_retirement_diagnostic(**{
         "key": work.operation.key, "runtime_epoch": work.operation.runtime_epoch,
         "source": work.resource, **changes})
+
+
+@pytest.mark.parametrize("terminal", ["failed", "deadline"])
+def test_offer_gather_custody_is_bound_to_exact_work_and_source(terminal):
+    owner = ConnectionSupervisor("epoch")
+    gather = advance(owner, start(owner, "offer", preferred=True))
+    assert gather.phase is Phase.GATHER_OFFER
+    if terminal == "failed":
+        cutoff = gather.deadline - 1
+        owner.dispatch(gather.operation.key, Failed(gather.operation, cutoff,
+            Failure.INVALID_DOCUMENT, allocated=gather.resource))
+        method = owner.pairing_gather_failed_diagnostic
+        expected = (gather, cutoff)
+        retirement = OFFER_FAILED_RETIREMENT
+    else:
+        owner.dispatch(gather.operation.key, Tick(gather.deadline))
+        method = owner.pairing_gather_deadline_diagnostic
+        expected = (gather, gather.deadline)
+        retirement = {"phase": "gather_offer", "event": "tick", "reason": "phase_timeout"}
+    args = {"key": gather.operation.key, "runtime_epoch": "epoch", "source": gather.resource}
+    assert observation(owner, gather) == retirement
+    assert method(**args) == expected
+    assert method(**{**args, "runtime_epoch": "stale"}) is None
+    assert method(**{**args, "source": Resource("native", "foreign")}) is None
+    trace = owner._pairing_traces[gather.operation.key]
+    cause = trace.retirement
+    trace.retirement = replace(cause, gather_work=replace(gather,
+        operation=replace(gather.operation, generation=gather.operation.generation + 1)))
+    assert method(**args) is None
+    trace.retirement = cause
+    assert method(**args) == expected
 
 
 def test_first_exact_cause_survives_reconciliation_and_global_ring_eviction():
@@ -411,6 +461,123 @@ def qualified(create, directory):
         "turn_broker_consent": False, "turn_url": None, "turn_username": None,
         "turn_credential": None, "stun_urls": []})
     return private.QualificationControl(lambda: service), service, host, created, closed
+
+
+@pytest.mark.parametrize("case,stage,completed,kind,code", [
+    ("ice_validation", "ice_config", "none", "validation_error", "not_applicable"),
+    ("native_no_candidates", "native_offer", "ice_config", "native_unavailable", "no_candidates"),
+    ("native_subclass", "native_offer", "ice_config", "native_unavailable", "no_candidates"),
+    ("native_validation", "native_offer", "ice_config", "validation_error", "not_applicable"),
+    ("cleanup_overwrite", "native_offer", "ice_config", "validation_error", "not_applicable"),
+    ("offer_identity", "offer_sign", "native_offer", "identity_mismatch", "not_applicable"),
+])
+def test_actual_qualified_offer_failure_has_exact_stage_and_exception_kind(
+        native_pairing, tmp_path, case, stage, completed, kind, code):
+    port, service, host, *_ = qualified(native_pairing[0], tmp_path / ("mesh-qualification-offer-" + case))
+    if case == "native_no_candidates":
+        host.createOffer = lambda *args: '{"ok":false,"error":"native_webrtc_no_candidates"}'
+    elif case == "native_subclass":
+        class InheritedNativeUnavailable(NativeUnavailable):
+            pass
+        error = InheritedNativeUnavailable("native_webrtc_no_candidates")
+        service.native_webrtc_offer = lambda *args, **kwargs: (_ for _ in ()).throw(error)
+    elif case == "cleanup_overwrite":
+        def masked(*args, **kwargs):
+            try:
+                raise NativeUnavailable("native_webrtc_no_candidates")
+            finally:
+                raise ValidationError("PRIVATE_CLEANUP_REPLACEMENT")
+        service.native_webrtc_offer = masked
+    else:
+        method = {"ice_validation": "call_ice_servers", "native_validation": "native_webrtc_offer",
+                  "offer_identity": "webrtc_onboarding_offer"}[case]
+        error = IdentityMismatch("PRIVATE_IDENTITY") if case == "offer_identity" else ValidationError("PRIVATE_VALIDATION")
+        setattr(service, method, lambda *args, **kwargs: (_ for _ in ()).throw(error))
+    operation = str(uuid4())
+    port.dispatch("qualification.pairing_begin", {"operation_id": operation, "role": "offer"})
+    def status():
+        return port.dispatch("qualification.pairing_status", {"operation_id": operation})
+    run_until(service, lambda: status()["state"] == "retired")
+    observed = status()
+    assert observed["retirement"] == OFFER_FAILED_RETIREMENT
+    gather = observed["gather_failure"]
+    assert (gather["as_of"], gather["stage"], gather["stage_state"],
+            gather["last_completed"], gather["exception_kind"], gather["native_code"]) == (
+                "failed_result", stage, "entered", completed, kind, code)
+    assert validated_gather_for_retirement(observed["retirement"], gather) == gather
+    assert "PRIVATE" not in json.dumps(observed)
+
+
+@pytest.mark.parametrize("mode", ["work_throw", "marker_throw", "stale_marker", "stage_throw"])
+def test_offer_gather_observer_faults_omit_optional_evidence_without_changing_failure(
+        native_pairing, tmp_path, mode):
+    port, service, host, *_ = qualified(native_pairing[0],
+        tmp_path / ("mesh-qualification-offer-observer-" + mode))
+    host.createOffer = lambda *args: '{"ok":false,"error":"native_webrtc_no_candidates"}'
+    pairing = service._connection_runtime.executor.pairing
+    if mode == "work_throw":
+        pairing.ports = replace(pairing.ports,
+            mark_gather_work=lambda *args: (_ for _ in ()).throw(RuntimeError("PRIVATE_WORK")))
+    elif mode == "marker_throw":
+        pairing.ports = replace(pairing.ports,
+            mark_gather_failure=lambda *args: (_ for _ in ()).throw(RuntimeError("PRIVATE_MARKER")))
+    elif mode == "stale_marker":
+        pairing.ports = replace(pairing.ports,
+            mark_gather_failure=lambda context, work, kind, code:
+                context.__setitem__("gather_exception", (replace(work), kind, code)))
+    else:
+        original = service._native_pairing_stage
+        def broken(context, label, state):
+            if (label, state) == ("native_offer", "entered"):
+                raise RuntimeError("PRIVATE_STAGE")
+            return original(context, label, state)
+        service._native_pairing_stage = broken
+    operation = str(uuid4())
+    port.dispatch("qualification.pairing_begin", {"operation_id": operation, "role": "offer"})
+    def status():
+        return port.dispatch("qualification.pairing_status", {"operation_id": operation})
+    run_until(service, lambda: status()["state"] == "retired")
+    observed = status()
+    assert observed["retirement"] == OFFER_FAILED_RETIREMENT
+    assert "gather_failure" not in observed
+    assert "PRIVATE" not in json.dumps(observed)
+
+
+def test_actual_offer_deadline_uses_original_custodied_time_and_stage(native_pairing, tmp_path):
+    port, service, host, *_ = qualified(native_pairing[0], tmp_path / "mesh-qualification-offer-deadline")
+    entered, release = Event(), Event()
+    offset = [0.0]
+    shared_now = lambda: monotonic() + offset[0]
+    service._connection_runtime.now = shared_now
+    service._connection_runtime.runner._now = shared_now
+    original = host.createOffer
+
+    def blocked(*args):
+        entered.set()
+        assert release.wait(3)
+        return original(*args)
+
+    host.createOffer = blocked
+    operation = str(uuid4())
+    port.dispatch("qualification.pairing_begin", {"operation_id": operation, "role": "offer"})
+    def status():
+        return port.dispatch("qualification.pairing_status", {"operation_id": operation})
+    try:
+        run_until(service, entered.is_set)
+        offset[0] = 26.0
+        service._connection_runtime.step()
+        run_until(service, lambda: status()["state"] == "retired")
+        observed = status()
+        assert observed["retirement"] == {
+            "phase": "gather_offer", "event": "tick", "reason": "phase_timeout"}
+        gather = observed["gather_failure"]
+        assert (gather["as_of"], gather["worker"], gather["stage"],
+                gather["stage_state"], gather["last_completed"]) == (
+                    "phase_deadline", "started", "native_offer", "entered", "ice_config"), gather
+        assert "exception_kind" not in gather and "native_code" not in gather
+        assert validated_gather_for_retirement(observed["retirement"], gather) == gather
+    finally:
+        release.set()
 
 
 @pytest.mark.parametrize("case", ["valid_failed", "wrong_as_of_failed", "wrong_as_of_tick",

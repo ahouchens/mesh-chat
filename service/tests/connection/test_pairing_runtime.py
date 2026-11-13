@@ -30,10 +30,11 @@ def pairing(preferred=True):
                            Authority(1, True, True, preferred), Desired.ENABLED)
 
 
-def test_gather_worker_history_keeps_deadline_state_after_late_completion():
+@pytest.mark.parametrize("phase", [Phase.GATHER_OFFER, Phase.GATHER_ANSWER])
+def test_gather_worker_history_keeps_deadline_state_after_late_completion(phase):
     clock = [10.0]
     entered, release = Event(), Event()
-    work = Work(operation=Operation("epoch", pairing().key, 1, 1, 1), phase=Phase.GATHER_ANSWER,
+    work = Work(operation=Operation("epoch", pairing().key, 1, 1, 1), phase=phase,
         resource=Resource("native", "resource"), deadline=35.0)
     class Executor:
         def execute(self, effect, cancellation):
@@ -54,7 +55,8 @@ def test_gather_worker_history_keeps_deadline_state_after_late_completion():
     assert runner.gather_milestones(replace(work, resource=Resource("native", "foreign"))) == ()
 
 
-def test_queued_gather_expired_before_worker_entry_and_history_eviction(monkeypatch):
+@pytest.mark.parametrize("phase", [Phase.GATHER_OFFER, Phase.GATHER_ANSWER])
+def test_queued_gather_expired_before_worker_entry_and_history_eviction(monkeypatch, phase):
     clock = [10.0]
     deferred = []
     class DeferredThread:
@@ -70,7 +72,7 @@ def test_queued_gather_expired_before_worker_entry_and_history_eviction(monkeypa
         def retire(self, resource):
             pass
     runner = BoundedEffectRunner(Executor(), Policy(max_actors=1, max_workers=1), now=lambda: clock[0])
-    work = Work(Operation("epoch", pairing().key, 1, 1, 1), Phase.GATHER_ANSWER,
+    work = Work(Operation("epoch", pairing().key, 1, 1, 1), phase,
                 Resource("native", "first"), 35.0)
     assert runner.submit(work)
     assert runner.gather_milestones(work) == (("queued", 10.0),)
@@ -85,8 +87,9 @@ def test_queued_gather_expired_before_worker_entry_and_history_eviction(monkeypa
     assert runner.gather_milestones(other) == (("queued", 36.0),)
 
 
-def test_optional_gather_recorder_failure_does_not_replace_worker_result():
-    work = Work(Operation("epoch", pairing().key, 1, 1, 1), Phase.GATHER_ANSWER,
+@pytest.mark.parametrize("phase", [Phase.GATHER_OFFER, Phase.GATHER_ANSWER])
+def test_optional_gather_recorder_failure_does_not_replace_worker_result(phase):
+    work = Work(Operation("epoch", pairing().key, 1, 1, 1), phase,
                 Resource("native", "resource"), monotonic() + 3)
     class Executor:
         def execute(self, effect, cancellation):

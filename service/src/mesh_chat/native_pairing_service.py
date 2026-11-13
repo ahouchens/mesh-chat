@@ -482,35 +482,54 @@ class NativePairingServiceMixin:
                     except Exception:
                         context["ice_diagnostic_snapshot"] = unavailable_ice_diagnostic()
                         result["ice_diagnostic"] = unavailable_ice_diagnostic()
-                if "gather_failure_snapshot" not in context:
-                    try:
-                        custody = self._connection_runtime.owner.pairing_gather_deadline_diagnostic(
-                            key=key, runtime_epoch=context["runtime_epoch"], source=context["source"])
+                gather = self._native_pairing_gather_failure_snapshot(context, result["retirement"])
+                if gather is not None:
+                    result["gather_failure"] = gather
+            return result
+
+    def _native_pairing_gather_failure_snapshot(self, context, retirement):
+        """Select only the exact source-custodied gather result from in-memory state."""
+        if "gather_failure_snapshot" not in context:
+            try:
+                phase = "gather_offer" if context["role"] == "offer" else "gather_answer"
+                observed = None
+                if retirement.get("phase") == phase:
+                    key = connection_key({"id": context["id"], "scope_kind": "pairing",
+                                          "local_device_id": context["identity_hash"]})
+                    owner = self._connection_runtime.owner
+                    args = {"key": key, "runtime_epoch": context["runtime_epoch"], "source": context["source"]}
+                    custody = owner.pairing_gather_deadline_diagnostic(**args)
+                    if custody is not None:
+                        work, deadline = custody
+                        same_work = (context.get("gather_work") is work if phase == "gather_offer"
+                                     else context.get("gather_work") == work)
+                        stages = context["gather_stages"] if same_work else None
+                        observed = gather_failure_at_deadline(deadline,
+                            self._connection_runtime.runner.gather_milestones(work), stages, phase=phase)
+                    else:
+                        custody = owner.pairing_gather_failed_diagnostic(**args)
                         if custody is not None:
-                            work, deadline = custody
-                            stages = (context["gather_stages"] if context.get("gather_work") == work else None)
-                            observed = gather_failure_at_deadline(deadline,
-                                self._connection_runtime.runner.gather_milestones(work), stages)
-                        else:
-                            custody = self._connection_runtime.owner.pairing_gather_failed_diagnostic(
-                                key=key, runtime_epoch=context["runtime_epoch"], source=context["source"])
-                            observed = None
-                            if custody is not None:
-                                work, cutoff = custody
-                                stages = (context["gather_stages"] if context.get("gather_work") == work else None)
-                                marker = context.get("gather_exception")
+                            work, cutoff = custody
+                            same_work = (context.get("gather_work") is work if phase == "gather_offer"
+                                         else context.get("gather_work") == work)
+                            stages = context["gather_stages"] if same_work else None
+                            marker = context.get("gather_exception")
+                            if phase == "gather_offer":
+                                matched = (type(marker) is tuple and len(marker) == 3 and marker[0] is work)
+                                kind, code = marker[1:] if matched else ("unknown", "unknown")
+                                if not matched:
+                                    stages = None
+                            else:
                                 kind, code = (marker[1:] if marker is not None and marker[0] == work
                                               else ("unknown", "unknown"))
-                                observed = gather_failure_at_result(cutoff,
-                                    self._connection_runtime.runner.gather_milestones(work), stages,
-                                    kind, code)
-                        context["gather_failure_snapshot"] = validated_gather_for_retirement(
-                            result["retirement"], observed)
-                    except Exception:
-                        context["gather_failure_snapshot"] = None
-                if context["gather_failure_snapshot"] is not None:
-                    result["gather_failure"] = dict(context["gather_failure_snapshot"])
-            return result
+                            observed = gather_failure_at_result(cutoff,
+                                self._connection_runtime.runner.gather_milestones(work), stages,
+                                kind, code, phase=phase)
+                context["gather_failure_snapshot"] = validated_gather_for_retirement(retirement, observed)
+            except Exception:
+                context["gather_failure_snapshot"] = None
+        selected = context["gather_failure_snapshot"]
+        return dict(selected) if selected is not None else None
 
     def _native_pairing_ice_diagnostic(self, operation_id, context):
         """One retained-SDP snapshot for the exact admitted terminal pairing."""
@@ -637,9 +656,10 @@ class NativePairingServiceMixin:
             context["source"] = resource
 
     def _native_pairing_mark_gather_work(self, context, work):
-        """Bind the exact admitted answer work without a lock or host call."""
+        """Bind the exact admitted gather work without a lock or host call."""
         try:
-            if (work.phase is Phase.GATHER_ANSWER and context["role"] == "answer"
+            expected = Phase.GATHER_OFFER if context["role"] == "offer" else Phase.GATHER_ANSWER
+            if (work.phase is expected
                     and work.operation.key.scope == "pairing"
                     and work.operation.key.profile_id == context["id"]
                     and work.operation.key.local_device == context["identity_hash"]
@@ -651,10 +671,10 @@ class NativePairingServiceMixin:
             pass
 
     def _native_pairing_mark_gather_failure(self, context, work, kind, code):
-        """Retain only fixed labels bound to this exact answer Work."""
+        """Retain only fixed labels bound to this exact gather Work."""
         try:
-            if (context["role"] == "answer" and context.get("gather_work") == work
-                    and work.phase is Phase.GATHER_ANSWER
+            expected = Phase.GATHER_OFFER if context["role"] == "offer" else Phase.GATHER_ANSWER
+            if (context.get("gather_work") == work and work.phase is expected
                     and work.operation.runtime_epoch == context["runtime_epoch"]
                     and work.resource == context["source"]
                     and context.get("gather_exception") is None):
@@ -664,8 +684,11 @@ class NativePairingServiceMixin:
 
     def _native_pairing_stage(self, context, label, state):
         try:
+            allowed = ({"ice_config", "native_offer", "offer_sign", "complete"}
+                       if context["role"] == "offer" else
+                       {"ice_config", "native_accept", "answer_sign", "bind_onboarding", "complete"})
             if (context.get("gather_work") is not None and
-                    label in {"ice_config", "native_accept", "answer_sign", "bind_onboarding", "complete"}
+                    label in allowed
                     and state in {"entered", "completed"}):
                 history = context["gather_stages"]
                 if history is not None and len(history) < 9:
@@ -727,19 +750,22 @@ class NativePairingServiceMixin:
                 raise CallOutcomeRequiresResync("Native pairing allocation outcome requires resync")
             context["allocation_attempted"] = True
             context["host"] = self._native_webrtc_host()
-        if context["role"] == "answer":
-            self._native_pairing_note_stage(context, "ice_config", "entered")
+        self._native_pairing_note_stage(context, "ice_config", "entered")
         ice = self.call_ice_servers()
-        if context["role"] == "answer":
-            self._native_pairing_note_stage(context, "ice_config", "completed")
+        self._native_pairing_note_stage(context, "ice_config", "completed")
         self._native_pairing_check(context)
         if not context["direct"]:
             ice = {**ice, "iceTransportPolicy": "relay"}
         if context["role"] == "offer":
+            self._native_pairing_note_stage(context, "native_offer", "entered")
             native = self.native_webrtc_offer(context["session"], ice, CHANNELS)
+            self._native_pairing_note_stage(context, "native_offer", "completed")
             self._native_pairing_check(context)
+            self._native_pairing_note_stage(context, "offer_sign", "entered")
             document = self.webrtc_onboarding_offer(native["sdp"], native["fingerprint"])
+            self._native_pairing_note_stage(context, "offer_sign", "completed")
             context["offer"] = document
+            self._native_pairing_note_stage(context, "complete", "completed")
         else:
             self._native_pairing_note_stage(context, "native_accept", "entered")
             native = self.native_webrtc_accept(context["session"], context["offer"]["sdp"], ice, CHANNELS)

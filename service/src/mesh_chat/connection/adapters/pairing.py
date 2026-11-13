@@ -92,7 +92,7 @@ class PairingExecutor:
                 self.ports.reserve(context, work.resource)
                 pending = False
             else:
-                if work.phase is Phase.GATHER_ANSWER and self.ports.mark_gather_work is not None:
+                if work.phase in {Phase.GATHER_OFFER, Phase.GATHER_ANSWER} and self.ports.mark_gather_work is not None:
                     try:
                         self.ports.mark_gather_work(context, work)
                     except Exception:
@@ -106,7 +106,7 @@ class PairingExecutor:
         except ContactNotApproved:
             failure = Failure.REVOKED
         except (IdentityMismatch, ValidationError) as error:
-            if (work.phase is Phase.GATHER_ANSWER and context is not None
+            if (work.phase in {Phase.GATHER_OFFER, Phase.GATHER_ANSWER} and context is not None
                     and self.ports.mark_gather_failure is not None):
                 try:
                     kind, code = _gather_exception_labels(error)

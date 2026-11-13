@@ -35,13 +35,18 @@ def validated_pairing_retirement(value) -> dict | None:
 GATHER_FAILURE_FIELDS = {
     "as_of": frozenset({"phase_deadline"}),
     "worker": frozenset({"queued", "started", "completed", "unknown"}),
-    "stage": frozenset({"not_started", "ice_config", "native_accept", "answer_sign",
+    "stage": frozenset({"not_started", "ice_config", "native_offer", "offer_sign", "native_accept", "answer_sign",
                          "bind_onboarding", "complete", "unknown"}),
     "stage_state": frozenset({"entered", "completed", "unknown"}),
-    "last_completed": frozenset({"none", "ice_config", "native_accept", "answer_sign",
+    "last_completed": frozenset({"none", "ice_config", "native_offer", "offer_sign", "native_accept", "answer_sign",
                                   "bind_onboarding", "unknown"}),
     "queue_age": frozenset({"lt1s", "1to5s", "5to20s", "20to25s", "gte25s", "unknown"}),
     "stage_age": frozenset({"lt1s", "1to5s", "5to20s", "20to25s", "gte25s", "unknown"}),
+}
+GATHER_STAGE_ORDER = {
+    "gather_offer": {"ice_config": 0, "native_offer": 1, "offer_sign": 2, "complete": 3},
+    "gather_answer": {"ice_config": 0, "native_accept": 1, "answer_sign": 2,
+                      "bind_onboarding": 3, "complete": 4},
 }
 FAILED_GATHER_FAILURE_FIELDS = {
     **GATHER_FAILURE_FIELDS,
@@ -77,7 +82,11 @@ def validated_gather_for_retirement(retirement, gather):
     """Require matching cause and as-of shape at each private projection edge."""
     cause = validated_pairing_retirement(retirement)
     selected = validated_gather_failure(gather)
-    if cause is None or selected is None or cause["phase"] != "gather_answer":
+    if cause is None or selected is None or cause["phase"] not in GATHER_STAGE_ORDER:
+        return None
+    stages = GATHER_STAGE_ORDER[cause["phase"]]
+    if (selected["stage"] not in {"not_started", "unknown", *stages}
+            or selected["last_completed"] not in {"none", "unknown", *(set(stages) - {"complete"})}):
         return None
     triplet = cause["event"], cause["reason"]
     if ((triplet == ("tick", "phase_timeout") and selected["as_of"] == "phase_deadline")
@@ -96,8 +105,10 @@ def _age_bucket(start, end):
 
 
 def _gather_failure_at(cutoff, worker_history, stage_history, as_of, exception_kind=None,
-                       native_code=None):
+                       native_code=None, *, phase="gather_answer"):
     """Select fixed milestones at the supervisor-custodied time only."""
+    if phase not in GATHER_STAGE_ORDER or (phase == "gather_offer" and stage_history is None):
+        return None
     if as_of == "failed_result":
         kind, code = exception_kind, native_code
         if validated_gather_failure({**{key: "unknown" for key in GATHER_FAILURE_FIELDS},
@@ -122,13 +133,13 @@ def _gather_failure_at(cutoff, worker_history, stage_history, as_of, exception_k
         saw_late = False
         for state, when in worker_history:
             if type(when) not in (int, float) or not isfinite(when) or when < previous:
-                return unknown
+                return None if phase == "gather_offer" else unknown
             previous = when
             if when > cutoff:
                 saw_late = True
                 continue
             if saw_late or state not in {"queued", "started", "completed"}:
-                return unknown
+                return None if phase == "gather_offer" else unknown
             worker = state
             if state == "queued":
                 queued = when
@@ -136,7 +147,7 @@ def _gather_failure_at(cutoff, worker_history, stage_history, as_of, exception_k
                 started = when
         queue_age = _age_bucket(queued, started if started is not None else cutoff)
         def unknown_stage():
-            return shaped({"as_of": as_of, "worker": worker, "stage": "unknown",
+            return None if phase == "gather_offer" else shaped({"as_of": as_of, "worker": worker, "stage": "unknown",
                     "stage_state": "unknown", "last_completed": "unknown",
                     "queue_age": queue_age, "stage_age": "unknown"})
         stage = "not_started" if worker == "queued" and stage_history == () else "unknown"
@@ -149,8 +160,7 @@ def _gather_failure_at(cutoff, worker_history, stage_history, as_of, exception_k
         saw_late = False
         previous_stage = -1
         completed_stage = -1
-        order = {"ice_config": 0, "native_accept": 1, "answer_sign": 2,
-                 "bind_onboarding": 3, "complete": 4}
+        order = GATHER_STAGE_ORDER[phase]
         for label, state, when in (() if stage_history is None else stage_history):
             if type(when) not in (int, float) or not isfinite(when) or when < previous:
                 return unknown_stage()
@@ -188,20 +198,22 @@ def _gather_failure_at(cutoff, worker_history, stage_history, as_of, exception_k
                   "stage_state": stage_state, "last_completed": last_completed,
                   "queue_age": queue_age,
                   "stage_age": _age_bucket(entered, stage_end)})
-        return validated_gather_failure(result) or unknown
+        selected = validated_gather_failure(result)
+        return selected if selected is not None else (None if phase == "gather_offer" else unknown)
     except (TypeError, ValueError):
-        return unknown
+        return None if phase == "gather_offer" else unknown
 
 
-def gather_failure_at_deadline(deadline, worker_history, stage_history):
+def gather_failure_at_deadline(deadline, worker_history, stage_history, *, phase="gather_answer"):
     """Existing timeout observation, unchanged at the original phase deadline."""
-    return _gather_failure_at(deadline, worker_history, stage_history, "phase_deadline")
+    return _gather_failure_at(deadline, worker_history, stage_history, "phase_deadline", phase=phase)
 
 
-def gather_failure_at_result(now, worker_history, stage_history, exception_kind, native_code):
+def gather_failure_at_result(now, worker_history, stage_history, exception_kind, native_code,
+                             *, phase="gather_answer"):
     """Observe a classified gather failure at its accepted Failed.now."""
     return _gather_failure_at(now, worker_history, stage_history, "failed_result",
-                              exception_kind, native_code)
+                              exception_kind, native_code, phase=phase)
 
 
 @dataclass(frozen=True)

@@ -32,7 +32,7 @@ class BoundedEffectRunner:
         self._deadlines = {}
         self._cleanup = {}
         self._cleanup_deadlines = {}
-        # One fixed three-event history per admitted answer work, bounded by actors.
+        # One fixed three-event history per admitted pairing gather, bounded by actors.
         self._gather_events = {}
         # Completed work retains a reservation until the owner consumes it.
         self._completed = Queue(maxsize=policy.max_workers + policy.max_effects)
@@ -86,7 +86,8 @@ class BoundedEffectRunner:
             self._workers[effect.operation] = (cancelled, thread)
             self._work_bytes[effect.operation] = size
             self._deadlines[effect.operation] = effect.deadline + self._policy.disconnect_grace
-            if effect.phase is Phase.GATHER_ANSWER and effect.operation.key.scope == "pairing":
+            if (effect.phase in {Phase.GATHER_OFFER, Phase.GATHER_ANSWER}
+                    and effect.operation.key.scope == "pairing"):
                 try:
                     record = _GatherMilestones((("queued", self._now()),))
                     self._gather_events[effect] = record
