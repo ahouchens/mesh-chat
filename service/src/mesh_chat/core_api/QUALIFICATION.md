@@ -1,5 +1,28 @@
 # Private packaged qualification control
 
+Full run [43360865677](https://github.com/ahouchens/mesh-chat/actions/runs/43360865677)
+at `4cf6cab` is **failed**: nine jobs passed, four failed and two optional probes
+were skipped. Policy passed 6,013 cases; UI boundary passed 2,091 Python and 12
+rendered cases; Android passed 83 exact JVM identities and 56 emulator cases.
+Installed Windows pairing/lifecycle passed. Linux passed 25 transport, 10 recovery
+and 12 setup cases. Windows recovery passed nine cases but failed `address_loss`
+before fault injection: admission had an active epoch-2 workspace but no General
+channel after 45 seconds. Subsequent Windows transport/setup checks did not run.
+Separate manifest/channel delivery permits that intermediate state; the retained
+evidence does not explain why channel discovery remained incomplete.
+
+Native Android failed before pairing at `android_root`, exit status 1,
+`connect_failure`; Windows then exhausted its partner-key wait. The discarded
+ADB suffix does not establish a transport subtype or transient cause. The prior
+impaired restored-delivery failure was not exercised and remains unresolved.
+The successor retains exact-workspace, bounded admission failure observations
+and optional fixed labels from already-captured ADB root errors. Original
+failures, admission/root deadlines, one root attempt and WebRTC are unchanged.
+Local combined boundary/diagnostic checks passed 2,170 cases; 6,037 policy cases
+were collected, not executed locally. One actual two-worker source-mode setup
+case verified diagnostic wiring. Full native and aggregate acceptance remain
+open, and helper-retirement implementation remains gated.
+
 Full run [43355120945](https://github.com/ahouchens/mesh-chat/actions/runs/43355120945)
 at `a6ba6dd` is **failed**: all ten non-native jobs passed; both native peers and
 the aggregate gate failed. Windows public pairing and lifecycle passed. Policy
