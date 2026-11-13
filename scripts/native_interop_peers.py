@@ -451,6 +451,7 @@ class AndroidPeer:
         self._qualification_binding = None
         self._transport_failure = None
         self._instrumentation_status = _instrumentation_status()
+        self._observe_system_phase("peer_start")
         nonce = os.urandom(32).hex()
         self.process = subprocess.Popen([self.adb, "shell", "am", "instrument", "-w", "-r",
             "-e", "class", self.TEST, "-e", "mesh_interop_nonce", nonce, self.RUNNER],
@@ -493,11 +494,13 @@ class AndroidPeer:
             stage = "authenticate"
             self._request("authenticate", {"nonce": nonce})
             stage = "initialize"
+            self._observe_system_phase("peer_initialize")
             self._request("initialize", {"directory_id": self.directory_id, "vault_key": base64.b64encode(self.key).decode()})
             stage = "inventory"
             inventory = self.inventory()
             stage = "binding"
             self._qualification_binding = self._initial_binding(inventory)
+            self._observe_system_phase("peer_runtime")
             return inventory
         except Exception as error:
             self._fail_start(stage, error)
@@ -685,6 +688,7 @@ class AndroidPeer:
         return self._request("inspect", {"command": "qualification.pairing_cancel", "payload": {"operation_id": operation_id}})
 
     def stop(self, *, crash=False, delete_profile=False, _origin="other_stop", _masked_start_kind="none"):
+        self._observe_system_phase("peer_stop")
         self._lifecycle_failure = None
         self._core_failure = None
         self._qualification_binding = None
@@ -740,6 +744,13 @@ class AndroidPeer:
                 except Exception: pass
                 raise
 
+    def _observe_system_phase(self, phase):
+        try:
+            observation = getattr(self, "system_observation", None)
+            if observation is not None: observation.phase(phase)
+        except Exception:
+            pass
+
 
 class AndroidEmulator:
     """Own the KVM emulator for the whole Node Action, including its cleanup."""
@@ -755,6 +766,8 @@ class AndroidEmulator:
         self.serial = "emulator-5554"
         self.process = None
         self.old_environment = {}
+        from native_interop_android_system import AndroidSystemObservation
+        self.observation = AndroidSystemObservation()
 
     def _adb(self, *arguments, timeout=30):
         return subprocess.check_output([str(self.sdk / "platform-tools/adb"), "-s", self.serial, *arguments],
@@ -779,10 +792,13 @@ class AndroidEmulator:
             with diagnostics.scope("android_avd_create"):
                 subprocess.run([avdmanager, "create", "avd", "--name", self.name, "--package", self.IMAGE],
                     input=b"no\n", check=True, capture_output=True, timeout=120)
+            from native_interop_android_system import LOG_TAGS
             self.process = subprocess.Popen([str(self.sdk / "emulator/emulator"), "-avd", self.name,
                 "-port", "5554", "-no-window", "-gpu", "swiftshader_indirect", "-accel", "on",
-                "-no-snapshot", "-noaudio", "-no-boot-anim", "-camera-back", "none", "-camera-front", "none"],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+                "-no-snapshot", "-noaudio", "-no-boot-anim", "-camera-back", "none", "-camera-front", "none",
+                "-show-kernel", "-logcat", LOG_TAGS],
+                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
+            self.observation.start(self.process.stdout)
             deadline = time.monotonic() + 600
             booted = False
             while time.monotonic() < deadline:
@@ -812,6 +828,7 @@ class AndroidEmulator:
             raise
 
     def close(self):
+        self.observation.phase("cleanup")
         failure = None
         if self.process is not None:
             try:
@@ -824,7 +841,9 @@ class AndroidEmulator:
                     self.process.wait(timeout=15)
                 except Exception:
                     failure = PeerFailure("emulator_retirement_failed")
-            if self.process.poll() is not None: self.process = None
+            if self.process.poll() is not None:
+                if self.observation.finish(self.process.stdout): self.process = None
+                else: failure = PeerFailure("emulator_observer_retirement_failed")
         if self.process is None:
             expected_parent = Path(os.environ["RUNNER_TEMP"]).resolve()
             if self.root.parent != expected_parent or self.root.name != self.name:

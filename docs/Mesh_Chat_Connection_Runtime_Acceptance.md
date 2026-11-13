@@ -1,5 +1,33 @@
 # Acceptance reconciliation: specification invariants and scenarios
 
+Full run [43520421850](https://github.com/ahouchens/mesh-chat/actions/runs/43520421850)
+at `b8e3e20` is **failed**: ten jobs passed, both native peers and the aggregate
+failed, and two optional jobs were skipped. The complete Windows and Linux
+Direct suites now pass. Required policy passed 6,620 cases without failures or
+skips; UI, desktop, layout, Android 56 and exact JVM 83 checks also passed.
+
+Both native peers completed all six path cases. Android's first cold restart
+lost the authenticated socket during `initialize`, before any response bytes.
+The preserved startup failure is `peer_closed`; subsequent rollback observed
+ADB `device_offline`. The running local instrumentation command is an ADB
+client, not the guest app process. The running emulator process does not prove
+guest health. Windows completed its restart/identity checks, then failed the
+partner barrier with `inventory_request/transport_failed`; its final cleanup
+did not fail. Zero cold receipt cycles completed. No reciprocal native100 or
+aggregate acceptance is claimed.
+
+The successor observes the existing emulator console using documented kernel
+and filtered Logcat output, continuously drained from emulator launch. It
+retains only fixed signature labels, saturating counters and the last 32
+host-read-order events, with coarse host phases. Oversized lines are discarded;
+no raw log lines, PIDs, addresses, keys or message content are retained. The
+failure snapshot precedes final cleanup. These are system-wide signatures,
+not app-causal proof; missing or buffered signatures cannot exclude a failure.
+The exact emulator process and console reader must retire before releasing
+custody. This changes diagnostic capture only: no new ADB retry, WebRTC change,
+product policy change or weakened acceptance requirement. Helper retirement
+and the remaining roadmap remain gated on full native and aggregate acceptance.
+
 Full run [43494402594](https://github.com/ahouchens/mesh-chat/actions/runs/43494402594)
 at `5c54739` is **failed**: nine jobs passed, Windows Direct, both native peers
 and the aggregate failed; two optional jobs were skipped. Policy passed 6,589

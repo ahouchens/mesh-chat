@@ -245,13 +245,16 @@ def scripted_android(monkeypatch, tmp_path, *, fault=None, boot_failures=0,
         assert state.exit == 0
         return state.exit
     def launch(args, **kwargs):
+        from native_interop_android_system import LOG_TAGS
         assert args == [str(emulator.sdk / "emulator/emulator"), "-avd", emulator.name, "-port", "5554",
             "-no-window", "-gpu", "swiftshader_indirect", "-accel", "on", "-no-snapshot", "-noaudio",
-            "-no-boot-anim", "-camera-back", "none", "-camera-front", "none"]
-        assert kwargs == {"stdout": peers.subprocess.DEVNULL, "stderr": peers.subprocess.DEVNULL, "start_new_session": True}
+            "-no-boot-anim", "-camera-back", "none", "-camera-front", "none",
+            "-show-kernel", "-logcat", LOG_TAGS]
+        assert kwargs == {"stdin": peers.subprocess.DEVNULL, "stdout": peers.subprocess.PIPE,
+                          "stderr": peers.subprocess.STDOUT, "start_new_session": True}
         state.starts += 1
         state.exit = state.exit_on_launch
-        return SimpleNamespace(poll=lambda: state.exit, wait=wait)
+        return SimpleNamespace(poll=lambda: state.exit, wait=wait, stdout=BytesIO(b""))
     def sleep(seconds):
         assert seconds == 1
         state.now += seconds

@@ -1627,6 +1627,7 @@ def main(*, gateway=None):
             peer = WindowsPeer(binary, parent / ("mesh-qualification-" + uuid4().hex), key)
         else:
             peer = AndroidPeer(key)
+            peer.system_observation = getattr(emulator, "observation", None)
         transport = GithubArtifacts(context, args.role, ROOT / ".test-tmp/native-interop-rendezvous")
         rendezvous = Rendezvous(context, args.role)
         controller = Controller(args.role, peer, transport, rendezvous, context, workload=args.workload,
@@ -1646,6 +1647,12 @@ def main(*, gateway=None):
             try: result.update(windows_lifecycle_failure(peer, error))
             except Exception: pass  # Optional attribution cannot replace the primary error.
         if args.role == "android":
+            try:
+                if emulator is not None and emulator.observation is not None:
+                    from native_interop_android_system import system_snapshot
+                    observed_system = system_snapshot(emulator.observation.snapshot())
+                    if observed_system is not None: result["android_system_observation"] = observed_system
+            except Exception: pass  # Diagnostic absence cannot replace the original failure.
             try: result.update(android_start_failure(peer, emulator, error))
             except Exception: pass  # Optional startup evidence cannot mask the primary error.
             result.update(android_control_failure(peer, emulator, error))

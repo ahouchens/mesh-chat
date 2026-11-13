@@ -16,7 +16,9 @@ import native_interop_peers as peers
 @pytest.mark.parametrize("stage", ["authenticate", "initialize", "inventory", "binding", "initialize_eof"])
 @pytest.mark.parametrize("cleanup_fails", [False, True])
 def test_startup_cause_survives_offline_rollback(monkeypatch, stage, cleanup_fails):
+    from native_interop_android_system import AndroidSystemObservation
     peer = peers.AndroidPeer(b"k" * 32)
+    peer.system_observation = AndroidSystemObservation()
     process = SimpleNamespace(stdout=io.BytesIO(b"INSTRUMENTATION_STATUS: mesh_interop_port=1234\n"),
         poll=lambda: 255, wait=lambda timeout: 255)
     monkeypatch.setattr(peers.subprocess, "Popen", lambda *a, **k: process)
@@ -38,6 +40,7 @@ def test_startup_cause_survives_offline_rollback(monkeypatch, stage, cleanup_fai
     def operation(name):
         if name == expected_stage:
             if stage == "initialize_eof":
+                peer.system_observation.consume(io.BytesIO(b"[ 1.0] Kernel panic - not syncing: PRIVATE\n"))
                 return peers.AndroidPeer._request(peer, name, {})
             raise original
         return {}
@@ -53,6 +56,8 @@ def test_startup_cause_survives_offline_rollback(monkeypatch, stage, cleanup_fai
         assert value["transport"]["action"] == "initialize"
         assert value["transport"]["eof_stage"] == "header"
         assert peer._transport_failure is None  # stop reset it; retained copy survives.
+        assert peer.system_observation.snapshot()["events"] == [
+            {"event": "kernel_panic", "phase": "peer_initialize"}]
     assert value["rollback_exception_kind"] == ("called_process_error" if cleanup_fails else None)
     if cleanup_fails:
         assert value["rollback_lifecycle"]["site"] == "forward_remove"
