@@ -866,6 +866,18 @@ def test_production_setup_bootstrap_admission_and_fresh_workspace_path(tmp_path,
         wait(1,"workspace_snapshot",lambda snap:any(item["state"] == "active" for item in snap["workspaces"]))
         wait(1,"workspace_snapshot",lambda snap:any(item["id"] == workspace["general_channel_id"] for item in snap["workspace_channels"]))
         if carrier_mode == "source":
+            admission = [call(index, "admission_diagnostic", workspace_id=workspace["id"])
+                         for index in range(2)]
+            assert all(item["available"] is True and item["general_reference"] == "present"
+                       and item["general_channel_record"] == "present" for item in admission)
+            assert admission[0]["channel_control"]["selection"] == "selected"
+            assert admission[0]["channel_control"]["state"] in _WORKSPACE_DIAGNOSTIC_STATES
+            assert admission[0]["channel_control"]["attempts"] <= _WORKSPACE_DIAGNOSTIC_ATTEMPTS
+            assert admission[1]["pending_control"]["selection"] in {
+                "not_observed", "absent", "present", "ambiguous", "unavailable"}
+            assert all(workspace["id"] not in json.dumps(item)
+                       and workspace["general_channel_id"] not in json.dumps(item)
+                       and len(json.dumps(item)) < 4000 for item in admission)
             request.node.user_properties.append(("channel_send_trace", call(0, "recovery_diagnostic")["channel_send_trace"]))
         for index, setup in enumerate((ready,answer)):
             assert call(index,"status",setup_id=setup["setup_id"])["state"] in {"admitted_path","relationship_active"}
