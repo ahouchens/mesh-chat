@@ -24,7 +24,8 @@ from native_interop_diagnostics import PreflightDiagnostics
 from native_interop_core_observation import core_failure_observation
 from native_interop_carrier_observation import carrier_target
 from native_interop_android_observation import (
-    BYTE_CAP, READ_CAP, InstrumentationStatus, android_transport_snapshot, process_observation,
+    BYTE_CAP, READ_CAP, InstrumentationStatus, android_lifecycle_snapshot,
+    android_transport_snapshot, process_observation,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -363,15 +364,48 @@ class AndroidPeer:
         self._core_failure = None
         self._qualification_binding = None
         self._transport_failure = None
+        self._lifecycle_failure = None
         self._instrumentation_status = _instrumentation_status()
         self.processes_started, self.clean_exits, self.forced_exits = 0, 0, 0
 
     def _adb(self, *args):
-        return subprocess.check_output([self.adb, *args], stderr=subprocess.DEVNULL, timeout=30).decode().strip()
+        try:
+            return subprocess.check_output([self.adb, *args], stderr=subprocess.DEVNULL, timeout=30).decode().strip()
+        except subprocess.CalledProcessError as error:
+            if type(error) is subprocess.CalledProcessError:
+                try:
+                    site = self._adb_lifecycle_site(args)
+                    if site is not None:
+                        status = self._instrumentation_status.snapshot() if self._instrumentation_status is not None else None
+                        code = error.returncode
+                        observed = android_lifecycle_snapshot({
+                            "v": 1, "site": site,
+                            "exit_status": code if type(code) is int and -64 <= code <= 255 and code != 0 else None,
+                            "instrumentation_process": process_observation(self.process),
+                            "instrumentation": status,
+                        })
+                        if observed is not None:
+                            self._lifecycle_failure = (error, observed)
+                except Exception:
+                    pass  # Optional attribution cannot replace the exact ADB failure.
+            raise
+
+    @staticmethod
+    def _adb_lifecycle_site(args):
+        if args == ("shell", "am", "force-stop", AndroidPeer.APP):
+            return "force_stop"
+        if (len(args) == 3 and args[:2] == ("forward", "tcp:0")
+                and type(args[2]) is str and re.fullmatch(r"tcp:[0-9]{1,5}", args[2])):
+            return "forward_add"
+        if (len(args) == 3 and args[:2] == ("forward", "--remove")
+                and type(args[2]) is str and re.fullmatch(r"tcp:[0-9]{1,5}", args[2])):
+            return "forward_remove"
+        return None
 
     def start(self):
         if self.process is not None:
             raise PeerFailure("peer_already_started")
+        self._lifecycle_failure = None
         self._qualification_binding = None
         self._transport_failure = None
         self._instrumentation_status = _instrumentation_status()
@@ -492,6 +526,17 @@ class AndroidPeer:
         except Exception:
             return None
 
+    def failure_lifecycle_observation(self, error):
+        try:
+            observed = self._lifecycle_failure
+            if (type(error) is not subprocess.CalledProcessError
+                    or type(observed) is not tuple or len(observed) != 2
+                    or observed[0] is not error):
+                return None
+            return android_lifecycle_snapshot(observed[1])
+        except Exception:
+            return None
+
     def network_diagnostic(self, *, timeout):
         binding = self._qualification_binding
         if binding is None: return None
@@ -539,6 +584,7 @@ class AndroidPeer:
         return self._request("inspect", {"command": "qualification.pairing_cancel", "payload": {"operation_id": operation_id}})
 
     def stop(self, *, crash=False, delete_profile=False):
+        self._lifecycle_failure = None
         self._core_failure = None
         self._qualification_binding = None
         self._transport_failure = None

@@ -12,6 +12,7 @@ STAGES = frozenset({"header", "body"})
 MARKERS = frozenset({"process_crash", "error", "instrumentation_failed"})
 PROCESS_STATES = frozenset({"absent", "running", "exited", "unknown"})
 INSTRUMENTATION_CODES = frozenset({"-1", "0", "1"})
+LIFECYCLE_SITES = frozenset({"forward_add", "force_stop", "forward_remove"})
 
 
 def process_observation(process):
@@ -27,6 +28,35 @@ def process_observation(process):
     if type(code) is int and -255 <= code <= 255:
         return {"state": "exited", "exit_status": code}
     return {"state": "unknown", "exit_status": None}
+
+
+def android_lifecycle_snapshot(value):
+    """Copy only fixed labels and bounded owned-process state from a failed ADB call."""
+    if (type(value) is not dict or set(value) != {"v", "site", "exit_status",
+            "instrumentation_process", "instrumentation"}
+            or type(value["v"]) is not int or value["v"] != 1
+            or type(value["site"]) is not str or value["site"] not in LIFECYCLE_SITES):
+        return None
+    code = value["exit_status"]
+    if code is not None and (type(code) is not int or not -64 <= code <= 255 or code == 0):
+        return None
+    process = value["instrumentation_process"]
+    if (type(process) is not dict or set(process) != {"state", "exit_status"}
+            or type(process["state"]) is not str or process["state"] not in PROCESS_STATES
+            or (process["state"] == "exited") != (type(process["exit_status"]) is int)
+            or (process["state"] != "exited" and process["exit_status"] is not None)
+            or (type(process["exit_status"]) is int and not -255 <= process["exit_status"] <= 255)):
+        return None
+    status = value["instrumentation"]
+    if status is not None and (type(status) is not dict or set(status) != {"reader_eof", "code", "marker"}
+            or type(status["reader_eof"]) is not bool
+            or (status["code"] is not None and (type(status["code"]) is not str
+                or status["code"] not in INSTRUMENTATION_CODES))
+            or (status["marker"] is not None and (type(status["marker"]) is not str
+                or status["marker"] not in MARKERS))):
+        return None
+    return {**value, "instrumentation_process": dict(process),
+            "instrumentation": dict(status) if status is not None else None}
 
 
 class InstrumentationStatus:

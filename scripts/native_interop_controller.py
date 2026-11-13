@@ -7,6 +7,7 @@ import json
 import math
 import os
 from pathlib import Path
+from subprocess import CalledProcessError
 import sys
 import time
 from uuid import uuid4
@@ -200,6 +201,27 @@ def android_control_failure(peer, emulator, error):
         return {"android_control_failure": {"transport": observed,
             "emulator_process": process_observation(getattr(emulator, "process", None)),
             "cleanup_failure_sites": []}}
+    except Exception:
+        return {}
+
+
+def android_lifecycle_failure(peer, emulator, error):
+    """Attribute only the exact failed ADB call before controller cleanup."""
+    if type(error) is not CalledProcessError:
+        return {}
+    try:
+        from native_interop_android_observation import android_lifecycle_snapshot, process_observation
+        provider = getattr(peer, "failure_lifecycle_observation", None)
+        observed = android_lifecycle_snapshot(provider(error)) if callable(provider) else None
+        if observed is None:
+            return {}
+        return {"android_lifecycle_failure": {
+            "site": observed["site"], "exit_status": observed["exit_status"],
+            "instrumentation_process": observed["instrumentation_process"],
+            "instrumentation": observed["instrumentation"],
+            "emulator_process": process_observation(getattr(emulator, "process", None)),
+            "cleanup_failure_sites": [],
+        }}
     except Exception:
         return {}
 
@@ -1590,7 +1612,10 @@ def main(*, gateway=None):
                   "phase": controller.phase if controller is not None else phase, "failure_type": type(error).__name__}
         if isinstance(error, PeerFailure): result["error_code"] = error.code
         elif isinstance(getattr(error, "code", None), str): result["error_code"] = PeerFailure(error.code).code
-        if args.role == "android": result.update(android_control_failure(peer, emulator, error))
+        if args.role == "android":
+            result.update(android_control_failure(peer, emulator, error))
+            try: result.update(android_lifecycle_failure(peer, emulator, error))
+            except Exception: pass  # Optional lifecycle attribution cannot replace the primary error.
         if controller is None and phase == "platform_outbound_preflight":
             site = preflight_diagnostics.failure_site(error)
             if site is not None:
@@ -1633,6 +1658,8 @@ def main(*, gateway=None):
                 result["cleanup_failed"] = True
                 if "android_control_failure" in result:
                     result["android_control_failure"]["cleanup_failure_sites"].append("peer_stop")
+                if "android_lifecycle_failure" in result:
+                    result["android_lifecycle_failure"]["cleanup_failure_sites"].append("peer_stop")
         if rendezvous is not None: rendezvous.close()
         if transport is not None: transport.close()
         if emulator is not None:
@@ -1647,11 +1674,15 @@ def main(*, gateway=None):
                     result.update(passed=False, cleanup_failed=True)
                     if "android_control_failure" in result:
                         result["android_control_failure"]["cleanup_failure_sites"].append("gateway_before_cleanup")
+                    if "android_lifecycle_failure" in result:
+                        result["android_lifecycle_failure"]["cleanup_failure_sites"].append("gateway_before_cleanup")
             try: emulator.close()
             except Exception:
                 result.update(passed=False, cleanup_failed=True)
                 if "android_control_failure" in result:
                     result["android_control_failure"]["cleanup_failure_sites"].append("emulator_close")
+                if "android_lifecycle_failure" in result:
+                    result["android_lifecycle_failure"]["cleanup_failure_sites"].append("emulator_close")
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps({key: result[key] for key in ("passed", "role", "evidence_level")}))
