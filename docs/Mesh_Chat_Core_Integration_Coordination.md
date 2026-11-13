@@ -1,5 +1,22 @@
 # Core integration coordination — 2026-11-09
 
+Native gateway integration [43337130170](https://github.com/ahouchens/mesh-chat/actions/runs/43337130170)
+at `aa75c1f` remains **unaccepted**. Its Windows direct recovery test sampled
+an attempted migration before a completed outcome; a condition-based wait now
+preserves the original deadline and certificate/identity/message checks, and
+both real Windows route-change cases pass locally. Independent review also
+found bootstrap subprocess credential inheritance, now restricted to explicit
+allowlists before the validated private-pipe handoff.
+
+The native Windows peer timed out awaiting Android's impairment readiness.
+A real subprocess regression reproduced a competing reader on the gateway's
+stdin pipe: long-lived `adb shell` inherited the same reply stream. The wrapper
+now keeps private, non-inheritable input/output descriptors and redirects both
+standard streams before starting subprocesses. The stalled Android job was
+cancelled without a final report; neither completed impairment nor cleanup is
+claimed for that run. Full source-bound native CI is still required before
+helper-retirement refactoring. WebRTC and the guest queue policy are unchanged.
+
 Host gateway capability [43332384324](https://github.com/ahouchens/mesh-chat/actions/runs/43332384324)
 at `bc064e9` passed on the same API 35 emulator image, including exact helper,
 namespace, veth and firewall cleanup. The real guest completed three impaired

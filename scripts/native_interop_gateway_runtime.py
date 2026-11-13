@@ -219,7 +219,8 @@ class NativeChild(Child):
 
 
 def namespace_child(arguments):
-    writer, reader = os.fdopen(os.dup(sys.stdout.fileno()), "w"), sys.stdin
+    writer = os.fdopen(os.dup(sys.stdout.fileno()), "w")
+    reader = os.fdopen(os.dup(sys.stdin.fileno()), "r")
     writer.write(json.dumps({"status": "started", "pid": os.getpid(),
                              "namespace_inode": namespace_inode(os.getpid())}) + "\n")
     writer.flush()
@@ -229,8 +230,10 @@ def namespace_child(arguments):
     os.environ.clear()
     os.environ.update(environment)
     environment.clear()
-    # Product and artifact tools cannot write into the private control protocol.
-    with open(os.devnull, "w") as discarded:
+    # Inherited standard streams must not expose either private RPC direction.
+    # In particular, adb shell reads stdin while instrumentation remains alive.
+    with open(os.devnull, "r+") as discarded:
+        os.dup2(discarded.fileno(), sys.stdin.fileno())
         os.dup2(discarded.fileno(), sys.stdout.fileno())
     server = None
     code, cleanup = 1, "passed"
@@ -258,6 +261,7 @@ def namespace_child(arguments):
         writer.write(json.dumps({"status": "closed", "cleanup": cleanup, "code": code}) + "\n")
         writer.flush()
         writer.close()
+        reader.close()
     return code
 
 

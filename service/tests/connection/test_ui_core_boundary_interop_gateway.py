@@ -274,3 +274,67 @@ def test_namespace_launcher_environment_is_token_free_before_pipe_handoff(monkey
     assert environment is not None
     assert "GITHUB_TOKEN" not in environment and "ACTIONS_RUNTIME_TOKEN" not in environment
     assert "synthetic-github-token" not in repr(argv) and "synthetic-runtime-token" not in repr(argv)
+
+
+def test_native_subprocess_cannot_consume_private_gateway_replies():
+    import json
+    import os
+    from pathlib import Path
+    import queue
+    import subprocess
+    import sys
+    import textwrap
+    import threading
+
+    script = textwrap.dedent('''
+        import contextlib, os, subprocess, sys
+        from types import SimpleNamespace
+        import native_interop_gateway_runtime as runtime
+        real_run, real_popen = subprocess.run, subprocess.Popen
+        server = SimpleNamespace(pid=os.getpid(), poll=lambda: None)
+        def launch(argv, **options):
+            if argv[1:] == ["server", "nodaemon"]: return server
+            return real_popen(argv, **options)
+        runtime.subprocess.Popen = launch
+        runtime.stop_process = lambda process: None
+        runtime.namespace_inode = lambda pid: 22
+        runtime.socket.create_connection = lambda *a, **kw: contextlib.nullcontext()
+        def controller(*, gateway):
+            # A real descendant inherits fd0 just like adb shell instrumentation.
+            # It must see EOF rather than compete with the gateway reader.
+            result = real_run([sys.executable, "-c",
+                "import os; assert os.read(0, 1) == b''; print('not-rpc')"],
+                timeout=3, check=True)
+            assert gateway.reader.fileno() != 0
+            assert not os.get_inheritable(gateway.reader.fileno())
+            assert not os.get_inheritable(gateway.writer.fileno())
+            assert gateway.call("install") == "private-reply"
+            return 0
+        sys.modules['native_interop_controller'] = SimpleNamespace(__file__='fixture', main=controller)
+        raise SystemExit(runtime.namespace_child([]))
+    ''')
+    environment = {**os.environ, "PYTHONPATH": str(Path(runtime.__file__).parent)}
+    process = subprocess.Popen([sys.executable, "-B", "-c", script], stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=environment)
+    messages = queue.Queue()
+    def read_output():
+        for line in process.stdout: messages.put(line)
+    reader = threading.Thread(target=read_output, daemon=True)
+    reader.start()
+    try:
+        assert json.loads(messages.get(timeout=10))["status"] == "started"
+        bootstrap = {key: os.environ[key] for key in ("PATH", "SystemRoot", "TEMP", "TMP") if key in os.environ}
+        process.stdin.write(json.dumps({**bootstrap, "ANDROID_HOME": "synthetic-sdk"}) + "\n")
+        process.stdin.flush()
+        assert json.loads(messages.get(timeout=10)) == {"op": "install"}
+        process.stdin.write(json.dumps({"ok": True, "value": "private-reply"}) + "\n")
+        process.stdin.flush()
+        assert json.loads(messages.get(timeout=10)) == {"status": "closed", "cleanup": "passed", "code": 0}
+        assert process.wait(timeout=10) == 0
+    finally:
+        if process.poll() is None: process.kill()
+        process.wait(timeout=10)
+        reader.join(timeout=5)
+        process.stdin.close()
+        process.stdout.close()
+        process.stderr.close()
