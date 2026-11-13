@@ -1,5 +1,25 @@
 # Connection runtime implementation and qualification
 
+Full run [43355120945](https://github.com/ahouchens/mesh-chat/actions/runs/43355120945)
+at `a6ba6dd` is **failed**: all ten non-native jobs passed; both native peers and
+the aggregate gate failed. Windows public pairing and lifecycle passed. Policy
+passed 5,993 cases; UI boundary passed 2,071 Python and 12 rendered cases; Android
+passed 83 exact JVM identities and 56 emulator cases. Both direct platforms
+passed 25 transport, 10 recovery and 12 setup cases.
+
+The native peers reached `impaired_kernel_block_negative_control/restored_delivery`
+and both exceeded the unchanged 90-second restored-delivery window. Source
+sequencing requires 20 impaired authenticated exchanges before that stage.
+The Android controller had verified dropped packets and removed its exact block
+rules; its failure report records no gateway operation or cleanup failure.
+Message and connection state at the failed restoration were not retained, so
+the underlying retry/recovery cause remains unproven. No parser error recurred.
+Full native, 100-iteration and aggregate acceptance remain open; helper-retirement
+implementation stays gated. WebRTC, work deadlines and success criteria are unchanged.
+The successor retains bounded first/last message states and poll/transition
+counts from existing queries on a matching restored-delivery failure. It adds
+no RPCs, retry action or timing allowance; successful qualification reports are unchanged.
+
 Full run [43349556210](https://github.com/ahouchens/mesh-chat/actions/runs/43349556210)
 at `3094405` is **failed**: nine jobs passed, the packaged Windows public-pairing
 job and aggregate gate failed, and native interop was skipped. Policy passed

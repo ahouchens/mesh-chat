@@ -31,6 +31,7 @@ PYTHON_SELECTION = (
     "service/tests/connection/test_ui_core_boundary_interop_faults.py",
     "service/tests/connection/test_ui_core_boundary_interop_path_setup.py",
     "service/tests/connection/test_ui_core_boundary_interop_controller.py",
+    "service/tests/connection/test_ui_core_boundary_interop_recovery_observation.py",
 )
 RENDERED_CASES = {("tests/core-ui-boundary/app.test.tsx",
                    "rendered UI through the production framed Core session > " + name) for name in (
