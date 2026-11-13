@@ -21,8 +21,22 @@ The separate manual Linux gateway capability run
 passed at the same source, including synthetic egress STUN request and ingress
 response capture and cleanup. It proves that observer capability, not native
 ICE success. WebRTC and qualification thresholds remain unchanged.
-Restart authority diagnosis, full native and aggregate acceptance, helper
-retirement and the remaining lifecycle/distribution roadmap remain open.
+An isolated actual-service/runtime regression reproduces a fresh reconnect
+candidate becoming visible before its owner grants a carrier lease, for both
+offer and answer creation. This is a deterministic qualification-readiness gap;
+the missing CI inventory prevents attributing that particular failure to it.
+The successor adds a private `pending_negotiation` inventory hint for an exact
+current fresh candidate during gather, publish, answer wait/apply and checking.
+It checks the distinct logical/physical mapping, owner operation, current work
+or bounded polling state, authority, fences, retirement and the existing deadline.
+It excludes recovered DISCOVER claims and grants no carrier permission.
+
+Readiness waits only for one consistent pending row; raw inspection, ambiguous
+resources, unavailable authority and revocation still fail closed. The controller
+keeps its existing readiness deadline and inspects the path only after permission
+is available. WebRTC, reducer policy and authenticated receipt requirements are
+unchanged. Full native and aggregate acceptance, helper retirement and the
+remaining lifecycle/distribution roadmap remain open.
 
 Full run [43379098108](https://github.com/ahouchens/mesh-chat/actions/runs/43379098108)
 at `2af0009` is **failed**: ten component jobs passed; both native peers and
