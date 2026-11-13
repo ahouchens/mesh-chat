@@ -23,6 +23,9 @@ from uuid import UUID, uuid4
 from native_interop_diagnostics import PreflightDiagnostics
 from native_interop_core_observation import core_failure_observation
 from native_interop_carrier_observation import carrier_target
+from native_interop_android_observation import (
+    BYTE_CAP, READ_CAP, InstrumentationStatus, android_transport_snapshot, process_observation,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 MAX_FRAME = 4 * 1024 * 1024
@@ -91,20 +94,28 @@ def encode(value):
     return HEADER.pack(len(raw)) + raw
 
 
-def receive(read):
-    def exact(length):
+def receive(read, on_eof=None):
+    received = reads = 0
+    def exact(length, stage):
+        nonlocal received, reads
         chunks = bytearray()
         while len(chunks) < length:
+            reads += 1
             part = read(length - len(chunks))
             if not part:
+                if on_eof is not None:
+                    try: on_eof(stage, min(received, BYTE_CAP), received > BYTE_CAP,
+                                min(reads, READ_CAP), reads > READ_CAP)
+                    except Exception: pass  # Optional observation cannot replace peer_closed.
                 raise PeerFailure("peer_closed")
             chunks.extend(part)
+            received += len(part)
         return bytes(chunks)
-    length, = HEADER.unpack(exact(4))
+    length, = HEADER.unpack(exact(4, "header"))
     if not 1 < length <= MAX_FRAME:
         raise PeerFailure("peer_frame_budget")
     try:
-        value = json.loads(exact(length))
+        value = json.loads(exact(length, "body"))
     except (UnicodeError, ValueError):
         raise PeerFailure("invalid_peer_frame") from None
     if not isinstance(value, dict):
@@ -346,6 +357,8 @@ class AndroidPeer:
         self._sequence = 0
         self._core_failure = None
         self._qualification_binding = None
+        self._transport_failure = None
+        self._instrumentation_status = InstrumentationStatus()
         self.processes_started, self.clean_exits, self.forced_exits = 0, 0, 0
 
     def _adb(self, *args):
@@ -355,6 +368,8 @@ class AndroidPeer:
         if self.process is not None:
             raise PeerFailure("peer_already_started")
         self._qualification_binding = None
+        self._transport_failure = None
+        self._instrumentation_status = InstrumentationStatus()
         nonce = os.urandom(32).hex()
         self.process = subprocess.Popen([self.adb, "shell", "am", "instrument", "-w", "-r",
             "-e", "class", self.TEST, "-e", "mesh_interop_nonce", nonce, self.RUNNER],
@@ -362,14 +377,21 @@ class AndroidPeer:
         self.processes_started += 1
         ports = queue.Queue(maxsize=2)
         process = self.process
+        status = self._instrumentation_status
         def reader():
-            while line := process.stdout.readline(8193):
-                if len(line) > 8192:
-                    continue
-                match = re.fullmatch(rb"INSTRUMENTATION_STATUS: mesh_interop_port=([0-9]{1,5})\r?\n", line)
-                if match:
-                    try: ports.put_nowait(int(match[1]))
-                    except queue.Full: pass
+            try:
+                while line := process.stdout.readline(8193):
+                    try: status.observe(line)
+                    except Exception: pass  # Status observation cannot affect port admission.
+                    if len(line) > 8192:
+                        continue
+                    match = re.fullmatch(rb"INSTRUMENTATION_STATUS: mesh_interop_port=([0-9]{1,5})\r?\n", line)
+                    if match:
+                        try: ports.put_nowait(int(match[1]))
+                        except queue.Full: pass
+            finally:
+                try: status.ended()
+                except Exception: pass
         self._reader = threading.Thread(target=reader, daemon=True)
         self._reader.start()
         try:
@@ -391,6 +413,7 @@ class AndroidPeer:
 
     def _request(self, action, payload=None, *, timeout=60):
         self._core_failure = None
+        self._transport_failure = None
         if self.socket is None:
             raise PeerFailure("peer_not_started")
         if type(timeout) not in {int, float} or not 0 < timeout <= 60:
@@ -399,6 +422,10 @@ class AndroidPeer:
         identifier = f"qualification:{self._sequence}"
         deadline = time.monotonic() + timeout
         self.socket.settimeout(timeout)
+        eof = None
+        def on_eof(stage, received_bytes, bytes_capped, read_calls, reads_capped):
+            nonlocal eof
+            eof = (stage, received_bytes, bytes_capped, read_calls, reads_capped)
         def read(count):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -407,7 +434,7 @@ class AndroidPeer:
             return self.socket.recv(count)
         try:
             self.socket.sendall(encode({"id": identifier, "action": action, "payload": payload or {}}))
-            value = receive(read)
+            value = receive(read, on_eof=on_eof)
             try:
                 return checked_reply(value, identifier)
             except PeerFailure as error:
@@ -416,6 +443,25 @@ class AndroidPeer:
                     selected = core_failure_observation(value.get("core_failure_observation"))
                     if selected is not None: self._core_failure = error, selected
                 raise
+        except PeerFailure as error:
+            if error.code == "peer_closed" and eof is not None:
+                try:
+                    operation = payload.get("operation") if action == "core" and type(payload) is dict else None
+                    operation = operation if operation in {"application.snapshot", "message.query",
+                        "message.enqueue", "runtime.capabilities"} else "other"
+                    selected = android_transport_snapshot({
+                        "v": 1, "action": action if action in {"authenticate", "initialize", "core", "inspect", "finish"} else "other",
+                        "operation": operation if action == "core" else None,
+                        "eof_stage": eof[0], "received_bytes": eof[1], "received_bytes_capped": eof[2],
+                        "read_calls": eof[3], "read_calls_capped": eof[4],
+                        "process": process_observation(self.process),
+                        "instrumentation": self._instrumentation_status.snapshot(),
+                    })
+                    if selected is not None:
+                        self._transport_failure = (error, identifier, selected)
+                except Exception:
+                    self._transport_failure = None
+            raise
         except TimeoutError:
             raise PeerFailure("peer_deadline") from None
 
@@ -427,6 +473,17 @@ class AndroidPeer:
         if (observed is not None and type(error) is PeerFailure and error.code == "internal" and observed[0] is error):
             return core_failure_observation(observed[1])
         return None
+
+    def failure_transport_observation(self, error):
+        try:
+            observed = self._transport_failure
+            if (type(error) is not PeerFailure or error.code != "peer_closed"
+                    or type(observed) is not tuple or len(observed) != 3
+                    or observed[0] is not error or observed[1] != f"qualification:{self._sequence}"):
+                return None
+            return android_transport_snapshot(observed[2])
+        except Exception:
+            return None
 
     def network_diagnostic(self, *, timeout):
         binding = self._qualification_binding
@@ -477,6 +534,7 @@ class AndroidPeer:
     def stop(self, *, crash=False, delete_profile=False):
         self._core_failure = None
         self._qualification_binding = None
+        self._transport_failure = None
         process = self.process
         if process is None:
             return
