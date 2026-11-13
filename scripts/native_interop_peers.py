@@ -292,10 +292,10 @@ class WindowsPeer:
                                   and record[0] is error) else None
 
     def stop(self, *, crash=False, _origin="other_stop", _masked_start_kind="none"):
+        self._lifecycle_failure = None
         process = self.process
         if process is None:
             return
-        self._lifecycle_failure = None
         failure, code = None, None
         stage = "poll"
         try:
@@ -406,6 +406,9 @@ class AndroidPeer:
         try: site = self._adb_lifecycle_site(args)
         except Exception: site = None
         try:
+            # communicate captures lifecycle stderr within the existing timeout.
+            # The 4096-byte classification limit bounds inspected/retained data,
+            # not subprocess's transient output buffer.
             return subprocess.check_output([self.adb, *args],
                 stderr=subprocess.PIPE if site is not None else subprocess.DEVNULL, timeout=30).decode().strip()
         except subprocess.CalledProcessError as error:

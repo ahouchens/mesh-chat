@@ -131,7 +131,7 @@ def test_cold_consent_is_published_then_imported_before_first_crash(monkeypatch,
     assert state.events[4] == ("native.command", {"command": "reconnect_capabilities_store", "payload": {
         "document": "PRIVATE_PEER_CAPABILITIES", "expected_contact_id": "PRIVATE_CONTACT", "expected_peer_destination": "a" * 32}})
     assert state.events[-2:] == ["inventory", ("stop", {
-        "crash": True, **({"_origin": "old_stop"} if role == "windows" else {})})]
+        "crash": True, "_origin": "old_stop"})]
 
 
 @pytest.mark.parametrize("field", ["id", "contact_id", "destination_hash", "local_device_id", "remote_device_id"])
@@ -248,7 +248,7 @@ def test_cold_setup_keeps_actual_loop_schedule_receipt_checks_and_native_deltas(
     assert instance.deadline == deadline and len(instance.cycles) == iterations
     assert state.exchanges == list(range(iterations)) and len(state.deliveries) == iterations - 1
     assert state.stops == [(index, {"crash": True,
-        **({"_origin": "old_stop"} if role == "windows" else {})})
+        "_origin": "old_stop"})
         for index in range(0, iterations, 10)]
     assert len(state.stops) == restarts and state.observations == iterations * 2
     assert [cycle["cold_start"] for cycle in instance.cycles] == [index % 10 == 0 for index in range(iterations)]
@@ -509,8 +509,7 @@ def signed_cold_controller(state, index, transport):
             return result
         def inventory(self): return {"service_incarnation": "old"}
         def stop(self, **kwargs):
-            assert kwargs == {"crash": True,
-                              **({"_origin": "old_stop"} if index == 0 else {})}
+            assert kwargs == {"crash": True, "_origin": "old_stop"}
             profile = service.reconnect_profiles()["profiles"][0]
             assert profile["auto_reconnect"] is True and profile["peer_auto_reconnect"] is True
             state.events.append((index, "first_crash"))

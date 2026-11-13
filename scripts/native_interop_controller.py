@@ -1493,7 +1493,7 @@ class Controller:
             with self._cold_step(index, restarted, "restart"):
                 previous = self.peer.inventory()["service_incarnation"]
                 if restarted:
-                    self.peer.stop(crash=True, **({"_origin": "old_stop"} if self.role == "windows" else {}))
+                    self.peer.stop(crash=True, _origin="old_stop")
                     current = self.peer.start()
                     if current["service_incarnation"] == previous:
                         raise ValueError("Cold start reused the previous service incarnation")
@@ -1627,7 +1627,8 @@ def main(*, gateway=None):
         if isinstance(error, PeerFailure): result["error_code"] = error.code
         elif isinstance(getattr(error, "code", None), str): result["error_code"] = PeerFailure(error.code).code
         if args.role == "windows":
-            result.update(windows_lifecycle_failure(peer, error))
+            try: result.update(windows_lifecycle_failure(peer, error))
+            except Exception: pass  # Optional attribution cannot replace the primary error.
         if args.role == "android":
             result.update(android_control_failure(peer, emulator, error))
             try: result.update(android_lifecycle_failure(peer, emulator, error))

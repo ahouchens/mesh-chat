@@ -59,7 +59,16 @@ def test_wait_timeout_is_distinct_from_tree_kill_failure(monkeypatch):
 
 
 def test_start_rollback_reports_masked_primary_start_kind(monkeypatch, tmp_path):
-    peer = peers.WindowsPeer(tmp_path / "not-launched", tmp_path, b"k" * 32)
+    # Pure lifecycle trace runs on both policy CI platforms; no Windows DLL or
+    # named pipe is involved because initialize fails before pipe connection.
+    peer, _, _ = windows_fixture(monkeypatch)
+    peer.process = peer.client = None
+    peer.binary, peer.directory, peer.key = tmp_path / "not-launched", tmp_path, b"k" * 32
+    peer.processes_started = 0
+    def unexpected_connect(*args, **kwargs):
+        raise AssertionError('Initialization must fail before pipe connect')
+    monkeypatch.setitem(sys.modules, 'mesh_chat.core_api.pipe_client',
+                        SimpleNamespace(connect=unexpected_connect))
     state = {"exit": None, "kills": 0}
     streams = [SimpleNamespace(read=lambda *_: b"", close=lambda: None,
                                write=lambda *_: None, flush=lambda: None) for _ in range(3)]
@@ -119,3 +128,12 @@ def test_returncode_and_process_state_are_bounded_without_raw_error():
         "process_state": "unknown", "masked_start_kind": "none"}
     assert observation.windows_lifecycle_snapshot({**row, "returncode": 999}) is None
     assert "PRIVATE" not in json.dumps(row)
+
+
+def test_noop_stop_clears_previous_failure_record(monkeypatch):
+    peer, _, _ = windows_fixture(monkeypatch)
+    failure = peers.PeerFailure('windows_shutdown_failed')
+    peer._lifecycle_failure = (failure, {'origin': 'old_stop'})
+    peer.process = None
+    peer.stop(crash=True)
+    assert peer.failure_lifecycle_observation(failure) is None
