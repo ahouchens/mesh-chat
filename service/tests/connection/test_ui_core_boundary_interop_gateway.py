@@ -235,3 +235,42 @@ def test_outer_cleanup_failure_cannot_leave_a_passing_native_report(monkeypatch,
     assert report["passed"] is (fault == "none")
     assert events == ["child", "helpers", "gateway"]
     assert not list(tmp_path.glob("mesh-native-gateway-*"))
+
+
+def test_privileged_commands_do_not_inherit_workflow_credentials(monkeypatch):
+    import native_interop_gateway_probe as probe
+    monkeypatch.setenv("GITHUB_TOKEN", "synthetic-github-token")
+    monkeypatch.setenv("ACTIONS_RUNTIME_TOKEN", "synthetic-runtime-token")
+    seen = []
+    def collect(argv, **options):
+        seen.append(options.get("env"))
+        return {"exit_code": 0, "timed_out": False, "stdout": "ok", "stderr": "",
+                "stdout_truncated": False, "stderr_truncated": False}
+    monkeypatch.setattr(probe, "_collect_process", collect)
+    assert probe.Commands({"commands": []}).run("ip", "link", "show", privileged=True) == "ok"
+    assert seen[0] is not None
+    assert "GITHUB_TOKEN" not in seen[0] and "ACTIONS_RUNTIME_TOKEN" not in seen[0]
+    assert seen[0]["PATH"] == probe.os.environ["PATH"]
+
+
+def test_namespace_launcher_environment_is_token_free_before_pipe_handoff(monkeypatch):
+    import io
+    import native_interop_gateway_probe as probe
+    monkeypatch.setenv("GITHUB_TOKEN", "synthetic-github-token")
+    monkeypatch.setenv("ACTIONS_RUNTIME_TOKEN", "synthetic-runtime-token")
+    monkeypatch.setattr(probe.os, "getuid", lambda: 1000, raising=False)
+    monkeypatch.setattr(probe.os, "getgid", lambda: 1000, raising=False)
+    captured = []
+    process = SimpleNamespace(stdin=io.BytesIO(), stdout=io.BytesIO())
+    def launch(argv, **options):
+        captured.append((argv, options.get("env")))
+        return process
+    monkeypatch.setattr(probe.subprocess, "Popen", launch)
+    monkeypatch.setattr(probe, "stop_process", lambda process: None)
+    def fail_selector(): raise OSError("fixture stops before native IO")
+    monkeypatch.setattr(probe.selectors, "DefaultSelector", fail_selector)
+    with pytest.raises(OSError): probe.Child(SimpleNamespace(ns="owned"))
+    argv, environment = captured[0]
+    assert environment is not None
+    assert "GITHUB_TOKEN" not in environment and "ACTIONS_RUNTIME_TOKEN" not in environment
+    assert "synthetic-github-token" not in repr(argv) and "synthetic-runtime-token" not in repr(argv)

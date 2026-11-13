@@ -148,7 +148,10 @@ class Commands:
         if self.deadline is not None:
             timeout = min(timeout, self.deadline - time.monotonic())
             require(timeout > 0, "probe_deadline_exceeded")
-        value = _collect_process(argv, timeout=timeout, stdout_limit=16384, stderr_limit=2048)
+        environment = {name: os.environ[name] for name in
+                       ("PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE") if name in os.environ}
+        value = _collect_process(argv, timeout=timeout, stdout_limit=16384, stderr_limit=2048,
+                                 env=environment)
         self.kept += len(value["stdout"].encode()) + len(value["stderr"].encode())
         require(self.kept <= 256 * 1024, "capture_budget_exhausted")
         self.report["commands"].append({"argv": argv, **value})
@@ -593,7 +596,8 @@ class Child:
         command = ["sudo", "-n", "ip", "netns", "exec", gateway.ns, "setpriv", "--reuid", str(os.getuid()),
                    "--regid", str(os.getgid()), "--clear-groups", "env", *(key + "=" + value for key, value in environment.items()),
                    sys.executable, "-B", *(entry or [str(Path(__file__).resolve()), "--child"])]
-        self.process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        self.process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                        stderr=subprocess.DEVNULL, env=environment)
         self.selector = None
         try:
             self.selector = selectors.DefaultSelector()
