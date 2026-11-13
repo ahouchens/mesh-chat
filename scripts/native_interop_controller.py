@@ -725,6 +725,7 @@ class Controller:
                 if (type(owner_state) is str and owner_state == "unadopted"
                         and resources[0].get("adopted") is False):
                     record_final_path_skip(missing_reasons, "adopted_not_true")
+                    self._readiness_skip(observation, "adopted_not_true")
                     return None
                 if type(owner_state) is str and owner_state == "pending_adoption":
                     record_final_path_skip(missing_reasons, "pending_adoption")

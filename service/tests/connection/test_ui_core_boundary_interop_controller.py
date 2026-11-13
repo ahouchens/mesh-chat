@@ -1801,18 +1801,19 @@ def test_readiness_denial_keeps_original_error_and_exact_adopted_stage(path_obse
     assert instance.failure_readiness(caught.value) == {}
 
 
-def test_readiness_denial_retains_exact_unadopted_inventory_without_changing_call(path_observer):
+def test_unadopted_readiness_timeout_retains_exact_inventory_and_skip(path_observer):
     state = path_observer
     instance = readiness_case(state)
     state.inventory["resources"][0].update(owner_state="unadopted", adopted=False)
     state.error = controller.PeerFailure("contact_not_approved")
     with pytest.raises(controller.PeerFailure) as caught:
         instance.path_case("turn_tls", "windows")
-    assert caught.value is state.error
+    assert caught.value.code == "scenario_deadline"
     value = instance.failure_readiness(caught.value)["readiness_observation"]
     assert value["owner_state"] == "unadopted" and value["adopted"] is False
-    assert value["skip_reason"] == "none" and value["polls"] == 1
-    assert state.events == ["inventory", ("path", "logical", "physical")]
+    assert value["skip_reason"] == "adopted_not_true" and value["polls"] == 128
+    assert value["polls_capped"] is True and state.now == 130
+    assert state.events == ["inventory"] * 480
 
 
 def test_readiness_denial_after_cancel_has_distinct_outer_stage(path_observer):

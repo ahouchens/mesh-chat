@@ -65,3 +65,23 @@ def test_unadopted_inventory_records_missing_readiness_without_path_probe(path_o
     state.error = controller.PeerFailure("contact_not_approved")
     assert state.controller.observe("logical", missing_reasons=reasons) is None
     assert reasons == {"adopted_not_true"} and state.events == ["inventory"]
+
+
+def test_authority_lost_after_authorized_inventory_still_fails_exact_path_read(path_observer):
+    state = path_observer
+    assert state.controller.observe("logical", scenario="turn_udp")["resource"] == "physical"
+    original_inventory = state.controller.peer.inventory
+    denial = controller.PeerFailure("contact_not_approved")
+
+    def inventory_then_revoke():
+        result = original_inventory()
+        state.inventory["resources"][0]["owner_state"] = "unavailable"
+        state.error = denial
+        return result
+
+    state.controller.peer.inventory = inventory_then_revoke
+    with pytest.raises(controller.PeerFailure) as caught:
+        state.controller.observe("logical", scenario="turn_udp")
+    assert caught.value is denial and state.sleeps == []
+    assert state.events == ["inventory", ("path", "logical", "physical")] * 2
+    assert state.sequence == 1

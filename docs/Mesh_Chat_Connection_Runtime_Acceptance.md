@@ -18,6 +18,22 @@ needed to distinguish pending adoption from lost authority. The earlier impaired
 restored-delivery failure was not exercised. Full native and aggregate acceptance
 remain open, and helper-retirement implementation remains gated.
 
+A deterministic service control reproduces a pre-claim inventory becoming stale:
+the same carrier is claimed before owner adoption, and path inspection correctly
+denies authority while contact approval remains intact. The controller now waits
+when one exact matching resource is explicitly `unadopted` and `adopted=false`.
+This deliberately omits a known-unready path sample; it neither catches a path
+denial nor grants authority. Other metadata and raw inspection retain their path
+checks. Permanent non-adoption reaches the original deadline. This source race
+is not established as the cause of the retained CI failure.
+
+Failure-only readiness evidence now retains fixed owner/readiness labels and
+capped poll/resource counts from existing observations, bound to the exact
+scenario, logical session, pairing and exception. It distinguishes initial
+adoption from observation after transfer cancellation without exposing IDs.
+The diagnostic adds no RPCs. Runtime policy, WebRTC, work deadlines, selected-path
+validation and native acceptance requirements are unchanged.
+
 Full run [43360865677](https://github.com/ahouchens/mesh-chat/actions/runs/43360865677)
 at `4cf6cab` is **failed**: nine jobs passed, four failed and two optional probes
 were skipped. Policy passed 6,013 cases; UI boundary passed 2,091 Python and 12
