@@ -973,8 +973,9 @@ def test_final_evidence_projection_rejects_untrusted_or_stale_private_fields(mon
     assert state.controller.failure_final_evidence(error) == {}
 
 
+@pytest.mark.parametrize("broken_projection", [False, True])
 def test_actual_turn_udp_failure_report_contains_only_fixed_final_traffic_attribution(
-        tmp_path, monkeypatch, capsys, sample):
+        tmp_path, monkeypatch, capsys, sample, broken_projection):
     import connection_ci
     state = retirement_case(monkeypatch, sample, role="android")
     original = state.controller.observe
@@ -987,6 +988,9 @@ def test_actual_turn_udp_failure_report_contains_only_fixed_final_traffic_attrib
     peer.process = SimpleNamespace(pid=17)
     peer.stop = lambda **_kwargs: setattr(peer, "process", None)
     state.controller.run = lambda: state.controller.path_case("turn_udp", "windows")
+    if broken_projection:
+        def broken(*_args): raise RuntimeError("PRIVATE_PROJECTION_ERROR")
+        state.controller.failure_final_evidence = broken
     monkeypatch.setattr(controller, "Controller", lambda *_args, **_kwargs: state.controller)
     monkeypatch.setattr(controller, "source_identity", lambda _: ("a" * 40, "b" * 40))
     monkeypatch.setattr(connection_ci, "current_plan", lambda: {"native_workload": "full"})
@@ -1007,8 +1011,11 @@ def test_actual_turn_udp_failure_report_contains_only_fixed_final_traffic_attrib
     report = json.loads(output.read_text())
     assert report["phase"] == "turn_udp_authenticated_receipts"
     assert report["failure_type"] == "ValueError"
-    assert report["final_evidence_failure"] == {"scenario": "turn_udp", "stage": "final_traffic",
-        "reason": "required_delta_missing", "fields": ["received_packets"]}
+    if broken_projection:
+        assert "final_evidence_failure" not in report
+    else:
+        assert report["final_evidence_failure"] == {"scenario": "turn_udp", "stage": "final_traffic",
+            "reason": "required_delta_missing", "fields": ["received_packets"]}
     assert "PRIVATE" not in output.read_text() + captured.out + captured.err
 
 

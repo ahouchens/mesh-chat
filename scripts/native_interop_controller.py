@@ -1602,7 +1602,8 @@ def main(*, gateway=None):
             result.update(controller.failure_recovery_context(error))
             result.update(controller.failure_exchange(error))
             result.update(controller.failure_final_path(error))
-            result.update(controller.failure_final_evidence(error))
+            try: result.update(controller.failure_final_evidence(error))
+            except Exception: pass  # Optional attribution cannot replace the primary failure.
             result.update(controller.failure_final_carrier(error))
             result.update(controller.failure_native_path(error))
             try: result.update(controller.failure_cold_start(error))
