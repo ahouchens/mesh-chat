@@ -25,6 +25,7 @@ from native_interop_peers import AndroidEmulator, AndroidPeer, PeerFailure, Wind
 from native_interop_core_observation import core_failure_observation
 from native_interop_carrier_observation import FinalCarrierObservation, carrier_target, final_carrier_snapshot
 from native_interop_pairing_ice import PairingIceObservation
+from native_interop_exchange_observation import ReceiptExchangeObservation
 from native_interop_ice_packets import validated_snapshot as validated_ice_packets, unavailable as ice_packets_unavailable
 from native_interop_preflight import (DEFAULT_SIGNAL_MAILBOX_URL, android_environment,
     android_network_diagnostic, outbound_services)
@@ -207,6 +208,7 @@ class Controller:
         self._final_carrier_observation = self._final_carrier_failure = None
         self._fault_cleanup_failure = None
         self._recovery_diagnostics = self._recovery_failure = None
+        self._exchange_observation = None
         try: self._negative_diagnostics = NegativeControlDiagnostics()
         except Exception: self._negative_diagnostics = None
         self.workload = required_workload(workload)
@@ -395,6 +397,28 @@ class Controller:
             return {"recovery_delivery": validated} if validated is not None else {}
         except Exception:
             return {}
+
+    def failure_exchange(self, error):
+        try:
+            observer = self._exchange_observation
+            if type(observer) is not ReceiptExchangeObservation:
+                return {}
+            value = observer.failure(error, self.phase, self.pairing,
+                self.failure_native_path(error).get("native_path_failure"))
+            return {"receipt_exchange": value} if value is not None else {}
+        except Exception:
+            return {}
+
+    def _observe_exchange(self, method, *values):
+        try:
+            observer = self._exchange_observation
+            if (type(observer) is ReceiptExchangeObservation
+                    and observer.matches(self.phase, self.pairing)):
+                getattr(observer, method)(*values)
+            else:
+                self._exchange_observation = None
+        except Exception:
+            self._exchange_observation = None
 
     def failure_final_path(self, error):
         try:
@@ -873,6 +897,7 @@ class Controller:
 
     def delivered(self, handle):
         state = self.core("message.query", {"profile": self.profile, "message": handle})["state"]
+        self._observe_exchange("delivery", handle, state)
         try:
             observer = self._recovery_diagnostics
             if type(observer) is RecoveryDeliveryDiagnostics:
@@ -882,14 +907,32 @@ class Controller:
         return state == "delivered"
 
     def records(self, text, direction):
-        return [item for item in self.snapshot().get("messages", []) if item.get("kind") == "chat"
+        messages = self.snapshot().get("messages", [])
+        self._observe_exchange("records", messages)
+        return [item for item in messages if item.get("kind") == "chat"
                 and item.get("text") == text and item.get("direction") == direction]
 
     def exchange(self, scenario, index=0, *, padded=False, path_diagnostics=None):
+        self._exchange_observation = None
+        try:
+            result = self._exchange_receipts(scenario, index, padded=padded, path_diagnostics=path_diagnostics)
+        except Exception as error:
+            self._observe_exchange("failed", error)
+            raise
+        else:
+            self._exchange_observation = None
+            return result
+
+    def _exchange_receipts(self, scenario, index, *, padded, path_diagnostics):
         with path_stage(path_diagnostics, "receipt_enqueue"):
             own, other = self.text(scenario, index, padded=padded), self.text(scenario, index, sender=self.partner, padded=padded)
             started = time.monotonic()
             handle = self.enqueue(own)
+        try:
+            self._exchange_observation = ReceiptExchangeObservation(
+                scenario, index, self.pairing, self.phase, handle, own, other)
+        except Exception:
+            self._exchange_observation = None
         with path_stage(path_diagnostics, "receipt_delivery_wait"):
             self.wait(lambda: self.delivered(handle), timeout=90)
         with path_stage(path_diagnostics, "receipt_inbound_wait"):
@@ -1294,6 +1337,7 @@ def main(*, gateway=None):
             result.update(controller.failure_retirement(error))
             result.update(controller.failure_negative_control(error))
             result.update(controller.failure_recovery(error))
+            result.update(controller.failure_exchange(error))
             result.update(controller.failure_final_path(error))
             result.update(controller.failure_final_carrier(error))
             result.update(controller.failure_native_path(error))

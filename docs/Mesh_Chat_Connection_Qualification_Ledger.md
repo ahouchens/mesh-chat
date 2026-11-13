@@ -1,5 +1,31 @@
 # Connection runtime qualification ledger
 
+Full run [43398691571](https://github.com/ahouchens/mesh-chat/actions/runs/43398691571)
+at `9cc1e51` is **failed**: ten component jobs passed; both native peers and
+the aggregate gate failed. Policy passed 6,185 cases, UI boundary 2,220 Python
+and 12 rendered cases, Android 56 emulator and 83 exact JVM cases. Both direct
+platforms passed 25 transport, 10 recovery and 12 setup cases. Layout passed
+72 cases with zero overflow. These component scopes do not grant native acceptance.
+
+Both native failures occurred in baseline `impaired_authenticated_receipts`,
+before impaired negative control and before cold starts. Android timed out in
+`receipt_inbound_wait` after its own delivery wait returned; Windows timed out
+in `receipt_delivery_wait`. The reports do not retain exchange indices, so they
+cannot establish that both peers failed at the same index. Gateway cleanup
+reported no error. Direct and TURN/UDP/TCP/TLS completion markers exist, but
+the pending-negotiation cold-start correction was not exercised on this run.
+
+The packet, carrier and delivery cause remains unproven. Source inspection found
+no snapshot message pagination and no deterministic oversize violation for the
+1,024-byte padded workload; it exercises LXMF resource transfer. The successor
+retains each failed exchange's index, fixed first/last message-query states and
+capped poll/transition counts. When an existing snapshot was requested, it also
+retains both exact-text record counts and a unique outbound native-ID-present
+boolean. An absent snapshot remains unknown, never zero. Error, operation and
+phase bindings reject stale evidence; identifiers and message contents stay in RAM.
+This adds no RPC, retry, native policy or deadline change. Full native/aggregate
+acceptance, helper retirement and the remaining roadmap remain open.
+
 Full run [43389512594](https://github.com/ahouchens/mesh-chat/actions/runs/43389512594)
 at `b583f25` is **failed**: ten component jobs passed; both native peers and
 the aggregate gate failed. Policy passed 6,163 cases, UI boundary 2,208 Python
@@ -33,8 +59,9 @@ It excludes recovered DISCOVER claims and grants no carrier permission.
 
 Readiness waits only for one consistent pending row; raw inspection, ambiguous
 resources, unavailable authority and revocation still fail closed. The controller
-keeps its existing readiness deadline and inspects the path only after permission
-is available. WebRTC, reducer policy and authenticated receipt requirements are
+keeps its existing readiness deadline. A consistent pending row waits for
+permission; raw, unavailable and ambiguous observations still inspect the path
+and preserve its authority errors. WebRTC, reducer policy and authenticated receipt requirements are
 unchanged. Full native and aggregate acceptance, helper retirement and the
 remaining lifecycle/distribution roadmap remain open.
 
