@@ -6,8 +6,8 @@ from time import monotonic
 
 import pytest
 
-from mesh_chat.connection.model import Phase, Resource, Work
-from mesh_chat.errors import ContactNotApproved
+from mesh_chat.connection.model import Bridge, Carrier, Health, Phase, Resource, Work
+from mesh_chat.errors import ContactNotApproved, NativeUnavailable
 from test_pairing_runtime import native_pairing
 from test_reconnect_service import _add_contact, _consent, mailbox
 
@@ -79,6 +79,81 @@ def test_fresh_reconnect_allocation_is_visible_before_owner_carrier_commit(
             state.key.profile_id, Resource("native", "other-logical"), Resource("native", physical))
         assert not owner.pending_native_negotiation(
             state.key, Resource("native", session), Resource("native", physical), step.deadline)
+        def hint():
+            return service.native_webrtc_inspection_resources()["resources"][0]["owner_state"]
+
+        with owner._lock:
+            del owner._running[step.operation]
+            owner._pending[state.key] = work
+        try:
+            assert hint() == "pending_negotiation"
+        finally:
+            with owner._lock:
+                del owner._pending[state.key]
+                owner._running[step.operation] = work
+
+        for poll_phase in (Phase.WAIT_ANSWER, Phase.CHECKING):
+            with owner._lock:
+                del owner._running[step.operation]
+                owner._states[state.key] = replace(
+                    current, negotiation=replace(step, phase=poll_phase, operation=None,
+                                                 poll_at=step.deadline + 5))
+            try:
+                assert hint() == "pending_negotiation"
+            finally:
+                with owner._lock:
+                    owner._states[state.key] = current
+                    owner._running[step.operation] = work
+
+        invalid_steps = (
+            replace(step, resource=Resource("native", "other-logical")),
+            replace(step, operation=replace(step.operation, runtime_epoch="other-epoch")),
+            replace(step, operation=replace(step.operation, generation=step.operation.generation + 1)),
+            replace(step, operation=replace(step.operation,
+                                            policy_revision=step.operation.policy_revision + 1)),
+        )
+        invalid_states = (
+            *(replace(current, negotiation=invalid_step) for invalid_step in invalid_steps),
+            replace(current, authority=replace(current.authority, authorized=False)),
+            replace(current, retirement_prepared=True),
+        )
+        for invalid_state in invalid_states:
+            with owner._lock:
+                owner._states[state.key] = invalid_state
+            try:
+                assert hint() == "unavailable"
+            finally:
+                with owner._lock:
+                    owner._states[state.key] = current
+
+        with owner._lock:
+            owner._states[state.key] = replace(
+                current, carrier=Carrier(Resource("native", physical), current.authority.revision,
+                                         Health.OPEN, Bridge.READY, service._connection_runtime.now()))
+        try:
+            assert hint() == "authorized"
+            assert not owner.pending_native_negotiation(
+                state.key, Resource("native", session), Resource("native", physical),
+                service._connection_runtime.now())
+        finally:
+            with owner._lock:
+                owner._states[state.key] = current
+
+        with owner._lock:
+            owner._retiring.add(Resource("native", physical))
+        try:
+            assert hint() == "unavailable"
+        finally:
+            with owner._lock:
+                owner._retiring.remove(Resource("native", physical))
+        with owner._lock:
+            owner._surrendered[state.key] = (Resource("native", physical),)
+        try:
+            assert hint() == "unavailable"
+        finally:
+            with owner._lock:
+                del owner._surrendered[state.key]
+
         stale_operation = replace(step.operation, sequence=step.operation.sequence + 1000)
         with owner._lock:
             owner._running[stale_operation] = Work(stale_operation, phase, step.resource, step.deadline)
@@ -92,6 +167,14 @@ def test_fresh_reconnect_allocation_is_visible_before_owner_carrier_commit(
             assert service.native_webrtc_inspection_resources()["resources"][0]["owner_state"] == "unavailable"
         finally:
             del service._native_webrtc_profile_sessions["ambiguous-profile"]
+        service._connection_runtime._quarantined = True
+        try:
+            assert not service._connection_runtime.pending_native_negotiation(
+                state.key.profile_id, Resource("native", session), Resource("native", physical))
+            with pytest.raises(NativeUnavailable):
+                hint()
+        finally:
+            service._connection_runtime._quarantined = False
         assert not service._connection_runtime.permits_carrier(
             state.key.profile_id, Resource("native", physical))
         with pytest.raises(ContactNotApproved):
