@@ -305,21 +305,26 @@ class Peers:
                 failure = (index,name,{"available":False},{"observation":"unavailable"})
         raise AssertionError(failure)
 
-    def connected(self, index, previous_certificate=None, *, route_before=None, deadline=None):
+    def connected(self, index, previous_certificate=None, *, route_before=None, deadline=None,
+                  control_receipts_before=None):
         # One total bound includes the configured native attempt and retry window.
         # A usable old Phase 2/path is not evidence that recovery has completed.
         # Retain the existing 180-second per-call ceiling. A shared scenario
         # deadline can shorten it; neither value establishes a product SLA.
+        if control_receipts_before is not None and (
+                type(control_receipts_before) is not int or control_receipts_before < 0):
+            raise ValueError("Control receipt baseline must be a nonnegative integer")
         stop=time.monotonic()+180
         if deadline is not None: stop=min(stop,deadline)
         if deadline is not None and time.monotonic()>=deadline:
             raise AssertionError({"failed_peer":index,"shared_deadline":"expired"})
         evidence=None
+        connection_observed=False
         while time.monotonic()<stop:
             rows=self.command(index,"direct_recovery_status")
-            if deadline is not None and time.monotonic()>=stop: break
+            if (deadline is not None or control_receipts_before is not None) and time.monotonic()>=stop: break
             evidence=self.call(index,"recovery_diagnostic")
-            if deadline is not None and time.monotonic()>=stop: break
+            if (deadline is not None or control_receipts_before is not None) and time.monotonic()>=stop: break
             if (rows and all(r["state"]=="connected" and r["authenticated_peer_live"] and r["rns_ready"] for r in rows)
                     and evidence["pending"]==0 and len(evidence["paths"])==1
                     and evidence["paths"][0]["recovery"]
@@ -332,10 +337,30 @@ class Peers:
                              or evidence["paths"][0]["certificate"] != route_before["paths"][0]["certificate"])):
                     time.sleep(.2)
                     continue
+                # Native capsule authorization and ordinary signed-control ingress
+                # are separate observations. Require both within this same window.
+                if control_receipts_before is not None:
+                    connection_observed=True
+                    controls=evidence.get("controls")
+                    received=controls.get("received") if type(controls) is dict else None
+                    if type(received) is not int or received<=control_receipts_before:
+                        time.sleep(.2)
+                        continue
                 return evidence
             time.sleep(.2)
         if deadline is not None and time.monotonic()>=deadline:
             raise AssertionError({"failed_peer":index,"shared_deadline":"expired"})
+        if control_receipts_before is not None:
+            controls=evidence.get("controls") if type(evidence) is dict else None
+            controls=controls if type(controls) is dict else {}
+            raise AssertionError({"failed_peer":index,"replacement_control":{
+                "received_before":min(control_receipts_before,1024),
+                "received_before_capped":control_receipts_before>1024,
+                "connection_observed":connection_observed,
+                "counts_capped":any(type(controls.get(name)) is int and controls[name]>1024
+                                    for name in ("sent","send_failed","received","rejected")),
+                "last_counts":{name:_fixed_count(controls.get(name),1024)
+                               for name in ("sent","send_failed","received","rejected")}}})
         raise AssertionError({"failed_peer":index,"peers":[self.call(i,"recovery_diagnostic") for i in range(2)]})
 
     def admit(self):
@@ -436,7 +461,9 @@ def test_production_durable_recovery(tmp_path,scenario):
         if scenario=="replacement": time.sleep(2)
         after=[peers.connected(i,before[i]["paths"][0]["certificate"] if i in changed else None,
                               route_before=before[i] if i==changed_peer else None,
-                              deadline=delivery_deadline if scenario=="address_loss" else None) for i in range(2)]
+                              deadline=delivery_deadline if scenario=="address_loss" else None,
+                              **({"control_receipts_before":before[i]["controls"]["received"]}
+                                 if scenario=="replacement" else {})) for i in range(2)]
         if scenario=="replacement":
             assert all(after[i]["controls"]["received"]>before[i]["controls"]["received"] for i in range(2))
         if scenario in {"route_change","server_route_change"}:
