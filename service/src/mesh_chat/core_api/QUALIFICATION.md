@@ -1,5 +1,34 @@
 # Private packaged qualification control
 
+Full run [43414231985](https://github.com/ahouchens/mesh-chat/actions/runs/43414231985)
+at `25396ef` is **failed**: all ten component jobs passed; both native peers and
+the aggregate gate failed. Policy passed 6,231 cases, UI boundary 2,220 Python
+and 12 rendered cases, Android 56 emulator and 83 exact JVM cases. Both direct
+platforms passed 25 transport, 10 recovery and 12 setup cases. The Ubuntu 24.04
+layout pin is now verified by 72 browser cases with zero overflow cases. These
+component results do not grant native or aggregate acceptance.
+
+Both native peers failed in `turn_udp_supervisor_owned_pairing_windows` with
+`supervisor_pairing_retired`, checking/tick/phase_timeout. Windows' retained
+signed local SDP contained zero candidates; Android's local SDP contained one
+IPv4 UDP relay candidate, reflected as Windows' remote candidate. Windows'
+observed gathering state was complete; Android observed gathering to complete.
+Both direct initiator cases completed before this failure. TURN TCP/TLS,
+impaired receipts, the prior Android control EOF path and cold starts were not
+reached. The original TURN allocation failure cause remains unproven.
+
+Source inspection identifies a separate concrete adapter validation gap: the
+Windows host checks for candidates before applying its relay-only SDP filter,
+then publishes success even if that filter removes every candidate. The existing
+relay-only tests permit an empty candidate list through a vacuous `all` check.
+The bounded fix requires a candidate in the final published SDP and returns
+the existing `native_webrtc_no_candidates` error through the existing exact-peer
+cleanup path otherwise. It does not change the WebRTC libraries, gathering
+deadlines, retry policy, consent or acceptance requirements, and does not claim
+to repair the underlying absence of a TURN allocation. Full native and aggregate
+acceptance, cold-start validation, helper retirement and the remaining roadmap
+remain open.
+
 Full run [43406689324](https://github.com/ahouchens/mesh-chat/actions/runs/43406689324)
 at `d1cbcc4` is **failed**: nine component jobs passed; layout, both native peers
 and the aggregate gate failed. Policy passed 6,213 cases, UI boundary 2,220 Python
