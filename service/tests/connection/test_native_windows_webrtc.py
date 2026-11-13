@@ -577,22 +577,19 @@ def test_shutdown_retires_live_sessions_and_refuses_further_work():
     host_instance.shutdown()
 
 
-def test_relay_only_offer_has_no_direct_candidates_without_turn():
+def test_relay_only_offer_without_turn_rejects_empty_filtered_sdp():
     host_instance, events = host()
     ice = json.dumps({"iceServers": [], "iceTransportPolicy": "relay"})
     try:
         created = json.loads(host_instance.createOffer("relay", ice, json.dumps(CHANNELS)))
-        assert created["ok"], created
-        candidates = [
-            line for line in created["sdp"].splitlines()
-            if line.startswith("a=candidate:")
-        ]
-        assert all(" typ relay" in line for line in candidates), candidates
+        assert created == {"ok": False, "error": "native_webrtc_no_candidates"}
+        assert json.loads(host_instance.stats("relay"))["error"] == "native_webrtc_session_missing"
+        assert counts(host_instance)["reserved_count"] == 0
     finally:
         host_instance.shutdown()
 
 
-def test_relay_only_answer_filters_direct_candidates():
+def test_relay_only_answer_without_turn_rejects_empty_filtered_sdp():
     left, left_events = host()
     right, right_events = host()
     ice = json.dumps({"iceServers": [], "iceTransportPolicy": "relay"})
@@ -601,12 +598,22 @@ def test_relay_only_answer_filters_direct_candidates():
         assert offer["ok"], offer
         answer = json.loads(right.acceptOffer(
             "answer", offer["sdp"], ice, json.dumps(CHANNELS)))
-        assert answer["ok"], answer
-        candidates = [
-            line for line in answer["sdp"].splitlines()
-            if line.startswith("a=candidate:")
-        ]
-        assert all(" typ relay" in line for line in candidates), candidates
+        assert answer == {"ok": False, "error": "native_webrtc_no_candidates"}
+        assert json.loads(right.stats("answer"))["error"] == "native_webrtc_session_missing"
+        assert counts(right)["reserved_count"] == 0
+        assert counts(left)["active_count"] == 1
     finally:
         left.shutdown()
         right.shutdown()
+
+
+def test_relay_filter_keeps_actual_relay_candidate():
+    from mesh_chat.native_windows_webrtc import _has_candidate, _relay_filtered
+
+    sdp = ("v=0\r\n"
+           "a=candidate:host 1 udp 1 192.0.2.1 5000 typ host\r\n"
+           "a=candidate:relay 1 udp 1 192.0.2.2 5001 typ relay\r\n")
+    filtered = _relay_filtered(sdp)
+    assert _has_candidate(filtered)
+    assert " typ host" not in filtered
+    assert "a=candidate:relay 1 udp 1 192.0.2.2 5001 typ relay\r\n" in filtered

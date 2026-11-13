@@ -327,6 +327,8 @@ class WindowsNativeWebRTCHost:
             sdp = _sha256_only(pc.localDescription.sdp)
             if _relay_only(ice_json):
                 sdp = _relay_filtered(sdp)
+            if not _has_candidate(sdp):
+                raise _HostFailure("native_webrtc_no_candidates")
             self._publish(lease, session)
             for channel in session.channels.values():
                 self._channel_state(session, channel, channel.label)
