@@ -394,6 +394,7 @@ class AndroidPeer:
             raise PeerFailure("invalid_profile_leaf")
         self.process = self.socket = None
         self.forward = None
+        self._start_failure = None
         self._sequence = 0
         self._core_failure = None
         self._qualification_binding = None
@@ -446,6 +447,7 @@ class AndroidPeer:
         if self.process is not None:
             raise PeerFailure("peer_already_started")
         self._lifecycle_failure = None
+        self._start_failure = None
         self._qualification_binding = None
         self._transport_failure = None
         self._instrumentation_status = _instrumentation_status()
@@ -475,24 +477,71 @@ class AndroidPeer:
                     except Exception: pass
         self._reader = threading.Thread(target=reader, daemon=True)
         self._reader.start()
+        stage = "port_wait"
         try:
             port = ports.get(timeout=90)
+            stage = "port_validate"
             if not 1024 <= port <= 65535:
                 raise PeerFailure("invalid_android_port")
+            stage = "forward"
             self.forward = self._adb("forward", "tcp:0", f"tcp:{port}")
+            stage = "forward_validate"
             if re.fullmatch(r"[0-9]{1,5}", self.forward) is None:
                 raise PeerFailure("invalid_adb_forward")
+            stage = "connect"
             self.socket = socket.create_connection(("127.0.0.1", int(self.forward)), timeout=60)
+            stage = "authenticate"
             self._request("authenticate", {"nonce": nonce})
+            stage = "initialize"
             self._request("initialize", {"directory_id": self.directory_id, "vault_key": base64.b64encode(self.key).decode()})
+            stage = "inventory"
             inventory = self.inventory()
+            stage = "binding"
             self._qualification_binding = self._initial_binding(inventory)
             return inventory
         except Exception as error:
+            self._fail_start(stage, error)
+
+    def _fail_start(self, stage, error):
+        primary = PeerFailure("android_host_start_failed")
+        observed = None
+        try:
+            from native_interop_android_start import start_observation
+            observed = start_observation(stage, error, peer_failure=isinstance(error, PeerFailure),
+                transport=self.failure_transport_observation(error),
+                lifecycle=self.failure_lifecycle_observation(error))
+        except Exception:
+            pass  # Failure observation cannot prevent rollback.
+        try:
             try: kind = stop_failure("finish", error)["exception_kind"]
             except Exception: kind = "other"
             self.stop(crash=True, _origin="start_rollback", _masked_start_kind=kind)
-            raise PeerFailure("android_host_start_failed") from None
+        except Exception as cleanup:
+            if observed is not None:
+                try:
+                    from native_interop_android_start import exception_kind
+                    observed["rollback_exception_kind"] = exception_kind(cleanup, peer_failure=isinstance(cleanup, PeerFailure))
+                    lifecycle = self.failure_lifecycle_observation(cleanup)
+                    if lifecycle is not None: observed["rollback_lifecycle"] = lifecycle
+                except Exception:
+                    pass
+        try:
+            from native_interop_android_start import start_failure_snapshot
+            selected = start_failure_snapshot(observed)
+            if selected is not None: self._start_failure = (primary, selected)
+        except Exception:
+            pass
+        raise primary from None
+
+    def failure_start_observation(self, error):
+        try:
+            from native_interop_android_start import start_failure_snapshot
+            record = self._start_failure
+            if type(record) is tuple and len(record) == 2 and record[0] is error:
+                return start_failure_snapshot(record[1])
+        except Exception:
+            pass
+        return None
 
     def _request(self, action, payload=None, *, timeout=60):
         self._core_failure = None

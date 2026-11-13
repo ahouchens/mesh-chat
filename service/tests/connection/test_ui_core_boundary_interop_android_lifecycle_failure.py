@@ -204,7 +204,7 @@ def test_forward_failure_keeps_existing_start_wrapper_and_cleanup_order(monkeypa
     assert peer.process is None
 
 
-def test_start_cleanup_failure_attributes_only_final_force_stop_error(monkeypatch):
+def test_start_cleanup_failure_keeps_primary_forward_error(monkeypatch):
     peer = peers.AndroidPeer(b"k" * 32)
     forward = subprocess.CalledProcessError(4, ["PRIVATE_FORWARD"])
     cleanup = subprocess.CalledProcessError(8, ["PRIVATE_FORCE_STOP"])
@@ -227,12 +227,16 @@ def test_start_cleanup_failure_attributes_only_final_force_stop_error(monkeypatc
         raise forward if argv[1] == "forward" else cleanup
 
     monkeypatch.setattr(peers.subprocess, "check_output", check_output)
-    with pytest.raises(subprocess.CalledProcessError) as caught:
+    with pytest.raises(peers.PeerFailure, match="android_host_start_failed") as caught:
         peer.start()
-    assert caught.value is cleanup
     assert calls == [["forward", "tcp:0", "tcp:1234"],
                      ["shell", "am", "force-stop", peer.APP]]
-    assert peer.failure_lifecycle_observation(forward) is None
+    observed = peer.failure_start_observation(caught.value)
+    assert observed["stage"] == "forward"
+    assert observed["exception_kind"] == "called_process_error"
+    assert observed["initial_lifecycle"]["site"] == "forward_add"
+    assert observed["rollback_lifecycle"]["site"] == "force_stop"
+    assert peer.failure_start_observation(peers.PeerFailure("android_host_start_failed")) is None
     assert peer.failure_lifecycle_observation(cleanup)["site"] == "force_stop"
     assert peer.failure_lifecycle_observation(cleanup)["stop_origin"] == "start_rollback"
     assert peer.failure_lifecycle_observation(cleanup)["masked_start_kind"] == "called_process_error"

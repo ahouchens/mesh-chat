@@ -28,6 +28,13 @@ was running; guest/ADB health and the cause of disconnection remain unknown.
 Both reports flagged cleanup failure. Zero cold receipt cycles completed;
 neither the native 100-cycle gate nor aggregate acceptance passed.
 
+Startup rollback now preserves the intended `android_host_start_failed` error
+and reports its fixed startup stage, exception category and selected error code.
+Exact socket EOF or ADB observations are captured before rollback resets them;
+rollback failure is retained separately. Cleanup order, custody, waits and
+qualification remain unchanged, and no retry is added. This corrects masking
+of the primary failure; it does not establish or repair the ADB offline cause.
+
 The successor corrects a source-level initial handoff gap: signature-only
 announce observation can precede main RNS identity/ratchet and path acceptance.
 Initial confirmation now requires main keys and the selected admitted interface;

@@ -205,6 +205,22 @@ def android_control_failure(peer, emulator, error):
         return {}
 
 
+def android_start_failure(peer, emulator, error):
+    if type(error) is not PeerFailure or error.code != "android_host_start_failed":
+        return {}
+    try:
+        from native_interop_android_start import start_failure_snapshot
+        from native_interop_android_observation import process_observation
+        provider = getattr(peer, "failure_start_observation", None)
+        observed = start_failure_snapshot(provider(error)) if callable(provider) else None
+        if observed is None: return {}
+        return {"android_start_failure": {**observed,
+            "emulator_process": process_observation(getattr(emulator, "process", None)),
+            "cleanup_failure_sites": []}}
+    except Exception:
+        return {}
+
+
 def android_lifecycle_failure(peer, emulator, error):
     """Attribute only the exact failed ADB call before controller cleanup."""
     if type(error) is not CalledProcessError:
@@ -1630,6 +1646,8 @@ def main(*, gateway=None):
             try: result.update(windows_lifecycle_failure(peer, error))
             except Exception: pass  # Optional attribution cannot replace the primary error.
         if args.role == "android":
+            try: result.update(android_start_failure(peer, emulator, error))
+            except Exception: pass  # Optional startup evidence cannot mask the primary error.
             result.update(android_control_failure(peer, emulator, error))
             try: result.update(android_lifecycle_failure(peer, emulator, error))
             except Exception: pass  # Optional lifecycle attribution cannot replace the primary error.
@@ -1677,6 +1695,8 @@ def main(*, gateway=None):
                     result["android_control_failure"]["cleanup_failure_sites"].append("peer_stop")
                 if "android_lifecycle_failure" in result:
                     result["android_lifecycle_failure"]["cleanup_failure_sites"].append("peer_stop")
+                if "android_start_failure" in result:
+                    result["android_start_failure"]["cleanup_failure_sites"].append("peer_stop")
         if rendezvous is not None: rendezvous.close()
         if transport is not None: transport.close()
         if emulator is not None:
@@ -1693,6 +1713,8 @@ def main(*, gateway=None):
                         result["android_control_failure"]["cleanup_failure_sites"].append("gateway_before_cleanup")
                     if "android_lifecycle_failure" in result:
                         result["android_lifecycle_failure"]["cleanup_failure_sites"].append("gateway_before_cleanup")
+                    if "android_start_failure" in result:
+                        result["android_start_failure"]["cleanup_failure_sites"].append("gateway_before_cleanup")
             try: emulator.close()
             except Exception:
                 result.update(passed=False, cleanup_failed=True)
@@ -1700,6 +1722,8 @@ def main(*, gateway=None):
                     result["android_control_failure"]["cleanup_failure_sites"].append("emulator_close")
                 if "android_lifecycle_failure" in result:
                     result["android_lifecycle_failure"]["cleanup_failure_sites"].append("emulator_close")
+                if "android_start_failure" in result:
+                    result["android_start_failure"]["cleanup_failure_sites"].append("emulator_close")
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps({key: result[key] for key in ("passed", "role", "evidence_level")}))
