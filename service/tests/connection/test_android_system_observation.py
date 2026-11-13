@@ -138,7 +138,8 @@ def test_counters_saturate_without_stopping_the_reader():
 
 
 @pytest.mark.parametrize("change", [{"raw": "PRIVATE"}, {"counts": {}}, {"v": True},
-    {"events": [{"event": "PRIVATE", "phase": "boot"}]}, {"events_dropped": True}])
+    {"events": [{"event": "PRIVATE", "phase": "boot"}]}, {"events_dropped": True},
+    {"counters_saturate_at": 65535.0}])
 def test_malformed_snapshot_is_rejected(change):
     from native_interop_android_system import system_snapshot
     value = observer().snapshot()

@@ -21,7 +21,8 @@ def system_snapshot(value):
     fields = {"v", "counts", "events", "events_dropped", "oversized_lines", "counters_saturate_at",
               "reader_eof", "reader_failed", "classifier_failed"}
     if type(value) is not dict or set(value) != fields: return None
-    if type(value["v"]) is not int or value["v"] != 1 or value["counters_saturate_at"] != CAP: return None
+    if (type(value["v"]) is not int or value["v"] != 1
+            or type(value["counters_saturate_at"]) is not int or value["counters_saturate_at"] != CAP): return None
     if any(type(value[key]) is not bool for key in ("reader_eof", "reader_failed", "classifier_failed")): return None
     counts, events = value["counts"], value["events"]
     if type(counts) is not dict or set(counts) != set(EVENTS): return None
