@@ -862,6 +862,156 @@ def retirement_case(monkeypatch, sample, *, role="windows", polls=None, reply=No
     return state
 
 
+@pytest.mark.parametrize("scenario", ["direct", "turn_udp"])
+def test_final_observation_missing_uses_existing_skip_fact_in_actual_path_case(monkeypatch, sample, scenario):
+    state = retirement_case(monkeypatch, sample, role="android")
+    original = state.controller.observe
+    def observe(*args, **kwargs):
+        value = original(*args, **kwargs)
+        if state.observation == 3:
+            controller.record_final_path_skip(kwargs.get("missing_reasons"), "messaging_ready_not_true")
+            return None
+        return value
+    state.controller.observe = observe
+    with pytest.raises(ValueError) as caught:
+        state.controller.path_case(scenario, "windows")
+    assert str(caught.value) == "Native selected path disappeared after receipt delivery"
+    assert state.controller.failure_final_evidence(caught.value) == {"final_evidence_failure": {
+        "scenario": scenario, "stage": "final_observation", "reason": "path_missing",
+        "skip_reason": "messaging_ready_not_true"}}
+    assert state.controller.failure_final_evidence(ValueError("PRIVATE_FOREIGN")) == {}
+    assert state.observation == 3 and state.actions == [] and not state.markers
+
+
+def test_final_observation_exception_keeps_primary_error_in_actual_turn_udp_path(monkeypatch, sample):
+    state = retirement_case(monkeypatch, sample, role="android")
+    original = state.controller.observe
+    failure = ValueError("PRIVATE_OBSERVATION_ERROR")
+    def observe(*args, **kwargs):
+        value = original(*args, **kwargs)
+        if state.observation == 3: raise failure
+        return value
+    state.controller.observe = observe
+    with pytest.raises(ValueError) as caught:
+        state.controller.path_case("turn_udp", "windows")
+    assert caught.value is failure
+    assert state.controller.failure_final_evidence(failure) == {"final_evidence_failure": {
+        "scenario": "turn_udp", "stage": "final_observation", "reason": "observation_error"}}
+    assert "PRIVATE" not in json.dumps(state.controller.failure_final_evidence(failure))
+
+
+@pytest.mark.parametrize("change,reason,fields", [
+    ("service_incarnation", "native_identity_changed", ["service_incarnation"]),
+    ("profile_incarnation", "native_identity_changed", ["profile_incarnation"]),
+    ("logical_session", "native_identity_changed", ["logical_session"]),
+    ("resource", "native_identity_changed", ["resource"]),
+    ("adapter_epoch", "native_identity_changed", ["adapter_epoch"]),
+    ("pair", "selected_pair_changed", None),
+    ("sequence", "sample_sequence_not_increasing", None),
+    ("regression", "counter_regression", ["received_controls"]),
+    ("missing_positive", "required_delta_missing", ["received_packets"]),
+])
+def test_final_traffic_attribution_uses_fixed_labels_in_actual_turn_udp_path(monkeypatch, sample, change, reason, fields):
+    state = retirement_case(monkeypatch, sample, role="android")
+    original = state.controller.observe
+    def observe(*args, **kwargs):
+        value = original(*args, **kwargs)
+        if change == "regression" and state.observation == 2:
+            value["application"]["received_controls"] = 1
+        if state.observation == 3:
+            if change in {"service_incarnation", "profile_incarnation", "logical_session", "resource", "adapter_epoch"}:
+                value[change] = "PRIVATE_OTHER"
+            elif change == "pair": value["pair"]["token"] = "f" * 32
+            elif change == "sequence": value["sample_sequence"] = 2
+            elif change == "regression": value["application"]["received_controls"] = 0
+            else: value["application"]["received_packets"] = 0
+        return value
+    state.controller.observe = observe
+    with pytest.raises(ValueError) as caught:
+        state.controller.path_case("turn_udp", "windows")
+    expected = {"scenario": "turn_udp", "stage": "final_traffic", "reason": reason}
+    if fields is not None: expected["fields"] = fields
+    assert state.controller.failure_final_evidence(caught.value) == {"final_evidence_failure": expected}
+    assert "PRIVATE" not in json.dumps(expected)
+    assert state.observation == 3 and state.actions == [] and not state.markers
+
+
+@pytest.mark.parametrize("broken", ["classifier", "validator"])
+def test_final_traffic_projection_failure_preserves_exact_primary_error(monkeypatch, sample, broken):
+    state = retirement_case(monkeypatch, sample, role="android")
+    failure = ValueError("PRIVATE_TRAFFIC_ERROR")
+    def fail_traffic(*_args): raise failure
+    monkeypatch.setattr(controller, "traffic", fail_traffic)
+    if broken == "classifier":
+        monkeypatch.setattr(controller, "traffic_failure_details", lambda *_: (_ for _ in ()).throw(
+            RuntimeError("PRIVATE_PROJECTION_ERROR")))
+    else:
+        monkeypatch.setattr(controller, "traffic_failure_details", lambda *_: {"reason": "selected_pair_changed"})
+        monkeypatch.setattr(controller, "final_evidence_failure_observation", lambda *_: (_ for _ in ()).throw(
+            RuntimeError("PRIVATE_PROJECTION_ERROR")))
+    with pytest.raises(ValueError) as caught:
+        state.controller.path_case("turn_udp", "windows")
+    assert caught.value is failure and state.controller.failure_final_evidence(failure) == {}
+
+
+def test_final_evidence_projection_rejects_untrusted_or_stale_private_fields(monkeypatch, sample):
+    from native_interop_diagnostics import final_evidence_failure_observation
+    for value in ({"scenario": "turn_udp", "stage": "final_traffic", "reason": "counter_regression",
+                   "fields": ["PRIVATE_COUNTER"]},
+                  {"scenario": "turn_udp", "stage": "final_observation", "reason": "path_missing",
+                   "skip_reason": "PRIVATE_ENDPOINT"},
+                  {"scenario": "turn_udp", "stage": "final_traffic", "reason": [], "fields": []}):
+        assert final_evidence_failure_observation(value) is None
+    state = retirement_case(monkeypatch, sample)
+    error = ValueError("PRIVATE_ERROR")
+    state.controller.phase = "turn_udp_authenticated_receipts"
+    state.controller._final_evidence_failure = error, state.controller.phase, state.controller.pairing, {
+        "scenario": "turn_udp", "stage": "final_traffic", "reason": "PRIVATE_REASON"}
+    assert state.controller.failure_final_evidence(error) == {}
+    state.controller._final_evidence_failure = error, "direct_authenticated_receipts", state.controller.pairing, {
+        "scenario": "turn_udp", "stage": "final_traffic", "reason": "selected_pair_changed"}
+    assert state.controller.failure_final_evidence(error) == {}
+
+
+def test_actual_turn_udp_failure_report_contains_only_fixed_final_traffic_attribution(
+        tmp_path, monkeypatch, capsys, sample):
+    import connection_ci
+    state = retirement_case(monkeypatch, sample, role="android")
+    original = state.controller.observe
+    def observe(*args, **kwargs):
+        value = original(*args, **kwargs)
+        if state.observation == 3: value["application"]["received_packets"] = 0
+        return value
+    state.controller.observe = observe
+    peer = state.controller.peer
+    peer.process = SimpleNamespace(pid=17)
+    peer.stop = lambda **_kwargs: setattr(peer, "process", None)
+    state.controller.run = lambda: state.controller.path_case("turn_udp", "windows")
+    monkeypatch.setattr(controller, "Controller", lambda *_args, **_kwargs: state.controller)
+    monkeypatch.setattr(controller, "source_identity", lambda _: ("a" * 40, "b" * 40))
+    monkeypatch.setattr(connection_ci, "current_plan", lambda: {"native_workload": "full"})
+    monkeypatch.setattr(controller, "context_from_environment", lambda: {"source_commit": "a" * 40})
+    monkeypatch.setattr(controller, "binding", lambda *_: (None, {}))
+    monkeypatch.setattr(controller, "outbound_services", lambda: {})
+    monkeypatch.setattr(controller, "android_environment", lambda **_: {})
+    monkeypatch.setattr(controller, "AndroidEmulator", lambda: SimpleNamespace(start=lambda *args, **kwargs: None,
+        close=lambda: None))
+    monkeypatch.setattr(controller, "AndroidPeer", lambda *_: peer)
+    monkeypatch.setattr(controller, "GithubArtifacts", lambda *_: SimpleNamespace(close=lambda: None))
+    monkeypatch.setattr(controller, "Rendezvous", lambda *_: SimpleNamespace(close=lambda: None))
+    output = tmp_path / "report.json"
+    monkeypatch.setattr(sys, "argv", ["controller", "--role", "android", "--workload", "full",
+        "--expected-source", "a" * 40, "--output", str(output)])
+    assert controller.main() == 1
+    captured = capsys.readouterr()
+    report = json.loads(output.read_text())
+    assert report["phase"] == "turn_udp_authenticated_receipts"
+    assert report["failure_type"] == "ValueError"
+    assert report["final_evidence_failure"] == {"scenario": "turn_udp", "stage": "final_traffic",
+        "reason": "required_delta_missing", "fields": ["received_packets"]}
+    assert "PRIVATE" not in output.read_text() + captured.out + captured.err
+
+
 def test_prepared_case_publishes_completion_before_committing_same_request(monkeypatch, sample):
     state = retirement_case(monkeypatch, sample)
     state.controller.path_case("direct", "windows")
@@ -1499,6 +1649,16 @@ def test_final_ready_recovery_still_rejects_changed_identity_or_counters(monkeyp
         state.controller.path_case("turn_tls", "windows")
     assert state.controller.failure_negative_control(failure.value) == {
         "negative_control": {"scenario": "turn_tls", "stage": "final_traffic"}}
+    reason, fields = {
+        "resource": ("native_identity_changed", ["resource"]),
+        "epoch": ("native_identity_changed", ["adapter_epoch"]),
+        "pair": ("selected_pair_changed", None),
+        "counters": ("required_delta_missing", ["enqueued_packets", "enqueued_bytes",
+            "received_packets", "received_bytes"]),
+    }[change]
+    selected = {"scenario": "turn_tls", "stage": "final_traffic", "reason": reason}
+    if fields is not None: selected["fields"] = fields
+    assert state.controller.failure_final_evidence(failure.value) == {"final_evidence_failure": selected}
     assert not state.requests
 
 

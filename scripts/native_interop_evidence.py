@@ -161,6 +161,43 @@ def traffic(before, after):
     return delta
 
 
+TRAFFIC_IDENTITY_FIELDS = ("service_incarnation", "profile_incarnation", "logical_session", "resource", "adapter_epoch")
+TRAFFIC_REQUIRED_FIELDS = ("enqueued_packets", "enqueued_bytes", "received_packets", "received_bytes")
+
+
+def traffic_failure_details(before, after):
+    """Classify an already failed comparison using only fixed field names."""
+    if type(before) is not dict or type(after) is not dict:
+        return None
+    try:
+        if any(type(row[name]) is not str for row in (before, after) for name in TRAFFIC_IDENTITY_FIELDS):
+            return None
+        if (type(before["pair"]) is not dict or type(after["pair"]) is not dict
+                or any(type(row["pair"]["token"]) is not str for row in (before, after))
+                or any(type(row["sample_sequence"]) is not int for row in (before, after))
+                or any(type(row["application"]) is not dict or set(row["application"]) != set(APPLICATION)
+                       or any(type(row["application"][name]) is not int or row["application"][name] < 0
+                              for name in APPLICATION) for row in (before, after))):
+            return None
+        changed = [name for name in TRAFFIC_IDENTITY_FIELDS if before[name] != after[name]]
+        if changed:
+            return {"reason": "native_identity_changed", "fields": changed}
+        if before["pair"]["token"] != after["pair"]["token"]:
+            return {"reason": "selected_pair_changed"}
+        if after["sample_sequence"] <= before["sample_sequence"]:
+            return {"reason": "sample_sequence_not_increasing"}
+        delta = {name: after["application"][name] - before["application"][name] for name in APPLICATION}
+        regressed = [name for name in APPLICATION if delta[name] < 0]
+        if regressed:
+            return {"reason": "counter_regression", "fields": regressed}
+        missing = [name for name in TRAFFIC_REQUIRED_FIELDS if delta[name] <= 0]
+        if missing:
+            return {"reason": "required_delta_missing", "fields": missing}
+    except Exception:
+        pass
+    return None
+
+
 def _require(condition, message):
     if not condition: raise ValueError(message)
 

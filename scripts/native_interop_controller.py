@@ -17,11 +17,12 @@ sys.path.insert(0, str(ROOT / "service/src"))
 from mesh_chat.connection.diagnostics import validated_gather_for_retirement, validated_pairing_retirement
 from native_interop_artifacts import GithubArtifacts, RendezvousUnavailable, context_from_environment
 from native_interop_evidence import (MAX_NEGATIVE_BLOCK_MS, SCENARIOS, SAMPLE_REJECTION_REASONS,
-    Samples, accounting, digest, selection, traffic)
+    Samples, accounting, digest, selection, traffic, traffic_failure_details)
 from native_interop_faults import NativePathDiagnostics, path_failure_observation, path_stage
 from native_interop_diagnostics import (NegativeControlDiagnostics, PreflightDiagnostics, RecoveryDeliveryDiagnostics,
-    final_path_missing_observation, final_path_missing_reason, negative_control_error, negative_control_observation,
-    negative_control_stage, record_final_path_skip, recovery_delivery_observation, rendezvous_observation,
+    final_evidence_failure_observation, final_path_missing_observation, final_path_missing_reason,
+    negative_control_error, negative_control_observation, negative_control_stage, record_final_path_skip,
+    recovery_delivery_observation, rendezvous_observation,
     reset_negative_control)
 from native_interop_peers import AndroidEmulator, AndroidPeer, PeerFailure, WindowsPeer
 from native_interop_core_observation import core_failure_observation
@@ -228,6 +229,7 @@ class Controller:
         self._retirement_context = self._retirement_failure = None
         self._path_diagnostics = None
         self._final_path_failure = None
+        self._final_evidence_failure = None
         self._final_carrier_observation = self._final_carrier_failure = None
         self._recovery_context_target = self._recovery_context_failure = None
         self._fault_cleanup_failure = None
@@ -498,6 +500,31 @@ class Controller:
         except Exception:
             return {}
 
+    def _record_final_evidence_failure(self, error, scenario, stage, details):
+        try:
+            selected = final_evidence_failure_observation({**details, "scenario": scenario, "stage": stage})
+            self._final_evidence_failure = (error, self.phase, self.pairing, selected) if selected is not None else None
+        except Exception:
+            self._final_evidence_failure = None
+
+    def failure_final_evidence(self, error):
+        try:
+            record = self._final_evidence_failure
+            if (type(record) is not tuple or len(record) != 4 or record[0] is not error
+                    or record[1] != self.phase or record[2] != self.pairing):
+                return {}
+            selected = final_evidence_failure_observation(record[3])
+            if selected is not None:
+                scenario = selected["scenario"]
+                phases = {scenario + "_authenticated_receipts"}
+                if scenario in {"turn_tcp", "turn_tls", "impaired"}:
+                    phases.add(scenario + "_kernel_block_negative_control")
+                if self.phase not in phases:
+                    return {}
+            return {"final_evidence_failure": selected} if selected is not None else {}
+        except Exception:
+            return {}
+
     def _begin_final_carrier_observation(self, before, scenario):
         self._final_carrier_observation = self._final_carrier_failure = None
         try:
@@ -578,6 +605,16 @@ class Controller:
     def negative_traffic(self, before, after):
         with negative_control_stage(self._negative_diagnostics, "final_traffic"):
             return traffic(before, after)
+
+    def final_traffic(self, before, after, scenario):
+        try:
+            return self.negative_traffic(before, after)
+        except Exception as error:
+            try: details = traffic_failure_details(before, after)
+            except Exception: details = None
+            if details is not None:
+                self._record_final_evidence_failure(error, scenario, "final_traffic", details)
+            raise
 
     def endpoint_resource_current(self, before):
         inventory = self.peer.inventory()
@@ -1169,6 +1206,7 @@ class Controller:
     def path_case(self, scenario, initiator):
         self._retirement_context = self._retirement_failure = None
         self._final_path_failure = None
+        self._final_evidence_failure = None
         self._final_carrier_observation = self._final_carrier_failure = None
         self._fault_cleanup_failure = None
         self._negative_diagnostics = reset_negative_control(self._negative_diagnostics, scenario)
@@ -1216,32 +1254,38 @@ class Controller:
             self._begin_recovery_context(before, scenario)
             negative, restoration_deadline = (self.negative(fault, scenario)
                 if scenario in {"turn_tcp", "turn_tls", "impaired"} else (None, None))
-            with negative_control_stage(self._negative_diagnostics, "final_observation"):
-                missing_reasons = set() if scenario in {"turn_tcp", "turn_tls", "impaired"} else None
-                if scenario in {"turn_tcp", "turn_tls", "impaired"}:
-                    self._begin_final_carrier_observation(before, scenario)
-                    after, missing_reasons = self.final_ready_observation(
-                        session, scenario, restoration_deadline)
-                    if after is not None and time.monotonic() > restoration_deadline:
-                        after, missing_reasons = None, set()
-                    if after is not None and fault is not None and (
-                            getattr(fault, "endpoint_mode", False) or getattr(fault, "uid_udp_mode", False)):
-                        with negative_control_stage(self._negative_diagnostics, "kernel_restore_current"):
-                            fault.require_current()
-                        if time.monotonic() > restoration_deadline:
+            missing_reasons = set()
+            try:
+                with negative_control_stage(self._negative_diagnostics, "final_observation"):
+                    if scenario in {"turn_tcp", "turn_tls", "impaired"}:
+                        self._begin_final_carrier_observation(before, scenario)
+                        after, missing_reasons = self.final_ready_observation(
+                            session, scenario, restoration_deadline)
+                        if after is not None and time.monotonic() > restoration_deadline:
                             after, missing_reasons = None, set()
-                elif missing_reasons is None:
-                    after = self.observe(session, ready=True, scenario=scenario)
-                else:
-                    after = self.observe(session, ready=True, scenario=scenario, missing_reasons=missing_reasons)
-                if after is None:
-                    error = ValueError("Native selected path disappeared after receipt delivery")
-                    if missing_reasons is not None:
+                        if after is not None and fault is not None and (
+                                getattr(fault, "endpoint_mode", False) or getattr(fault, "uid_udp_mode", False)):
+                            with negative_control_stage(self._negative_diagnostics, "kernel_restore_current"):
+                                fault.require_current()
+                            if time.monotonic() > restoration_deadline:
+                                after, missing_reasons = None, set()
+                    else:
+                        after = self.observe(session, ready=True, scenario=scenario, missing_reasons=missing_reasons)
+                    if after is None:
+                        error = ValueError("Native selected path disappeared after receipt delivery")
                         try: reason = final_path_missing_reason(missing_reasons)
                         except Exception: reason = "unavailable"
-                        self._final_path_failure = error, reason
-                        self._record_final_carrier_failure(error)
-                    raise negative_control_error(self._negative_diagnostics, "final_observation", error, "path_missing")
+                        if scenario in {"turn_tcp", "turn_tls", "impaired"}:
+                            self._final_path_failure = error, reason
+                            self._record_final_carrier_failure(error)
+                        self._record_final_evidence_failure(error, scenario, "final_observation",
+                            {"reason": "path_missing", "skip_reason": reason})
+                        raise negative_control_error(self._negative_diagnostics, "final_observation", error, "path_missing")
+            except Exception as error:
+                if self._final_evidence_failure is None or self._final_evidence_failure[0] is not error:
+                    self._record_final_evidence_failure(error, scenario, "final_observation",
+                        {"reason": "observation_error"})
+                raise
             self._final_carrier_observation = self._final_carrier_failure = None
             with negative_control_stage(self._negative_diagnostics, "final_evidence"):
                 if fault is not None and scenario == "impaired": impairment = fault.report()
@@ -1253,7 +1297,8 @@ class Controller:
                     "operation": digest(self.pairing), "role": "offer" if self.role == initiator else "answer", "state": "transferred",
                     "transferred_cancel_preserves_carrier": True},
                     "before": selection(before), "after": selection(after),
-                    "native_delta": self.negative_traffic(before, after), "messages": messages, "impairment": impairment, "negative": negative})
+                    "native_delta": self.final_traffic(before, after, scenario), "messages": messages,
+                    "impairment": impairment, "negative": negative})
         finally:
             if fault is not None:
                 if scenario != "impaired":
@@ -1557,6 +1602,7 @@ def main(*, gateway=None):
             result.update(controller.failure_recovery_context(error))
             result.update(controller.failure_exchange(error))
             result.update(controller.failure_final_path(error))
+            result.update(controller.failure_final_evidence(error))
             result.update(controller.failure_final_carrier(error))
             result.update(controller.failure_native_path(error))
             try: result.update(controller.failure_cold_start(error))

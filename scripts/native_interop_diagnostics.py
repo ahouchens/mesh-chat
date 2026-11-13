@@ -165,6 +165,47 @@ NEGATIVE_CONTROL_REASONS = {
 FINAL_PATH_MISSING_REASONS = frozenset({"no_resource", "pending_adoption", "pending_negotiation", "adopted_not_true",
     "attached_not_true", "messaging_ready_not_true", "nonselected", "mixed", "unavailable"})
 FINAL_PATH_SKIP_REASONS = FINAL_PATH_MISSING_REASONS - {"mixed", "unavailable"}
+FINAL_EVIDENCE_SCENARIOS = frozenset({"direct", "turn_udp", "turn_tcp", "turn_tls", "impaired"})
+FINAL_TRAFFIC_IDENTITY_FIELDS = frozenset({"service_incarnation", "profile_incarnation", "logical_session",
+    "resource", "adapter_epoch"})
+FINAL_TRAFFIC_COUNTER_FIELDS = frozenset({"enqueued_packets", "enqueued_controls", "enqueued_bytes",
+    "received_packets", "received_controls", "received_bytes"})
+FINAL_TRAFFIC_REQUIRED_FIELDS = frozenset({"enqueued_packets", "enqueued_bytes", "received_packets", "received_bytes"})
+
+
+def final_evidence_failure_observation(value):
+    """Admit only content-free final observation/traffic labels to a report."""
+    if (type(value) is not dict or type(value.get("scenario")) is not str
+            or value["scenario"] not in FINAL_EVIDENCE_SCENARIOS
+            or type(value.get("stage")) is not str):
+        return None
+    stage, reason = value["stage"], value.get("reason")
+    if type(reason) is not str:
+        return None
+    if stage == "final_observation":
+        if reason == "path_missing":
+            if (set(value) != {"scenario", "stage", "reason", "skip_reason"}
+                    or final_path_missing_observation(value["skip_reason"]) is None):
+                return None
+        elif reason != "observation_error" or set(value) != {"scenario", "stage", "reason"}:
+            return None
+    elif stage == "final_traffic":
+        fields = value.get("fields")
+        allowed = ({"native_identity_changed": FINAL_TRAFFIC_IDENTITY_FIELDS,
+                    "counter_regression": FINAL_TRAFFIC_COUNTER_FIELDS,
+                    "required_delta_missing": FINAL_TRAFFIC_REQUIRED_FIELDS}).get(reason)
+        if allowed is not None:
+            if (set(value) != {"scenario", "stage", "reason", "fields"}
+                    or type(fields) is not list or not 1 <= len(fields) <= len(allowed)
+                    or any(type(field) is not str for field in fields)
+                    or len(set(fields)) != len(fields) or not set(fields) <= allowed):
+                return None
+        elif (reason not in {"selected_pair_changed", "sample_sequence_not_increasing"}
+              or set(value) != {"scenario", "stage", "reason"}):
+            return None
+    else:
+        return None
+    return {key: list(item) if key == "fields" else item for key, item in value.items()}
 
 
 def record_final_path_skip(reasons, reason):
