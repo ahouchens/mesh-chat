@@ -3011,7 +3011,9 @@ def test_actual_root_report_serializes_only_fixed_stderr_family(tmp_path, monkey
     assert run.record["failure_type"] == "CalledProcessError"
     assert run.record["preflight_exit_status"] == 255 and run.record["preflight_root_reason"] == reason
     assert set(run.record) == {"v", "passed", "evidence_level", "role", "scope", "workload", "phase",
-        "failure_type", "preflight_failure_site", "preflight_exit_status", "preflight_root_reason"}
+        "failure_type", "preflight_failure_site", "preflight_exit_status", "preflight_root_reason",
+        "android_system_observation"}
+    assert_empty_system_observation(run.record)
     assert "PRIVATE_" not in run.output and "adb:" not in run.output
     assert run.script.calls.count("android_root") == 1 and run.events == []
     assert_android_cleaned(run.script)
@@ -3041,12 +3043,13 @@ def test_actual_precontroller_report_identifies_each_checked_command_only(tmp_pa
     assert record["passed"] is False and record["phase"] == "platform_outbound_preflight"
     assert record["failure_type"] == "CalledProcessError" and record["preflight_failure_site"] == site
     fields = {"v", "passed", "evidence_level", "role", "scope", "workload", "phase", "failure_type",
-              "preflight_failure_site", "preflight_exit_status"}
+              "preflight_failure_site", "preflight_exit_status", "android_system_observation"}
     assert record["preflight_exit_status"] == 1
     if site == "android_root":
         fields.add("preflight_root_reason")
         assert record["preflight_root_reason"] == "unclassified"
     assert set(record) == fields
+    assert_empty_system_observation(record)
     sites = (*ANDROID_START_SITES, *ANDROID_ENVIRONMENT_SITES)
     expected = list(sites[:sites.index(site) + 1])
     if run.script.starts: expected.insert(2, "boot")
@@ -3065,13 +3068,27 @@ def test_precontroller_report_omits_foreign_or_cleared_command_attribution(tmp_p
     assert run.exit_code == 1 and run.record["phase"] == "platform_outbound_preflight"
     expected_type = "CalledProcessError" if fault in {"caught_then_same", "unscoped_same"} else "PeerFailure"
     assert run.record["failure_type"] == expected_type
-    fields = {"v", "passed", "evidence_level", "role", "scope", "workload", "phase", "failure_type"}
+    fields = {"v", "passed", "evidence_level", "role", "scope", "workload", "phase", "failure_type",
+              "android_system_observation"}
     if expected_type == "PeerFailure":
         fields.add("error_code")
         assert run.record["error_code"] == "invalid_request"
     assert set(run.record) == fields
+    assert_empty_system_observation(run.record)
     assert "controller" not in run.events and "PRIVATE_" not in run.output
     assert not run.script.emulator.root.exists() and run.script.emulator.process is None
+
+
+def assert_empty_system_observation(record):
+    """An empty console cannot supply a guest cause for a preflight error."""
+    observed = record["android_system_observation"]
+    assert set(observed) == {"v", "counts", "events", "events_dropped", "oversized_lines",
+                            "counters_saturate_at", "reader_eof", "reader_failed", "classifier_failed"}
+    assert observed["events"] == [] and all(n == 0 for n in observed["counts"].values())
+    assert observed["events_dropped"] == observed["oversized_lines"] == 0
+    assert observed["reader_failed"] is observed["classifier_failed"] is False
+    assert type(observed["reader_eof"]) is bool
+    assert observed["v"] == 1 and observed["counters_saturate_at"] == 65535
 
 
 @pytest.mark.parametrize("caught", [False, True])
