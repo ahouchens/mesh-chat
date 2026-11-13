@@ -187,6 +187,46 @@ def test_failure_projection_drops_private_fields_and_caps_numeric_evidence():
     assert "PRIVATE" not in json.dumps(projected)
 
 
+@pytest.mark.parametrize("has_reference", [False, True])
+@pytest.mark.parametrize("table", ["workspace_delivery", "workspace_pending_control"])
+@pytest.mark.parametrize("document_channel", [None, "PRIVATE_UNRELATED"])
+def test_control_requires_exact_general_channel_anchor(has_reference, table, document_channel):
+    workspace, delivery, pending = private_rows()
+    workspace["general_channel_id"] = "PRIVATE_GENERAL" if has_reference else None
+    row = delivery if table == "workspace_delivery" else pending
+    document = {"workspace_id": "PRIVATE_WORKSPACE", "name": "general"}
+    if document_channel is not None:
+        document["channel_id"] = document_channel
+    row["document"] = json.dumps(document)
+    store = SimpleNamespace(get=lambda kind, key: workspace if kind == "workspace" else row)
+    value = setup._admission_channel_diagnostic(store, "PRIVATE_WORKSPACE",
+        "PRIVATE_WORKSPACE_RECORD", None,
+        ["PRIVATE_DELIVERY"] if table == "workspace_delivery" else [],
+        ["PRIVATE_PENDING"] if table == "workspace_pending_control" else [], now=100,
+        expected_channel_id="PRIVATE_GENERAL")
+    field = "channel_control" if table == "workspace_delivery" else "pending_control"
+    assert value[field] == {"selection": "unavailable"}
+    assert "native_failure" not in value
+    assert "PRIVATE" not in json.dumps(value)
+
+
+@pytest.mark.parametrize("has_reference", [False, True])
+def test_missing_or_conflicting_channel_anchor_cannot_select_control(has_reference):
+    workspace, delivery, pending = private_rows()
+    workspace["general_channel_id"] = "PRIVATE_GENERAL" if has_reference else None
+    rows = {"workspace": workspace, "workspace_delivery": delivery,
+            "workspace_pending_control": pending}
+    store = SimpleNamespace(get=lambda kind, key: rows.get(kind))
+    value = setup._admission_channel_diagnostic(store, "PRIVATE_WORKSPACE",
+        "PRIVATE_WORKSPACE_RECORD", None, ["PRIVATE_DELIVERY"], ["PRIVATE_PENDING"], now=100,
+        expected_channel_id="PRIVATE_CONFLICT" if has_reference else None)
+    if value.get("available") is True:
+        assert value["channel_control"] == {"selection": "unavailable"}
+        assert value["pending_control"] == {"selection": "unavailable"}
+    assert "native_failure" not in value
+    assert "PRIVATE" not in json.dumps(value)
+
+
 def test_channel_native_probe_selects_exact_control_and_reports_contention():
     class Busy:
         def acquire(self, _blocking):

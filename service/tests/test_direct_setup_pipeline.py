@@ -188,6 +188,10 @@ def _admission_channel_diagnostic(store, workspace_id, workspace_record_id,
         return unavailable
     general = workspace.get("general_channel_id")
     reference = type(general) is str and bool(general)
+    expected = type(expected_channel_id) is str and bool(expected_channel_id)
+    if reference and expected and general != expected_channel_id:
+        return unavailable
+    channel_anchor = general if reference else expected_channel_id if expected else None
     channel_record = None
     if type(channel_record_id) is str and channel_record_id:
         try: channel_record = store.get("workspace_channel", channel_record_id)
@@ -219,10 +223,10 @@ def _admission_channel_diagnostic(store, workspace_id, workspace_record_id,
     selected = None
     if not delivery_ids:
         control = {"selection": "not_observed"}
-    elif any(row is False or (row is not None and (
+    elif channel_anchor is None or any(row is False or (row is not None and (
             type(row) is not dict or row.get("workspace_id") != workspace_id
             or row.get("kind") != "workspace_channel_record"
-            or not _admission_control_document(row, workspace_id, general if reference else None)))
+            or not _admission_control_document(row, workspace_id, channel_anchor)))
             for row in deliveries):
         control = {"selection": "unavailable"}
     else:
@@ -252,10 +256,10 @@ def _admission_channel_diagnostic(store, workspace_id, workspace_record_id,
     result["channel_control"] = control
     if not pending_ids:
         result["pending_control"] = {"selection": "not_observed"}
-    elif any(row is False or (row is not None and (
+    elif channel_anchor is None or any(row is False or (row is not None and (
             type(row) is not dict or row.get("workspace_id") != workspace_id
             or row.get("kind") != "workspace_channel_record"
-            or not _admission_control_document(row, workspace_id)))
+            or not _admission_control_document(row, workspace_id, channel_anchor)))
             for row in pending):
         result["pending_control"] = {"selection": "unavailable"}
     else:
