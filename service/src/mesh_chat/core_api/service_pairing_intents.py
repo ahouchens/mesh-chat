@@ -10,6 +10,7 @@ import time
 from uuid import UUID, uuid5
 from weakref import ref
 
+from ..app_owned_diagnostics import APP_CALLER, capture_public_pairing
 from ..call_manager import CallOutcomeRequiresResync
 from ..errors import ContactNotApproved, NativeUnavailable, ValidationError
 from ..native_webrtc_host import require_host
@@ -202,6 +203,7 @@ class ServicePairingIntents:
     def begin(self, scope, pairing, params, operation_id):
         service, store = self.service, self.service.store
         with storage_errors(), service._dispatch_lock, store.read_snapshot():
+            admitted = False
             profile = self._require(scope)
             mailbox = service._call_settings.signal_mailbox_url
             if mailbox is None:
@@ -248,7 +250,14 @@ class ServicePairingIntents:
                         row = store.get("api_pairing_intent", identifier)
                 else:
                     self._admit(scope, identifier, row, params)
+                    admitted = True
             result = self._observe(row)
+            if admitted and scope.caller == APP_CALLER:
+                try:
+                    context = getattr(service, "_native_pairing_contexts", {}).get(row["native_id"])
+                    capture_public_pairing(service, identifier, row, context)
+                except Exception:
+                    pass  # A private observation cannot change public admission.
         service._changed()
         return result
 
