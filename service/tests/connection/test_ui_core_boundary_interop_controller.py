@@ -976,6 +976,9 @@ def negative_control_case(monkeypatch, sample, *, role="android", point="receipt
     instance.transport = SimpleNamespace(publish=publish, wait=receive)
     instance.rendezvous = SimpleNamespace(seal=lambda phase, value: value, open=lambda phase, value: value)
     original = instance.observe
+    instance._prepare_negative_control = lambda _: SimpleNamespace(
+        send=lambda stage: instance.publish("negative_" + stage + "_" + scenario, {"approved": True}),
+        receive=lambda stage, **_: instance.receive("negative_" + stage + "_" + scenario) == {"approved": True})
     def observe(*args, **kwargs):
         value = original(*args, **kwargs)
         if state.observation >= 3 and state.point == "path_missing": return None
@@ -2763,7 +2766,8 @@ def interop_reports(source="a" * 40, tree="b" * 40, android_artifacts=None, *, w
             after = selection(case_id, role, role + "initial", name, 1, 2)
             negative = None
             if name in {"turn_tcp", "turn_tls", "impaired"}:
-                negative = {"blocked_packets": 2 if role == "android" else None, "delivered_while_blocked": False,
+                negative = {"blocked_packets": 2 if role == "android" else None,
+                    "block_operation_ms": 3000 if role == "android" else None, "delivered_while_blocked": False,
                     "delivered_after_restore": True, "kernel_protocol": ("udp" if name == "impaired" else "tcp") if role == "android" else None,
                     "kernel_target": {"kind": "uid_udp_all_destinations" if name == "impaired" else "uid_tcp_turn_destination_set",
                         "digest": evidence.digest([name, "kernel target"]), "rule_count": 2 if name == "impaired" else 1} if role == "android" else None,
@@ -2946,15 +2950,15 @@ def test_transport_filtering_uses_one_broker_url_and_never_counts_configuration_
 
 def test_fixed_plan_and_phase_inventory_keep_explicit_bounded_setup_uploads():
     assert checked_payload("control", {"scenarios": list(evidence.SCENARIOS), "iterations": 100, "cold_start_every": 10})
-    from native_interop_rendezvous import CASE_COMPLETION_PHASES
-    windows = {"key", "reconnect_capabilities", *OFFER_PHASES, *("negative_checked_" + name for name in ("turn_tcp", "turn_tls", "impaired")), *CASE_COMPLETION_PHASES}
-    android = {"key", "reconnect_capabilities", "offer", "approved", "impaired_ready", *("negative_ready_" + name for name in ("turn_tcp", "turn_tls", "impaired")), *CASE_COMPLETION_PHASES}
-    assert len(windows) == 16 and len(android) == 14
-    assert len(windows) + 1 == 17 and len(android) + 1 == 15
+    from native_interop_rendezvous import CASE_COMPLETION_PHASES, NEGATIVE_CONTROL_PHASES
+    windows = {"key", "reconnect_capabilities", *OFFER_PHASES, *CASE_COMPLETION_PHASES}
+    android = {"key", "reconnect_capabilities", "offer", "approved", "impaired_ready", *NEGATIVE_CONTROL_PHASES, *CASE_COMPLETION_PHASES}
+    assert len(windows) == 13 and len(android) == 14
+    assert len(windows) + 1 == 14 and len(android) + 1 == 15
     quick = {"case_complete_direct_windows", "case_complete_direct_android", "case_complete_turn_udp_windows"}
     assert len({"key", "offer", "offer_turn_udp", "reconnect_capabilities", *quick}) + 1 == 8
     assert len({"key", "offer", "approved", "reconnect_capabilities", *quick}) + 1 == 8
-    assert all(name in APPROVAL_PHASES for name in windows | android if name.startswith("negative"))
+    assert all(name in NEGATIVE_CONTROL_PHASES for name in windows | android if name.startswith("negative"))
 
 
 def test_workflow_keeps_two_actual_concurrent_platform_jobs_and_owned_emulator_lifetime():
@@ -4064,6 +4068,10 @@ def run_completion_pair(mode, monkeypatch):
         observer.default_call_settings = {}
         observer.broker_ice = {"iceServers": [{"urls": ["turn:192.0.2.1:3478?transport=tcp"],
             "username": "modeled", "credential": "modeled"}]}
+        observer._prepare_negative_control = lambda _, r=role: SimpleNamespace(
+            send=lambda stage: world.publish(r, "negative_" + stage, {"approved": True}),
+            receive=lambda stage, **_: world.receive(
+                "android" if r == "windows" else "windows", "negative_" + stage) == {"approved": True})
         observers[role] = observer
     def execute(role):
         try:

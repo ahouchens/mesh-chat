@@ -1,5 +1,56 @@
 # Independent public consumer qualification proposal
 
+Full run [43427814301](https://github.com/ahouchens/mesh-chat/actions/runs/43427814301)
+at `522d2c5` is **failed**: ten component jobs passed; both native peers and the
+aggregate failed. Policy passed 6,257 cases, UI boundary 2,228 Python and 12
+rendered cases, Android 56 emulator and 83 exact JVM cases. Both direct platforms
+passed 25 transport, 10 recovery and 12 setup cases; layout passed 72 cases with
+zero overflow. The Windows reports and nine pipe cases passed. These component
+results do not establish full native acceptance.
+
+Both peers completed the direct cases, TURN UDP/TCP/TLS and twenty impaired
+baseline exchanges, then failed impaired `restored_delivery`. The new Android
+evidence bounds the fully installed exact block to at least **16,755ms**, within
+a **17,525ms** command-operation interval, with **241 actual packet drops**.
+Artifact ready/checked coordination was inside that outage. The local two-second
+no-receipt loop did not bound the rule lifetime.
+
+The exact Android carrier loss witness records an inspection that observed
+SUSPECT followed by a tick with `carrier_lost` and prior health SUSPECT. The
+policy's suspect grace is ten seconds; ownership loss preceded the native local
+close request. Windows records inspection-driven `carrier_lost` from OPEN and
+a native close callback after a local request. Both same-service/profile terminal
+inventories contained zero resources. This establishes exact carrier retirement.
+The scenario disables automatic replacement consent, so queued traffic cannot
+assume a newly permitted replacement negotiation after losing that carrier.
+
+The retained witness does not timestamp SUSPECT onset or retirement relative to
+rule removal, identify Windows' exact terminal ICE/channel state, or identify
+the RNS/LXMF requeue cause. Sending changed to queued at 49,910ms on Android and
+66,304ms on Windows during restored polling; these are not retirement timestamps.
+No gateway operation/cleanup error, Android control EOF or empty TURN offer was
+reported in this attempt. Impaired completion and cold starts were not reached.
+
+The candidate moves short negative-control coordination to a fresh, separate
+encrypted mailbox room. Its capability crosses the authenticated sealed artifact
+channel before blocking, and the remote peer arms before the rules are installed.
+Only fixed run/attempt/source/scenario/role/room-bound ready and checked controls
+cross that room during the block. Application messages and authenticated receipts
+continue over the production Core/native path. Expired, foreign or malformed
+controls fail; capability expiry is rechecked after blocking HTTP calls.
+
+Both original two-second no-receipt observations, positive drops, exact rule
+cleanup and once-only authenticated restored delivery remain mandatory. Every
+accepted Android block must have a measured command-operation interval from
+2,000 through 8,000ms, including verified exact rule deletion. The paired report
+validator requires that evidence. This is an acceptance bound, not a physical
+watchdog: a delayed HTTP call or cleanup can extend a failing outage but cannot
+qualify it. Cleanup retains its single existing owner. The original 90-second
+recovery and 3,000-second global limits, WebRTC and reconnect consent are unchanged.
+No native recovery correction is qualified yet. The separate long-partition and
+permitted-renegotiation requirements, native/aggregate acceptance, helper retirement
+and later roadmap items remain open.
+
 Full run [43419926345](https://github.com/ahouchens/mesh-chat/actions/runs/43419926345)
 at `c17cdf1` is **failed**: all ten component jobs passed; both native peers and
 the aggregate gate failed. Policy passed 6,232 cases, UI boundary 2,220 Python

@@ -40,11 +40,11 @@ def recovery(monkeypatch, *, role="android", states=("sending", "queued"), sampl
         return inventory() if sample is None else sample
     instance.peer.inventory = read
     def delay(seconds): clock.now += seconds
-    def publish(*_): delay(3)
-    def receive(*_):
-        delay(4)
-        return {"approved": True}
-    instance.publish, instance.receive = publish, receive
+    def send(*_): delay(0.25)
+    def receive(*_, **__):
+        delay(0.25)
+        return True
+    instance._prepare_negative_control = lambda _: SimpleNamespace(send=send, receive=receive)
     fault = None
     if role == "android":
         def unblock():
@@ -61,15 +61,15 @@ def test_timeout_reads_exact_carrier_once_after_original_window(monkeypatch, rol
     with pytest.raises(controller.PeerFailure, match="scenario_deadline") as caught:
         instance.negative(fault, "impaired")
     assert len(reads) == 1 and reads[0][0] == clock.now
-    assert clock.now == pytest.approx(102 if role == "android" else 99)
+    assert clock.now == pytest.approx(95.5 if role == "android" else 92.5)
     assert reads[0][1]["carrier_observation"]["expected_physical"] == BEFORE["resource"]
     value = instance.failure_recovery_context(caught.value)["recovery_context"]
     assert value["carrier_read"] == "observed"
     assert value["carrier"]["matching_resources"] == 1
     assert value["carrier"]["owner_state"] == "authorized"
     if role == "android":
-        assert value["kernel_block_window"] == {"fully_installed_ms": 9000,
-            "operation_window_ms": 12000, "fully_installed_capped": False,
+        assert value["kernel_block_window"] == {"fully_installed_ms": 2500,
+            "operation_window_ms": 5500, "fully_installed_capped": False,
             "operation_window_capped": False, "dropped_packets": 7, "packets_capped": False}
     else:
         assert value["kernel_block_window"] is None
@@ -96,13 +96,13 @@ def test_bad_or_failed_terminal_read_preserves_primary_timeout(monkeypatch, samp
     assert value["kernel_block_window"]["dropped_packets"] == 7
 
 
-@pytest.mark.parametrize("global_deadline", [30, 221])
+@pytest.mark.parametrize("global_deadline", [30, 214])
 def test_terminal_read_is_skipped_when_global_budget_is_insufficient(monkeypatch, global_deadline):
     instance, clock, _, reads, fault = recovery(monkeypatch)
     instance.deadline = global_deadline
     with pytest.raises(controller.PeerFailure) as caught:
         instance.negative(fault, "impaired")
-    assert clock.now == pytest.approx(min(102, global_deadline)) and reads == []
+    assert clock.now == pytest.approx(min(95.5, global_deadline)) and reads == []
     value = instance.failure_recovery_context(caught.value)["recovery_context"]
     assert value["carrier_read"] == "skipped_deadline" and value["carrier"] is None
 

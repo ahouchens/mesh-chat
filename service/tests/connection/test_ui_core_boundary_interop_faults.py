@@ -1090,7 +1090,7 @@ def test_negative_projection_rejects_unknown_extra_wrong_type_and_mismatched_rea
 
 
 def test_negative_projection_has_exact_safe_catalog_and_never_parses_exception_text():
-    assert set(NEGATIVE_CONTROL_REASONS) == {"kernel_block", "kernel_current_process", "kernel_current_socket",
+    assert set(NEGATIVE_CONTROL_REASONS) == {"control_prepare", "block_duration", "kernel_block", "kernel_current_process", "kernel_current_socket",
         "kernel_block_install", "ready_publish", "ready_receive", "blocked_enqueue", "blocked_receipt",
         "checked_receive", "checked_publish", "kernel_unblock", "kernel_counter_read", "kernel_counter_parse",
         "kernel_restore_current", "kernel_restore_delete", "dropped_count", "restored_delivery",

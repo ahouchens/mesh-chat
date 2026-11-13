@@ -10,6 +10,8 @@ from native_interop_workload import LEVEL, PATH_CASES, SCOPE, workload as requir
 SCENARIOS = ("direct", "turn_udp", "turn_tcp", "turn_tls", "impaired", "cold_start_receipts")
 APPLICATION = ("enqueued_packets", "enqueued_controls", "enqueued_bytes", "received_packets", "received_controls", "received_bytes")
 ACCOUNTING = ("capacity", "reserved_count", "creating_count", "allocated_count", "active_count", "retiring_count")
+# Acceptance bound on measured command operations, not a physical watchdog.
+MAX_NEGATIVE_BLOCK_MS = 8000
 SAMPLE_REJECTION_REASONS = frozenset({
     "sample_object", "qualification_scope", "sample_version", "service_incarnation", "profile_incarnation",
     "adapter_epoch", "sample_request", "sample_sequence", "sample_ttl", "sample_timestamp",
@@ -274,10 +276,13 @@ def verify_report(record, source, tree, role, *, workload="full"):
         for message in case["messages"]: _message(message, identities)
         negative = case["negative"]
         if scenario in {"turn_tcp", "turn_tls", "impaired"}:
-            _require(isinstance(negative, dict) and set(negative) == {"blocked_packets", "delivered_while_blocked", "delivered_after_restore", "kernel_protocol", "kernel_target", "outbound", "inbound"}
+            _require(isinstance(negative, dict) and set(negative) == {"blocked_packets", "block_operation_ms", "delivered_while_blocked", "delivered_after_restore", "kernel_protocol", "kernel_target", "outbound", "inbound"}
                 and negative["delivered_while_blocked"] is False and negative["delivered_after_restore"] is True,
                 "Selected TURN transport lacks its blocked-path negative control")
             if role == "android":
+                _require(type(negative["block_operation_ms"]) is int
+                    and 2000 <= negative["block_operation_ms"] <= MAX_NEGATIVE_BLOCK_MS,
+                    "Kernel block duration exceeds the short negative-control budget")
                 target = negative["kernel_target"]
                 expected_kind = "uid_udp_all_destinations" if scenario == "impaired" else "uid_tcp_turn_destination_set"
                 _require(type(negative["blocked_packets"]) is int and negative["blocked_packets"] > 0
@@ -288,7 +293,8 @@ def verify_report(record, source, tree, role, *, workload="full"):
                     and (target["rule_count"] == 2 if scenario == "impaired" else 1 <= target["rule_count"] <= 16),
                     "TURN negative control lacks actual scoped kernel drops")
             else:
-                _require(negative["blocked_packets"] is None and negative["kernel_protocol"] is None and negative["kernel_target"] is None,
+                _require(negative["blocked_packets"] is None and negative["block_operation_ms"] is None
+                    and negative["kernel_protocol"] is None and negative["kernel_target"] is None,
                          "Windows role cannot claim Android kernel counters")
             for name in ("outbound", "inbound"):
                 _require(token(negative[name], 64) and negative[name] not in identities, "Negative control reused a message")

@@ -4,6 +4,7 @@ import argparse
 from contextlib import contextmanager
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import sys
@@ -15,7 +16,8 @@ sys.path.insert(0, str(ROOT / "service/src"))
 
 from mesh_chat.connection.diagnostics import validated_gather_for_retirement, validated_pairing_retirement
 from native_interop_artifacts import GithubArtifacts, RendezvousUnavailable, context_from_environment
-from native_interop_evidence import SCENARIOS, SAMPLE_REJECTION_REASONS, Samples, accounting, digest, selection, traffic
+from native_interop_evidence import (MAX_NEGATIVE_BLOCK_MS, SCENARIOS, SAMPLE_REJECTION_REASONS,
+    Samples, accounting, digest, selection, traffic)
 from native_interop_faults import NativePathDiagnostics, path_failure_observation, path_stage
 from native_interop_diagnostics import (NegativeControlDiagnostics, PreflightDiagnostics, RecoveryDeliveryDiagnostics,
     final_path_missing_observation, final_path_missing_reason, negative_control_error, negative_control_observation,
@@ -1000,6 +1002,41 @@ class Controller:
                     "authenticated_receipt": True, "inbound_records": 1, "outbound_records": 1,
                     "receipt_roundtrip_ms": (time.monotonic() - started) * 1000}, handle
 
+    def _prepare_negative_control(self, scenario):
+        from native_interop_negative_control import NegativeControlMailbox, new_capability
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            raise PeerFailure("scenario_deadline")
+        phase = "negative_control_" + scenario
+        if self.role == "android":
+            capability = new_capability(DEFAULT_SIGNAL_MAILBOX_URL)
+            self.publish(phase, {"capability": capability})
+        else:
+            capability = self.receive(phase, timeout=min(180, remaining))["capability"]
+        if time.monotonic() >= self.deadline:
+            raise PeerFailure("scenario_deadline")
+        control = NegativeControlMailbox(self.context, self.role, scenario, capability,
+            base=DEFAULT_SIGNAL_MAILBOX_URL, clock=time.monotonic, sleep=time.sleep)
+        if self.role == "windows":
+            control.send("armed")
+        elif control.receive("armed", deadline=min(self.deadline, time.monotonic() + 180)) is not True:
+            raise ValueError("Negative control peer was not armed")
+        if time.monotonic() >= self.deadline:
+            raise PeerFailure("scenario_deadline")
+        return control
+
+    def _short_block_duration(self, started, finished):
+        observer = self._negative_diagnostics
+        if (type(started) not in (int, float) or type(finished) not in (int, float)
+                or not math.isfinite(started) or not math.isfinite(finished)
+                or finished - started < 2):
+            raise negative_control_error(observer, "block_duration",
+                ValueError("Kernel block clock is invalid"), "invalid_clock")
+        if (finished - started) * 1000 > MAX_NEGATIVE_BLOCK_MS:
+            raise negative_control_error(observer, "block_duration",
+                ValueError("Kernel block exceeded its short proof budget"), "over_budget")
+        return math.ceil((finished - started) * 1000)
+
     def negative(self, fault, scenario):
         self.phase = scenario + "_kernel_block_negative_control"
         self._negative_diagnostics = reset_negative_control(self._negative_diagnostics, scenario)
@@ -1015,15 +1052,19 @@ class Controller:
             pass
         self._recovery_context_target = None
         observer = self._negative_diagnostics
+        with negative_control_stage(observer, "control_prepare"):
+            control = self._prepare_negative_control(scenario)
+        block_started = block_operation_ms = None
         if fault is not None:
+            block_started = time.monotonic()
             window = mark_window(window, "block_call", time.monotonic)
             with negative_control_stage(observer, "kernel_block"): fault.block()
             window = mark_window(window, "block_return", time.monotonic)
             with negative_control_stage(observer, "ready_publish"):
-                self.publish("negative_ready_" + scenario, {"approved": True})
+                control.send("ready")
         else:
             with negative_control_stage(observer, "ready_receive"):
-                if self.receive("negative_ready_" + scenario) != {"approved": True}:
+                if control.receive("ready", deadline=min(self.deadline, time.monotonic() + 180)) is not True:
                     raise negative_control_error(observer, "ready_receive",
                         ValueError("Kernel block admission was not acknowledged"), "not_acknowledged")
         with negative_control_stage(observer, "blocked_enqueue"):
@@ -1043,19 +1084,22 @@ class Controller:
         packets = None
         if fault is not None:
             with negative_control_stage(observer, "checked_receive"):
-                if self.receive("negative_checked_" + scenario) != {"approved": True}:
+                if control.receive("checked", deadline=min(self.deadline,
+                        block_started + MAX_NEGATIVE_BLOCK_MS / 1000)) is not True:
                     raise negative_control_error(observer, "checked_receive",
                         ValueError("Remote blocked-path observation is missing"), "not_acknowledged")
             window = mark_window(window, "unblock_call", time.monotonic)
             with negative_control_stage(observer, "kernel_unblock"): packets = fault.unblock()
             window = mark_window(window, "unblock_return", time.monotonic, packets)
+            with negative_control_stage(observer, "block_duration"):
+                block_operation_ms = self._short_block_duration(block_started, time.monotonic())
             with negative_control_stage(observer, "dropped_count"):
                 if packets <= 0:
                     raise negative_control_error(observer, "dropped_count",
                         ValueError("Negative control has no actual dropped packets"), "no_dropped_packets")
         else:
             with negative_control_stage(observer, "checked_publish"):
-                self.publish("negative_checked_" + scenario, {"approved": True})
+                control.send("checked")
         restoration_deadline = None
         try:
             if self._recovery_diagnostics is not None:
@@ -1102,7 +1146,8 @@ class Controller:
             with negative_control_stage(observer, "kernel_restore_current"):
                 fault.require_current()
         self._recovery_diagnostics = self._recovery_failure = None
-        return {"blocked_packets": packets, "delivered_while_blocked": False, "delivered_after_restore": True,
+        return {"blocked_packets": packets, "block_operation_ms": block_operation_ms,
+                "delivered_while_blocked": False, "delivered_after_restore": True,
                 "kernel_protocol": fault.protocol if fault is not None else None,
                 "kernel_target": {"kind": fault.target_kind, "digest": digest(fault.target_material),
                                   "rule_count": fault.rule_count} if fault is not None else None,

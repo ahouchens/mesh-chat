@@ -54,6 +54,8 @@ def blocked_controller(monkeypatch, restored_states, *, role="windows", blocked_
     instance.contact = {"core_handle": "PRIVATE_RECIPIENT"}
     instance.receive = lambda _: {"approved": True}
     instance.publish = lambda *_: None
+    instance._prepare_negative_control = lambda _: SimpleNamespace(
+        send=lambda *_: None, receive=lambda *_, **__: True)
     instance.records = lambda *_: [{"id": "PRIVATE_RECORD"}]
     return instance, clock, calls
 

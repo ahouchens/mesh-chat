@@ -135,6 +135,8 @@ class RecoveryDeliveryDiagnostics:
 
 
 NEGATIVE_CONTROL_REASONS = {
+    "control_prepare": frozenset(),
+    "block_duration": frozenset({"invalid_clock", "over_budget"}),
     "kernel_block": frozenset(),
     "kernel_current_process": frozenset({"process_changed"}),
     "kernel_current_socket": frozenset({"socket_changed"}),

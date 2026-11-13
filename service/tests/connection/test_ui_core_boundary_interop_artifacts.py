@@ -733,7 +733,9 @@ def test_decoder_value_error_cannot_inherit_completed_response_read_origin(tmp_p
 @pytest.mark.parametrize("role", ["windows", "android"])
 @pytest.mark.parametrize("phase,fault", [("reconnect_capabilities", fault) for fault in (
     None, "unknown_phase", "plaintext", "extra_field", "wrong_job", "wrong_source", "nonce", "ciphertext")]
-    + [(phase, None) for phase in sorted(CASE_COMPLETION_PHASES)])
+    + [(phase, None) for phase in sorted(CASE_COMPLETION_PHASES)]
+    + [("negative_control_" + scenario, fault) for scenario in ("turn_tcp", "turn_tls", "impaired")
+       for fault in (None, "plaintext", "extra_field")])
 def test_actual_node_upload_accepts_only_sealed_setup_phases_without_sdk_or_network(tmp_path, role, phase, fault):
     """Execute the real upload validator with a local inert ArtifactClient module."""
     node = os.environ.get("MESH_NODE") or shutil.which("node")
@@ -758,8 +760,13 @@ export class DefaultArtifactClient {
     partner = Rendezvous(CONTEXT, "android" if role == "windows" else "windows")
     sender.bind_partner(partner.public_manifest())
     try:
-        sealed = sender.seal(phase, {"completed": True} if phase in CASE_COMPLETION_PHASES
-                             else {"capabilities": "PRIVATE_SIGNED_CREDENTIALS"})
+        if phase.startswith("negative_control_"):
+            from mesh_chat.signal_mailbox import create_pairing
+            payload = {"capability": create_pairing("https://signal.example")}
+        else:
+            payload = ({"completed": True} if phase in CASE_COMPLETION_PHASES
+                       else {"capabilities": "PRIVATE_SIGNED_CREDENTIALS"})
+        sealed = sender.seal(phase, payload)
         env = {**os.environ, **environment(role), "ACTIONS_RUNTIME_TOKEN": "PRIVATE_TEST_RUNTIME_TOKEN",
                "MESH_UPLOAD_OBSERVATION": str(tmp_path / "observed.json")}
         if fault == "unknown_phase": sealed["phase"] = "reconnect_documents"
