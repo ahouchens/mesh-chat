@@ -272,22 +272,27 @@ ROOT_FAILURE_REASONS = frozenset({
 })
 
 
-def root_failure_reason(stderr):
-    # AOSP client/commandline.cpp adb_root/wait_for_device diagnostic families.
-    # These identify text families, never a runner version or a proven cause.
+def _root_failure_lines(stderr):
     if type(stderr) not in (bytes, str) or len(stderr) > 4096:
-        return "unclassified"
+        return None
     if type(stderr) is str:
         try:
             stderr = stderr.encode("utf-8")
         except UnicodeEncodeError:
-            return "unclassified"
+            return None
     if len(stderr) > 4096:
+        return None
+    return [line for line in stderr.splitlines() if line]
+
+
+def root_failure_reason(stderr):
+    # AOSP client/commandline.cpp adb_root/wait_for_device diagnostic families.
+    # These identify text families, never a runner version or a proven cause.
+    lines = _root_failure_lines(stderr)
+    if lines is None:
         return "unclassified"
     reasons = set()
-    for line in stderr.splitlines():
-        if not line:
-            continue
+    for line in lines:
         if line.startswith(b"adb: unable to connect for root: "):
             reasons.add("connect_failure")
         elif line.startswith(b"adb: error while reading for root: "):
@@ -301,6 +306,24 @@ def root_failure_reason(stderr):
     return next(iter(reasons)) if len(reasons) == 1 else "unclassified"
 
 
+def root_connect_detail(stderr):
+    """Recognize entire fixed ADB messages; never serialize a private suffix."""
+    lines = _root_failure_lines(stderr)
+    if lines is None or len(lines) != 1:
+        return None
+    prefix = b"adb: unable to connect for root: "
+    labels = {
+        b"device offline": "device_offline",
+        b"device offline (no transport)": "no_transport",
+        b"device offline (transport offline)": "transport_offline",
+        b"device still connecting": "device_connecting",
+        b"device still authorizing": "device_authorizing",
+        b"closed": "connection_closed",
+        b"failed to read transport id from server": "transport_id_read_failed",
+    }
+    return labels.get(lines[0][len(prefix):]) if lines[0].startswith(prefix) else None
+
+
 def command_failure_observation(error, site):
     if type(error) is not CalledProcessError:
         return {}
@@ -310,6 +333,9 @@ def command_failure_observation(error, site):
         observation["preflight_exit_status"] = status
     if site == "android_root":
         observation["preflight_root_reason"] = root_failure_reason(error.stderr)
+        detail = root_connect_detail(error.stderr)
+        if detail is not None:
+            observation["preflight_root_connect_detail"] = detail
     return observation
 
 

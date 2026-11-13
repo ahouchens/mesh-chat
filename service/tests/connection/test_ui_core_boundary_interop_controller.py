@@ -2435,6 +2435,26 @@ def test_root_failure_reports_only_checked_status_and_literal_reason(tmp_path, m
     assert_android_cleaned(run.script)
 
 
+@pytest.mark.parametrize("suffix,detail", [
+    ("device offline", "device_offline"),
+    ("device offline (no transport)", "no_transport"),
+    ("device offline (transport offline)", "transport_offline"),
+    ("device still connecting", "device_connecting"),
+    ("device still authorizing", "device_authorizing"),
+    ("closed", "connection_closed"),
+    ("failed to read transport id from server", "transport_id_read_failed"),
+])
+def test_actual_root_connect_failure_retains_only_fixed_detail(tmp_path, monkeypatch, capsys, suffix, detail):
+    run = run_android_preflight_report(tmp_path, monkeypatch, capsys, site="android_root",
+        failure_stderr=("adb: unable to connect for root: " + suffix + "\n").encode())
+    assert run.exit_code == 1 and run.record["passed"] is False
+    assert run.record["preflight_root_reason"] == "connect_failure"
+    assert run.record.get("preflight_root_connect_detail") == detail
+    assert run.script.calls == ["android_devices", "android_avd_create", "boot", "android_root", "kill"]
+    assert run.events == [] and "PRIVATE_" not in run.output and "adb:" not in run.output
+    assert_android_cleaned(run.script)
+
+
 @pytest.mark.parametrize("stderr,reason", [
     pytest.param(b"adb: unable to connect for root: PRIVATE_SUFFIX\n", "connect_failure", id="connect"),
     pytest.param("adb: error while reading for root: PRIVATE_SUFFIX\r\n", "read_failure", id="read-text"),

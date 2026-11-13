@@ -365,6 +365,30 @@ def test_checked_command_status_is_snapshotted_once_for_same_error(status):
     assert diagnostics.failure_observation(error) == {}
 
 
+@pytest.mark.parametrize("stderr", [
+    b"adb: unable to connect for root: device offline PRIVATE_SUFFIX\n",
+    b"adb: unable to connect for root: device offline\nadb: unable to connect for root: closed\n",
+    b"adb: unable to connect for root: device offline\nPRIVATE_EXTRA\n",
+    b"adb: unable to connect for root: " + b"X" * 4096,
+    b"adb: error while reading for root: device offline\n",
+    "adb: unable to connect for root: \ud800",
+])
+def test_root_connect_detail_is_never_guessed_from_partial_or_conflicting_text(stderr):
+    error = peers.subprocess.CalledProcessError(1, "PRIVATE_COMMAND", stderr=stderr)
+    assert "preflight_root_connect_detail" not in observed_command_error(error).failure_observation(error)
+
+
+def test_root_connect_detail_is_snapshotted_for_exact_error_and_site():
+    error = peers.subprocess.CalledProcessError(1, "PRIVATE_COMMAND",
+        stderr="adb: unable to connect for root: device offline\r\n")
+    diagnostics = observed_command_error(error)
+    error.stderr = b"PRIVATE_CHANGED"
+    assert diagnostics.failure_observation(error).get("preflight_root_connect_detail") == "device_offline"
+    assert diagnostics.failure_observation(peers.subprocess.CalledProcessError(1, "PRIVATE_COMMAND")) == {}
+    error.stderr = b"adb: unable to connect for root: device offline\n"
+    assert observed_command_error(error, "android_root_identity").failure_observation(error) == {"preflight_exit_status": 1}
+
+
 class DiagnosticInt(int):
     pass
 
