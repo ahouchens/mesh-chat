@@ -23,6 +23,7 @@ from native_interop_diagnostics import (NegativeControlDiagnostics, PreflightDia
     reset_negative_control)
 from native_interop_peers import AndroidEmulator, AndroidPeer, PeerFailure, WindowsPeer
 from native_interop_core_observation import core_failure_observation
+from native_interop_carrier_observation import FinalCarrierObservation, carrier_target, final_carrier_snapshot
 from native_interop_preflight import (DEFAULT_SIGNAL_MAILBOX_URL, android_environment,
     android_network_diagnostic, outbound_services)
 from native_interop_rendezvous import Rendezvous, checked_payload
@@ -200,6 +201,7 @@ class Controller:
         self._retirement_context = self._retirement_failure = None
         self._path_diagnostics = None
         self._final_path_failure = None
+        self._final_carrier_observation = self._final_carrier_failure = None
         self._fault_cleanup_failure = None
         self._recovery_diagnostics = self._recovery_failure = None
         try: self._negative_diagnostics = NegativeControlDiagnostics()
@@ -405,6 +407,54 @@ class Controller:
                 return {}
             reason = final_path_missing_observation(record[1])
             return {"final_path_missing": reason} if reason is not None else {}
+        except Exception:
+            return {}
+
+    def _begin_final_carrier_observation(self, before, scenario):
+        self._final_carrier_observation = self._final_carrier_failure = None
+        try:
+            target = carrier_target({"operation_id": self.pairing, "logical_session": before["logical_session"],
+                "expected_physical": before["resource"], "expected_service_incarnation": before["service_incarnation"],
+                "expected_profile_incarnation": before["profile_incarnation"]})
+            if (target is not None and scenario in {"turn_tcp", "turn_tls", "impaired"}
+                    and self.phase == scenario + "_kernel_block_negative_control"):
+                self._final_carrier_observation = FinalCarrierObservation(target, scenario, self.phase, time.monotonic())
+        except Exception:
+            pass
+
+    def _final_carrier_poll(self, logical, scenario):
+        try:
+            observation = self._final_carrier_observation
+            if observation is None:
+                return None
+            if (type(observation) is FinalCarrierObservation
+                    and carrier_target(observation.target) == observation.target
+                    and observation.matches(self.phase, self.pairing, logical, scenario)):
+                return observation
+        except Exception:
+            pass
+        self._final_carrier_observation = None
+        return None
+
+    def _record_final_carrier_failure(self, error):
+        try:
+            observation = self._final_carrier_observation
+            if observation is not None:
+                self._final_carrier_failure = error, observation, observation.snapshot()
+        except Exception:
+            self._final_carrier_failure = None
+
+    def failure_final_carrier(self, error):
+        try:
+            record = self._final_carrier_failure
+            if (type(record) is not tuple or len(record) != 3 or record[0] is not error
+                    or type(record[1]) is not FinalCarrierObservation
+                    or record[1] is not self._final_carrier_observation or not self.failure_final_path(error)
+                    or not record[1].matches(self.phase, self.pairing, record[1].target["logical_session"],
+                                            self.failure_negative_control(error)["negative_control"]["scenario"])):
+                return {}
+            selected = final_carrier_snapshot(record[2])
+            return {"final_carrier_observation": selected} if selected is not None else {}
         except Exception:
             return {}
 
@@ -713,7 +763,11 @@ class Controller:
     def observe(self, logical=None, *, ready=True, scenario=None, missing_reasons=None):
         observation = self._readiness_poll(logical, scenario)
         with self._substage("path_inventory"):
-            inventory = self.peer.inventory()
+            carrier = self._final_carrier_poll(logical, scenario)
+            inventory = self.peer.inventory(carrier_observation=carrier.target) if carrier is not None else self.peer.inventory()
+            if carrier is not None:
+                try: carrier.observe(inventory, time.monotonic())
+                except Exception: self._final_carrier_observation = None
             resources = [item for item in inventory["resources"] if logical is None or item["logical_session"] == logical]
             self._readiness_inventory(observation, resources)
             if not resources:
@@ -914,6 +968,7 @@ class Controller:
     def path_case(self, scenario, initiator):
         self._retirement_context = self._retirement_failure = None
         self._final_path_failure = None
+        self._final_carrier_observation = self._final_carrier_failure = None
         self._fault_cleanup_failure = None
         self._negative_diagnostics = reset_negative_control(self._negative_diagnostics, scenario)
         session, url = self.negotiate(scenario, initiator)
@@ -962,6 +1017,7 @@ class Controller:
             with negative_control_stage(self._negative_diagnostics, "final_observation"):
                 missing_reasons = set() if scenario in {"turn_tcp", "turn_tls", "impaired"} else None
                 if scenario in {"turn_tcp", "turn_tls", "impaired"}:
+                    self._begin_final_carrier_observation(before, scenario)
                     after, missing_reasons = self.final_ready_observation(
                         session, scenario, restoration_deadline)
                     if after is not None and time.monotonic() > restoration_deadline:
@@ -982,7 +1038,9 @@ class Controller:
                         try: reason = final_path_missing_reason(missing_reasons)
                         except Exception: reason = "unavailable"
                         self._final_path_failure = error, reason
+                        self._record_final_carrier_failure(error)
                     raise negative_control_error(self._negative_diagnostics, "final_observation", error, "path_missing")
+            self._final_carrier_observation = self._final_carrier_failure = None
             with negative_control_stage(self._negative_diagnostics, "final_evidence"):
                 if fault is not None and scenario == "impaired": impairment = fault.report()
                 if scenario == "impaired" and self.role == "android" and (
@@ -1202,6 +1260,7 @@ def main(*, gateway=None):
             result.update(controller.failure_negative_control(error))
             result.update(controller.failure_recovery(error))
             result.update(controller.failure_final_path(error))
+            result.update(controller.failure_final_carrier(error))
             result.update(controller.failure_native_path(error))
             try: result.update(controller.failure_kernel_cleanup(error))
             except Exception: pass  # Optional cleanup metadata cannot replace the primary report.

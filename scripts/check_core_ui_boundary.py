@@ -32,6 +32,7 @@ PYTHON_SELECTION = (
     "service/tests/connection/test_ui_core_boundary_interop_path_setup.py",
     "service/tests/connection/test_ui_core_boundary_interop_controller.py",
     "service/tests/connection/test_ui_core_boundary_interop_adoption_race.py",
+    "service/tests/connection/test_ui_core_boundary_interop_carrier_observation.py",
     "service/tests/connection/test_ui_core_boundary_interop_recovery_observation.py",
 )
 RENDERED_CASES = {("tests/core-ui-boundary/app.test.tsx",

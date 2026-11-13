@@ -22,6 +22,7 @@ from uuid import UUID, uuid4
 
 from native_interop_diagnostics import PreflightDiagnostics
 from native_interop_core_observation import core_failure_observation
+from native_interop_carrier_observation import carrier_target
 
 ROOT = Path(__file__).resolve().parents[1]
 MAX_FRAME = 4 * 1024 * 1024
@@ -59,6 +60,15 @@ def retirement_correlation(operation_id, request_id):
     except ValueError: canonical = False
     if not canonical: raise PeerFailure("invalid_carrier_retirement_request")
     return {"operation_id": operation_id, "request_id": request_id}
+
+
+def inventory_payload(operation_id, request_id, carrier_observation):
+    if carrier_observation is None:
+        return retirement_correlation(operation_id, request_id)
+    target = carrier_target(carrier_observation)
+    if operation_id is not None or request_id is not None or target is None:
+        raise PeerFailure("invalid_carrier_observation_request")
+    return {"carrier_observation": target}
 
 
 def retirement_payload(operation_id, request_id, logical_session, expected_physical,
@@ -228,8 +238,8 @@ class WindowsPeer:
         client = self.client
         return self._bounded(lambda: client.request(operation, params or {}, idempotency_key=key))
 
-    def inventory(self, *, operation_id=None, request_id=None):
-        payload = retirement_correlation(operation_id, request_id)
+    def inventory(self, *, operation_id=None, request_id=None, carrier_observation=None):
+        payload = inventory_payload(operation_id, request_id, carrier_observation)
         return self.private("qualification.inventory", payload) if payload else self.private("qualification.inventory")
 
     def retire_carrier(self, operation_id, request_id, logical_session, expected_physical,
@@ -440,9 +450,9 @@ class AndroidPeer:
             return None
         return service + profile
 
-    def inventory(self, *, operation_id=None, request_id=None):
+    def inventory(self, *, operation_id=None, request_id=None, carrier_observation=None):
         return self._request("inspect", {"command": "qualification.inventory",
-            "payload": retirement_correlation(operation_id, request_id)})
+            "payload": inventory_payload(operation_id, request_id, carrier_observation)})
 
     def retire_carrier(self, operation_id, request_id, logical_session, expected_physical,
                        expected_service_incarnation, expected_adapter_epoch, *, action=None):

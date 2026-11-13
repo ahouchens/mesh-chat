@@ -3987,7 +3987,12 @@ class CompletionPeer:
         assert operation == self.operation
         return {"operation_id": operation, "state": "transferred"}
 
-    def inventory(self, *, operation_id=None, request_id=None):
+    def inventory(self, *, operation_id=None, request_id=None, carrier_observation=None):
+        if carrier_observation is not None:
+            assert carrier_observation == {"operation_id": self.operation, "logical_session": self.logical,
+                "expected_physical": self.physical, "expected_service_incarnation": self.service,
+                "expected_profile_incarnation": self.profile}
+            assert operation_id is None and request_id is None
         retired = self.role in self.world.retired_roles
         counts = dict(capacity=16, reserved_count=int(not retired), creating_count=0,
             allocated_count=int(not retired), active_count=int(not retired), retiring_count=0)

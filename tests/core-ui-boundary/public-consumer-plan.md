@@ -1,5 +1,32 @@
 # Independent public consumer qualification proposal
 
+Full run [43370860477](https://github.com/ahouchens/mesh-chat/actions/runs/43370860477)
+at `62c232d` is **failed**: all ten non-native jobs passed; both native peers
+and the aggregate gate failed. Policy passed 6,072 cases; UI boundary passed
+2,130 Python and 12 rendered cases. Android passed 83 exact JVM identities and
+56 emulator cases. Both direct platforms passed 25 transport, 10 recovery and
+12 setup cases, including Windows `address_loss`. Windows installed pairing and
+lifecycle passed; all 72 layout cases reported zero overflow.
+
+Android reached TURN/TCP `final_observation` after restored delivery and its
+exact-resource current check, then failed `path_missing/no_resource`. The last
+poll lacked its logical resource; the report does not establish when or why
+that resource disappeared. Windows prepared retirement and waited for Android's
+completion marker, but never committed it. Normal controller retirement is not
+supported as the cause. No gateway operation or cleanup failure was reported.
+TURN/TLS and impaired recovery were not reached, so their prior failures remain
+unresolved. Full native and aggregate acceptance remain open; helper retirement
+and the remaining lifecycle/distribution roadmap are not complete.
+
+The successor adds bounded private evidence for the exact adopted carrier's
+first owner-loss transition, suspect precursor and locally observed native-close
+order. Existing final-path inventory requests carry the exact transferred
+pairing target; stale, ambiguous or evicted observations are unavailable. The
+controller retains capped first/last inventory facts and emits fixed labels only
+for the matching final-path failure. Local event order does not prove physical
+or remote failure order. No extra polling request, transport change, authority
+bypass, recovery deadline change or relaxed acceptance is introduced.
+
 Full run [43365547066](https://github.com/ahouchens/mesh-chat/actions/runs/43365547066)
 at `a21646c` is **failed**: all ten non-native jobs passed; both native peers
 and the aggregate gate failed. Policy executed and passed 6,047 cases; UI boundary
