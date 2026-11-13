@@ -1,7 +1,123 @@
 """Failure-only, bounded attribution for controller and Android boundaries."""
 
 from contextlib import contextmanager
+import math
 from subprocess import CalledProcessError
+
+
+RECOVERY_STATES = frozenset({
+    "waiting_for_keys", "queued", "sending", "stored_for_delivery",
+    "received_by_endpoint", "delivered", "expired", "failed", "cancelled",
+})
+RECOVERY_PHASES = ("blocked_receipt", "restored_delivery")
+RECOVERY_POLL_CAP = 512
+RECOVERY_ELAPSED_MS_CAP = 120000
+
+
+def recovery_delivery_observation(value):
+    """Validate the fixed, identifier-free projection before it leaves RAM."""
+    if type(value) is not dict or set(value) != {"scenario", *RECOVERY_PHASES}:
+        return None
+    if type(value["scenario"]) is not str or value["scenario"] not in {"turn_tcp", "turn_tls", "impaired"}:
+        return None
+    result = {"scenario": value["scenario"]}
+    fields = {"polls", "polls_capped", "first_state", "last_state",
+              "transitions", "transitions_capped", "first_elapsed_ms", "last_elapsed_ms",
+              "elapsed_capped"}
+    for phase in RECOVERY_PHASES:
+        item = value[phase]
+        if type(item) is not dict or set(item) != fields:
+            return None
+        polls, transitions = item["polls"], item["transitions"]
+        if (type(polls) is not int or not 0 <= polls <= RECOVERY_POLL_CAP
+                or type(transitions) is not int or not 0 <= transitions <= polls
+                or type(item["polls_capped"]) is not bool
+                or type(item["transitions_capped"]) is not bool
+                or type(item["elapsed_capped"]) is not bool
+                or (item["polls_capped"] and polls != RECOVERY_POLL_CAP)
+                or (item["transitions_capped"] and (transitions != RECOVERY_POLL_CAP
+                                                    or not item["polls_capped"]))
+                or (not item["polls_capped"] and transitions > max(0, polls - 1))):
+            return None
+        first, last = item["first_state"], item["last_state"]
+        first_ms, last_ms = item["first_elapsed_ms"], item["last_elapsed_ms"]
+        if polls == 0:
+            if (any(part is not None for part in (first, last, first_ms, last_ms))
+                    or transitions or item["elapsed_capped"]):
+                return None
+        elif (type(first) is not str or type(last) is not str
+                or first not in RECOVERY_STATES or last not in RECOVERY_STATES
+                or type(first_ms) is not int or type(last_ms) is not int
+                or not 0 <= first_ms <= last_ms <= RECOVERY_ELAPSED_MS_CAP
+                or (item["elapsed_capped"] and last_ms != RECOVERY_ELAPSED_MS_CAP)
+                or (transitions == 0 and first != last)
+                or (polls == 1 and (transitions != 0 or first != last or first_ms != last_ms))):
+            return None
+        result[phase] = dict(item)
+    return result
+
+
+class RecoveryDeliveryDiagnostics:
+    """Failure-only observations bound to one blocked public message handle."""
+
+    def __init__(self, scenario, handle):
+        if scenario not in {"turn_tcp", "turn_tls", "impaired"} or type(handle) is not str or not handle:
+            raise ValueError("Invalid recovery diagnostic scope")
+        self.scenario, self._handle = scenario, handle
+        self._phase, self._started, self._last_now, self._failure = None, None, None, None
+        self._disabled = False
+        self._phases = {}
+
+    def start(self, phase, now):
+        if (self._disabled or phase not in RECOVERY_PHASES
+                or type(now) not in (int, float) or not math.isfinite(now)):
+            self._disabled = True
+            return
+        if phase == "restored_delivery" and self._phase != "blocked_receipt":
+            self._disabled = True
+            return
+        self._phase, self._started, self._last_now = phase, now, None
+        self._phases[phase] = {"polls": 0, "polls_capped": False,
+            "first_state": None, "last_state": None, "transitions": 0,
+            "transitions_capped": False, "first_elapsed_ms": None, "last_elapsed_ms": None,
+            "elapsed_capped": False}
+
+    def observe(self, handle, state, now):
+        if self._disabled or handle != self._handle or self._phase not in RECOVERY_PHASES:
+            return
+        if (type(state) is not str or state not in RECOVERY_STATES
+                or type(now) not in (int, float) or not math.isfinite(now)
+                or now < self._started or (self._last_now is not None and now < self._last_now)):
+            self._disabled = True
+            return
+        item = self._phases[self._phase]
+        elapsed_raw = int((now - self._started) * 1000)
+        elapsed = min(RECOVERY_ELAPSED_MS_CAP, elapsed_raw)
+        item["elapsed_capped"] |= elapsed_raw > RECOVERY_ELAPSED_MS_CAP
+        self._last_now = now
+        if item["polls"] == 0:
+            item["first_state"], item["first_elapsed_ms"] = state, elapsed
+        elif item["last_state"] != state:
+            if item["transitions"] < RECOVERY_POLL_CAP:
+                item["transitions"] += 1
+            else:
+                item["transitions_capped"] = True
+        if item["polls"] < RECOVERY_POLL_CAP:
+            item["polls"] += 1
+        else:
+            item["polls_capped"] = True
+        item["last_state"], item["last_elapsed_ms"] = state, elapsed
+
+    def failed(self, error):
+        if not self._disabled and self._phase == "restored_delivery":
+            self._failure = error
+
+    def failure_observation(self, error, scenario, handle):
+        if (self._disabled or error is not self._failure
+                or scenario != self.scenario or handle != self._handle):
+            return None
+        return recovery_delivery_observation({
+            "scenario": self.scenario, **self._phases})
 
 
 NEGATIVE_CONTROL_REASONS = {

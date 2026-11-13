@@ -17,9 +17,10 @@ from mesh_chat.connection.diagnostics import validated_gather_for_retirement, va
 from native_interop_artifacts import GithubArtifacts, RendezvousUnavailable, context_from_environment
 from native_interop_evidence import SCENARIOS, SAMPLE_REJECTION_REASONS, Samples, accounting, digest, selection, traffic
 from native_interop_faults import NativePathDiagnostics, path_failure_observation, path_stage
-from native_interop_diagnostics import (NegativeControlDiagnostics, PreflightDiagnostics, final_path_missing_observation,
-    final_path_missing_reason, negative_control_error, negative_control_observation, negative_control_stage,
-    record_final_path_skip, rendezvous_observation, reset_negative_control)
+from native_interop_diagnostics import (NegativeControlDiagnostics, PreflightDiagnostics, RecoveryDeliveryDiagnostics,
+    final_path_missing_observation, final_path_missing_reason, negative_control_error, negative_control_observation,
+    negative_control_stage, record_final_path_skip, recovery_delivery_observation, rendezvous_observation,
+    reset_negative_control)
 from native_interop_peers import AndroidEmulator, AndroidPeer, PeerFailure, WindowsPeer
 from native_interop_core_observation import core_failure_observation
 from native_interop_preflight import (DEFAULT_SIGNAL_MAILBOX_URL, android_environment,
@@ -172,6 +173,7 @@ class Controller:
         self._path_diagnostics = None
         self._final_path_failure = None
         self._fault_cleanup_failure = None
+        self._recovery_diagnostics = self._recovery_failure = None
         try: self._negative_diagnostics = NegativeControlDiagnostics()
         except Exception: self._negative_diagnostics = None
         self.workload = required_workload(workload)
@@ -272,6 +274,22 @@ class Controller:
             selected = negative_control_observation(observer.failure_observation(error))
             if selected != negative_control_observation(record[1]): return {}
             return {"negative_control": selected} if selected else {}
+        except Exception:
+            return {}
+
+    def failure_recovery(self, error):
+        try:
+            record = self._recovery_failure
+            if (type(record) is not tuple or len(record) != 4 or record[0] is not error
+                    or record[3] is not self._recovery_diagnostics
+                    or type(record[3]) is not RecoveryDeliveryDiagnostics
+                    or self.phase != record[1] + "_kernel_block_negative_control"
+                    or self.failure_negative_control(error) != {
+                        "negative_control": {"scenario": record[1], "stage": "restored_delivery"}}):
+                return {}
+            selected = record[3].failure_observation(error, record[1], record[2])
+            validated = recovery_delivery_observation(selected)
+            return {"recovery_delivery": validated} if validated is not None else {}
         except Exception:
             return {}
 
@@ -660,7 +678,14 @@ class Controller:
         return result["message"]
 
     def delivered(self, handle):
-        return self.core("message.query", {"profile": self.profile, "message": handle})["state"] == "delivered"
+        state = self.core("message.query", {"profile": self.profile, "message": handle})["state"]
+        try:
+            observer = self._recovery_diagnostics
+            if type(observer) is RecoveryDeliveryDiagnostics:
+                observer.observe(handle, state, time.monotonic())
+        except Exception:
+            self._recovery_diagnostics = None  # Optional evidence cannot change the queried result.
+        return state == "delivered"
 
     def records(self, text, direction):
         return [item for item in self.snapshot().get("messages", []) if item.get("kind") == "chat"
@@ -687,6 +712,7 @@ class Controller:
     def negative(self, fault, scenario):
         self.phase = scenario + "_kernel_block_negative_control"
         self._negative_diagnostics = reset_negative_control(self._negative_diagnostics, scenario)
+        self._recovery_diagnostics = self._recovery_failure = None
         observer = self._negative_diagnostics
         if fault is not None:
             with negative_control_stage(observer, "kernel_block"): fault.block()
@@ -699,6 +725,11 @@ class Controller:
                         ValueError("Kernel block admission was not acknowledged"), "not_acknowledged")
         with negative_control_stage(observer, "blocked_enqueue"):
             handle = self.enqueue(self.text("blocked_path_" + scenario), negative_control=True)
+        try:
+            self._recovery_diagnostics = RecoveryDeliveryDiagnostics(scenario, handle)
+            self._recovery_diagnostics.start("blocked_receipt", time.monotonic())
+        except Exception:
+            self._recovery_diagnostics = None
         until = time.monotonic() + 2
         while time.monotonic() < until:
             with negative_control_stage(observer, "blocked_receipt"):
@@ -721,16 +752,29 @@ class Controller:
             with negative_control_stage(observer, "checked_publish"):
                 self.publish("negative_checked_" + scenario, {"approved": True})
         restoration_deadline = None
-        with negative_control_stage(observer, "restored_delivery"):
-            if scenario in {"turn_tcp", "turn_tls", "impaired"}:
-                # Receipt, inbound record, and final path share this one window.
-                restoration_deadline = min(self.deadline, time.monotonic() + 90)
-                self.wait(lambda: self.delivered(handle),
-                          timeout=max(0, restoration_deadline - time.monotonic()))
-                if time.monotonic() > restoration_deadline:
-                    raise PeerFailure("scenario_deadline")
-            else:
-                self.wait(lambda: self.delivered(handle), timeout=90)
+        try:
+            if self._recovery_diagnostics is not None:
+                try: self._recovery_diagnostics.start("restored_delivery", time.monotonic())
+                except Exception: self._recovery_diagnostics = None
+            with negative_control_stage(observer, "restored_delivery"):
+                if scenario in {"turn_tcp", "turn_tls", "impaired"}:
+                    # Receipt, inbound record, and final path share this one window.
+                    restoration_deadline = min(self.deadline, time.monotonic() + 90)
+                    self.wait(lambda: self.delivered(handle),
+                              timeout=max(0, restoration_deadline - time.monotonic()))
+                    if time.monotonic() > restoration_deadline:
+                        raise PeerFailure("scenario_deadline")
+                else:
+                    self.wait(lambda: self.delivered(handle), timeout=90)
+        except Exception as error:
+            observed = self._recovery_diagnostics
+            try:
+                if type(observed) is RecoveryDeliveryDiagnostics:
+                    observed.failed(error)
+                    self._recovery_failure = error, scenario, handle, observed
+            except Exception:
+                self._recovery_failure = None
+            raise
         with negative_control_stage(observer, "recovered_inbound"):
             if restoration_deadline is not None:
                 remaining = restoration_deadline - time.monotonic()
@@ -751,6 +795,7 @@ class Controller:
         if fault is not None and (getattr(fault, "endpoint_mode", False) or getattr(fault, "uid_udp_mode", False)):
             with negative_control_stage(observer, "kernel_restore_current"):
                 fault.require_current()
+        self._recovery_diagnostics = self._recovery_failure = None
         return {"blocked_packets": packets, "delivered_while_blocked": False, "delivered_after_restore": True,
                 "kernel_protocol": fault.protocol if fault is not None else None,
                 "kernel_target": {"kind": fault.target_kind, "digest": digest(fault.target_material),
@@ -1043,6 +1088,7 @@ def main(*, gateway=None):
             result.update(controller.failure_rendezvous(error))
             result.update(controller.failure_retirement(error))
             result.update(controller.failure_negative_control(error))
+            result.update(controller.failure_recovery(error))
             result.update(controller.failure_final_path(error))
             result.update(controller.failure_native_path(error))
             try: result.update(controller.failure_kernel_cleanup(error))
