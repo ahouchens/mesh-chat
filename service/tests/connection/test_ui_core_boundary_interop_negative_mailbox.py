@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import sys
 import time
+from types import SimpleNamespace
 import urllib.error
 
 import pytest
@@ -12,6 +13,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 from mesh_chat import signal_mailbox as mailbox
 from mesh_chat.signal_crypto import decode, encode, seal
+import native_interop_negative_control as control_module
 from native_interop_negative_control import NegativeControlMailbox, new_capability
 from native_interop_rendezvous import Rendezvous, checked_payload
 
@@ -232,3 +234,19 @@ def test_receive_finite_deadline_and_post_http_deadline_check(peers):
     host.advance = lambda: setattr(clock, "now", clock.now + 5)
     with pytest.raises(ValueError):
         android.receive("armed", deadline=clock.now + 1)
+
+
+@pytest.mark.parametrize("operation", ["send", "receive"])
+def test_expiry_during_successful_http_response_cannot_acknowledge(peers, monkeypatch, operation):
+    host, clock, pair, windows, android = peers
+    if operation == "receive":
+        windows.send("armed")
+    wall = [pair["expires_at"] - 1]
+    monkeypatch.setattr(control_module, "time", SimpleNamespace(time=lambda: wall[0]))
+    host.advance = lambda: wall.__setitem__(0, pair["expires_at"])
+    with pytest.raises(ValueError, match="expired"):
+        if operation == "send":
+            windows.send("armed")
+        else:
+            android.receive("armed", deadline=clock.now + 3)
+    assert len(host.requests) == 1 + (operation == "receive")

@@ -95,6 +95,7 @@ class NegativeControlMailbox:
                                    token=self.token, session=self.session, secret=self.secret)
         except Exception:
             raise NegativeControlError("Negative-control publish unavailable") from None
+        self._live()
         return True
 
     def _stage(self, document, expected):
@@ -133,6 +134,7 @@ class NegativeControlMailbox:
                                               token=self.token, secret=self.secret, pending=True)
             except Exception:
                 raise NegativeControlError("Negative-control fetch unavailable") from None
+            self._live()
             if self.clock() >= deadline:
                 break
             if (type(result) is not dict or result.get("session_id") != self.session
