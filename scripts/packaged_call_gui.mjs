@@ -47,6 +47,13 @@ function readView(expectedText) {
   return { appMounted: Boolean(document.querySelector("#root > *")) && document.title === "Mesh Chat",
     dialogTitle: dialog?.querySelector("h2")?.textContent?.trim().slice(0, 100) || null,
     status: status.slice(0, 160), conversationOpen: Boolean(conversation),
+    callEnabled: Boolean(conversation?.querySelector('button[aria-label="Call Independent peer"]:not([disabled])')),
+    peerVisible: [...document.querySelectorAll("button.contact-row .contact-row__content strong")]
+      .some((row) => row.textContent?.trim() === "Independent peer"),
+    relayOption: [...(dialog?.querySelectorAll("button") || [])].some((row) =>
+      row.textContent?.replace(/\s+/g, " ").trim() === "Use the relay"),
+    contactPreview: [...(dialog?.querySelectorAll("button") || [])].some((row) =>
+      row.textContent?.replace(/\s+/g, " ").trim() === "Accept contact"),
     matchedCount: Math.min(matched.length, 2),
     matchedInbound: matched.some((row) => row.classList.contains("message--inbound")),
     matchedOutboundDelivered: matched.some((row) => row.classList.contains("message--outbound") &&
@@ -105,7 +112,7 @@ class Gui {
         if (!response.ok || Number(response.headers.get("content-length")) > 65536) throw new Error();
         const rows = await boundedTargets(response);
         if (!Array.isArray(rows) || rows.length > 128) throw new Error();
-        target = rows.find((row) => {
+        const matches = rows.filter((row) => {
           if (row?.type !== "page" || typeof row.url !== "string"
               || !socketAddress(row.webSocketDebuggerUrl)) return false;
           try {
@@ -114,6 +121,8 @@ class Gui {
               (url.protocol === "tauri:" && url.hostname === "localhost");
           } catch { return false; }
         });
+        if (matches.length > 1) throw new Error("app_target_ambiguous");
+        target = matches[0];
         if (target) break;
       } catch { /* Exact app may still be starting. */ }
       await pause(100);

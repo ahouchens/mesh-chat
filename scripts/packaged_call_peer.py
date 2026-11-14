@@ -88,10 +88,16 @@ class BrowserProcess:
             cwd=BROWSER.parent, shell=False, creationflags=subprocess.CREATE_NO_WINDOW)
         self.reader = threading.Thread(target=self._read, daemon=True)
         self.reader.start()
-        try: line = self.responses.get(timeout=remaining(deadline, 25))
-        except queue.Empty: raise TimeoutError("browser_ready_deadline") from None
-        if line != b'{"ready":true}\n':
-            raise ValueError("browser_not_ready")
+        try:
+            try: line = self.responses.get(timeout=remaining(deadline, 45))
+            except queue.Empty: raise TimeoutError("browser_ready_deadline") from None
+            if line != b'{"ready":true}\n':
+                raise ValueError("browser_not_ready")
+        except Exception:
+            if self.process.poll() is None: self.process.kill()
+            self.process.wait(timeout=5)
+            self.reader.join(timeout=2)
+            raise
         return self
 
     def request(self, action, **params):
@@ -114,7 +120,9 @@ class BrowserProcess:
                 or response.get("ok") is not True or type(response.get("value")) is not dict):
             raise ValueError("browser_reply")
         if action == "close":
-            self.retired = response["value"].get("browserRetired") is True and response["value"].get("profileRemoved") is True
+            self.retired = (response["value"].get("browserRetired") is True
+                            and response["value"].get("devtoolsClosed") is True
+                            and response["value"].get("profileRemoved") is True)
         return response["value"]
 
     def close(self):
@@ -130,4 +138,5 @@ class BrowserProcess:
             try: self.process.wait(timeout=5)
             except subprocess.TimeoutExpired: return False
             return False
-        return self.retired and code == 0
+        self.reader.join(timeout=2)
+        return self.retired and code == 0 and not self.reader.is_alive()

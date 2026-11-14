@@ -141,6 +141,7 @@ export class BrowserMedia {
       await pause(100);
     }
     if (!port) throw new Error("browser_start_unavailable");
+    this.port = port;
     let target;
     while (Date.now() < until && !this.exited) {
       try {
@@ -148,7 +149,9 @@ export class BrowserMedia {
         if (!response.ok || Number(response.headers.get("content-length")) > 65536) throw new Error();
         const rows = await response.json();
         if (!Array.isArray(rows) || rows.length > 32) throw new Error();
-        target = rows.find((row) => row?.type === "page" && row.url === this.pageUrl);
+        const matches = rows.filter((row) => row?.type === "page" && row.url === this.pageUrl);
+        if (matches.length > 1) throw new Error("browser_page_ambiguous");
+        target = matches[0];
         if (target) break;
       } catch { /* Target discovery is bounded by the same start deadline. */ }
       await pause(100);
@@ -230,11 +233,25 @@ export class BrowserMedia {
       await deadline(new Promise((resolve) => this.child.once("close", resolve)), 5000,
         "browser_retirement_unconfirmed");
     }
+    let devtoolsClosed = this.port === undefined;
+    if (this.port !== undefined) {
+      for (let attempt = 0; attempt < 20; attempt++) {
+        try {
+          await fetch(`http://127.0.0.1:${this.port}/json/list`,
+            { signal: AbortSignal.timeout(500) });
+        } catch {
+          devtoolsClosed = true;
+          break;
+        }
+        await pause(250);
+      }
+    }
     if (this.directory && this.exited) {
       await rm(this.directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
       this.directory = undefined;
     }
-    return { stopped, browserRetired: this.exited === true, profileRemoved: !this.directory };
+    return { stopped, browserRetired: this.exited === true,
+      devtoolsClosed, profileRemoved: !this.directory };
   }
 }
 
@@ -259,7 +276,7 @@ async function runProtocol(executable) {
           value = await media.observe();
         } else if (request.action === "close") {
           value = await media.close();
-          retired = value.browserRetired && value.profileRemoved;
+          retired = value.browserRetired && value.devtoolsClosed && value.profileRemoved;
         } else throw new Error("browser_action_invalid");
         process.stdout.write(JSON.stringify({ id: request.id, ok: true, value }) + "\n");
         if (retired) return;
@@ -271,7 +288,9 @@ async function runProtocol(executable) {
   } finally {
     if (!retired) {
       const value = await media.close();
-      if (!value.browserRetired || !value.profileRemoved) throw new Error("browser_cleanup_unconfirmed");
+      if (!value.browserRetired || !value.devtoolsClosed || !value.profileRemoved) {
+        throw new Error("browser_cleanup_unconfirmed");
+      }
     }
   }
 }

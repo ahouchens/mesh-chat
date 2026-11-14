@@ -139,6 +139,7 @@ class Flow:
                   seconds=30)
         self.gui_click("Use the relay")
         self.wait("relay_consent", lambda: True if not self.gui_view()["relayOption"] else None)
+        self.checks["gui_relay_consent"] = True
         self.gui_click("Join with WebRTC")
         self.peer.request("fill", label="Paste the signed WebRTC offer or mailbox code", value=code, scope="dialog")
         self.gui_click("Review and create answer")
