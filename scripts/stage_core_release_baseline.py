@@ -166,6 +166,14 @@ def write_report(path, value):
             os.unlink(temporary)
 
 
+def output_overlaps_inputs(output, metadata, assets_dir):
+    output_path = output.resolve()
+    asset_root = assets_dir.resolve()
+    return (output_path in {metadata.resolve(), FIXTURES.resolve()}
+            or output_path.is_relative_to(asset_root)
+            or output.parent.resolve().is_relative_to(asset_root))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--release-metadata", type=Path, required=True)
@@ -173,8 +181,16 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     try:
-        if args.output.resolve() == args.release_metadata.resolve() or args.output.resolve().is_relative_to(args.assets_dir.resolve()):
-            raise ValueError("Report output overlaps release inputs")
+        unsafe_output = output_overlaps_inputs(
+            args.output, args.release_metadata, args.assets_dir
+        )
+    except Exception:
+        unsafe_output = True
+    if unsafe_output:
+        print(json.dumps({"passed": False, "evidence_level": LEVEL,
+                          "failure_kind": "UnsafeOutput"}))
+        return 1
+    try:
         pins = pinned_fixture()
         result = inspect(args.release_metadata, args.assets_dir, pins,
                          git_tag_identity(ROOT, pins["tag"]))

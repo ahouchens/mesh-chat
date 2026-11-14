@@ -24,7 +24,9 @@ its retained checksum text hashes to
 `6306c25b130e10287b857829a29a6ea9b4dbfa27acaa9c1a25550e95345410a4`.
 The script checks release and asset IDs, sizes, SHA-256 digests, exact directory
 inventory, and the checksum text. A failed input produces a bounded failure
-report without private local paths.
+report without private local paths. An output path that overlaps the metadata,
+asset directory, or pinned fixture is rejected on stdout without writing a
+report.
 
 The old SDK component rebuild fixture in `tests/core-sdk-upgrade/` remains
 separate. Its source commit is

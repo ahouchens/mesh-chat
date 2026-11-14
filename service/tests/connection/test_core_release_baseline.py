@@ -173,3 +173,35 @@ def test_cli_missing_published_binaries_writes_bounded_failure(tmp_path, monkeyp
     assert result == {"v": 1, "passed": False,
                       "evidence_level": "published_release_byte_intake_only",
                       "failure_kind": "ValueError"}
+
+
+@pytest.mark.parametrize("target", ["metadata", "asset", "fixture"])
+def test_cli_unsafe_output_does_not_mutate_any_input(tmp_path, monkeypatch, capsys, target):
+    metadata, assets, _, _ = synthetic_case(tmp_path)
+    asset = assets / next(iter(intake.pinned_fixture()["assets"]))
+    fixture = tmp_path / "fixtures.json"
+    fixture.write_bytes(intake.FIXTURES.read_bytes())
+    monkeypatch.setattr(intake, "FIXTURES", fixture)
+    before = {path: sha(path.read_bytes()) for path in (metadata, asset, fixture)}
+    output = {"metadata": metadata, "asset": asset, "fixture": fixture}[target]
+    monkeypatch.setattr(sys, "argv", ["stage_core_release_baseline.py",
+        "--release-metadata", str(metadata), "--assets-dir", str(assets),
+        "--output", str(output)])
+
+    assert intake.main() == 1
+    assert json.loads(capsys.readouterr().out) == {
+        "passed": False, "evidence_level": "published_release_byte_intake_only",
+        "failure_kind": "UnsafeOutput"
+    }
+    assert {path: sha(path.read_bytes()) for path in before} == before
+
+
+def test_cli_rejects_new_report_inside_asset_inventory(tmp_path, monkeypatch, capsys):
+    metadata, assets, _, _ = synthetic_case(tmp_path)
+    output = assets / "report.json"
+    monkeypatch.setattr(sys, "argv", ["stage_core_release_baseline.py",
+        "--release-metadata", str(metadata), "--assets-dir", str(assets),
+        "--output", str(output)])
+    assert intake.main() == 1
+    assert json.loads(capsys.readouterr().out)["failure_kind"] == "UnsafeOutput"
+    assert not output.exists()
