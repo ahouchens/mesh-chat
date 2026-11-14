@@ -82,7 +82,7 @@ jobs:
         with:
           workspaces: src-tauri -> target
           shared-key: pr-android-arm64-debug
-          cache-on-failure: true
+          save-if: 'false'
       - run: pnpm install --frozen-lockfile
       - run: python -m pip install --disable-pip-version-check -r service/requirements-dev.lock
       - name: Build Android debug APK

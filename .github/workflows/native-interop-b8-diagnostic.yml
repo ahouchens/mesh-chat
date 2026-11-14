@@ -1,6 +1,7 @@
 name: Paired native first cold diagnostic
 
 on:
+  workflow_call:
   workflow_dispatch:
 
 permissions:

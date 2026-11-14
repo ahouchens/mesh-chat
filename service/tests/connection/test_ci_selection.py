@@ -359,7 +359,8 @@ def test_native_topology_starts_after_both_real_packages_and_is_a_required_final
     jobs = value["jobs"]
     assert set(jobs["native_interop"]["needs"]) == {"plan", "verification", "android"}
     assert jobs["native_interop"]["uses"] == "./.github/workflows/native-interop.yml"
-    assert "native_interop" in jobs["gate"]["needs"] and jobs["gate"]["if"] == "always()"
+    assert "native_interop" in jobs["gate"]["needs"]
+    assert jobs["gate"]["if"] == "${{ always() && !(github.event_name == 'workflow_dispatch' && inputs.b8_first_cold_diagnostic) }}"
     downloads = [step.get("with", {}).get("name", "") for step in jobs["gate"]["steps"] if step.get("uses", "").startswith("actions/download-artifact@")]
     assert any(name.startswith("native-interop-windows-") for name in downloads)
     assert any(name.startswith("native-interop-android-") for name in downloads)

@@ -1,6 +1,8 @@
 """The first cold probe has a manual route and cannot replace qualification."""
 
+import json
 from pathlib import Path
+import re
 
 import yaml
 
@@ -13,10 +15,19 @@ def read(name):
     return yaml.safe_load((WORKFLOWS / name).read_text(encoding="utf-8"))
 
 
+def selected(expression, event, diagnostic):
+    value = expression.removeprefix("${{").removesuffix("}}").strip()
+    value = value.replace("github.event_name", repr(event))
+    value = value.replace("inputs.b8_first_cold_diagnostic", repr(diagnostic))
+    value = value.replace("always()", "True").replace("&&", " and ").replace("||", " or ")
+    value = re.sub(r"!(?!=)", " not ", value)
+    return eval(value, {"__builtins__": {}}, {})
+
+
 def test_manual_parent_uses_same_run_producers_and_distinct_pair_checker():
     workflow = read("native-interop-b8-diagnostic.yml")
     events = workflow.get("on", workflow.get(True))
-    assert set(events) == {"workflow_dispatch"}
+    assert set(events) == {"workflow_call", "workflow_dispatch"}
     assert set(workflow["jobs"]) == {"verification", "android", "native_interop", "b8_pair_check"}
     assert workflow["jobs"]["verification"]["uses"] == "./.github/workflows/ci.yml"
     assert workflow["jobs"]["android"]["uses"] == "./.github/workflows/android-webrtc.yml"
@@ -58,6 +69,28 @@ def test_manual_parent_uses_same_run_producers_and_distinct_pair_checker():
         "dist/qualification/native-interop-b8/native-interop-b8-first-cold-android.json"))
 
 
+def test_existing_manual_dispatch_routes_diagnostic_without_running_required_gate():
+    workflow = read("connection-qualification.yml")
+    dispatch = workflow.get("on", workflow.get(True))["workflow_dispatch"]
+    assert dispatch["inputs"]["b8_first_cold_diagnostic"]["default"] is False
+    jobs = workflow["jobs"]
+    diagnostic = jobs["b8_first_cold_diagnostic"]
+    assert diagnostic["uses"] == "./.github/workflows/native-interop-b8-diagnostic.yml"
+    assert diagnostic["permissions"] == {"contents": "read", "actions": "read"}
+    assert jobs["native_interop"]["uses"] == "./.github/workflows/native-interop.yml"
+    assert set(jobs["gate"]["needs"]) >= {"plan", "verification", "android", "native_interop"}
+    for event in ("workflow_dispatch", "push", "workflow_call"):
+        assert selected(jobs["plan"]["if"], event, False) is True
+        assert selected(jobs["gate"]["if"], event, False) is True
+        assert selected(diagnostic["if"], event, False) is False
+    assert selected(jobs["plan"]["if"], "workflow_dispatch", True) is False
+    assert selected(jobs["gate"]["if"], "workflow_dispatch", True) is False
+    assert selected(diagnostic["if"], "workflow_dispatch", True) is True
+    assert selected(jobs["plan"]["if"], "push", True) is True
+    assert selected(jobs["gate"]["if"], "push", True) is True
+    assert selected(diagnostic["if"], "push", True) is False
+
+
 def test_role_jobs_keep_original_artifact_bindings_and_select_separate_diagnostic_reports():
     workflow = read("native-interop.yml")
     assert set(workflow["jobs"]) == {"native_windows_peer", "native_android_peer"}
@@ -75,5 +108,18 @@ def test_role_jobs_keep_original_artifact_bindings_and_select_separate_diagnosti
         assert "native-interop-b8-first-cold-" + role + "-{0}-{1}-{2}" in upload["with"]["name"]
         assert "'dist/reports/native-interop-" + role + ".json'" in upload["with"]["path"]
         assert "'dist/reports/native-interop-b8-first-cold-" + role + ".json'" in upload["with"]["path"]
-    gate = (WORKFLOWS / "connection-qualification.yml").read_text(encoding="utf-8")
-    assert "b8_first_cold" not in gate and "native-interop-b8-first-cold" not in gate
+    qualification = read("connection-qualification.yml")["jobs"]
+    assert qualification["native_interop"]["with"]["workload"] == "${{ needs.plan.outputs.native_workload }}"
+    assert "native-interop-b8-first-cold" not in json.dumps(qualification["gate"])
+
+
+def test_android_producer_restores_rust_cache_without_saving_after_toolchain_cleanup():
+    steps = read("android-webrtc.yml")["jobs"]["android"]["steps"]
+    rust_index = next(index for index, step in enumerate(steps)
+                      if step.get("uses") == "Swatinem/rust-cache@v2")
+    cleanup_index = next(index for index, step in enumerate(steps)
+                         if step.get("name") == "Free disk for the emulator system image")
+    assert rust_index < cleanup_index
+    assert 'rm -rf "$HOME/.rustup"' in steps[cleanup_index]["run"]
+    assert steps[rust_index]["with"]["save-if"] == "false"
+    assert "cache-on-failure" not in steps[rust_index]["with"]
