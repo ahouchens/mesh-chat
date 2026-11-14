@@ -37,11 +37,12 @@ installed Windows/Android pair, physical-device identity, or support window.
 The committed metadata is a retained snapshot of the public release record;
 the binaries themselves must be supplied locally for any passing intake.
 
-## Windows installed-app UI contract (preparation only)
+## Windows installed-app UI contract and disposable controller
 
 `windows-ui-execution-manifest.json` records the actual released MSI and NSIS
-identity and the prerequisites still needed to execute an installed whole-app
-switch. Candidate installer and installed-file hashes are intentionally null.
+identity and the unresolved installed whole-app switch. Candidate installer and
+installed-file hashes are intentionally null in this static contract; actual
+execution reports retain the exact candidate binding and observed bytes.
 The released MSI is machine-scope WiX, defaults to `ProgramFiles64Folder/Mesh Chat`,
 and has a selectable `INSTALLDIR`; it installs `mesh-chat.exe` and
 `mesh-chat-service.exe` together. The published NSIS archive lists the same
@@ -51,10 +52,10 @@ launcher and sidecar. The existing R5 guarded NSIS launcher in
 Neither installer has been run for this contract. Both the released and current
 candidate app versions are `0.9.66`, so installer replacement semantics remain
 unproven. The MSI has a WebView2 download action when that runtime is absent;
-the future runner must positively preflight WebView2 before installation.
+the disposable runner positively preflights WebView2 before installation.
 
 `scripts/check_windows_release_ui.mjs` is the separate bounded CDP seed/readback
-contract. A future Windows-only orchestrator must launch the exact installed app
+contract. The Windows-only orchestrator launches the exact installed app
 with a fresh loopback WebView2 debugging port and feed one JSON object on stdin:
 
 ```json
@@ -81,10 +82,20 @@ socket retirement it emits a fixed failure and the owning runner must retain
 custody of the app and report the failure.
 
 The driver does not install, launch or retire either application, inspect EFS,
-or establish an installed upgrade. An orchestrator must first prove fresh
+or establish an installed upgrade. `scripts/run_windows_release_continuity.py`
+owns those operations on a fresh GitHub Windows runner and retains bounded
+binary, UI hash, process cleanup and fixed failure evidence. It first proves fresh
 GitHub Windows runner app-data and OS credential state, exact published and
 candidate installed bytes, EFS, and complete old app/sidecar retirement before
 switching whole installations. It must confirm a clean candidate reopen and
 retirement. Until same-version installer behavior is proven, the execution
 manifest stays at `contract_only_switch_unproven` and every installed upgrade,
 peer receipt, schema refusal, physical-device and full R8 claim remains false.
+
+The `windows-release-continuity-r8.yml` workflow runs manually or when its own
+file changes on `codex/mesh-core-restart-diagnostic`. It builds an exact-source
+candidate and downloads the pinned published installer, then attempts the
+same-version replacement. An unchanged/mixed installation or uncertain
+retirement fails the run. It executes installers only on the disposable runner;
+the local custody tests use controlled substitutes. A successful continuity
+diagnostic is narrower than a supported version upgrade or full R8 acceptance.

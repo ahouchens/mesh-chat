@@ -1,6 +1,15 @@
 # Core integration coordination — 2026-11-09
 
-Current November 14 integration: `e543df1` CI failures are reproduced and
+Current November 14 integration: `ec81f1f` full/native and call CI are active;
+layout/Android fail application typing. `6797f86` corrects the hook's return
+type and passes the actual project build check. R8 controller through `a9e650a`
+is reviewed and passes 14 Python plus 16 Node checks; root prepares its distinct
+installed workflow push. B implements bounded admin-request UI retry identity,
+A checks actual host replay coverage, and D prepares an OS-network partition
+consumer diagnostic. Root retains active-run failures and will validate fresh
+source-bound native/call evidence before promotion.
+
+Earlier November 14 integration: `e543df1` CI failures are reproduced and
 corrected through `227630b`: Windows path semantics in the portable witness
 test, plus unsupported settings keys in the installed private fixture. The
 corrected fixture passed all 11 checks against the exact earlier CI binary;

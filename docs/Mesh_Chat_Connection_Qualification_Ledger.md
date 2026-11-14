@@ -1,5 +1,35 @@
 # Connection runtime qualification ledger
 
+## Application type correction and disposable release continuity lane — November 14, 2026
+
+Corrected fixture source `ec81f1f` started full run `43586982197` and
+installed-call run `43586979596`, attempt 1. Its layout and Android build jobs
+failed the application TypeScript check: `useProfileEffectScope` was declared
+as the general optional `CoreEffectScope`, while the new access-send UI calls
+its always-provided `isCurrent` method. The earlier local command used
+`tsc --noEmit -p tsconfig.json`; that root file has no inputs and only project
+references, so it did not validate the application. The earlier successful
+command must not be treated as a passing application type check.
+
+Correction `6797f86` declares the hook's actual complete return contract as
+`Required<CoreEffectScope>`. Its implementation already supplies all three
+methods; runtime admission and retirement behavior are unchanged. The real
+build check, `tsc -b --force`, now passes both application and Node projects.
+The active runs retain their failed outcomes; fresh corrected-source builds
+are still required. Preserve their pending private-admission results separately.
+
+R8 controller through `a9e650a` is integrated after root, A and D review.
+Fourteen custody/controller tests and sixteen Node UI contract tests pass.
+It requires a disposable GitHub Windows runner with absent app data and
+credential slot, WebView2 present, pinned published NSIS bytes, exact old and
+candidate installed files, EFS, source/version readback, three equal UI hash
+reports and positive app/sidecar/job retirement. Cleanup exceptions retain the
+primary failure; only fixed UI error codes and bounded hash/cleanup evidence
+are reported. A new workflow-file push on the diagnostic feature branch starts
+this distinct lane. No installer ran locally. Same-version replacement, native
+upgrade, peer receipt, schema refusal, physical-device and full R8 acceptance
+remain unproven until the relevant execution supplies evidence.
+
 ## Private admission fixture failure reproduced and corrected — November 14, 2026
 
 Full run `43584028427` and installed-call run `43584025870`, attempt 1 at
@@ -35,7 +65,8 @@ producer/bridge checks passed after `227630b` updated the strict TAP count for
 the new regression. No production admission rules or default changed.
 
 UI recommendation-send recovery `d3ca3fd`/`85cdf56` passed 283 application and
-profile-lifecycle tests plus TypeScript no-emit checking. An uncertain send keeps
+profile-lifecycle tests. The ineffective initial type command and its later
+correction are recorded above. An uncertain send keeps
 its operation ID through settings close/reopen; confirmed deliberate resends use
 a new ID, stale authority/profile results are fenced, and removed workspace
 state is pruned. R8's released-app UI contract through `983ce05` passed 15 Node
