@@ -163,3 +163,30 @@ complete `src/App.test.tsx` file passed 197/197 and the TypeScript build passed
 on this code commit. This remains component-level UI evidence. Installed
 Windows/Android supported-facade behavior, native restart, and media
 coexistence remain open.
+
+## Verified-contact workspace invitation retry checkpoint
+
+The next bounded R3/R5 UI action was `invite_contact` from the workspace
+invitation dialog. Before the change, each send omitted the Core operation ID.
+A successful atomic invitation/outbox commit with a lost response left Send
+available, and a retry could create another signed invitation and outbound
+message. The new App regression first failed because its first send had no
+explicit `operation_id`.
+
+Commit `abbf4682952a8b869d691b1c9d806d57c4e1490a` passes an explicit ID
+for each submitted workspace/contact intent. The current Messenger profile
+lifetime retains an uncertain ID through dialog closure and reopening. A
+different contact receives a separate ID; definitive refusal and visible
+confirmed success retire only that intent. A reply arriving after dialog close
+cannot update the reopened dialog or erase its retry ID. Profile retirement
+fences a late reply and starts a new lifetime with a new ID. The UI labels an
+unknown result as unconfirmed. This change neither creates nor retires native,
+WebRTC or media resources.
+
+Four focused App tests cover committed lost reply, closure while pending,
+changed contact and refusal, confirmed later send, and profile retirement. The
+complete `src/App.test.tsx` file passed 201/201 and the TypeScript build passed.
+Core's atomic same-key invitation/outbox replay is separately covered by
+`test_core_workspace_consent.py`; these App tests exercise the renderer with
+substitutes. Exact-source packaged Windows/Android delivery, independent client
+attachment, native restart and media coexistence remain open.
