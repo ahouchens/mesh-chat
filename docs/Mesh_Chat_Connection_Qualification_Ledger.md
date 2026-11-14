@@ -1,5 +1,56 @@
 # Connection runtime qualification ledger
 
+## Paired reproduction and compatibility repair prepared — November 13, 2026
+
+Windows candidate run `43539960943` at `71226a7` closed failed in the installed
+candidate-pair step. Broad verification and the preceding Windows checks passed;
+input assembly passed with exact same-run SDK/build bindings. Artifact
+`14092139581`, ZIP SHA256
+`66fa4a581ce2083d8c366c343160ea9c51df7a425244e6056166b24b3b02c9bc`, retains the
+assembly report, manifest and failed execution report. Its generic `ValueError`
+does not identify the historical failure phase. The workspace remained retained
+because complete owner retirement was not confirmed.
+
+A found a definite fixture contract mismatch: the old TypeScript client compared
+`application.snapshot.profile.destination`, while that projection exposes
+`destination_hash`. Root `cbc07c7` integrates the correction and bounded fixed
+failure-stage/driver-phase reporting. Root **27 manifest/assembly cases passed**,
+zero skips, 1.83 s (`.test-tmp/windows-candidate-repair.xml`). This is a demonstrated
+fixture correction, not proof of the historical run's exact stopping point or
+installed compatibility success; a new source-bound run is required.
+
+R1/R4 now has a manual `b8_first_cold` mode: the unchanged full six-path order,
+then the existing first crash/restart, identity, readiness, authenticated receipt,
+exact-path and accounting checks. A sealed `cold_complete_1` barrier keeps cleanup
+behind reciprocal completion. The diagnostic has separate report names, scope
+and evidence level. Its checker requires both roles from the exact source/tree
+and run/attempt. Root `c9ae151`/`69d3775`, checker `b2ba747`, gate protections
+`94cbfff` and workflows through `c9f9c66` implement this route. Normal quick/full
+selection and the 100-iteration requirement remain unchanged. Explicit aggregate
+and release checks reject diagnostics. Manual admission precedes resource creation;
+parent and producer concurrency groups cannot cancel ordinary qualification runs.
+C independently reviewed the final controller, gate and workflow changes.
+
+Root evidence: **2,006 interop tests passed** (38.28 s), **68 admission/checker/
+gateway tests passed**, **155 gate/admission/checker tests passed**, **152 matrix
+tests passed**, and **166 integrated workflow/binding tests passed**. Reports are
+`.test-tmp/b8-controller-retry.xml`, `b8-job-green.xml`, `b8-aggregate-green.xml`,
+`b8-matrix.xml` and `b8-workflow-integrated.xml`. An earlier broader local run was
+interrupted by a full drive; its partial log is retained and is not passing
+evidence. Disposable test outputs and B's generated dependency/build directories
+were removed to recover space; source and retained evidence were preserved.
+
+B's verified-contact invitation repair is integrated as `20107e9`/`91a02db`.
+An uncertain response retains the exact workspace/contact action ID across dialog
+reopening; changed intent, confirmed success, refusal and profile retirement are
+handled explicitly. Root **201 App tests and TypeScript checks passed**
+(`.test-tmp/contact-invite-integration.json`, `contact-invite-types.log`). This
+closes that component defect, not packaged invitation delivery/media coexistence.
+
+The next executions are the paired six-path/first-cold diagnostic and repaired
+installed Windows candidate fixture. Neither can close full native acceptance,
+R2 promotion, the complete fault/100-cycle gate or the broader refactor.
+
 ## Three packaged reopens passed — November 13, 2026
 
 Run [43540388648](https://github.com/ahouchens/mesh-chat/actions/runs/43540388648)

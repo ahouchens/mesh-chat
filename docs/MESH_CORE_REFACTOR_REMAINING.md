@@ -78,10 +78,14 @@ the specification's IDs or imply equal effort. Several packages overlap.
   preserving identity/profile handle and verifying retirement. All five build
   source checkpoints were clean. Next reproduce the six-path prefix and first
   paired cold cycle; this Android-only result has no paired receipt evidence.
+  The manual paired diagnostic is now implemented and independently reviewed,
+  with separate reports, strict paired evidence and explicit qualification exclusion.
   The original cold-restart and Windows inventory failures remain open.
 - Invitation dismissal now retains its operation identity across uncertain replies
   within the current profile lifetime. Channel creation now also reuses its
   submitted action identity after an uncertain reply (197 UI tests and types pass).
+  Verified-contact invitation retries now retain their action identity too
+  (201 App tests and types pass).
   Reducer event classification adds eight cases; signed collision/replay adds a
   component interleaving trace (65 related tests pass). Packaged acceptance remains open.
 - Full native acceptance, shared-owner promotion and the complete refactor are
@@ -97,9 +101,9 @@ its owned checkout and reports source evidence and gaps before integration.
 | --- | --- | --- | --- |
 | Lead, D reviewing | R1 | Boot repair and three packaged reopens passed; all build checkpoints clean. | Reproduce the original six-path prefix and first paired cold restart, then unchanged full native acceptance. |
 | C | R0/R1 preparation | Mixed-actor and event-classification tests integrated; physical baseline provenance remains unresolved. | Review a diagnostic reuse plan for the six-path prefix and first paired cold cycle. |
-| B | R3/R5 | Invitation dismissal and channel-creation retry repairs integrated. | Audit the next concrete independent pending-action/lifecycle gap; packaged UI/media coexistence remains open. |
+| B | R3/R5 | Invitation dismissal, channel creation and verified-contact invitation retry repairs integrated. | Packaged lifecycle, invitation delivery and UI/media coexistence remain open. |
 | A | R8/R1 review | Repaired candidate fixture and build-mode review integrated. | Review results of exact-source installed Windows execution. |
-| D | R9/R8 | Opt-in Windows candidate workflow integrated; run `43539960943` active. Android build-source checkpoints integrated. | Interpret source-bound results; no mixed-source acceptance. |
+| D | R9/R8 | Paired diagnostic workflow integrated with manual admission and isolated concurrency. Windows `43539960943` failed in its fixture; the snapshot-field repair is integrated. | Execute the repaired Windows fixture and paired restart diagnostic on one new source. |
 
 R2 helper retirement remains gated. R6/R7 implementation is not assigned by these
 preparation batches. Focused runs never close the full native or public-consumer
