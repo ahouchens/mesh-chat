@@ -31,6 +31,10 @@ def test_manual_parent_uses_same_run_producers_and_distinct_pair_checker():
     assert set(workflow["jobs"]) == {"verification", "android", "native_interop", "b8_pair_check"}
     assert workflow["jobs"]["verification"]["uses"] == "./.github/workflows/ci.yml"
     assert workflow["jobs"]["android"]["uses"] == "./.github/workflows/android-webrtc.yml"
+    assert workflow["jobs"]["verification"]["if"] == "${{ github.event_name == 'workflow_dispatch' }}"
+    assert workflow["jobs"]["android"]["if"] == "${{ github.event_name == 'workflow_dispatch' }}"
+    assert workflow["jobs"]["verification"]["with"] == {"b8_diagnostic_producer": True}
+    assert workflow["jobs"]["android"]["with"] == {"b8_diagnostic_producer": True}
     native = workflow["jobs"]["native_interop"]
     assert native["needs"] == ["verification", "android"]
     assert "needs.verification.result == 'success'" in native["if"]
@@ -40,7 +44,7 @@ def test_manual_parent_uses_same_run_producers_and_distinct_pair_checker():
     assert native["permissions"] == {"contents": "read", "actions": "read"}
     pair = workflow["jobs"]["b8_pair_check"]
     assert pair["needs"] == ["verification", "android", "native_interop"]
-    assert pair["if"] == "${{ !cancelled() }}"
+    assert pair["if"] == "${{ !cancelled() && github.event_name == 'workflow_dispatch' }}"
     assert pair["runs-on"] == "ubuntu-latest"
     steps = pair["steps"]
     checkout = next(step for step in steps if step.get("uses") == "actions/checkout@v7")
@@ -96,6 +100,39 @@ def test_existing_manual_dispatch_routes_diagnostic_without_running_required_gat
     assert selected(jobs["plan"]["if"], "push", True) is True
     assert selected(jobs["gate"]["if"], "push", True) is True
     assert selected(diagnostic["if"], "push", True) is False
+
+
+def test_manual_diagnostic_has_isolated_parent_concurrency_without_cancellation():
+    concurrency = read("connection-qualification.yml")["concurrency"]
+    group = concurrency["group"]
+    assert group.endswith("-${{ github.ref }}")
+    group_prefix = group.removesuffix("-${{ github.ref }}")
+    cancel = concurrency["cancel-in-progress"]
+    for event in ("workflow_dispatch", "push", "workflow_call"):
+        assert selected(group_prefix, event, False) == "connection-qualification"
+        assert selected(cancel, event, False) is True
+    assert selected(group_prefix, "workflow_dispatch", True) == "connection-b8-diagnostic"
+    assert selected(cancel, "workflow_dispatch", True) is False
+    assert selected(group_prefix, "push", True) == "connection-qualification"
+    assert selected(cancel, "push", True) is True
+
+
+def test_paired_producers_have_distinct_concurrency_without_changing_defaults():
+    for workflow_name, default_group in (
+        ("ci.yml", "ci-${{ github.workflow }}-${{ github.ref }}"),
+        ("android-webrtc.yml", None),
+    ):
+        workflow = read(workflow_name)
+        call_input = workflow.get("on", workflow.get(True))["workflow_call"]["inputs"]
+        assert call_input["b8_diagnostic_producer"]["default"] is False
+        group = workflow["concurrency"]["group"]
+        suffix = "${{ inputs.b8_diagnostic_producer && '-b8-first-cold' || '' }}"
+        assert group.endswith(suffix)
+        if default_group is not None:
+            assert group.removesuffix(suffix) == default_group
+        else:
+            assert group.removesuffix(suffix).startswith("android-webrtc-${{ github.ref }}")
+        assert workflow["concurrency"]["cancel-in-progress"] == "${{ !inputs.b8_diagnostic_producer }}"
 
 
 def test_role_jobs_keep_original_artifact_bindings_and_select_separate_diagnostic_reports():

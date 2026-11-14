@@ -14,10 +14,16 @@ concurrency:
 
 jobs:
   verification:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     uses: ./.github/workflows/ci.yml
+    with:
+      b8_diagnostic_producer: true
 
   android:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     uses: ./.github/workflows/android-webrtc.yml
+    with:
+      b8_diagnostic_producer: true
 
   native_interop:
     needs: [verification, android]
@@ -32,7 +38,7 @@ jobs:
   b8_pair_check:
     name: Retain distinct paired first cold diagnostic
     needs: [verification, android, native_interop]
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

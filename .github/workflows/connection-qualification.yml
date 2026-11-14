@@ -18,8 +18,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: connection-qualification-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.event_name == 'workflow_dispatch' && inputs.b8_first_cold_diagnostic && 'connection-b8-diagnostic' || 'connection-qualification' }}-${{ github.ref }}
+  cancel-in-progress: ${{ !(github.event_name == 'workflow_dispatch' && inputs.b8_first_cold_diagnostic) }}
 
 jobs:
   plan:

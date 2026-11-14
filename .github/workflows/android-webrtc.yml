@@ -2,6 +2,12 @@ name: Android WebRTC
 
 on:
   workflow_call:
+    inputs:
+      b8_diagnostic_producer:
+        description: Isolate the paired first cold producer from ordinary Android concurrency
+        type: boolean
+        required: false
+        default: false
   workflow_dispatch:
     inputs:
       network_inventory:
@@ -35,8 +41,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: android-webrtc-${{ github.ref }}${{ github.event_name == 'workflow_dispatch' && ((inputs.restart_diagnostic && (inputs.gateway_probe || inputs.network_inventory)) || (inputs.gateway_probe && inputs.network_inventory)) && '-conflict' || github.event_name == 'workflow_dispatch' && inputs.restart_diagnostic && '-restart' || github.event_name == 'workflow_dispatch' && inputs.gateway_probe && '-gateway' || github.event_name == 'workflow_dispatch' && inputs.network_inventory && '-inventory' || '' }}
-  cancel-in-progress: true
+  group: android-webrtc-${{ github.ref }}${{ github.event_name == 'workflow_dispatch' && ((inputs.restart_diagnostic && (inputs.gateway_probe || inputs.network_inventory)) || (inputs.gateway_probe && inputs.network_inventory)) && '-conflict' || github.event_name == 'workflow_dispatch' && inputs.restart_diagnostic && '-restart' || github.event_name == 'workflow_dispatch' && inputs.gateway_probe && '-gateway' || github.event_name == 'workflow_dispatch' && inputs.network_inventory && '-inventory' || '' }}${{ inputs.b8_diagnostic_producer && '-b8-first-cold' || '' }}
+  cancel-in-progress: ${{ !inputs.b8_diagnostic_producer }}
 
 jobs:
   diagnostic_conflict:

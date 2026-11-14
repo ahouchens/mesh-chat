@@ -2,6 +2,12 @@ name: CI
 
 on:
   workflow_call:
+    inputs:
+      b8_diagnostic_producer:
+        description: Isolate the paired first cold producer from ordinary CI concurrency
+        type: boolean
+        required: false
+        default: false
   workflow_dispatch:
     inputs:
       windows_candidate_pair:
@@ -14,8 +20,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.ref }}${{ inputs.b8_diagnostic_producer && '-b8-first-cold' || '' }}
+  cancel-in-progress: ${{ !inputs.b8_diagnostic_producer }}
 
 jobs:
   verify:
