@@ -59,7 +59,9 @@ The six `Event` families in `service/src/mesh_chat/connection/model.py` are `Tic
 | --- | --- | --- |
 | Adapter epoch change | Remaining adapter/supervisor boundary; no `ContextChanged` field or other reducer event | Exact adapter resource provenance and reconciliation tests |
 | Storage failure | Remaining domain/persistence boundary; no reducer event | `test_intent_transactions.py` for INV19/SC19 |
-| Duplicate signed signaling | Remaining protocol boundary; no signed document event in the reducer | Adapter/protocol interleaving evidence for SC02 |
+| Duplicate signed signaling | Adapter/protocol boundary; no signed document event in the reducer | New `test_reconnect_signed_collision.py` component interleaving for SC02 |
+
+The smallest C-owned SC02 protocol trace now lives in `service/tests/connection/test_reconnect_signed_collision.py`. It starts both opposite-role reconnect actors at the same reducer tick and routes actual signed `reconnect_request`, `reconnect_offer`, and `reconnect_answer` documents through `ReconnectExecutor` ports. A correctly signed offer for another attempt remains pending before native acceptance; the matching offer then completes one native allocation and one ready carrier per actor. Replaying the already-completed signed request in a fresh local negotiation stays pending without a second offer. The mailbox and native peer are doubles, so this is component interleaving evidence; actual HTTP, WebRTC transport, packaged and physical SC02 behavior remain open. Focused verification: 44 passed across this trace, the adjacent adapter tests and reconnect protocol tests (0.93 s).
 
 This batch strengthens INV02/03/04/07/09 and SC03/10's *policy* edges without changing acceptance labels. `Failed(RATE_LIMITED)` is a modeled event; the new trace asserts its cooldown even after Stop and Start. Packaged lifecycle, media coexistence and real-clock §9.6 budgets remain open at their respective integration/D boundaries.
 
