@@ -95,20 +95,53 @@ and stay separate from in-place upgrade. Whole-profile export/import,
 portable private-key backup, uninstall/data-clear preservation or removal,
 and native installed upgrade are unqualified.
 
-## Smallest next implementation batch
+## Windows candidate-pair fixture and next artifact
 
-Create a source-pinned **candidate pair manifest and installed-pair fixture**
-for one Windows AMD64 package set. Bind the exact staged service/runtime and
-standalone Python and TypeScript archives, public API 1.1, IPC 1 and wire 1,
-OS/toolchain, permissions and hashes. From an isolated install outside the
-checkout, exercise one declared compatible old-client/new-host pair and one
-incompatible-major refusal before mutation. Upgrade a disposable profile in
-place without replacing its key, then assert identity, history, outbox, draft
-and receipt continuity after restart. Keep wrong-key/corrupt-data controls
-separate from version refusal. Record the pair and exclusions as *candidate*
-results; do not publish a support window from this batch.
+`tests/core-sdk-upgrade/windows_candidate_pair.py` accepts an explicit
+source/tree, version, Windows AMD64 and normal-host permission manifest. Each
+artifact record contains a relative path, exact byte count and SHA-256 under
+the manifest directory. It requires the source-bound SDK staging report, the
+pinned old component rebuild report, candidate Python wheel and TypeScript
+tarball, old TypeScript tarball and service-carried Python wheel, plus the
+current Windows sidecar and its colocated build manifest. The old native binary
+field is explicitly `null`. It validates all bytes and reports before starting
+the runtime, then checks the exact sidecar build fingerprint through
+`native_windows_evidence.artifact_binding`.
 
-After that, qualify the matching staged Kotlin client/runtime-host AAR and
+When the exact current sidecar is supplied, the fixture copies it and installs
+both current SDKs and the old TypeScript package outside the checkout. One
+normal app-owned host rejects a raw public API major-2 `profile.create` before
+any profile mutation; the current TypeScript SDK then creates the profile.
+Installed Python 0.3 and TypeScript 0.2 clients read the same authorized
+identity through the public pipe. A normal owner stop/reopen preserves that
+identity and both clients read it again; Windows EFS protection and two clean
+host exits are required. Its retained report is fixed-field and states
+`native_upgrade_qualified: false`; outbox, draft and receipt continuity are
+`not_exercised` in this current-host run. The separate pinned component fixture
+above supplies local format-1-to-2 message/receipt/draft evidence, without
+turning this fixture into a native upgrade claim.
+
+Run it only with a prepared manifest and Node 22+:
+
+```sh
+python tests/core-sdk-upgrade/windows_candidate_pair.py \
+  --manifest <isolated-artifact-root>/candidate.json \
+  --expected-source <exact-source-commit> \
+  --output <retained-report.json>
+```
+
+The local worktree has no source-bound Windows sidecar or prior native binary,
+so the installed-host case has not run here. The next smallest R8 execution
+batch is to retain the current source-bound sidecar **and** its build manifest,
+assemble the explicit artifact directory from the same-source SDK staging and
+pinned baseline rebuild, run this fixture on Windows AMD64, and verify its
+report. A later in-place native upgrade needs a retained prior Windows binary,
+its exact source/build manifest and the matching vault/key provenance; a
+reconstructed old component wheel cannot stand in for that binary. Keep
+wrong-key/corrupt-data controls separate from version refusal. No result from
+this batch declares a release support window.
+
+Then qualify the matching staged Kotlin client/runtime-host AAR and
 independent APK pair on Android, including installed upgrade and ABI/permission
 binding, then reconcile SC25 and INV25–INV26 against exact artifacts. Complete
 the distribution notice/license inventory for the actual archives and native
