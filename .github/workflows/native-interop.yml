@@ -45,8 +45,8 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: native-interop-windows-${{ github.sha }}
-          path: dist/reports/native-interop-windows.json
+          name: ${{ inputs.workload == 'b8_first_cold' && format('native-interop-b8-first-cold-windows-{0}-{1}-{2}', github.sha, github.run_id, github.run_attempt) || format('native-interop-windows-{0}', github.sha) }}
+          path: ${{ inputs.workload == 'b8_first_cold' && 'dist/reports/native-interop-b8-first-cold-windows.json' || 'dist/reports/native-interop-windows.json' }}
           if-no-files-found: error
           retention-days: 14
 
@@ -94,7 +94,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: native-interop-android-${{ github.sha }}
-          path: dist/reports/native-interop-android.json
+          name: ${{ inputs.workload == 'b8_first_cold' && format('native-interop-b8-first-cold-android-{0}-{1}-{2}', github.sha, github.run_id, github.run_attempt) || format('native-interop-android-{0}', github.sha) }}
+          path: ${{ inputs.workload == 'b8_first_cold' && 'dist/reports/native-interop-b8-first-cold-android.json' || 'dist/reports/native-interop-android.json' }}
           if-no-files-found: error
           retention-days: 14

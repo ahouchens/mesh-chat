@@ -1,0 +1,74 @@
+name: Paired native first cold diagnostic
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: native-interop-b8-diagnostic-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verification:
+    uses: ./.github/workflows/ci.yml
+
+  android:
+    uses: ./.github/workflows/android-webrtc.yml
+
+  native_interop:
+    needs: [verification, android]
+    if: ${{ needs.verification.result == 'success' && needs.android.result == 'success' }}
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/native-interop.yml
+    with:
+      workload: b8_first_cold
+
+  b8_pair_check:
+    name: Retain distinct paired first cold diagnostic
+    needs: [verification, android, native_interop]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - name: Download Windows diagnostic role report
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: native-interop-b8-first-cold-windows-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist/qualification/native-interop-b8
+      - name: Download Android diagnostic role report
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: native-interop-b8-first-cold-android-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist/qualification/native-interop-b8
+      - name: Check paired first cold diagnostic only
+        if: ${{ !cancelled() }}
+        run: >-
+          python scripts/check_native_interop_b8_diagnostic.py
+          --expected-source "${{ github.sha }}"
+          --windows-report dist/qualification/native-interop-b8/native-interop-b8-first-cold-windows.json
+          --android-report dist/qualification/native-interop-b8/native-interop-b8-first-cold-android.json
+          --output dist/reports/native-interop-b8-first-cold-pair.json
+      - name: Retain paired first cold diagnostic reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-interop-b8-first-cold-summary-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            dist/reports/native-interop-b8-first-cold-pair.json
+            dist/qualification/native-interop-b8/native-interop-b8-first-cold-windows.json
+            dist/qualification/native-interop-b8/native-interop-b8-first-cold-android.json
+          if-no-files-found: error
+          retention-days: 14
