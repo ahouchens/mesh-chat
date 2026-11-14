@@ -1,0 +1,142 @@
+name: Installed Windows call and public SDK peer R5 diagnostic
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: packaged-call-r5-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verification:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    uses: ./.github/workflows/ci.yml
+    with:
+      public_pair_producer: true
+
+  media_candidate:
+    name: Build exact-source Windows NSIS candidate
+    needs: verification
+    if: ${{ needs.verification.result == 'success' }}
+    runs-on: windows-latest
+    timeout-minutes: 80
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: pnpm/setup@v3
+        with:
+          version: 11.25.0
+          runtime: node@24
+          cache: true
+          install: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: |
+            service/requirements.lock
+            service/requirements-dev.lock
+      - uses: dtolnay/rust-toolchain@1.90.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          shared-key: release-windows-desktop
+      - run: pnpm install --frozen-lockfile
+      - run: python -m pip install --disable-pip-version-check -r service/requirements-dev.lock
+      - name: Build same-source candidate after exact verification
+        run: python scripts/release.py build --platform desktop --skip-tests --report dist/reports/packaged-media-build.json
+      - name: Retain exact candidate for installed GUI role
+        uses: actions/upload-artifact@v4
+        with:
+          name: packaged-call-candidate-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            dist/reports/packaged-media-build.json
+            dist/desktop/releases/**/manifest.json
+            dist/desktop/releases/**/mesh-chat.exe
+            dist/desktop/releases/**/mesh-chat-service.exe
+            dist/desktop/releases/**/bundle/nsis/*.exe
+          if-no-files-found: error
+          retention-days: 14
+
+  call_gui:
+    name: Actual installed GUI CallDialog role
+    needs: [verification, media_candidate]
+    if: ${{ needs.verification.result == 'success' && needs.media_candidate.result == 'success' }}
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: service/requirements-dev.lock
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - run: python -m pip install --disable-pip-version-check -r service/requirements-dev.lock
+      - run: npm ci --ignore-scripts --prefix scripts/native-interop-artifact
+      - uses: actions/download-artifact@v4
+        with:
+          name: packaged-call-candidate-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist
+      - name: Run installed GUI and seven-check capture before call
+        run: python scripts/packaged_call_controller.py --role gui --expected-source "${{ github.sha }}"
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: packaged-call-gui-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            dist/reports/packaged-call-gui.json
+            dist/reports/packaged-call-capture-preflight.json
+          if-no-files-found: error
+          retention-days: 14
+
+  call_peer:
+    name: Independent public SDK and real browser media role
+    needs: [verification, media_candidate]
+    if: ${{ needs.verification.result == 'success' && needs.media_candidate.result == 'success' }}
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: service/requirements-dev.lock
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - run: python -m pip install --disable-pip-version-check -r service/requirements-dev.lock
+      - run: npm ci --ignore-scripts --prefix scripts/native-interop-artifact
+      - uses: actions/download-artifact@v4
+        with:
+          name: desktop-transport-${{ github.sha }}
+          path: dist/reports
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-windows-tested-${{ github.sha }}
+          path: .
+      - name: Run ordinary public SDK peer and real browser answerer
+        run: python scripts/packaged_call_controller.py --role peer --expected-source "${{ github.sha }}"
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: packaged-call-peer-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist/reports/packaged-call-peer.json
+          if-no-files-found: error
+          retention-days: 14
