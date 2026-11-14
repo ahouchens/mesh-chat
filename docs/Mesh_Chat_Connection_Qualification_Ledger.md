@@ -1,5 +1,38 @@
 # Connection runtime qualification ledger
 
+## First-cold completion upload admission failure — November 13, 2026
+
+Paired diagnostic [43546317181](https://github.com/ahouchens/mesh-chat/actions/runs/43546317181)
+at `6773e646accb67d0740e51d2cb82929fb8a73390`, attempt 1, closed failed after
+all three same-run producers passed. Both role reports contain
+`RendezvousUnavailable`, `failure_site=rendezvous_publish`, and a cold-start
+snapshot with iteration 1, completed 1, restarted true, stage `complete_barrier`.
+The pair checker correctly rejects these failed reports as `pair_invalid`.
+
+The source has a definite uploader-contract mismatch: Python permits
+`cold_complete_1`, while `scripts/native-interop-artifact/upload.mjs` permits
+only `cold_complete_5` and multiples of ten. The uploader rejects the diagnostic
+marker before invoking the Actions artifact client. This is distinct from the
+historical Windows artifact inventory transport failure. A focused real-Node
+uploader regression and guarded admission repair are being prepared.
+
+The controller appends a completed cycle only after identity/receipt, readiness,
+message exchange, exact-path and accounting checks. Thus the reports show
+progress beyond the historical first-restart failure; they do not retain a
+successful final role report or establish paired acceptance. The auxiliary
+`path_recheck=unread` means no retired-resource secondary read was recorded,
+not that the mandatory exact-path stage was skipped. Final normal owner cleanup
+and sealed paired result acceptance still require a repaired run.
+
+Summary artifact `14095840683` is 2,188 bytes with ZIP SHA256
+`f31edf3522ca5c593285f011ba2f53d8a060c870c0dcb7679f690f976021f6f4`.
+It retains both role reports, Windows SHA256
+`d3050b434f810c6b2b6fafe3d61b74f358a5d4f988f07f939f7b9905cb0a0ba0`
+and Android SHA256
+`6ce238568f3e848f3e4995a7901d8a1c13ed3a5385c5dc464fc25d092a32f035`.
+Root verified the archive digest and retained it as
+`.test-tmp/paired-first-cold-6773e64-summary.zip`.
+
 ## Installed Windows candidate pair passed — November 13, 2026
 
 Run [43546319373](https://github.com/ahouchens/mesh-chat/actions/runs/43546319373),

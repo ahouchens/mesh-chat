@@ -100,13 +100,13 @@ its owned checkout and reports source evidence and gaps before integration.
 | Owner | Roadmap batch | Exclusive file scope / concrete deliverable | Next milestone |
 | --- | --- | --- | --- |
 | Lead, D reviewing | R1 | Boot repair and three packaged reopens passed; all build checkpoints clean. | Reproduce the original six-path prefix and first paired cold restart, then unchanged full native acceptance. |
-| C | R0/R1 preparation | Mixed-actor and event-classification tests integrated; physical baseline provenance remains unresolved. | Review a diagnostic reuse plan for the six-path prefix and first paired cold cycle. |
-| B | R3/R5 | Invitation dismissal, channel creation and verified-contact invitation retry repairs integrated. | Packaged lifecycle, invitation delivery and UI/media coexistence remain open. |
-| A | R8/R1 review | Repaired candidate fixture and build-mode review integrated. | Review results of exact-source installed Windows execution. |
-| D | R9/R8 | Paired diagnostic workflow integrated with manual admission and isolated concurrency. Windows `43539960943` failed in its fixture; the snapshot-field repair is integrated. | Execute the repaired Windows fixture and paired restart diagnostic on one new source. |
+| C | R6 | Installed Android public-session smoke integrated; factor its admitted, bounded session lifetime for the cross-platform controller. | Public Windows–Android pairing and one authenticated receipt in each direction, then restart and controlled network interruption. |
+| B | R3/R5/R8 | Invitation recovery and installed WebView2 capture preparation integrated. | Monitor Windows Python/media run `43549705457`; prepare the actual CallDialog plus messaging case. |
+| A | R6/R8 | Windows current/old TypeScript installed candidate passed; integrated workflow review passed. | Monitor Android public-session run `43549708208`. |
+| D | R1/R9 | Paired diagnostic workflow and prerequisite fixes integrated. | Retain and diagnose paired first-cold run `43546317181` at `6773e64`. |
 
-R2 helper retirement remains gated. R6/R7 implementation is not assigned by these
-preparation batches. Focused runs never close the full native or public-consumer
+R2 helper retirement remains gated. R6 preparation is assigned; R7's remaining
+isolation work still needs its own implementation batch. Focused runs never close the full native or public-consumer
 gates. Baseline, UI and compatibility preparation documents are integrated. The
 mixed-actor trace and event-classification batch are integrated. A's repaired
 Windows pair/refusal fixture passed independent review and is integrated; installed execution
@@ -230,8 +230,11 @@ required qualification gate is excluded from this diagnostic route. R8 replaceme
 corrected installed Windows fixture. Its TypeScript current/old-client checks
 include same-identity reopen, two clean exits and EFS storage. Native upgrade,
 Python API and peer receipt evidence are outside this result.
-D monitors the paired run, whose same-run producers passed and both native roles
-started. The R6 Android public-session fixture is integrated through `0f93b9c`:
+The paired run closed failed after both peers appended their first completed cold
+cycle: the Node artifact uploader rejects `cold_complete_1`, which Python allows.
+D is preparing a guarded admission fix and a real-uploader regression. Final
+cleanup/result acceptance still needs a repaired run. The R6 Android
+public-session fixture is integrated through `0f93b9c`:
 one ordinary main-process host and installed Binder SDK span public profile
 creation/query and shutdown. Exact-source and explicit disposable-emulator
 admission precede device mutations; bounded I/O and a shared deadline govern the
@@ -257,3 +260,27 @@ repairs are integrated. R2 remains gated on full native acceptance and failure
 disposition. Exact run outcomes, artifact hashes and component test evidence are
 in the ledger. Baseline provenance, full automated gaps and physical/publication
 deferrals remain explicit.
+
+## Next independent public-consumer execution
+
+The first combined R6 case uses the ordinary installed Windows app-owned host
+and the independent Android main-process host through their public SDKs. A
+separate controller exchanges bounded, sealed setup/control metadata bound to
+one source, run and attempt; product pairing and messages use the normal Core
+transport. Keep this namespace and producer allowlist separate from private
+native-peer diagnostics.
+
+Create two fresh identities, request relay-only operation with explicit broker
+consent, pair with explicit invitation/approval decisions, and require public
+messaging readiness. Send one keyed message in each direction. Both sender
+delivery state and receiver message records must agree, with exactly one inbound
+and outbound record per message. Finish and confirm each actual owner exits.
+This first case establishes pairing/receipt evidence only.
+
+After that baseline, reopen the Windows owner on the same protected data and
+check identity, contact, keyed-message state and a new receipt. A later controlled
+network interruption uses an emulator OS rule targeted to the app UID, with
+rule/counter evidence and verified rollback, while retaining the localhost ADB
+control channel. Prove delivery is withheld under the rule and resumes exactly
+once afterward. No WebRTC fork is needed. Android cold credential-unlock behavior
+remains a separate case requiring the real OS credential flow.
