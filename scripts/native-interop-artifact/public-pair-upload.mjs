@@ -1,12 +1,14 @@
 import { createHash } from "node:crypto";
-import { readFile, stat } from "node:fs/promises";
+import { readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 // Separate public-pair admission; the package's pinned ArtifactClient is shared.
 try {
-  const [name, suppliedPath] = process.argv.slice(2);
+  const [name, suppliedPath, suppliedIdentity] = process.argv.slice(2);
   const file = path.resolve(suppliedPath ?? "");
-  if (path.basename(file) !== "bundle.json" || (await stat(file)).size > 32 * 1024) throw new Error();
+  const identity = path.resolve(suppliedIdentity ?? "");
+  if (path.basename(file) !== "bundle.json" || (await stat(file)).size > 32 * 1024
+      || path.basename(identity) !== "identity.json" || path.dirname(identity) !== path.dirname(file)) throw new Error();
   const value = JSON.parse(await readFile(file, "utf8"));
   const context = value.context;
   const role = value.role ?? value.sender;
@@ -72,8 +74,8 @@ try {
   });
   if (!Number.isSafeInteger(result.id) || result.id <= 0
       || !Number.isSafeInteger(result.size) || result.size <= 0 || result.size > 64 * 1024) throw new Error();
-  process.stdout.write(JSON.stringify({ passed: true, id: result.id, size: result.size }) + "\n");
+  await writeFile(identity, JSON.stringify({ passed: true, id: result.id, size: result.size }) + "\n",
+    { encoding: "utf8", flag: "wx" });
 } catch {
-  process.stdout.write(JSON.stringify({ passed: false }) + "\n");
   process.exitCode = 1;
 }

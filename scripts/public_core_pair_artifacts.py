@@ -136,6 +136,7 @@ class GithubArtifacts:
             raise PublicPairUnavailable("Public pair setup deadline expired")
         with tempfile.TemporaryDirectory(prefix="public-pair-upload-", dir=self.directory) as temporary:
             bundle = Path(temporary) / "bundle.json"
+            identity = Path(temporary) / "identity.json"
             bundle.write_bytes(canonical(value))
             if bundle.stat().st_size > MAX_BLOB:
                 raise ValueError("Public pair upload exceeds its budget")
@@ -143,8 +144,9 @@ class GithubArtifacts:
             if remaining <= 0:
                 raise PublicPairUnavailable("Public pair setup deadline expired")
             try:
-                process = subprocess.run([self.node, str(UPLOAD), name, str(bundle)],
-                                         capture_output=True, text=True, timeout=min(60, remaining))
+                process = subprocess.run([self.node, str(UPLOAD), name, str(bundle), str(identity)],
+                                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                         timeout=min(60, remaining))
             except Exception:
                 raise PublicPairUnavailable("Public pair setup upload is unavailable") from None
             if self.clock() >= deadline:
@@ -152,8 +154,10 @@ class GithubArtifacts:
             if process.returncode:
                 raise PublicPairUnavailable("Public pair setup upload failed")
             try:
-                response = json.loads(process.stdout.splitlines()[-1])
-            except (ValueError, IndexError):
+                if not identity.is_file() or not 0 < identity.stat().st_size <= 256:
+                    raise ValueError("invalid identity file")
+                response = json.loads(identity.read_bytes())
+            except (OSError, ValueError):
                 raise PublicPairUnavailable("Public pair upload returned no identity") from None
             if (type(response) is not dict or response.get("passed") is not True
                     or type(response.get("id")) is not int or response["id"] <= 0

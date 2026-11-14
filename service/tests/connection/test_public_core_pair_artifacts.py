@@ -149,8 +149,10 @@ def test_upload_uses_remaining_deadline_and_rejects_late_completion(tmp_path, mo
     calls = []
     def run(*args, **options):
         calls.append(options["timeout"])
+        assert options["stdout"] == subprocess.DEVNULL and options["stderr"] == subprocess.DEVNULL
+        Path(args[0][-1]).write_text('{"passed":true,"id":17,"size":123}\n')
         now[0] = 1.1
-        return SimpleNamespace(returncode=0, stdout='{"passed":true,"id":17,"size":123}\n')
+        return SimpleNamespace(returncode=0)
     monkeypatch.setattr(artifacts.subprocess, "run", run)
     try:
         with pytest.raises(artifacts.PublicPairUnavailable):
@@ -246,12 +248,15 @@ export class DefaultArtifactClient {
         value = sender.public_manifest() if phase == "key" else sender.seal(phase, payload)
         bundle = tmp_path / "bundle.json"
         bundle.write_bytes(pair.canonical(value))
+        identity = tmp_path / "identity.json"
         env = {**os.environ, **environment(role), "ACTIONS_RUNTIME_TOKEN": "synthetic-runtime-token",
                "MESH_UPLOAD_OBSERVATION": str(tmp_path / "observed.json")}
-        result = subprocess.run([node, str(script), pair.artifact_name(CONTEXT, role, phase), str(bundle)],
+        result = subprocess.run([node, str(script), pair.artifact_name(CONTEXT, role, phase),
+                                 str(bundle), str(identity)],
                                 env=env, capture_output=True, text=True, timeout=10)
         assert result.returncode == 0 and result.stderr == ""
-        assert json.loads(result.stdout) == {"passed": True, "id": 17, "size": 123}
+        assert result.stdout == ""
+        assert json.loads(identity.read_text()) == {"passed": True, "id": 17, "size": 123}
         observed = json.loads((tmp_path / "observed.json").read_text())
         assert observed["body"] == value
         assert observed["options"] == {"retentionDays": 1, "compressionLevel": 0}
@@ -280,10 +285,12 @@ def test_real_node_helper_rejects_native_or_plaintext_admission(tmp_path, fault)
         if fault == "wrong_pair": value["context"]["pair_id"] = "0" * 32
         bundle = tmp_path / "bundle.json"
         bundle.write_bytes(pair.canonical(value))
-        result = subprocess.run([node, str(script), pair.artifact_name(CONTEXT, "windows", "offer_code"), str(bundle)],
+        identity = tmp_path / "identity.json"
+        result = subprocess.run([node, str(script), pair.artifact_name(CONTEXT, "windows", "offer_code"),
+                                 str(bundle), str(identity)],
                                 env=env, capture_output=True, text=True, timeout=10)
-        assert result.returncode == 1 and json.loads(result.stdout) == {"passed": False}
-        assert result.stderr == ""
+        assert result.returncode == 1 and result.stdout == result.stderr == ""
+        assert not identity.exists()
     finally:
         sender.close()
         receiver.close()
