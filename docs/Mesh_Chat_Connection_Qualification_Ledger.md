@@ -1,5 +1,33 @@
 # Connection runtime qualification ledger
 
+## Paired diagnostic prerequisite failure repaired — November 13, 2026
+
+At source `ef86e8f`, paired diagnostic run `43544372506` and Windows candidate
+run `43544375713` failed broad verification before their requested scenarios.
+The paired verification job `132292073243` reported **2 failed, 7,985 passed,
+52 skipped**. Its retained log is `.test-tmp/paired-first-cold-ef86e8f-verify.log`.
+The Windows candidate job was skipped; no new compatibility result was produced.
+The paired producer jobs finishing afterward cannot establish paired acceptance.
+
+The workflow test's expression parser rejected digits in the new
+`b8_diagnostic_producer` input and selected the wrong concurrency suffix.
+Root `58e365d` integrates D's `e65acbc` repair, covering both ordinary and
+diagnostic producer routing/cancellation without changing production conditions.
+The second failure exposed a real diagnostic blind spot: `git diff HEAD`
+can be empty when an index change is reversed only in the working tree, while
+tracked status remains dirty. Root `4eb7c82` inventories the index and working
+tree separately, merges exact paths, and retains each layer's status with the
+existing modes and content hashes. Combined inventory size/privacy bounds remain.
+Real Git regressions cover both file-mode settings and staged content reverted
+only in the working tree. D independently reviewed this repair with no blocker.
+
+Root **146 affected checkpoint/restart/workflow/selection tests passed**, zero
+skips, 5.04 s (`.test-tmp/verify-repair.xml`); the new checkpoint cases first
+reproduced the failure locally (`.test-tmp/source-checkpoint-red.xml`). These
+are diagnostic/tooling repairs. Neither changes WebRTC nor explains the original
+post-six-path cold restart. The next run must still exercise that paired cycle
+and the installed Windows fixture on the corrected exact source.
+
 ## Paired reproduction and compatibility repair prepared — November 13, 2026
 
 Windows candidate run `43539960943` at `71226a7` closed failed in the installed
