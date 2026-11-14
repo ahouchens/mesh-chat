@@ -65,9 +65,21 @@ for (const [name, end] of [
 }
 
 test("silent startup has a bounded failure and requests EOF cleanup", async () => {
-  const runtime = run("process.stdin.on('end',()=>process.exit(0));", 50);
-  await assert.rejects(runtime.ready, /app_owned_runtime_unavailable/);
-  await assert.rejects(runtime.stop(), /app_owned_runtime_unavailable/);
+  const child = spawn(process.execPath, ["--input-type=module", "-e", prelude +
+    "process.stdin.on('end',()=>process.exit(0));"],
+    {stdio:["pipe","pipe","pipe"],windowsHide:true});
+  const closed = new Promise(resolve => child.once("close", resolve));
+  const runtime = observeRuntime(child, pipe, 50);
+  const custodyTimer = setTimeout(() => { if (child.exitCode === null) child.kill(); }, 3000);
+  try {
+    await assert.rejects(runtime.ready, /app_owned_runtime_unavailable/);
+    assert.equal(await closed, 0); // EOF retired this exact owned child, not just the status wait.
+    await assert.rejects(runtime.stop(100), /app_owned_runtime_unavailable/);
+  } finally {
+    clearTimeout(custodyTimer);
+    if (child.exitCode === null) child.kill();
+    await closed;
+  }
 });
 
 async function refusal(script, check, timeout = 5000) {
