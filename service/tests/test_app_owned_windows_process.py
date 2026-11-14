@@ -7,6 +7,7 @@ from unittest.mock import Mock
 
 import pytest
 
+import mesh_chat.app_owned_windows_process as windows_process
 from mesh_chat.app_owned_admission import ProcessIdentity
 from mesh_chat.app_owned_windows_process import (
     PROCESS_QUERY_LIMITED_INFORMATION, SYNCHRONIZE, WAIT_OBJECT_0, WAIT_TIMEOUT,
@@ -21,6 +22,14 @@ def test_rejects_invalid_pid_before_open_process():
         with pytest.raises(ValueError):
             port.open(pid)
     kernel.OpenProcess.assert_not_called()
+
+
+def test_mocked_open_error_without_windows_last_error(monkeypatch):
+    monkeypatch.delattr(windows_process.ctypes, "get_last_error", raising=False)
+    kernel = Mock()
+    kernel.OpenProcess.return_value = None
+    with pytest.raises(OSError, match="OpenProcess"):
+        WindowsProcessPort(kernel=kernel).open(42)
 
 
 def test_failed_creation_query_keeps_unclosed_handle_for_explicit_retry():
@@ -39,6 +48,30 @@ def test_failed_creation_query_keeps_unclosed_handle_for_explicit_retry():
     assert port.retire() is True
     assert port.retire() is True
     assert kernel.CloseHandle.call_count == 3
+
+
+def test_retained_failed_acquisition_blocks_new_open_until_retry(monkeypatch):
+    kernel = Mock()
+    kernel.OpenProcess.side_effect = [314, 315]
+    kernel.GetProcessTimes.return_value = False
+    kernel.CloseHandle.side_effect = [False, True, True]
+    kernel.WaitForSingleObject.return_value = WAIT_TIMEOUT
+    port = WindowsProcessPort(kernel=kernel)
+
+    with pytest.raises(OSError, match="GetProcessTimes"):
+        port.open(42)
+    for _ in range(3):
+        with pytest.raises(RuntimeError, match="cleanup is pending"):
+            port.open(43)
+    assert kernel.OpenProcess.call_count == 1
+
+    assert port.retire() is True
+    monkeypatch.setattr(port, "_creation_time", lambda _handle: 1)
+    monkeypatch.setattr(port, "_image", lambda _handle: r"C:\test\helper.exe")
+    pin = port.open(43)
+    assert pin.identity.pid == 43
+    assert kernel.OpenProcess.call_count == 2
+    pin.close()
 
 
 def test_failed_image_query_closes_acquired_handle_atomically(monkeypatch):

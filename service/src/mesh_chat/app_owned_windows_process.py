@@ -46,7 +46,8 @@ def _bind_kernel():
 
 
 def _failure(operation: str) -> OSError:
-    return OSError(ctypes.get_last_error(), operation)
+    last_error = getattr(ctypes, "get_last_error", None)
+    return OSError(last_error() if last_error is not None else 0, operation)
 
 
 def _alive(kernel, handle: int) -> bool:
@@ -124,6 +125,8 @@ class WindowsProcessPort:
         if type(pid) is not int or not 1 <= pid <= MAX_PID:
             raise ValueError("Process identifier is invalid")
         with self._lock:
+            if self._retained:
+                raise RuntimeError("Process handle cleanup is pending")
             handle = self._kernel.OpenProcess(
                 PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, False, pid)
             if not handle:
