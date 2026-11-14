@@ -1,0 +1,41 @@
+{
+  "v": 1,
+  "kind": "windows_release_ui_execution_prerequisite",
+  "status": "contract_only_switch_unproven",
+  "baseline": {
+    "source_commit": "7c40f7b23eab3e9d83ff7ca1075c90c4d84ce516",
+    "source_tree": "96daefa74c38a5cfd7863e37e3effcb7a06dc6cd",
+    "msi_sha256": "dadbffdedb39c1714abc426d9a2ded1eb815d84be0dfb11e7c7c88c332f2f34e",
+    "nsis_sha256": "a20b381a8c7199c40aeba0487634c1302043c3e07d8b66c7838be8abfc050e23",
+    "msi_product_code": "{0C81B3B9-5D0C-4EF7-A56D-CBE7FF8AE840}",
+    "msi_upgrade_code": "{20C99291-FD11-5408-A78F-71151DB27904}",
+    "installed_version": "0.9.66"
+  },
+  "candidate": {
+    "source_commit": null,
+    "source_tree": null,
+    "installer_sha256": null,
+    "installed_app_sha256": null,
+    "installed_sidecar_sha256": null,
+    "installed_version": "0.9.66"
+  },
+  "required_before_execution": [
+    "fresh_disposable_github_windows_runner_profile_and_credential_slot",
+    "webview2_present_without_installer_bootstrap_download",
+    "pinned_published_release_byte_intake",
+    "source_bound_candidate_installer_and_installed_file_manifest",
+    "verified_efs_profile_and_vault",
+    "proven_whole_app_switch_for_same_version_installers",
+    "positive_old_app_and_sidecar_retirement",
+    "clean_candidate_reopen_and_retirement"
+  ],
+  "claims": {
+    "ui_seed_readback_contract": true,
+    "installed_continuity_executed": false,
+    "installer_upgrade_qualified": false,
+    "peer_receipt_qualified": false,
+    "schema_refusal_qualified": false,
+    "physical_device_identity_qualified": false,
+    "full_r8_qualified": false
+  }
+}

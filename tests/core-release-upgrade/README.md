@@ -36,3 +36,50 @@ the published release source. A passing byte intake reports only
 installed Windows/Android pair, physical-device identity, or support window.
 The committed metadata is a retained snapshot of the public release record;
 the binaries themselves must be supplied locally for any passing intake.
+
+## Windows installed-app UI contract (preparation only)
+
+`windows-ui-execution-manifest.json` records the actual released MSI and NSIS
+identity and the prerequisites still needed to execute an installed whole-app
+switch. Candidate installer and installed-file hashes are intentionally null.
+The released MSI is machine-scope WiX, defaults to `ProgramFiles64Folder/Mesh Chat`,
+and has a selectable `INSTALLDIR`; it installs `mesh-chat.exe` and
+`mesh-chat-service.exe` together. The published NSIS archive lists the same
+launcher and sidecar. The existing R5 guarded NSIS launcher in
+`scripts/run_packaged_media_preflight.py` and loopback CDP driver in
+`scripts/packaged_call_gui.mjs` provide reusable installation and UI boundaries.
+Neither installer has been run for this contract. Both the released and current
+candidate app versions are `0.9.66`, so installer replacement semantics remain
+unproven. The MSI has a WebView2 download action when that runtime is absent;
+the future runner must positively preflight WebView2 before installation.
+
+`scripts/check_windows_release_ui.mjs` is the separate bounded CDP seed/readback
+contract. A future Windows-only orchestrator must launch the exact installed app
+with a fresh loopback WebView2 debugging port and feed one JSON object on stdin:
+
+```json
+{"phase":"seed","expected_source":"7c40f7b23eab3e9d83ff7ca1075c90c4d84ce516","expected_version":"0.9.66","workspace_name":"R8 CI space 001","message_text":"R8 CI message 001","draft_text":"R8 CI draft 001"}
+```
+
+Run `node scripts/check_windows_release_ui.mjs <port>` with Node 22+ and the
+object above on stdin. The seed phase requires a fresh app snapshot, then uses
+CDP mouse and keyboard input on visible onboarding, workspace and composer
+controls. It creates one synthetic profile, a sole-owner workspace, one message
+and one saved draft. It calls only the app-origin read-only `snapshot` and
+`list_workspace_messages` service commands for readback; `app_build_info`
+checks the installed source/version. The success result contains SHA-256 hashes
+of the profile destination, workspace and channel IDs, message ID/text and
+draft text. It contains no raw key, snapshot, text or path. The candidate
+`observe` phase takes the same marker strings and its exact source commit;
+it makes no mutation. Run it once when the candidate first opens and again
+after a clean candidate close/reopen. Compare the three bounded reports with
+`node scripts/check_windows_release_ui_reports.mjs <seed.json> <observe.json> <reopen.json> <candidate-source>`.
+
+The driver does not install, launch or retire either application, inspect EFS,
+or establish an installed upgrade. An orchestrator must first prove fresh
+GitHub Windows runner app-data and OS credential state, exact published and
+candidate installed bytes, EFS, and complete old app/sidecar retirement before
+switching whole installations. It must confirm a clean candidate reopen and
+retirement. Until same-version installer behavior is proven, the execution
+manifest stays at `contract_only_switch_unproven` and every installed upgrade,
+peer receipt, schema refusal, physical-device and full R8 claim remains false.
