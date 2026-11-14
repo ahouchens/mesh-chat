@@ -27,11 +27,12 @@ function sample() {
 
 test("configuration accepts only bounded synthetic markers and exact source", () => {
   assert.deepEqual(checkedConfig({ ...markers }), markers);
+  assert.equal(checkedConfig({ ...markers, workspace_name: "W".repeat(64) }).workspace_name.length, 64);
   for (const bad of [
     { ...markers, expected_source: "0".repeat(40), extra: "secret" },
     { ...markers, expected_source: "0".repeat(40) },
     { ...markers, phase: "observe", expected_source: "174728edad62aae6ef16e95b075183d06c5cdda3" },
-    { ...markers, workspace_name: "x".repeat(97) },
+    { ...markers, workspace_name: "x".repeat(65) },
     { ...markers, draft_text: markers.message_text },
     { ...markers, message_text: "private\ntext" },
     { ...markers, phase: "mutate" },

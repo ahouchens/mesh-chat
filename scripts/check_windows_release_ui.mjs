@@ -1,11 +1,10 @@
 // Drive only visible released-app controls; read back through two read-only commands.
-import { createInterface } from "node:readline";
 import { checkedConfig, checkedReadback, EVIDENCE_LEVEL, projectReadback } from "./windows_release_ui_contract.mjs";
+import { boundedCdpFrame, closeBoundedSocket, completeAfterCleanup, readBoundedInput, withDeadline } from "./windows_release_ui_io.mjs";
 
 const START_MS = 20_000;
 const STEP_MS = 20_000;
 const READBACK_MS = 12_000;
-const MAX_INPUT = 2_048;
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function boundedSocket(address, port) {
@@ -30,7 +29,10 @@ async function boundedTargets(response) {
     const { done, value } = await reader.read();
     if (done) break;
     size += value.byteLength;
-    if (size > 65_536) throw new Error("ui_target_invalid");
+    if (size > 65_536) {
+      await reader.cancel();
+      throw new Error("ui_target_invalid");
+    }
     chunks.push(value);
   }
   return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)));
@@ -92,7 +94,14 @@ class Gui {
     this.socket = new WebSocket(address);
     this.socket.addEventListener("message", (event) => {
       let frame;
-      try { frame = JSON.parse(String(event.data)); } catch { return; }
+      try { frame = boundedCdpFrame(event.data); }
+      catch {
+        this.protocolFailed = true;
+        for (const pending of this.pending.values()) pending.reject(new Error("ui_cdp_frame_invalid"));
+        this.pending.clear();
+        try { this.socket.close(); } catch { /* Owning runner retains custody. */ }
+        return;
+      }
       const pending = this.pending.get(frame.id);
       if (!pending) return;
       this.pending.delete(frame.id);
@@ -103,13 +112,19 @@ class Gui {
       for (const pending of this.pending.values()) pending.reject(new Error("ui_socket_closed"));
       this.pending.clear();
     });
-    await Promise.race([
-      new Promise((resolve, reject) => {
-        this.socket.addEventListener("open", resolve, { once: true });
-        this.socket.addEventListener("error", () => reject(new Error("ui_socket_failed")), { once: true });
-      }),
-      pause(Math.max(1, until - Date.now())).then(() => { throw new Error("ui_socket_deadline"); }),
-    ]);
+    let onOpen, onError;
+    try {
+      const opened = new Promise((resolve, reject) => {
+        onOpen = resolve;
+        onError = () => reject(new Error("ui_socket_failed"));
+        this.socket.addEventListener("open", onOpen);
+        this.socket.addEventListener("error", onError);
+      });
+      await withDeadline(opened, Math.max(1, until - Date.now()), "ui_socket_deadline");
+    } finally {
+      this.socket.removeEventListener("open", onOpen);
+      this.socket.removeEventListener("error", onError);
+    }
     await this.command("Runtime.enable");
     const identity = await this.evaluate(`window.__TAURI_INTERNALS__?.invoke('app_build_info').then(value => ({
       mounted: Boolean(document.querySelector('#root > *')) && document.title === 'Mesh Chat',
@@ -120,14 +135,14 @@ class Gui {
   }
 
   async command(method, params = {}) {
-    if (this.socket?.readyState !== WebSocket.OPEN) throw new Error("ui_socket_closed");
+    if (this.protocolFailed || this.socket?.readyState !== WebSocket.OPEN) {
+      throw new Error("ui_socket_closed");
+    }
     const id = this.nextId++;
     const promise = new Promise((resolve, reject) => this.pending.set(id, { resolve, reject }));
-    this.socket.send(JSON.stringify({ id, method, params }));
     try {
-      return await Promise.race([
-        promise, pause(STEP_MS).then(() => { throw new Error("ui_step_deadline"); }),
-      ]);
+      this.socket.send(JSON.stringify({ id, method, params }));
+      return await withDeadline(promise, STEP_MS, "ui_step_deadline");
     } finally { this.pending.delete(id); }
   }
 
@@ -238,17 +253,11 @@ class Gui {
     return this.settledReadback(markers);
   }
 
-  close() { this.socket?.close(); }
+  async close() { return closeBoundedSocket(this.socket); }
 }
 
 async function inputConfig() {
-  const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
-  let data = "";
-  for await (const line of lines) {
-    data += line;
-    if (Buffer.byteLength(data) > MAX_INPUT) throw new Error("ui_config_unbounded");
-  }
-  return checkedConfig(JSON.parse(data));
+  return checkedConfig(JSON.parse(await readBoundedInput(process.stdin)));
 }
 
 async function main() {
@@ -258,7 +267,7 @@ async function main() {
   }
   const config = await inputConfig();
   const gui = new Gui();
-  try {
+  return completeAfterCleanup(async () => {
     await gui.open(port, config);
     const hashes = config.phase === "seed" ? await gui.seed(config)
       : await gui.settledReadback(config);
@@ -267,7 +276,7 @@ async function main() {
       phase: config.phase, hashes, native_upgrade_qualified: false,
       peer_receipt_qualified: false, schema_refusal_qualified: false,
       physical_device_identity_qualified: false };
-  } finally { gui.close(); }
+  }, () => gui.close());
 }
 
 try {

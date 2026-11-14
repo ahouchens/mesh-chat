@@ -5,7 +5,8 @@ export const RELEASE_SOURCE = "7c40f7b23eab3e9d83ff7ca1075c90c4d84ce516";
 const SDK_FIXTURE_SOURCE = "174728edad62aae6ef16e95b075183d06c5cdda3";
 
 const HEX40 = /^[a-f0-9]{40}$/;
-const MARKER = /^[A-Za-z0-9][A-Za-z0-9 .:_-]{0,95}$/;
+const WORKSPACE_MARKER = /^[A-Za-z0-9][A-Za-z0-9 .:_-]{0,63}$/;
+const CONTENT_MARKER = /^[A-Za-z0-9][A-Za-z0-9 .:_-]{0,95}$/;
 
 export function checkedConfig(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)
@@ -16,8 +17,9 @@ export function checkedConfig(value) {
       || (value.phase === "seed" && value.expected_source !== RELEASE_SOURCE)
       || (value.phase === "observe" && [RELEASE_SOURCE, SDK_FIXTURE_SOURCE].includes(value.expected_source))
       || value.expected_version !== "0.9.66"
-      || ![value.workspace_name, value.message_text, value.draft_text].every(
-        (item) => typeof item === "string" && MARKER.test(item))) {
+      || typeof value.workspace_name !== "string" || !WORKSPACE_MARKER.test(value.workspace_name)
+      || ![value.message_text, value.draft_text].every(
+        (item) => typeof item === "string" && CONTENT_MARKER.test(item))) {
     throw new Error("ui_config_invalid");
   }
   if (new Set([value.workspace_name, value.message_text, value.draft_text]).size !== 3) {

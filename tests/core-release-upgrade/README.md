@@ -74,6 +74,11 @@ draft text. It contains no raw key, snapshot, text or path. The candidate
 it makes no mutation. Run it once when the candidate first opens and again
 after a clean candidate close/reopen. Compare the three bounded reports with
 `node scripts/check_windows_release_ui_reports.mjs <seed.json> <observe.json> <reopen.json> <candidate-source>`.
+Stdin is capped at 2 KiB and must reach EOF within five seconds. CDP frames
+are capped at 64 KiB before parsing; command deadlines clear on completion.
+The driver reports success only after its CDP socket closes. On uncertain
+socket retirement it emits a fixed failure and the owning runner must retain
+custody of the app and report the failure.
 
 The driver does not install, launch or retire either application, inspect EFS,
 or establish an installed upgrade. An orchestrator must first prove fresh
