@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DELIVERY = ROOT / "dist/reports/packaged-media-build.json"
 PREFLIGHT = ROOT / "scripts/packaged_media_preflight.py"
 INSTALL_TIMEOUT_SECONDS = 180
-PREFLIGHT_TIMEOUT_SECONDS = 90
+PREFLIGHT_TIMEOUT_SECONDS = 180
 LEVEL = "windows_nsis_install_webview2_media_preflight_only"
 
 
@@ -181,7 +181,7 @@ def install(installer: Path, directory: Path) -> tuple[int, bool]:
         raise PreparationFailure("installer_timed_out") from error
 
 
-def run_preflight(app: Path, candidate: dict, args: argparse.Namespace) -> tuple[bool, str]:
+def run_preflight(app: Path, candidate: dict, args: argparse.Namespace, result: dict) -> tuple[bool, str]:
     if args.preflight_output.exists():
         raise PreparationFailure("preflight_output_not_fresh")
     command = [sys.executable, str(PREFLIGHT), "--app", str(app),
@@ -192,9 +192,26 @@ def run_preflight(app: Path, candidate: dict, args: argparse.Namespace) -> tuple
                "--expected-source", candidate["source_commit"], "--expected-tree", candidate["source_tree"],
                "--run-id", args.run_id, "--run-attempt", str(args.run_attempt),
                "--node", str(args.node), "--output", str(args.preflight_output)]
-    completed = subprocess.run(command, cwd=ROOT, stdin=subprocess.DEVNULL,
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                               timeout=PREFLIGHT_TIMEOUT_SECONDS)
+    process = subprocess.Popen(command, cwd=ROOT, stdin=subprocess.DEVNULL,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        code = process.wait(timeout=PREFLIGHT_TIMEOUT_SECONDS)
+        result["preflight_child_retired"] = True
+    except subprocess.TimeoutExpired as error:
+        result["app_retirement_unconfirmed"] = True
+        try:
+            process.kill()
+        except OSError:
+            if process.poll() is None:
+                result["preflight_child_retired"] = False
+                raise PreparationFailure("preflight_child_retirement_uncertain") from error
+        try:
+            process.wait(timeout=5)
+            result["preflight_child_retired"] = True
+        except subprocess.TimeoutExpired:
+            result["preflight_child_retired"] = False
+            raise PreparationFailure("preflight_child_retirement_uncertain") from error
+        raise PreparationFailure("preflight_timed_out_app_retirement_unconfirmed") from error
     raw = preflight.checked_bytes(args.preflight_output, preflight.MAX_REPORT_BYTES)
     record = json.loads(raw)
     if (not isinstance(record, dict) or record.get("source_commit") != candidate["source_commit"]
@@ -205,7 +222,8 @@ def run_preflight(app: Path, candidate: dict, args: argparse.Namespace) -> tuple
             or record.get("application_sha256") != candidate["application_sha256"]
             or record.get("sidecar_sha256") != candidate["sidecar_sha256"]):
         raise PreparationFailure("preflight_result_unbound")
-    return completed.returncode == 0 and record.get("passed") is True, hashlib.sha256(raw).hexdigest()
+    result["app_retired"] = record.get("app_retired") is True
+    return code == 0 and record.get("passed") is True, hashlib.sha256(raw).hexdigest()
 
 
 def main() -> int:
@@ -256,7 +274,7 @@ def main() -> int:
                 or preflight.digest(install_dir / "mesh-chat-service.exe") != candidate["sidecar_sha256"]):
             raise PreparationFailure("installed_bytes_mismatch")
         result["phase"] = "capture_preflight"
-        passed, report_sha = run_preflight(app, candidate, args)
+        passed, report_sha = run_preflight(app, candidate, args, result)
         result["preflight_report_sha256"] = report_sha
         result["preflight_passed"] = passed
         if not passed:

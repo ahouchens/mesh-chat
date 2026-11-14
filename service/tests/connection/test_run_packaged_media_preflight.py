@@ -8,6 +8,7 @@ from pathlib import Path, PureWindowsPath
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -149,6 +150,39 @@ class NsIsCandidateTests(unittest.TestCase):
                 runner.install(installer, directory)
             launch.return_value.kill.assert_called_once_with()
             self.assertEqual(launch.return_value.wait.call_count, 2)
+
+    def test_preflight_timeout_records_wrapper_retirement_and_app_uncertainty(self):
+        args = SimpleNamespace(run_id="123", run_attempt=1, node=Path("node"),
+                               preflight_output=self.root / "dist/reports/packaged-media-preflight.json")
+        candidate = {"manifest_path": self.manifest, "release_manifest_sha256": "c" * 64,
+                     "delivery_report_sha256": "d" * 64, "source_commit": self.source,
+                     "source_tree": self.tree}
+        result = {}
+        with patch.object(runner.subprocess, "Popen") as launch:
+            launch.return_value.wait.side_effect = [subprocess.TimeoutExpired("preflight", 180), 0]
+            with self.assertRaisesRegex(runner.PreparationFailure,
+                                        "preflight_timed_out_app_retirement_unconfirmed"):
+                runner.run_preflight(self.release / "mesh-chat.exe", candidate, args, result)
+            launch.return_value.kill.assert_called_once_with()
+            self.assertEqual(launch.return_value.wait.call_count, 2)
+            self.assertEqual(launch.call_args.args[0][-4:-2], ["--node", "node"])
+        self.assertEqual(result, {"app_retirement_unconfirmed": True, "preflight_child_retired": True})
+
+    def test_preflight_timeout_does_not_claim_retirement_when_kill_fails(self):
+        args = SimpleNamespace(run_id="123", run_attempt=1, node=Path("node"),
+                               preflight_output=self.root / "dist/reports/packaged-media-preflight.json")
+        candidate = {"manifest_path": self.manifest, "release_manifest_sha256": "c" * 64,
+                     "delivery_report_sha256": "d" * 64, "source_commit": self.source,
+                     "source_tree": self.tree}
+        result = {}
+        with patch.object(runner.subprocess, "Popen") as launch:
+            launch.return_value.wait.side_effect = subprocess.TimeoutExpired("preflight", 180)
+            launch.return_value.kill.side_effect = OSError("cannot retire child")
+            launch.return_value.poll.return_value = None
+            with self.assertRaisesRegex(runner.PreparationFailure, "preflight_child_retirement_uncertain"):
+                runner.run_preflight(self.release / "mesh-chat.exe", candidate, args, result)
+            launch.return_value.kill.assert_called_once_with()
+        self.assertEqual(result, {"app_retirement_unconfirmed": True, "preflight_child_retired": False})
 
 
 if __name__ == "__main__":
