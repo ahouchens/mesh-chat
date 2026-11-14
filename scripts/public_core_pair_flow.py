@@ -68,12 +68,14 @@ class Flow:
     def publish(self, phase, payload):
         limit = min(self._budget(), self.clock() + 90)
         self.exchange.publish(phase, payload, limit)
-        self._budget()
+        if self.clock() >= limit:
+            raise TimeoutError("public_pair_setup_deadline")
 
     def receive(self, phase):
         limit = min(self._budget(), self.clock() + 90)
         value = self.exchange.receive(phase, limit)
-        self._budget()
+        if self.clock() >= limit:
+            raise TimeoutError("public_pair_setup_deadline")
         if type(value) is not dict:
             raise ValueError("public_pair_setup")
         if phase != "offer_code" and value != {}:
@@ -86,6 +88,8 @@ class Flow:
             if self.clock() >= phase_end:
                 raise TimeoutError("public_pair_" + phase)
             value = observe()
+            if self.clock() >= phase_end:
+                raise TimeoutError("public_pair_" + phase)
             if value is not None:
                 return value
             if index + 1 == attempts:

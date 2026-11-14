@@ -207,6 +207,41 @@ def test_poll_attempt_cap_and_five_second_spacing():
     assert probes == [0, 5, 10] and clock.sleeps == [5, 5]
 
 
+@pytest.mark.parametrize("completed_at,accepted", [(90, False), (89.999, True)])
+def test_observation_must_complete_inside_phase_deadline(completed_at, accepted):
+    clock = Clock()
+    scenario = flow.Flow("android", Peer("android"), Exchange("android"), PAIR_ID,
+                         840, clock.clock, clock.sleep)
+    def observe():
+        clock.now = completed_at
+        return {"ready": True}
+    if accepted:
+        assert scenario.wait("boundary", 1, observe) == {"ready": True}
+    else:
+        with pytest.raises(TimeoutError, match="public_pair_boundary"):
+            scenario.wait("boundary", 1, observe)
+
+
+@pytest.mark.parametrize("method", ["publish", "receive"])
+@pytest.mark.parametrize("offset,accepted", [(0, False), (-0.001, True)])
+def test_setup_exchange_must_complete_inside_its_phase_deadline(method, offset, accepted):
+    clock = Clock()
+    class AdvancingExchange(Exchange):
+        def publish(self, phase, payload, deadline):
+            clock.now = deadline + offset
+        def receive(self, phase, deadline):
+            clock.now = deadline + offset
+            return {}
+    scenario = flow.Flow("android", Peer("android"), AdvancingExchange("android"), PAIR_ID,
+                         840, clock.clock, clock.sleep)
+    action = (lambda: scenario.publish("ready", {})) if method == "publish" else (lambda: scenario.receive("ready"))
+    if accepted:
+        assert action() == ({} if method == "receive" else None)
+    else:
+        with pytest.raises(TimeoutError, match="public_pair_setup_deadline"):
+            action()
+
+
 def test_finish_reserve_blocks_new_public_request():
     clock, peer = Clock(), Peer("android")
     scenario = flow.Flow("android", peer, Exchange("android"), PAIR_ID, 840,
