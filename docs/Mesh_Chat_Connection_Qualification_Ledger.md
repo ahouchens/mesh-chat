@@ -1,5 +1,29 @@
 # Connection runtime qualification ledger
 
+## Reusable Windows public session adapter — November 13, 2026
+
+Commits `ecd42bc` and `e5e0e01` add a bounded controller adapter around the
+existing installed TypeScript application and its ordinary Windows host. It
+checks exact-source runtime and normal bootstrap evidence, installs outside the
+checkout, sends numbered public requests, and requires a positive consumer exit
+before permitting workspace removal. Failed or uncertain retirement retains
+the workspace. Review corrected raw-pipe short writes: the adapter now sends the
+whole frame within the original deadline and rejects invalid write progress.
+
+Integrated verification passed **478 tests** across Windows session, independent
+consumer and Android session suites, including actual installation from the
+staged SDK archive. The short-write follow-up passed **21 focused tests**.
+Reports: `.test-tmp/windows-adapter-integration.xml` and
+`.test-tmp/windows-adapter-write-fix.xml`. These are local adapter/installation
+checks, not a packaged Windows host or paired-platform result.
+
+The future same-run controller must download `desktop-transport-${SHA}` for
+`windows-independent-bootstrap.json` and its relative
+`windows-independent-sdk/mesh-chat-core-client-0.3.0-experimental.tgz`, as well
+as `native-windows-tested-${SHA}` for the frozen executable and hidden build
+manifest. The SDK staging artifact alone cannot satisfy normal bootstrap
+admission. Combined public pairing, receipts and recovery remain open.
+
 ## Installed Android public session passed — November 13, 2026
 
 Run [43549708208](https://github.com/ahouchens/mesh-chat/actions/runs/43549708208),
