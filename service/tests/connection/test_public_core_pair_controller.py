@@ -38,7 +38,10 @@ def setup(monkeypatch, tmp_path, role="windows", *, failed_phase=None):
         event("android_close")
         return True
     peer.open, peer.finish, peer.cleanup_workspace, peer.close = open_peer, finish_peer, cleanup, close
-    exchange = SimpleNamespace(connect=lambda deadline: event("connect"), close=lambda: event("exchange_close"))
+    def connect(deadline):
+        assert deadline == 600
+        event("connect")
+    exchange = SimpleNamespace(connect=connect, close=lambda: event("exchange_close"))
     monkeypatch.setattr(controller, "admitted_context", lambda *args: dict(CONTEXT))
     monkeypatch.setattr(controller, "runner_temp", lambda: tmp_path)
     monkeypatch.setattr(controller.evidence, "source_identity", lambda expected: (SOURCE, TREE))

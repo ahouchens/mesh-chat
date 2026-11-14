@@ -64,6 +64,15 @@ the artifact runtime authority. The checker accepts `--windows-report`,
 `--expected-source` and `--output`, with actual job outcomes in `PUBLIC_PAIR_NEEDS`.
 It derives the pair ID from CI context; an optional `--pair-id` must match.
 
+The `connection-qualification.yml` manual input `public_pair_diagnostic=true`
+selects `public-core-pair-diagnostic.yml`; it conflicts with the first-cold
+diagnostic input. Both are false by default. Separate concurrency groups keep
+the public run and its producers from canceling ordinary qualification or the
+native diagnostic. The Android wrapper runs inside the emulator runner's live
+script, which inherits the Node Action environment. The initial key exchange
+allows up to 600 seconds for platform setup skew, within the unchanged
+1200-second controller limit; application sessions begin afterward.
+
 ## Verification and limits
 
 At integration `1955823`, 171 focused tests passed across the adapters' controller

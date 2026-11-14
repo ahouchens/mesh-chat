@@ -14,6 +14,7 @@ from public_core_pair_flow import run_role
 
 ROOT = Path(__file__).resolve().parents[1]
 TOTAL_SECONDS = 1200
+SETUP_SECONDS = 600
 
 
 def producer_inputs(role, context, tree):
@@ -116,8 +117,9 @@ def run(role, expected_source, serial=None, *, clock=time.monotonic):
         temporary = tempfile.TemporaryDirectory(prefix="mesh-public-pair-setup-", dir=parent)
         exchange = create_exchange(context, role, Path(temporary.name))
         # Exchange keys before starting either application, avoiding an idle
-        # Android SDK session while the other platform waits for its CI runner.
-        exchange.connect(min(deadline - 120, clock() + 180))
+        # Android SDK session while the other platform installs tools and boots
+        # its emulator. This wait still consumes the controller's total budget.
+        exchange.connect(min(deadline - 120, clock() + SETUP_SECONDS))
         phase = "startup"
         peer = create_peer(role, expected_source, serial, parent)
         peer.open()
