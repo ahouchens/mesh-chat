@@ -162,6 +162,8 @@ jobs:
         run: python scripts/check_windows_separate_process_consumer.py --expected-source "${{ github.sha }}"
       - name: Check installed public SDK admission under a distinct executable image path
         run: python scripts/check_windows_image_admission.py --expected-source "${{ github.sha }}"
+      - name: Check installed opt-in private owner and helper admission
+        run: python scripts/check_windows_private_admission.py --expected-source "${{ github.sha }}"
       - name: Qualify public SDK pairing and receipts between normal Windows application hosts
         run: python scripts/check_independent_core_pairing.py --expected-source "${{ github.sha }}"
       - name: Exercise paired public consumer process recovery and later delivery
@@ -251,6 +253,7 @@ jobs:
             dist/reports/windows-independent-bootstrap.json
             dist/reports/windows-independent-separate-process.json
             dist/reports/windows-independent-image-admission.json
+            dist/reports/windows-independent-private-admission.json
             dist/reports/windows-independent-pairing.json
             dist/reports/windows-independent-paired-process-recovery.json
             dist/reports/windows-independent-sdk/**

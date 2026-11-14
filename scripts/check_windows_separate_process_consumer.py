@@ -127,10 +127,10 @@ class _Capture:
 def run_fixture(node, directory, runtime, data, overall_deadline, *, fixture="separate_process",
                 failure_parser=None):
     """Own exactly one child, its bounded readers and one monotonic retirement window."""
-    # The image fixture owns a full 120-second inner window. Its outer process
-    # needs room to finish that window before this runner's retirement reserve.
+    # Each fixed fixture has room beyond its inner window for process retirement.
     scripts = {"separate_process": ("separate-process-check.mjs", CHILD_SECONDS),
                "image_admission": ("image-admission-check.mjs", 150),
+               "private_admission": ("private-admission-check.mjs", 210),
                "paired_process_recovery": ("paired-process-recovery-check.mjs", 390)}
     if fixture not in scripts:
         raise ValueError("fixture_selector")
@@ -176,7 +176,7 @@ def run_fixture(node, directory, runtime, data, overall_deadline, *, fixture="se
             phase = (fixture_failure(bytes(output.data)) if fixture == "separate_process" and not error.data
                      else None)
             detail = None
-            if fixture == "paired_process_recovery" and not error.data and callable(failure_parser):
+            if fixture in {"paired_process_recovery", "private_admission"} and not error.data and callable(failure_parser):
                 try:
                     detail = failure_parser(bytes(output.data))
                 except Exception:
