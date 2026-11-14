@@ -4351,7 +4351,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
   const workspaceAccessSendRecovery = useRef(new Map<string, WorkspaceAccessSendRecovery>());
   const adminRequestAttempts = useRef(new Map<string, {
     scope: string; operationId: string; inFlight: boolean; accepted: boolean; attempted: boolean;
-    route: "core" | "legacy" | null; workspaceHandle: string | null; targetHandle: string | null;
+    workspaceHandle: string; targetHandle: string | null;
   }>());
   const adminRequestInFlightScope = useRef<string | null>(null);
   const admitProfileRequest = useProfileRequestAdmission();
@@ -5576,9 +5576,14 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     }
     const targetHandle = member?.core_handle ?? null;
     const intent = JSON.stringify([scope, requestKind, targetMemberId, requestedRole, ""]);
-    const attempt = adminRequestAttempts.current.get(intent)
+    const existing = adminRequestAttempts.current.get(intent);
+    if (!existing && (!workspace.core_handle || (targetMemberId && !targetHandle))) {
+      setWorkspaceActionError("Core workspace administration is not ready for this request. Refresh the workspace and try again.");
+      return;
+    }
+    const attempt = existing
       ?? { scope, operationId: newOperationId(), inFlight: false, accepted: false, attempted: false,
-        route: null, workspaceHandle: null, targetHandle: null };
+        workspaceHandle: workspace.core_handle!, targetHandle };
     if (attempt.inFlight) return;
     const priorAttempt = attempt.attempted;
     adminRequestAttempts.current.set(intent, attempt);
@@ -5589,38 +5594,9 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     try {
       if (!attempt.accepted) {
         attempt.attempted = true;
-        if (!attempt.route) {
-          attempt.route = workspace.core_handle && (!targetMemberId || targetHandle) ? "core" : "legacy";
-          attempt.workspaceHandle = attempt.route === "core" ? workspace.core_handle! : null;
-          attempt.targetHandle = attempt.route === "core" ? targetHandle : null;
-        }
-        if (attempt.route === "core") {
-          try {
-            await coreApiWorkspaceAdminSubmit(
-              attempt.workspaceHandle!, requestKind, attempt.targetHandle, requestedRole, "",
-              attempt.operationId, admitProfileRequest);
-          } catch (reason) {
-            // Only initial, explicit Core absence can select legacy. An uncertain
-            // Core call must replay through Core's own operation-id namespace.
-            if (priorAttempt || profileErrorCode(reason) !== "core_api_unavailable") throw reason;
-            attempt.route = "legacy";
-            attempt.workspaceHandle = null;
-            attempt.targetHandle = null;
-            await serviceCommand("submit_workspace_admin_request", {
-              workspace_id: workspace.id, request_kind: requestKind,
-              ...(targetMemberId ? { target_member_id: targetMemberId } : {}),
-              ...(requestedRole ? { requested_role: requestedRole } : {}),
-              note: "", operation_id: attempt.operationId,
-            }, admitProfileRequest);
-          }
-        } else {
-          await serviceCommand("submit_workspace_admin_request", {
-            workspace_id: workspace.id, request_kind: requestKind,
-            ...(targetMemberId ? { target_member_id: targetMemberId } : {}),
-            ...(requestedRole ? { requested_role: requestedRole } : {}),
-            note: "", operation_id: attempt.operationId,
-          }, admitProfileRequest);
-        }
+        await coreApiWorkspaceAdminSubmit(
+          attempt.workspaceHandle, requestKind, attempt.targetHandle, requestedRole, "",
+          attempt.operationId, admitProfileRequest);
         attempt.accepted = true;
       }
       if (!stillCurrent()) return;
@@ -5633,6 +5609,12 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       }
     } catch (reason) {
       if (!stillCurrent()) return;
+      if (profileErrorCode(reason) === "core_api_unavailable") {
+        setWorkspaceActionError(priorAttempt
+          ? "Core workspace administration is unavailable. The earlier request outcome remains unconfirmed; retry the same action after restoring access."
+          : "Core workspace administration is unavailable. Refresh the workspace and try again.");
+        return;
+      }
       const refused = ["forbidden", "invalid_request", "idempotency_conflict"].includes(profileErrorCode(reason));
       if (refused && !priorAttempt && adminRequestAttempts.current.get(intent) === attempt) adminRequestAttempts.current.delete(intent);
       setWorkspaceActionError(refused ? priorAttempt

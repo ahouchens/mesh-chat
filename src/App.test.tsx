@@ -140,8 +140,7 @@ const api = vi.hoisted(() => {
     serviceCommand(action === "background_set" ? "set_background_availability"
       : action === "notification_previews" ? "set_hide_notification_previews"
       : "open_notification_target", params)),
-  coreApiWorkspaceAdminSubmit: vi.fn(async (_handle: string, kind: string, memberHandle: string | null, role: string | null, _note: string, key: string): Promise<unknown> =>
-    serviceCommand("submit_workspace_admin_request", { workspace_id: workspace.id, request_kind: kind, ...(memberHandle ? { target_member_id: memberHandle } : {}), ...(role ? { requested_role: role } : {}), note: _note, operation_id: key })),
+  coreApiWorkspaceAdminSubmit: vi.fn(async (_handle: string, _kind: string, _memberHandle: string | null, _role: string | null, _note: string, _key: string): Promise<unknown> => ({ state: "submitted" })),
   coreApiContactInvitation: vi.fn(async (action: string, params: Record<string, unknown>): Promise<unknown> => serviceCommand(action === "decide" ? "decide_contact_invitation" : "receive_contact_invitation", action === "decide" ? { invitation_id: params.invitation, accept: params.accept } : { document: params.document, peer_destination: params.peer, ...(params.workspace_document ? { workspace_document: params.workspace_document } : {}) })),
   coreApiDecidePeerRequest: vi.fn(async (_destination: string, accept: boolean): Promise<unknown> =>
     api.serviceCommand(accept ? "approve_request" : "decline_request", { contact_id: approved.id })),
@@ -5155,12 +5154,12 @@ describe("desktop workspaces", () => {
     const dialog = screen.getByRole("region", { name: "Workspace settings for Lakewatcher" });
     expect(within(dialog).getByRole("status").textContent).toMatch(/effective role is administrator/i);
     fireEvent.click(within(dialog).getByRole("button", { name: "Request invitation" }));
-    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("submit_workspace_admin_request", expect.objectContaining({ workspace_id: workspace.id, request_kind: "invitation", operation_id: expect.any(String) })));
+    await waitFor(() => expect(api.coreApiWorkspaceAdminSubmit).toHaveBeenCalledWith(workspace.core_handle, "invitation", null, null, "", expect.any(String)));
     fireEvent.click(within(dialog).getByRole("button", { name: "Request promotion" }));
-    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("submit_workspace_admin_request", expect.objectContaining({ workspace_id: workspace.id, request_kind: "role_change", target_member_id: member.id, requested_role: "admin", operation_id: expect.any(String) })));
+    await waitFor(() => expect(api.coreApiWorkspaceAdminSubmit).toHaveBeenCalledWith(workspace.core_handle, "role_change", member.core_handle, "admin", "", expect.any(String)));
     fireEvent.click(within(dialog).getByRole("button", { name: /Request removal/ }));
     fireEvent.click(within(dialog).getByRole("button", { name: "Submit request" }));
-    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("submit_workspace_admin_request", expect.objectContaining({ workspace_id: workspace.id, request_kind: "member_removal", target_member_id: member.id, operation_id: expect.any(String) })));
+    await waitFor(() => expect(api.coreApiWorkspaceAdminSubmit).toHaveBeenCalledWith(workspace.core_handle, "member_removal", member.core_handle, null, "", expect.any(String)));
   });
 
   describe("administrator request recovery", () => {
@@ -5192,13 +5191,18 @@ describe("desktop workspaces", () => {
       api.initializeService.mockResolvedValue(current);
       api.onInvitation.mockResolvedValue(() => undefined);
       api.onServiceEvent.mockResolvedValue(() => undefined);
+      api.coreApiWorkspaceAdminSubmit.mockImplementation(async (_handle, kind, memberHandle, role, _note, key) => submit({
+        workspace_id: initialWorkspace.id, request_kind: kind,
+        ...(memberHandle ? { target_member_id: memberHandle } : {}),
+        ...(role ? { requested_role: role } : {}),
+        note: "", operation_id: key,
+      }));
       api.serviceCommand.mockImplementation(async (command: string, payload?: Record<string, unknown>) => {
         if (command === "snapshot") {
           if (failRefresh) { failRefresh = false; throw new Error("snapshot unavailable"); }
           return current;
         }
         if (command === "list_workspace_messages") return { messages: [], next_cursor: null, high_water: 0 } satisfies WorkspaceMessagePage;
-        if (command === "submit_workspace_admin_request") return submit(payload ?? {});
         return {};
       });
       render(<App />);
@@ -5261,53 +5265,44 @@ describe("desktop workspaces", () => {
       expect(calls[1].operation_id).not.toBe(calls[0].operation_id);
     });
 
-    it("uses the retained key through the non-Core service path", async () => {
+    it("shows Core readiness feedback without submitting when required handles are absent", async () => {
       const calls: Array<Record<string, unknown>> = [];
       const legacy = { ...adminWorkspace, core_handle: undefined,
         members: adminWorkspace.members.map((item) => ({ ...item, core_handle: undefined })) };
-      mount((payload) => {
-        calls.push(payload);
-        if (calls.length === 1) throw new Error("reply lost after commit");
-        return { state: "submitted" };
-      }, legacy);
+      mount((payload) => { calls.push(payload); return { state: "submitted" }; }, legacy);
       const settings = await openPeople();
       fireEvent.click(within(settings).getByRole("button", { name: "Request invitation" }));
-      await within(settings).findByRole("alert");
-      fireEvent.click(within(settings).getByRole("button", { name: "Request invitation" }));
-      await waitFor(() => expect(calls).toHaveLength(2));
-      expect(calls[0].operation_id).toEqual(expect.any(String));
-      expect(calls[1].operation_id).toBe(calls[0].operation_id);
+      expect((await within(settings).findByRole("alert")).textContent).toMatch(/Core workspace administration is not ready/i);
+      expect(calls).toHaveLength(0);
       expect(api.coreApiWorkspaceAdminSubmit).not.toHaveBeenCalled();
+      expect(api.serviceCommand.mock.calls.some(([command]) => command === "submit_workspace_admin_request")).toBe(false);
+      fireEvent.click(within(settings).getByRole("button", { name: "Request promotion" }));
+      expect(within(settings).getByRole("alert").textContent).toMatch(/not ready/i);
+      expect(calls).toHaveLength(0);
     });
 
-    it("passes the same key to fallback only when Core is explicitly unavailable", async () => {
+    it("refuses a member request without its Core target handle", async () => {
       const calls: Array<Record<string, unknown>> = [];
-      api.coreApiWorkspaceAdminSubmit.mockRejectedValueOnce(new Error("core_api_unavailable"));
+      const withoutTargetHandle = { ...adminWorkspace,
+        members: adminWorkspace.members.map((item) => item.id === member.id ? { ...item, core_handle: undefined } : item) };
+      mount((payload) => { calls.push(payload); return { state: "submitted" }; }, withoutTargetHandle);
+      const settings = await openPeople();
+      fireEvent.click(within(settings).getByRole("button", { name: "Request promotion" }));
+      expect((await within(settings).findByRole("alert")).textContent).toMatch(/Core workspace administration is not ready/i);
+      expect(calls).toHaveLength(0);
+      expect(api.coreApiWorkspaceAdminSubmit).not.toHaveBeenCalled();
+      expect(api.serviceCommand.mock.calls.some(([command]) => command === "submit_workspace_admin_request")).toBe(false);
+    });
+
+    it("reports explicit Core unavailability without a legacy fallback", async () => {
+      const calls: Array<Record<string, unknown>> = [];
       mount((payload) => { calls.push(payload); return { state: "submitted" }; });
+      api.coreApiWorkspaceAdminSubmit.mockRejectedValueOnce(new Error("core_api_unavailable"));
       const settings = await openPeople();
       fireEvent.click(within(settings).getByRole("button", { name: "Request invitation" }));
-      await waitFor(() => expect(calls).toHaveLength(1));
-      expect(calls[0].operation_id).toBe(api.coreApiWorkspaceAdminSubmit.mock.calls[0][5]);
-    });
-
-    it("keeps a legacy pending request on that route when Core handles appear", async () => {
-      const calls: Array<Record<string, unknown>> = [];
-      const legacy = { ...adminWorkspace, core_handle: undefined,
-        members: adminWorkspace.members.map((item) => ({ ...item, core_handle: undefined })) };
-      const control = mount((payload) => {
-        calls.push(payload);
-        if (calls.length === 1) throw new Error("legacy reply lost after commit");
-        return { state: "submitted" };
-      }, legacy);
-      const settings = await openPeople();
-      fireEvent.click(within(settings).getByRole("button", { name: "Request invitation" }));
-      await within(settings).findByRole("alert");
-      control.changeWorkspace(adminWorkspace);
-      await act(async () => { window.dispatchEvent(new Event("focus")); });
-      fireEvent.click(within(settings).getByRole("button", { name: "Request invitation" }));
-      await waitFor(() => expect(calls).toHaveLength(2));
-      expect(calls[1]).toEqual(calls[0]);
-      expect(api.coreApiWorkspaceAdminSubmit).not.toHaveBeenCalled();
+      expect((await within(settings).findByRole("alert")).textContent).toMatch(/Core workspace administration is unavailable/i);
+      expect(calls).toHaveLength(0);
+      expect(api.serviceCommand.mock.calls.some(([command]) => command === "submit_workspace_admin_request")).toBe(false);
     });
 
     it("keeps a Core pending request on that route when its handle disappears", async () => {
@@ -5325,7 +5320,7 @@ describe("desktop workspaces", () => {
       await waitFor(() => expect(api.coreApiWorkspaceAdminSubmit).toHaveBeenCalledTimes(2));
       expect(api.coreApiWorkspaceAdminSubmit.mock.calls[1]).toEqual(api.coreApiWorkspaceAdminSubmit.mock.calls[0]);
       expect(legacyCalls).toHaveLength(0);
-      expect(within(settings).getByRole("alert").textContent).toMatch(/not confirmed/i);
+      expect(within(settings).getByRole("alert").textContent).toMatch(/unconfirmed/i);
     });
 
     it("keeps an earlier uncertain request key when a later replay is refused", async () => {
