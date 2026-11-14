@@ -1,6 +1,21 @@
 # Core integration coordination — 2026-11-09
 
-Current November 14 handoff: use [the compact work register](MESH_CORE_REFACTOR_REMAINING.md)
+Current November 14 integration: Windows CI `43575546186` at `9833142` closed
+failed at `receiver_reopen/unavailable`, after verification and ordinary pairing
+passed. Root reproduced the real cleanup registry rejecting the second receiver
+lifetime. D's fix is integrated as `3322776`; it reserves cleanup before launch,
+retains all bounds, and adds a real-registry regression. Installed recovery must
+still pass. B's installed CallDialog producer through `b549f90` has local and
+independent review evidence but has not executed an installed call. C owns its
+feature-branch launch routing; D reviews exact artifact and role boundaries.
+Private R7 components are integrated through `0843761`, including process pins,
+per-operation host authorization, bounded codecs and positive pipe retirement.
+A owns Python admission wiring and B owns private Node owner/helper control.
+Both remain disabled pending coherent integration and installed negative cases.
+Root owns source-bound validation, push, CI closure and roadmap reconciliation.
+Full native, public owner restart, actual CallDialog and R2 promotion remain open.
+
+Earlier November 14 handoff: use [the compact work register](MESH_CORE_REFACTOR_REMAINING.md)
 and [focused restart strategy](MESH_CORE_RESTART_STRATEGY_HANDOFF.md). Independent
 R0/R3/R5/R8/R9 batches proceed under their explicit file ownership. R2 retirement
 and shared-owner promotion remain gated. Installed Windows separate-process

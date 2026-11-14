@@ -3,11 +3,16 @@
 Current November 14 checkpoint: the latest full native run `43568841923` remains
 failed at Android's first cold initialize. Public owner-restart `43571465943`
 failed its Windows paired-process prerequisite; neither public role executed.
+Successor CI `43575546186` at `9833142` failed at `receiver_reopen/unavailable`.
+The real cleanup registry's rejection of answerer incarnation 2 is reproduced
+and corrected in `3322776`; installed recovery success is still pending.
 Gateway capability `43572907432` passed after its parser correction, but remains
 `qualification=false` and does not close selected packaged-peer partition cases.
 Android custody/attribution and Windows failure-label improvements through
-`8b1c119` have local test evidence only. Actual CallDialog coexistence and
-same-image caller isolation remain open. See the newest entries in the
+`8b1c119` have local test evidence only. The CallDialog producer through `b549f90`
+and private admission components through `0843761` are implemented and locally
+checked. Actual CallDialog coexistence and installed same-image caller isolation
+remain open. See the newest entries in the
 [qualification ledger](Mesh_Chat_Connection_Qualification_Ledger.md) for source,
 artifact hashes and evidence limits. Earlier results below remain historical.
 

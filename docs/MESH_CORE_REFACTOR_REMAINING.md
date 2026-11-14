@@ -1,7 +1,7 @@
 # Mesh Core refactor: remaining work and completion map
 
-Prepared November 13, 2026; refreshed November 14 through Android custody and
-recovery attribution `8b1c119`, gateway capability run `43572907432`, and
+Prepared November 13, 2026; refreshed November 14 through receiver recovery
+correction `3322776`, failed CI `43575546186`, installed-call implementation, and
 the source-bound results below. The last full native qualification remains failed;
 focused diagnostics do not replace it. This is a compact planning register, not
 new qualification evidence.
@@ -65,11 +65,19 @@ the specification's IDs or imply equal effort. Several packages overlap.
   failure frame was discarded; reviewed fixed-stage attribution is now integrated.
   A local mixed-source diagnostic instead timed out waiting for the initial
   invitation after 360 seconds, which does not establish the CI cause.
+- Successor CI `43575546186` at `9833142` passed verification and failed Windows
+  recovery at `receiver_reopen/unavailable`. The real cleanup registry rejected
+  the required second answerer lifetime. Correction `3322776` reserves cleanup
+  before launch and permits both second lifetimes within the four-slot bound.
+  Actual installed recovery still requires a new passing run.
 - Android custody/initialize changes at `8b0befd` passed 7,041 local connection
   tests with two platform skips and strict typing. Follow-ups through `8b1c119`
   passed 106 affected tests with one platform skip. The native EOF cause is still
-  unproven. Actual CallDialog harness implementation is under independent review;
-  bounded I/O, browser cleanup and settings verification corrections precede CI.
+  unproven. The actual CallDialog harness through `b549f90` is implemented and
+  reviewed, with local lifecycle, browser and DOM evidence. Its installed audio
+  and messaging execution remains pending. R7 roster, Windows pins, generic
+  authorization and private codecs are integrated through `0843761`; coherent
+  Python/Node admission wiring and installed negative cases remain in progress.
 - Core/API, SDK packages, typed UI migration and native transport implementations
   already exist. Do not restart them from scratch.
 - All ten nonnative jobs passed in historical full run `b8e3e20`. Both native peers

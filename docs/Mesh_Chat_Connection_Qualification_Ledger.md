@@ -1,5 +1,48 @@
 # Connection runtime qualification ledger
 
+## Receiver-reopen fixture defect and installed-call candidate — November 14, 2026
+
+Run [43575546186](https://github.com/ahouchens/mesh-chat/actions/runs/43575546186),
+attempt 1 at `98331429f7292c7b0cd59d2596ae1523e4f36ad2`, tree
+`4c2f209eef68b182cfd713bf668f8308fcf187e0`, closed failed. Ubuntu verification
+passed. The Windows paired-process producer failed at `receiver_reopen` with
+`unavailable` after 43.374 seconds. Earlier installed bootstrap, EFS, lifetime,
+image admission and ordinary public pairing checks passed. Later Windows checks
+did not execute; this direct CI run contained no Android or actual call role.
+Root validated desktop artifact `14107156034`, ZIP SHA-256
+`1b4ed4e948f34e63b6088169a3a9a9f3e892dfbcd87ca13b1aab109de13f5dfc`,
+and verification artifact `14106945333`, ZIP SHA-256
+`a6e31e229a0f8b08820e11ffba66073ec5871c3bb2171e7025d8c2ebdb938e53`.
+
+Root reproduced a deterministic source defect matching that stage: the fixture
+reopens both peers, but its cleanup registry rejected answerer incarnation 2.
+Its `invalid_cleanup_slot` exception was reduced to `unavailable`. The previous
+fixture tests mocked the ownership callback and missed the actual registry.
+Integrated correction `3322776` permits both second lifetimes, retains the
+four-slot cap and duplicate/unknown-role rejection, and reserves cleanup facts
+before launching a child. The regression uses the real ownership function and
+registry; the strict Python report validator accepts the same bounded slots.
+This establishes the fixture defect, not success of the remaining recovery flow
+or the cause of Android's earlier native initialize EOF. A fresh installed run
+is still required.
+
+The R5 installed CallDialog producer through `b549f90` is implemented and
+independently reviewed. Local evidence includes 18 Python checks and four DOM
+checks at `a60c323`, nine final lifecycle checks at `b549f90`, and one actual
+Edge launch/retirement at `a60c323`. The Edge check verified process/job, pipe,
+reader and profile cleanup; it performed no call or Core traffic. The CI case
+requires installed GUI audio, a separate public SDK/browser peer, authenticated
+messages before/during/after the call, and exact cleanup. No installed call
+acceptance is claimed yet.
+
+R7 private roster, per-operation authorization, Windows process pins and bounded
+private codecs are integrated through `0843761`, with focused checks and
+independent review. Same-image admission wiring is not enabled. Pipe custody
+correction `c03f4a8` passed 53 affected checks: canceling overlapped I/O now waits
+for completion in its owned worker; shutdown retains handles and dependencies
+until all workers retire. These component results do not establish installed
+same-image caller isolation or permit R2/default promotion.
+
 ## Gateway capability passed; recovery attribution integrated — November 14, 2026
 
 Gateway run [43572907432](https://github.com/ahouchens/mesh-chat/actions/runs/43572907432),
