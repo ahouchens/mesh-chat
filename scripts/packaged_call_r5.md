@@ -39,9 +39,10 @@ and installed bytes must close or remain unchanged for a positive result.
 The disposable runner retains reports. A failed run is diagnostic evidence,
 not acceptance.
 
-`.github/workflows/packaged-call-r5.yml` is a standalone diagnostic dispatch.
+`.github/workflows/packaged-call-r5.yml` is a standalone diagnostic. It launches
+on a push to `codex/mesh-core-restart-diagnostic` that changes this workflow file,
+which allows its first run before default-branch registration. Manual dispatch
+is retained. Source-only pushes without that workflow change do not launch it.
 It runs exact-source CI verification and producers before building the NSIS
-candidate or starting the two roles. To wire it into a top-level selection,
-the integration lead should expose the standalone dispatch or factor out the
-CI producer jobs into a reusable workflow. Calling it from `ci.yml` as written
+candidate or starting the two roles. Calling it from `ci.yml` as written
 would recursively invoke CI. No `ci.yml` change is included in this candidate.
