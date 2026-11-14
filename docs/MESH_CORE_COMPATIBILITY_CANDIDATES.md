@@ -150,13 +150,15 @@ python tests/core-sdk-upgrade/windows_candidate_pair.py \
   --output <retained-report.json>
 ```
 
-The local worktree has no source-bound Windows sidecar or prior native binary,
-so the installed-host case has not run here. The next smallest R8 execution
-batch is to retain the current source-bound sidecar **and** its build manifest,
-assemble the explicit artifact directory from the same-source SDK staging and
-pinned baseline rebuild, run this fixture on Windows AMD64, and verify its
-report. If it fails, inspect the reported retained workspace and exact child
-retirement before removing that workspace. A later in-place native upgrade
+The installed current-host case passed in Windows run
+[43546319373](https://github.com/ahouchens/mesh-chat/actions/runs/43546319373)
+at exact source `6773e646accb67d0740e51d2cb82929fb8a73390`. Artifact `14095266611`
+binds the same-run SDK staging, sidecar and candidate manifest. Current and old
+TypeScript clients passed version refusal, profile creation, same-identity
+reopen, two clean host exits and EFS checks. This run predates the independent
+Python-owned fixture; its Python API result remains unqualified. The next
+Windows batch executes that separate fixture on the integrated source.
+A later in-place native upgrade
 needs a retained prior Windows binary, its exact source/build manifest and
 the matching vault/key provenance; a
 reconstructed old component wheel cannot stand in for that binary. Keep

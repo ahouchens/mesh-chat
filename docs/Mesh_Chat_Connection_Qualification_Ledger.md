@@ -1,5 +1,31 @@
 # Connection runtime qualification ledger
 
+## Installed Windows candidate pair passed — November 13, 2026
+
+Run [43546319373](https://github.com/ahouchens/mesh-chat/actions/runs/43546319373),
+attempt 1, source `6773e646accb67d0740e51d2cb82929fb8a73390`, tree
+`1effd28693203801442029f9d7dae22119702479`, passed verification and all Windows
+host steps. Verification reported **7,990 passed, 52 skipped**. The installed
+candidate pair passed current and old TypeScript API calls, incompatible-major
+refusal before profile creation, same-identity reopen, two clean host exits and
+EFS directory/vault checks.
+
+Candidate artifact `14095266611` is 2,881 bytes, ZIP SHA256
+`9eba95ec2d67351a8b2fa562fa1a255ee7ae2713d780b8d299e00a2676fe46a0`.
+Its manifest SHA256 is
+`044da6cf24d608c8acef9a07fade94745edac1ccbdfbccbde9223c4660b5d549`;
+runtime SHA256 is
+`d18ee8a9aaf972706696d4e42d29c436aa2a839c07383f6eb3f6e8bee678136a`.
+Same-run SDK staging artifact `14094756119` binds the assembled inputs.
+The root retains the ZIP and API metadata under
+`.test-tmp/windows-candidate-6773e64*`.
+
+This closes the repaired current-host TypeScript candidate execution gap. It
+does not qualify Python API behavior, an older native binary, native upgrade,
+outbox/draft/receipt continuity, or full native acceptance. The independent
+Python-owned consumer was integrated after this source and needs its own run.
+The paired first-cold diagnostic `43546317181` is separate and still active.
+
 ## Paired diagnostic prerequisite failure repaired — November 13, 2026
 
 At source `ef86e8f`, paired diagnostic run `43544372506` and Windows candidate

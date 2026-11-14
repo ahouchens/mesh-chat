@@ -226,14 +226,29 @@ scenario. The staged/worktree inventory and workflow-expression test repairs pas
 146 affected tests. R1/R4 replacement `43546317181` exercises the six-path prefix
 and first paired cold cycle after its same-run package producers; the normal
 required qualification gate is excluded from this diagnostic route. R8 replacement
-`43546319373` retries the corrected installed Windows fixture.
-A monitors Windows and D monitors the paired run. The R6 audit
-identified staged Android public pairing/receipt instrumentation as the next
-cross-platform consumer batch. A separate Python-owned Windows consumer and its
+`43546319373` passed broad verification (7,990 passed, 52 skipped) and the
+corrected installed Windows fixture. Its TypeScript current/old-client checks
+include same-identity reopen, two clean exits and EFS storage. Native upgrade,
+Python API and peer receipt evidence are outside this result.
+D monitors the paired run, whose same-run producers passed and both native roles
+started. The R6 Android public-session fixture is integrated through `0f93b9c`:
+one ordinary main-process host and installed Binder SDK span public profile
+creation/query and shutdown. Exact-source and explicit disposable-emulator
+admission precede device mutations; bounded I/O and a shared deadline govern the
+session. Its isolated manual CI route is integrated as `deeb8f4`. Pairing/receipts, restart and
+network-interruption orchestration remain the next cross-platform consumer batch.
+A separate Python-owned Windows consumer and its
 opt-in CI step are integrated through `849600c`, with 189 related tests passing;
 actual installed execution remains pending. Caller authority is unchanged.
-B is preparing the first installed Windows app audio-call coexistence scenario;
-existing engine tests do not exercise calls and messaging through the app UI.
+B's installed Windows WebView2 media preflight and NSIS installer runner are
+integrated through `33c027b`. They bind the actual installed application and
+sidecar to the same-source delivery report and manifest. Manual CI route
+`c3e19b6` and timeout reporting follow-up `af6f7ef` are integrated. This first run exercises capture and peer
+connection availability only; actual CallDialog plus messaging coexistence
+remains open. Combined local session/media/workflow checks passed 186 tests,
+with one unavailable file-symlink test skipped. Another 646 Android distribution,
+qualification and matrix regressions passed; two Bash cases hit local sandbox
+and long-path limits, then both passed with a short path outside the sandbox.
 
 The preceding three packaged Android reopens passed at `6819084`; the historical
 six-path cold failure and Windows artifact-inventory failure remain unresolved.
