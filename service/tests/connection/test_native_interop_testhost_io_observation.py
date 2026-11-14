@@ -155,6 +155,16 @@ def test_real_subprocess_timeout_shares_budget_and_retires_child(monkeypatch):
     assert children[0].poll() is not None
 
 
+def test_default_cap_includes_delayed_reader_and_child_retirement(monkeypatch):
+    calls, children = subprocess_adb(monkeypatch, [(b"device\n", 0, 10)])
+    started = time.monotonic()
+    observed = io.control_path_presence("adb", "12345", AndroidPeer.APP)
+    assert time.monotonic() - started < 3.5
+    assert observed == presence("timeout", "timeout", "timeout")
+    assert len(calls) == 1
+    assert children[0].poll() is not None
+
+
 def test_real_delayed_children_share_one_deadline(monkeypatch):
     replies = [
         (b"device\n", 0, .2),

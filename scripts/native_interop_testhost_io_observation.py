@@ -184,13 +184,13 @@ def _process_label(data, code, failure, device):
     return "one" if len(pids.split()) == 1 else "multiple"
 
 
-def control_path_presence(adb, forward, app, *, budget=4.0):
+def control_path_presence(adb, forward, app, *, budget=3.4):
     """Sample pinned ADB device, owned forward, and fixed app under one deadline."""
     unknown = {"device": "unknown", "forward": "unknown", "app_process": "unknown"}
     if (type(adb) is not str or not adb or type(app) is not str
             or re.fullmatch(r"[a-z][a-z0-9_.]{1,127}", app) is None):
         return unknown
-    budget = min(4.0, max(0, budget))
+    budget = min(3.4, max(0, budget))
     cleanup_slice = min(.15, budget / 6)
     deadline = time.monotonic() + budget - 3 * cleanup_slice
     prefix = [adb, "-s", "emulator-5554"]
