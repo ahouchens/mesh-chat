@@ -1,5 +1,4 @@
 // Narrow admission and post-removal evidence for the installed private fixture.
-import { randomUUID } from "node:crypto";
 import { win32 as windowsPath } from "node:path";
 import { HelperCoreError } from "./public-process-helper.mjs";
 
@@ -21,7 +20,7 @@ export async function requireDeniedBeforeReply(transport, mode, preface, openCor
 
 export async function requireRevokedHelper(helper, profile, settings, deadline) {
   try {
-    await helper.request("settings.update", {profile, settings}, deadline, randomUUID());
+    await helper.request("settings.update", {profile, settings}, deadline);
   } catch (error) {
     if (!(error instanceof HelperCoreError) || error.code !== "unauthenticated") {
       throw new Error("helper_revocation_not_proven");
@@ -30,6 +29,21 @@ export async function requireRevokedHelper(helper, profile, settings, deadline) 
     return;
   }
   throw new Error("removed_helper_mutated");
+}
+
+export async function requireOwnerSettingsControl(owner, profile, timeoutMs) {
+  const before = (await owner.request("settings.query", {profile}, {timeoutMs: timeoutMs()})).settings;
+  if (typeof before?.nearby_discovery !== "boolean") throw new Error("settings_shape");
+  const changedSetting = {nearby_discovery: !before.nearby_discovery};
+  // settings.update is a last-write-wins operation without a caller key.
+  await owner.request("settings.update", {profile, settings: changedSetting}, {timeoutMs: timeoutMs()});
+  const changed = (await owner.request("settings.query", {profile}, {timeoutMs: timeoutMs()})).settings;
+  if (changed.nearby_discovery !== changedSetting.nearby_discovery) throw new Error("mutation_control");
+  await owner.request("settings.update", {profile, settings: {nearby_discovery: before.nearby_discovery}},
+    {timeoutMs: timeoutMs()});
+  const restored = (await owner.request("settings.query", {profile}, {timeoutMs: timeoutMs()})).settings;
+  if (restored.nearby_discovery !== before.nearby_discovery) throw new Error("mutation_restore");
+  return {before, changedSetting};
 }
 
 export function hostWitnessScript(hostPid, ownerPid, executable) {

@@ -9,7 +9,7 @@ import { performance } from "node:perf_hooks";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { Helper, PrivateConsumerInput } from "./public-process-helper.mjs";
-import { hostWitnessScript, requireDeniedBeforeReply, requireRevokedHelper } from "./private-admission-evidence.mjs";
+import { hostWitnessScript, requireDeniedBeforeReply, requireOwnerSettingsControl, requireRevokedHelper } from "./private-admission-evidence.mjs";
 import { launchRuntime } from "./runtime.mjs";
 
 const SOURCE = fileURLToPath(import.meta.url);
@@ -244,18 +244,7 @@ async function check(executable, dataDirectory) {
     checks.registered_helper_once = true;
 
     phase = "removed_helper";
-    const before = (await owner.request("settings.query", {profile: handle}, {timeoutMs: budget(deadline)})).settings;
-    if (typeof before?.nearby_discovery !== "boolean") throw new Error("settings_shape");
-    const changedSetting = {nearby_discovery: !before.nearby_discovery};
-    await owner.request("settings.update", {profile: handle, settings: changedSetting},
-      {idempotencyKey: randomUUID(), timeoutMs: budget(deadline)});
-    const changed = (await owner.request("settings.query", {profile: handle}, {timeoutMs: budget(deadline)})).settings;
-    if (changed.nearby_discovery !== changedSetting.nearby_discovery) throw new Error("mutation_control");
-    await owner.request("settings.update", {profile: handle,
-      settings: {nearby_discovery: before.nearby_discovery}},
-    {idempotencyKey: randomUUID(), timeoutMs: budget(deadline)});
-    const restored = (await owner.request("settings.query", {profile: handle}, {timeoutMs: budget(deadline)})).settings;
-    if (restored.nearby_discovery !== before.nearby_discovery) throw new Error("mutation_restore");
+    const {before, changedSetting} = await requireOwnerSettingsControl(owner, handle, () => budget(deadline));
     checks.owner_mutation_control = true;
     await runtime.removeHelper(helper.child.pid, budget(deadline, 5000));
     await requireRevokedHelper(helper, handle, changedSetting, deadline);

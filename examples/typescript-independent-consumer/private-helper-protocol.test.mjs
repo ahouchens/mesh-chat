@@ -4,7 +4,7 @@ import { once } from "node:events";
 import { test } from "node:test";
 import { Helper, HelperCoreError } from "./public-process-helper.mjs";
 import { observeRuntime } from "./runtime.mjs";
-import { hostWitnessScript, requireDeniedBeforeReply, requireRevokedHelper } from "./private-admission-evidence.mjs";
+import { hostWitnessScript, requireDeniedBeforeReply, requireOwnerSettingsControl, requireRevokedHelper } from "./private-admission-evidence.mjs";
 
 const TOKEN = "a".repeat(64);
 const PIPE = "private-test-pipe";
@@ -238,13 +238,34 @@ test("removed helper evidence requires exact unauthenticated result and clean ex
       assert.equal(operation, "settings.update");
       assert.deepEqual(params, {profile: "local", settings: {nearby_discovery: true}});
       assert.equal(deadline, 12345);
-      assert.match(key, /^[0-9a-f-]{36}$/);
+      assert.equal(key, undefined); // settings.update has no caller idempotency key.
       throw new HelperCoreError("unauthenticated");
     },
     async closeInput(deadline) { assert.equal(deadline, 12345); closed++; },
   };
   await requireRevokedHelper(helper, "local", {nearby_discovery: true}, 12345);
   assert.equal(closed, 1);
+});
+
+test("owner mutation control uses the public non-keyed settings operation", async () => {
+  let nearbyDiscovery = false;
+  const calls = [];
+  const owner = {async request(operation, params, options) {
+    calls.push({operation, params, options});
+    assert.deepEqual(options, {timeoutMs: 1000});
+    if (operation === "settings.query") return {settings: {nearby_discovery: nearbyDiscovery}};
+    if (operation === "settings.update") {
+      nearbyDiscovery = params.settings.nearby_discovery;
+      return {settings: {nearby_discovery: nearbyDiscovery}};
+    }
+    throw new Error("unexpected_operation");
+  }};
+  const control = await requireOwnerSettingsControl(owner, "profile-handle", () => 1000);
+  assert.equal(nearbyDiscovery, false);
+  assert.deepEqual(control, {before: {nearby_discovery: false}, changedSetting: {nearby_discovery: true}});
+  assert.deepEqual(calls.map(({operation}) => operation), [
+    "settings.query", "settings.update", "settings.query", "settings.update", "settings.query",
+  ]);
 });
 
 test("transport errors, other Core errors, success and dirty exits cannot prove revocation", async () => {
