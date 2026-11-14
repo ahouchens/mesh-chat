@@ -1,5 +1,6 @@
 """The fresh public pair runs only through its isolated manual route."""
 
+import ast
 from pathlib import Path
 import os
 import re
@@ -158,3 +159,22 @@ def test_android_emulator_shell_restores_declared_hyphenated_input_after_shell_b
     assert "INPUT_DISPOSABLE-EMULATOR-SERIAL=emulator-5554" in restored.stdout
     assert "GITHUB_TOKEN=test-github-token" in restored.stdout
     assert "ACTIONS_RUNTIME_TOKEN=test-runtime-token" in restored.stdout
+
+
+def test_staged_typescript_application_hashes_match_windows_and_linux_checkouts():
+    source = ast.parse((ROOT / "scripts/stage_independent_core_consumers.py").read_text(encoding="utf-8"))
+    files = next(ast.literal_eval(node.value) for node in source.body if isinstance(node, ast.Assign)
+                 and any(isinstance(target, ast.Name) and target.id == "FILES" for target in node.targets))
+    directory = ROOT / "examples/typescript-independent-consumer"
+    assert set(files) == {"package.json", "README.md", *(path.name for path in directory.glob("*.mjs"))}
+    for name in files:
+        relative = f"examples/typescript-independent-consumer/{name}"
+        attributes = subprocess.check_output(
+            ["git", "-C", str(ROOT), "check-attr", "--cached", "text", "eol", "--", relative], text=True)
+        assert f"{relative}: text: set" in attributes
+        assert f"{relative}: eol: lf" in attributes
+        raw = subprocess.check_output(["git", "-C", str(ROOT), "show", f"HEAD:{relative}"])
+        checkout = [subprocess.check_output(["git", "-C", str(ROOT), "-c", f"core.autocrlf={mode}",
+                                             "cat-file", "--filters", f"HEAD:{relative}"])
+                    for mode in ("true", "input")]
+        assert checkout == [raw.replace(b"\r\n", b"\n")] * 2
