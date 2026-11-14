@@ -798,7 +798,7 @@ class AndroidEmulator:
             self.process = subprocess.Popen([str(self.sdk / "emulator/emulator"), "-avd", self.name,
                 "-port", "5554", "-no-window", "-gpu", "swiftshader_indirect", "-accel", "on",
                 "-no-snapshot", "-noaudio", "-no-boot-anim", "-camera-back", "none", "-camera-front", "none",
-                "-show-kernel", "-logcat", LOG_TAGS],
+                "-logcat", LOG_TAGS],
                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
             self.observation.start(self.process.stdout)
             deadline = time.monotonic() + 600

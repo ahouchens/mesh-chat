@@ -249,7 +249,7 @@ def scripted_android(monkeypatch, tmp_path, *, fault=None, boot_failures=0,
         assert args == [str(emulator.sdk / "emulator/emulator"), "-avd", emulator.name, "-port", "5554",
             "-no-window", "-gpu", "swiftshader_indirect", "-accel", "on", "-no-snapshot", "-noaudio",
             "-no-boot-anim", "-camera-back", "none", "-camera-front", "none",
-            "-show-kernel", "-logcat", LOG_TAGS]
+            "-logcat", LOG_TAGS]
         assert kwargs == {"stdin": peers.subprocess.DEVNULL, "stdout": peers.subprocess.PIPE,
                           "stderr": peers.subprocess.STDOUT, "start_new_session": True}
         state.starts += 1

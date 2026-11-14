@@ -1,7 +1,8 @@
 """One declared old/current emulator-launch pair; no app or native qualification.
 
-The control preserves b8e3e20's inherited stdin and discarded output. The observed
-case preserves 82c3364's flags and pipe. Only a fresh AVD is booted in each case;
+The control preserves b8e3e20's inherited stdin and discarded output. The current
+case uses filtered logcat and a pipe, without the conflicting kernel stdio sink.
+Only a fresh AVD is booted in each case;
 no APK, profile, credential, network impairment or product host is installed.
 """
 import argparse
@@ -24,7 +25,7 @@ from native_interop_android_observation import process_observation
 
 
 ROOT = Path(__file__).resolve().parents[1]
-VARIANTS = ("baseline_b8", "observed_82")
+VARIANTS = ("baseline_b8", "current_logcat")
 BOOT_SECONDS = 600
 CAP = 65535
 PATTERNS = {
@@ -99,8 +100,8 @@ def launch_command(emulator, variant):
         "-port", "5554", "-no-window", "-gpu", "swiftshader_indirect", "-accel", "on",
         "-no-snapshot", "-noaudio", "-no-boot-anim", "-camera-back", "none", "-camera-front", "none"]
     options = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL, "start_new_session": True}
-    if variant == "observed_82":
-        command += ["-show-kernel", "-logcat", LOG_TAGS]
+    if variant == "current_logcat":
+        command += ["-logcat", LOG_TAGS]
         options.update(stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     return command, options
 
@@ -224,7 +225,7 @@ def run_case(variant, update):
                     retire(emulator, console)
                 except Exception as error:
                     result["cleanup_failures"].append(checked_failure(error))
-            result["console"] = console.snapshot() if variant == "observed_82" else {"capture": "discarded_as_baseline"}
+            result["console"] = console.snapshot() if variant == "current_logcat" else {"capture": "discarded_as_baseline"}
             result["status"] = "completed"
             result["passed"] = result["booted"] and not result["cleanup_failures"] and "primary_failure" not in result
             update(result)

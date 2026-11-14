@@ -36,9 +36,11 @@ def test_launch_matches_actual_current_owner_and_declares_only_old_new_differenc
         return launch(command, **options)
     monkeypatch.setattr(peers.subprocess, "Popen", capture)
     script.emulator.start(script.apks)
-    assert diagnostic.launch_command(script.emulator, "observed_82") == captured[0]
+    assert diagnostic.launch_command(script.emulator, "current_logcat") == captured[0]
     old_command, old_options = diagnostic.launch_command(script.emulator, "baseline_b8")
-    assert old_command == captured[0][0][:-3]
+    assert old_command == captured[0][0][:-2]
+    assert "-show-kernel" not in captured[0][0]
+    assert captured[0][0][-2:] == ["-logcat", diagnostic.LOG_TAGS]
     assert old_options == {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL, "start_new_session": True}
     script.emulator.close()
     assert_android_cleaned(script)
@@ -61,7 +63,7 @@ def test_completed_control_is_on_disk_before_second_case_is_interrupted(monkeypa
     source = context(monkeypatch)
     output = tmp_path / "report.json"
     def run_case(variant, update):
-        if variant == "observed_82":
+        if variant == "current_logcat":
             update({"variant": variant, "status": "running", "stage": "boot"})
             saved = json.loads(output.read_text())
             assert saved["passed"] is False and saved["status"] == "running"
@@ -88,7 +90,7 @@ def test_uncertain_retirement_fences_next_case_and_keeps_declared_pair(monkeypat
     monkeypatch.setattr(diagnostic, "run_case", run_case)
     report = diagnostic.run(source, tmp_path / "report.json")
     assert calls == ["baseline_b8"]
-    assert report["attempts"][1] == {"variant": "observed_82", "status": "not_run",
+    assert report["attempts"][1] == {"variant": "current_logcat", "status": "not_run",
                                      "reason": "prior_cleanup_unresolved", "passed": False}
     assert not report["passed"]
 
@@ -164,7 +166,7 @@ def test_early_exit_is_captured_before_cleanup_without_losing_primary(monkeypatc
         raise OSError("PRIVATE_CLEANUP")
     monkeypatch.setattr(diagnostic, "retire", failed_cleanup)
     checkpoints = []
-    result = diagnostic.run_case("observed_82", lambda value: checkpoints.append(json.loads(json.dumps(value))))
+    result = diagnostic.run_case("current_logcat", lambda value: checkpoints.append(json.loads(json.dumps(value))))
     assert result["primary_failure"] == {"stage": "boot", "exception_kind": "PeerFailure",
                                          "error_code": "emulator_exited_during_boot"}
     assert result["process_before_cleanup"] == {"state": "exited", "exit_status": 2}
