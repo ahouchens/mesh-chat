@@ -15,6 +15,12 @@ import yaml
 SOURCE = Path(__file__).resolve().parents[3] / "scripts/public-core-pair-action"
 
 
+def input_key(name):
+    metadata = yaml.safe_load((SOURCE / "action.yml").read_text(encoding="utf-8"))
+    assert name in metadata["inputs"]
+    return "INPUT_" + name.replace(" ", "_").upper()
+
+
 def action(tmp_path, *, timeout_ms=None):
     root = tmp_path / "candidate"
     directory = root / "scripts/public-core-pair-action"
@@ -48,8 +54,8 @@ raise SystemExit(7 if os.environ.get("MESH_TEST_FAIL") else 0)
 
 
 def environment(role):
-    return {**os.environ, "INPUT_ROLE": role, "INPUT_PYTHON": sys.executable,
-            "INPUT_DISPOSABLE_EMULATOR_SERIAL": "emulator-5554" if role == "android" else "",
+    return {**os.environ, input_key("role"): role, input_key("python"): sys.executable,
+            input_key("disposable-emulator-serial"): "emulator-5554" if role == "android" else "",
             "GITHUB_JOB": "android_public" if role == "android" else "windows_public",
             "GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "workflow_dispatch",
             "GITHUB_SHA": "a" * 40, "GITHUB_REPOSITORY": "example/mesh",
@@ -92,7 +98,7 @@ def test_real_action_invokes_only_exact_role_controller_and_discards_output(tmp_
     ("GITHUB_REPOSITORY", "../mesh"),
     ("GITHUB_RUN_ID", "999999999999999999999"),
     ("GITHUB_TOKEN", ""), ("ACTIONS_RUNTIME_TOKEN", ""),
-    ("INPUT_DISPOSABLE_EMULATOR_SERIAL", "emulator-5556"),
+    (input_key("disposable-emulator-serial"), "emulator-5556"),
 ])
 def test_action_rejects_wrong_windows_admission_before_controller(tmp_path, field, bad):
     script, root = action(tmp_path)
@@ -107,7 +113,17 @@ def test_action_rejects_wrong_windows_admission_before_controller(tmp_path, fiel
 def test_android_requires_pinned_disposable_emulator(tmp_path):
     script, root = action(tmp_path)
     env = environment("android")
-    env["INPUT_DISPOSABLE_EMULATOR_SERIAL"] = ""
+    env[input_key("disposable-emulator-serial")] = ""
+    result = invoke(script, env)
+    assert result.returncode == 1 and result.stdout == "Public Core pair controller admission failed.\n"
+    assert not (root / "dist/reports/public-core-pair-android.json").exists()
+
+
+def test_android_rejects_underscore_alias_without_declared_input(tmp_path):
+    script, root = action(tmp_path)
+    env = environment("android")
+    env[input_key("disposable-emulator-serial")] = ""
+    env["INPUT_DISPOSABLE_EMULATOR_SERIAL"] = "emulator-5554"
     result = invoke(script, env)
     assert result.returncode == 1 and result.stdout == "Public Core pair controller admission failed.\n"
     assert not (root / "dist/reports/public-core-pair-android.json").exists()

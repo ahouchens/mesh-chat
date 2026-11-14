@@ -8,7 +8,7 @@ const RETIREMENT_MS = 15_000;
 function admitted() {
   const role = process.env.INPUT_ROLE;
   const jobs = { windows: "windows_public", android: "android_public" };
-  const serial = process.env.INPUT_DISPOSABLE_EMULATOR_SERIAL || "";
+  const serial = process.env["INPUT_DISPOSABLE-EMULATOR-SERIAL"] || "";
   if (!Object.prototype.hasOwnProperty.call(jobs, role)
       || process.env.GITHUB_JOB !== jobs[role]
       || process.env.GITHUB_ACTIONS !== "true"
