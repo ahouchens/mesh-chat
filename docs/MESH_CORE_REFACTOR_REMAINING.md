@@ -101,10 +101,10 @@ its owned checkout and reports source evidence and gaps before integration.
 | Owner | Roadmap batch | Exclusive file scope / concrete deliverable | Next milestone |
 | --- | --- | --- | --- |
 | Lead | R0/R6/R9 | Working 0.9.66 baseline identified; public pair controller, strict checker and isolated workflow integrated and reviewed. | Integrate reviewed fixes and bind platform results to the roadmap; full acceptance remains open. |
-| C | R1/R6 | Public session/flow work integrated; bounded Android test-host EOF observation designed. | Independently review D's observer; preserve five parked native interop files. |
-| B | R3/R5/R8 | Installed Windows Python and current/old TypeScript consumers passed; media replacement isolates the mismatch to the desktop app. | Trace the packaged/staged app divergence from `43554916988`, fix the demonstrated cause, then prepare CallDialog plus messaging. |
+| C | R1/R6/R7 | Observer review and Windows same-data reopen adapter complete. | Audit the smallest separate-consumer-process isolation case; preserve five parked native interop files. |
+| B | R3/R5/R8 | Installed app mismatch traced to Tauri's bundle-marker patch; Windows build repair integrated. | Monitor repair run `43557685270`, then prepare CallDialog plus messaging after capture passes. |
 | A | R6/R8 | Android public-session smoke passed; installed cross-platform fresh-pair workflow integrated. | Monitor first public pair run `43556580958` at `4565ce1`, then address its result before restart and partition extensions. |
-| D | R1/R9 | Native run `43551695082` failed on a partial Android test-control reply before cold restart. | Add bounded test-harness stage/ordinal/forward observation, obtain independent review, then one exact-source reproduction. |
+| D | R1/R9 | Bounded test-harness stage/ordinal/forward observer integrated and independently reviewed. | Monitor exact-source native reproduction `43557683098`; retain the first causal failure or paired result. |
 
 R2 helper retirement remains gated. R6 preparation is assigned; R7's remaining
 isolation work still needs its own implementation batch. Focused runs never close the full native or public-consumer
@@ -312,6 +312,18 @@ controlled network interruption, as described below. Full native, SC21,
 media coexistence and physical acceptance remain open.
 
 ## Independent public-consumer execution and next extensions
+
+Follow-up source `92e50bb11b72e5fb86c379167b79bbfefa6fe60f`, tree
+`2bba9680c95d490d23a46794487cac8e91e4c8a8`, includes the reviewed native observer,
+Windows same-data reopen adapter and Windows packaging repair. Integrated checks
+passed 1,382 native observer/peer/controller tests, 59 public adapter/flow tests,
+and 38 desktop release/media tests. The packaging repair disables Tauri's
+per-bundle executable patch on Windows, preserving the exact installed-byte gate;
+the current app has no updater integration. Native diagnostic
+[43557683098](https://github.com/ahouchens/mesh-chat/actions/runs/43557683098) and
+media replacement [43557685270](https://github.com/ahouchens/mesh-chat/actions/runs/43557685270)
+are active at that source. The earlier public fresh-pair run retains its own
+`4565ce1` source. None of these pending runs establishes a pass.
 
 The first combined R6 case uses the ordinary installed Windows app-owned host
 and the independent Android main-process host through their public SDKs. A
