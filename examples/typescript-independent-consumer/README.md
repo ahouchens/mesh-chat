@@ -97,6 +97,21 @@ precede cleanup claims. The distinct installed report requires positive owner
 retirement and EFS profile/vault checks. It does not establish isolation between
 applications that use the same allowed image path or complete SC22/R7 acceptance.
 
+`paired-process-recovery-check.mjs` reuses explicit pairing and the two initial
+receipts, then stops the receiver before a separate same-image consumer enqueues
+one message. The parent deliberately discards the application's enqueue reply
+and observes the pending record through its own public SDK session. That helper
+must exit before the sender owner stops and reopens the same protected data.
+A second helper with a different PID must observe the same authority and pending
+record, replay the original key to its original handle, and reject changed text
+with `idempotency_conflict`. After the receiver reopens, delivery must produce an
+authenticated receipt and exactly one matching inbound and outbound record.
+Four owner incarnations and both helpers must positively exit. The fixture uses
+a 360-second bound; its separate installed producer retains source, SDK and
+application hashes, verifies both EFS profiles/vaults, and requires owned cleanup.
+This covers an application-side discarded reply on one allowed image. It does
+not establish cross-application caller isolation or full SC22/SC23/SC24 acceptance.
+
 The qualification pairing check opts into a one-shot owner diagnostic with
 `MESH_CHAT_APP_PAIRING_DIAGNOSTICS=1`; ordinary launches leave it disabled.
 After a public failure, the owner sends EOF and observes the exact child's
@@ -137,5 +152,7 @@ consumer exit code zero. `runtime.mjs` requires the normal host's stopped marker
 and exact child exit before that consumer can exit successfully. The controller
 retains its owned workspace on timeout or failed retirement; remove it only
 after confirmed retirement with `cleanup_workspace()`. Its standalone smoke
-command creates and queries a fresh public profile only. No Windows–Android
-pairing, receipt, restart or network interruption has been executed by it yet.
+command creates and queries a fresh public profile only. Separate source-bound
+pairing and restart controllers exercise additional scenarios; their exact run
+reports determine acceptance. This smoke command does not prove those scenarios
+or network interruption recovery.

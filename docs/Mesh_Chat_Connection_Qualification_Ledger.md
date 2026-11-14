@@ -1,5 +1,51 @@
 # Connection runtime qualification ledger
 
+## Paired consumer-process recovery prepared — November 14, 2026
+
+Fixture `916a82d`, regression tests `082dc15`, and installed producer `f7986e3`
+exercise two approved profiles and two initial receipts, then a separate helper's
+application-side discarded enqueue reply. An independent owner session must
+observe one pending record. After that helper exits and the sender owner reopens
+the same data, a second distinct helper must retain current authority, replay the
+original key to its original handle, and reject changed text. Reopening the
+receiver must lead to one authenticated delivery and one inbound record. Success
+requires four positive owner exits, two positive helper exits, EFS on both
+profiles/vaults, unchanged source/SDK/application inputs, and owned cleanup.
+
+Independent reviews cleared the fixed fixture/producer contract and nine
+synthetic positive/fault cases that use real helper processes. Root integrated
+both staged application modules and a required CI step with its own report.
+The affected integration suite passed 562 tests, with one existing non-Windows
+refusal skip, including actual outside-checkout SDK installation. Installed
+execution remains pending. This does not complete cross-application isolation,
+SC22, SC23, SC24, or R7.
+
+## Owner-restart prerequisite failed before role execution — November 14, 2026
+
+Run [43567293402](https://github.com/ahouchens/mesh-chat/actions/runs/43567293402),
+attempt 1 at `9148d0f0e7fbc04846093beac6aad4bfde751af5`, tree
+`6f07593c5e85f592544bc23fc5afdaf220524cce`, closed failed. The Windows producer
+passed, but Android failed before its first WebRTC instrumentation case produced
+output. Both APK installations succeeded; ADB then reported `device offline`
+at 06:46:27 UTC. The case file contains only its run marker, without a queue
+assertion, stack, or instrumentation status. Later signaling, Core API, consumer,
+and independent-consumer suites passed. The underlying transient disconnect
+cause remains unproven; this is not evidence of a callback-queue defect.
+
+Both public restart roles were skipped because they require both producers.
+The restart summary has no role reports and cannot qualify restart. Artifact
+`14103720498` has ZIP SHA-256
+`f7c9e053ef954a4c94b41d131bdf0b4f97a6860ab4f5354457dc7ed8e3e42bc8`;
+the small Android qualification artifact `14103154845` has ZIP SHA-256
+`6f281975771174e4b9cf88368527691cf1d4d4f48553c82477eeb3e4b99b25f8`.
+The new full qualification
+[43568841923](https://github.com/ahouchens/mesh-chat/actions/runs/43568841923)
+and separate media run
+[43568844257](https://github.com/ahouchens/mesh-chat/actions/runs/43568844257)
+are active at `d9ab09f5bf991afa69366bdc22e2389b94877453`; their source includes
+image admission and the elevated-host media correction, but predates paired
+consumer-process recovery.
+
 ## Installed image-path admission prepared and validated locally — November 14, 2026
 
 The fixture stack `7232325`, `b1099bf`, `dc496b8`, producer `de79ee7`, and

@@ -120,7 +120,8 @@ def test_required_lifetime_evidence_keeps_bootstrap_and_session_scope_distinct()
     assert "two SDK sessions in one Node application" in pairing.SCOPE
     assert "no separate consumer-process exit" in pairing.SCOPE and "isolated-helper retirement" in pairing.SCOPE
     script = (ROOT / "examples/typescript-independent-consumer/pairing-check.mjs").read_text()
-    assert "deadline = Date.now() + 240000" in script
+    assert "afterPaired = sharedLifetime, totalMs = 240000" in script
+    assert "deadline = Date.now() + totalMs" in script
     assert "timeout=330" in (ROOT / "scripts/check_independent_core_pairing.py").read_text()
 
 
@@ -142,6 +143,25 @@ def test_distinct_image_fixture_is_required_after_bootstrap_and_has_separate_evi
     assert "dist/reports/windows-independent-image-admission.json" in upload["with"]["path"]
     from stage_independent_core_consumers import FILES
     assert "image-admission-check.mjs" in FILES
+
+
+def test_paired_process_recovery_requires_pairing_and_retains_distinct_evidence():
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+    steps = workflow["jobs"]["desktop-host"]["steps"]
+    positions = {script: next(index for index, step in enumerate(steps)
+                             if f"scripts/{script}.py" in step.get("run", ""))
+                 for script in ("check_independent_core_pairing", "check_windows_paired_process_recovery")}
+    recovery = positions["check_windows_paired_process_recovery"]
+    assert positions["check_independent_core_pairing"] < recovery
+    assert steps[recovery]["run"] == (
+        'python scripts/check_windows_paired_process_recovery.py --expected-source "${{ github.sha }}"')
+    assert "continue-on-error" not in steps[recovery] and "if" not in steps[recovery]
+    upload = next(step for step in steps if step.get("uses", "").startswith("actions/upload-artifact@")
+                  and step.get("with", {}).get("name") == "desktop-transport-${{ github.sha }}")
+    assert upload["if"] == "always()"
+    assert "dist/reports/windows-independent-paired-process-recovery.json" in upload["with"]["path"]
+    from stage_independent_core_consumers import FILES
+    assert {"public-process-helper.mjs", "paired-process-recovery-check.mjs"} <= set(FILES)
 
 
 def test_android_typed_app_cases_are_required_by_the_artifact_bound_inventory():
