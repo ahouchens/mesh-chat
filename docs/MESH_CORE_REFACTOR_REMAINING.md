@@ -232,7 +232,8 @@ include same-identity reopen, two clean exits and EFS storage. Native upgrade,
 Python API and peer receipt evidence are outside this result.
 The paired run closed failed after both peers appended their first completed cold
 cycle: the Node artifact uploader rejects `cold_complete_1`, which Python allows.
-D is preparing a guarded admission fix and a real-uploader regression. Final
+D's guarded admission fix is integrated as `22d2fb6`; 291 real-uploader,
+artifact/workflow/pair-checker regressions pass. Final
 cleanup/result acceptance still needs a repaired run. The R6 Android
 public-session fixture is integrated through `0f93b9c`:
 one ordinary main-process host and installed Binder SDK span public profile
@@ -243,6 +244,10 @@ network-interruption orchestration remain the next cross-platform consumer batch
 A separate Python-owned Windows consumer and its
 opt-in CI step are integrated through `849600c`, with 189 related tests passing;
 actual installed execution remains pending. Caller authority is unchanged.
+The reusable Android adapter is integrated through `82b8927`, with 56 related
+checks passing. It preserves one session and reserves a final completion frame;
+an otherwise successful context reports cleanup failure. These later commits
+are not covered by the active first-platform run at `c5f4484`.
 B's installed Windows WebView2 media preflight and NSIS installer runner are
 integrated through `33c027b`. They bind the actual installed application and
 sidecar to the same-source delivery report and manifest. Manual CI route

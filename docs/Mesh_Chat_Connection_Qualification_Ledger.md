@@ -14,7 +14,14 @@ The source has a definite uploader-contract mismatch: Python permits
 only `cold_complete_5` and multiples of ten. The uploader rejects the diagnostic
 marker before invoking the Actions artifact client. This is distinct from the
 historical Windows artifact inventory transport failure. A focused real-Node
-uploader regression and guarded admission repair are being prepared.
+uploader regression and guarded admission repair are integrated as `22d2fb6`
+(worker `dd96d60`). The actual Node helper rejects the genuine sealed marker
+before this fix and accepts it afterward only with the manual diagnostic
+workload, GitHub Actions context and workflow-dispatch event. Tests now cover
+every Python rendezvous phase plus the key phase against a local inert artifact
+client, preserving role/context/schema/TTL checks. Root **291 artifact, workflow
+and pair-checker tests passed**, zero skips, 15.36 s
+(`.test-tmp/uploader-b8-integration.xml`). A new paired run remains required.
 
 The controller appends a completed cycle only after identity/receipt, readiness,
 message exchange, exact-path and accounting checks. Thus the reports show
