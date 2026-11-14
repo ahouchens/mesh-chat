@@ -27,7 +27,7 @@ from native_interop_android_observation import (
     BYTE_CAP, READ_CAP, InstrumentationStatus, android_lifecycle_snapshot,
     android_transport_snapshot, process_observation, adb_stderr_category, stop_failure,
 )
-from native_interop_testhost_io_observation import TesthostIoStatus, failure_snapshot, forward_presence
+from native_interop_testhost_io_observation import TesthostIoStatus, control_path_presence, failure_snapshot
 
 ROOT = Path(__file__).resolve().parents[1]
 MAX_FRAME = 4 * 1024 * 1024
@@ -590,6 +590,11 @@ class AndroidPeer:
         except PeerFailure as error:
             if error.code == "peer_closed" and eof is not None:
                 try:
+                    presence = control_path_presence(self.adb, self.forward, self.APP) if eof[0] == "header" else {
+                        "device": "unknown", "forward": "unknown", "app_process": "unknown"}
+                except Exception:
+                    presence = {"device": "unknown", "forward": "unknown", "app_process": "unknown"}
+                try:
                     operation = payload.get("operation") if action == "core" and type(payload) is dict else None
                     operation = operation if operation in {"application.snapshot", "message.query",
                         "message.enqueue", "runtime.capabilities"} else "other"
@@ -606,9 +611,8 @@ class AndroidPeer:
                 except Exception:
                     self._transport_failure = None
                 try:
-                    forward = forward_presence(self.adb, self.forward) if eof[0] == "header" else "unknown"
                     statuses = self._testhost_io.matching(self._sequence)
-                    io = failure_snapshot({"statuses": statuses, "forward": forward}, self._sequence)
+                    io = failure_snapshot({"statuses": statuses, **presence}, self._sequence)
                     if io is not None:
                         self._testhost_failure = (error, identifier, io)
                 except Exception:

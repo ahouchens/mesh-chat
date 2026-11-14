@@ -3,6 +3,7 @@
 import re
 import subprocess
 import threading
+import time
 
 
 STAGES = frozenset({"read_header", "read_body", "dispatch", "write_header", "write_body",
@@ -73,9 +74,13 @@ class TesthostIoStatus:
 def failure_snapshot(value, ordinal):
     """Validate one captured EOF observation before report retention."""
     if (type(ordinal) is not int or not 1 <= ordinal <= 99999999
-            or type(value) is not dict or set(value) != {"statuses", "forward"}
+            or type(value) is not dict or set(value) != {"statuses", "device", "forward", "app_process"}
+            or type(value["device"]) is not str
+            or value["device"] not in {"device", "offline", "unauthorized", "other", "unknown", "timeout"}
             or type(value["forward"]) is not str
             or value["forward"] not in {"present", "absent", "unknown", "timeout"}
+            or type(value["app_process"]) is not str
+            or value["app_process"] not in {"absent", "one", "multiple", "unknown", "timeout"}
             or type(value["statuses"]) is not list or len(value["statuses"]) > 2):
         return None
     selected = []
@@ -93,51 +98,87 @@ def failure_snapshot(value, ordinal):
             return None
         selected.append({"last": row, "snapshot_dispatch_enter": entry["snapshot_dispatch_enter"],
                          "snapshot_flush_complete": entry["snapshot_flush_complete"]})
-    return {"statuses": selected, "forward": value["forward"]}
+    return {"statuses": selected, "device": value["device"], "forward": value["forward"],
+            "app_process": value["app_process"]}
 
 
-def forward_presence(adb, forward):
-    """Sample one mapping with a three second read and at most 0.2 second cleanup."""
-    if (type(adb) is not str or not adb or type(forward) is not str
-            or re.fullmatch(r"[0-9]{1,5}", forward) is None):
-        return "unknown"
+def _bounded_adb(argv, deadline, limit):
+    """Return one capped output and exit code under the caller's shared deadline."""
+    if time.monotonic() >= deadline:
+        return None, None, "timeout"
     process = None
     result = {}
     try:
-        process = subprocess.Popen([adb, "-s", "emulator-5554", "forward", "--list"], stdout=subprocess.PIPE,
-                                   stderr=subprocess.DEVNULL)
+        process = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         def read():
-            try: result["data"] = process.stdout.read(2049)
+            try: result["data"] = process.stdout.read(limit + 1)
             except Exception: result["error"] = True
             finally:
                 try: process.stdout.close()
                 except Exception: pass
         worker = threading.Thread(target=read, daemon=True)
         worker.start()
-        worker.join(3)
+        worker.join(max(0, deadline - time.monotonic()))
         if worker.is_alive():
-            return "timeout"
-        if result.get("error") or len(result.get("data", b"")) > 2048:
-            return "unknown"
+            return None, None, "timeout"
+        if result.get("error") or len(result.get("data", b"")) > limit:
+            return None, None, "unknown"
         try:
-            if process.wait(timeout=0) != 0:
-                return "unknown"
+            code = process.wait(timeout=max(0, deadline - time.monotonic()))
         except subprocess.TimeoutExpired:
-            return "timeout"
-        data = result["data"]
-        lines = data.splitlines()
-        if any(re.fullmatch(rb"[A-Za-z0-9_.:-]{1,64} tcp:[0-9]{1,5} tcp:[0-9]{1,5}", line) is None
-               for line in lines):
-            return "unknown"
-        if any(re.fullmatch(rb"emulator-5554 tcp:" + forward.encode("ascii") + rb" tcp:[0-9]{1,5}", line)
-               for line in lines):
-            return "present"
-        return "absent"
+            return None, None, "timeout"
+        return result["data"], code, None
     except Exception:
-        return "unknown"
+        return None, None, "unknown"
     finally:
         if process is not None:
             try:
                 if process.poll() is None: process.kill()
-                process.wait(timeout=0.2)
+                process.wait(timeout=.15)
             except Exception: pass
+
+
+def _device_label(data, code, failure):
+    if failure is not None or code != 0:
+        return failure or "unknown"
+    return {b"device": "device", b"offline": "offline", b"unauthorized": "unauthorized"}.get(
+        data.strip(), "other" if re.fullmatch(rb"[a-z_-]{1,32}", data.strip()) else "unknown")
+
+
+def _forward_label(data, code, failure, forward):
+    if failure is not None or code != 0 or type(forward) is not str or re.fullmatch(r"[0-9]{1,5}", forward) is None:
+        return failure or "unknown"
+    lines = data.splitlines()
+    if any(re.fullmatch(rb"[A-Za-z0-9_.:-]{1,64} tcp:[0-9]{1,5} tcp:[0-9]{1,5}", line) is None
+           for line in lines):
+        return "unknown"
+    if any(re.fullmatch(rb"emulator-5554 tcp:" + forward.encode("ascii") + rb" tcp:[0-9]{1,5}", line)
+           for line in lines):
+        return "present"
+    return "absent"
+
+
+def _process_label(data, code, failure, device):
+    if failure is not None:
+        return failure
+    if device != "device":
+        return "unknown"
+    if code == 1 and data == b"":
+        return "absent"
+    if code != 0 or not re.fullmatch(rb"[0-9]{1,10}(?: [0-9]{1,10})*\r?\n?", data):
+        return "unknown"
+    return "one" if len(data.split()) == 1 else "multiple"
+
+
+def control_path_presence(adb, forward, app, *, budget=3.4):
+    """Sample pinned ADB device, owned forward, and fixed app under one deadline."""
+    unknown = {"device": "unknown", "forward": "unknown", "app_process": "unknown"}
+    if (type(adb) is not str or not adb or type(app) is not str
+            or re.fullmatch(r"[a-z][a-z0-9_.]{1,127}", app) is None):
+        return unknown
+    deadline = time.monotonic() + min(3.4, max(0, budget))
+    prefix = [adb, "-s", "emulator-5554"]
+    device = _device_label(*_bounded_adb(prefix + ["get-state"], deadline, 64))
+    forward_state = _forward_label(*_bounded_adb(prefix + ["forward", "--list"], deadline, 2048), forward)
+    process = _process_label(*_bounded_adb(prefix + ["shell", "pidof", app], deadline, 128), device)
+    return {"device": device, "forward": forward_state, "app_process": process}
