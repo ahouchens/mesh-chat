@@ -2,6 +2,9 @@ name: Installed public Windows Android partition diagnostic
 
 on:
   workflow_dispatch:
+  push:
+    branches: [codex/mesh-core-integration-lead]
+    paths: ['.github/workflows/public-core-partition-diagnostic.yml']
 
 permissions:
   contents: read
@@ -13,11 +16,13 @@ concurrency:
 
 jobs:
   verification:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     uses: ./.github/workflows/ci.yml
     with:
       public_pair_producer: true
 
   android:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     uses: ./.github/workflows/android-webrtc.yml
     with:
       public_pair_producer: true
@@ -25,7 +30,7 @@ jobs:
   windows_public:
     name: Installed public Windows partition role
     needs: [verification, android]
-    if: ${{ needs.verification.result == 'success' && needs.android.result == 'success' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && needs.verification.result == 'success' && needs.android.result == 'success' }}
     runs-on: windows-latest
     timeout-minutes: 35
     steps:
@@ -70,7 +75,7 @@ jobs:
   android_public:
     name: Installed public Android partition role on owned KVM namespace
     needs: [verification, android]
-    if: ${{ needs.verification.result == 'success' && needs.android.result == 'success' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && needs.verification.result == 'success' && needs.android.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 50
     steps:
@@ -124,7 +129,7 @@ jobs:
   public_pair_check:
     name: Check same-run installed public partition only
     needs: [verification, android, windows_public, android_public]
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
