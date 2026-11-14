@@ -752,6 +752,29 @@ class AndroidPeer:
             pass
 
 
+def wait_emulator_transport_retired(emulator):
+    """Keep emulator custody until ADB no longer lists its exited transport."""
+    deadline = time.monotonic() + 30
+    while (remaining := deadline - time.monotonic()) > 0:
+        try:
+            devices = subprocess.check_output(
+                [str(emulator.sdk / "platform-tools/adb"), "devices"],
+                stderr=subprocess.DEVNULL, text=True, timeout=min(5, remaining))
+        except Exception as error:
+            raise PeerFailure("emulator_transport_retirement_failed") from error
+        lines = devices.splitlines()
+        if not lines or lines[0].strip() != "List of devices attached":
+            raise PeerFailure("emulator_transport_retirement_failed")
+        serials = {line.split()[0] for line in lines[1:] if line.strip()}
+        if serials - {emulator.serial}:
+            raise PeerFailure("unowned_android_device_present")
+        if not serials:
+            emulator._transport_owned = False
+            return
+        time.sleep(min(.25, max(0, deadline - time.monotonic())))
+    raise PeerFailure("emulator_transport_retirement_failed")
+
+
 class AndroidEmulator:
     """Own the KVM emulator for the whole Node Action, including its cleanup."""
     IMAGE = "system-images;android-35;google_apis;x86_64"
@@ -767,6 +790,7 @@ class AndroidEmulator:
         self.process = None
         self.old_environment = {}
         self._start_failure = None
+        self._transport_owned = False
         from native_interop_android_system import AndroidSystemObservation
         self.observation = AndroidSystemObservation()
 
@@ -800,6 +824,7 @@ class AndroidEmulator:
                 "-no-snapshot", "-noaudio", "-no-boot-anim", "-camera-back", "none", "-camera-front", "none",
                 "-logcat", LOG_TAGS],
                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
+            self._transport_owned = True
             self.observation.start(self.process.stdout)
             deadline = time.monotonic() + 600
             booted = False
@@ -860,6 +885,8 @@ class AndroidEmulator:
                 if self.observation.finish(self.process.stdout): self.process = None
                 else: failure = PeerFailure("emulator_observer_retirement_failed")
         if self.process is None:
+            if self._transport_owned:
+                wait_emulator_transport_retired(self)
             expected_parent = Path(os.environ["RUNNER_TEMP"]).resolve()
             if self.root.parent != expected_parent or self.root.name != self.name:
                 raise PeerFailure("emulator_cleanup_path_changed")

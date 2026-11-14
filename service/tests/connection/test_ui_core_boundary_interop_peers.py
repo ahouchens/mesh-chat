@@ -222,6 +222,11 @@ def scripted_android(monkeypatch, tmp_path, *, fault=None, boot_failures=0,
     state = SimpleNamespace(calls=[], exit=None, exit_on_launch=None, starts=0, waits=[], now=0, boot_attempts=0, failure=None, fault=fault,
         emulator=emulator, apks=apks, commands=commands)
     def command(kind, args, **kwargs):
+        if kind == "check_output" and args == [*adb, "devices"] and kwargs.get("timeout", 0) <= 5:
+            assert kwargs == {"text": True, "stderr": peers.subprocess.DEVNULL, "timeout": kwargs["timeout"]}
+            assert kwargs["timeout"] > 0 and state.exit is not None
+            state.calls.append("transport_retirement")
+            return "List of devices attached\n"
         matches = [(site, options, result) for site, (expected_kind, argv, options, result) in commands.items()
                    if kind == expected_kind and args == argv]
         assert len(matches) == 1, (kind, args)
@@ -283,7 +288,7 @@ def test_actual_android_start_attributes_exact_command_without_retry_and_cleans_
     assert diagnostics.failure_site(peers.subprocess.CalledProcessError(1, "PRIVATE_COMMAND")) is None
     expected = list(ANDROID_START_SITES[:ANDROID_START_SITES.index(site) + 1])
     if script.starts: expected.insert(2, "boot")
-    if script.starts: expected.append("kill")
+    if script.starts: expected.extend(("kill", "transport_retirement"))
     assert script.calls == expected
     script.emulator.close()  # Inventory failure is outside start's original cleanup scope.
     assert_android_cleaned(script)
@@ -298,7 +303,7 @@ def test_boot_poll_failure_still_retries_only_within_original_deadline_without_a
             script.emulator.start(script.apks, diagnostics=diagnostics)
         assert diagnostics.failure_site(failure.value) is None
         assert script.boot_attempts == script.now == 600
-        assert script.calls == [*ANDROID_START_SITES[:2], *(["boot"] * 600), "kill"]
+        assert script.calls == [*ANDROID_START_SITES[:2], *(["boot"] * 600), "kill", "transport_retirement"]
     else:
         script.emulator.start(script.apks, diagnostics=diagnostics)
         assert script.boot_attempts == 2 and script.now == 1
@@ -482,8 +487,8 @@ def test_nonstandard_exceptions_cannot_supply_command_diagnostics():
 @pytest.mark.parametrize("fault,code,expected", [
     ("unowned", "unowned_android_device_present", ["android_devices"]),
     ("avdmanager", "avdmanager_unavailable", ["android_devices"]),
-    ("nonroot", "required_rootable_kernel_unavailable", [*ANDROID_START_SITES[:2], "boot", *ANDROID_START_SITES[2:5], "kill"]),
-    ("exited", "emulator_exited_during_boot", [*ANDROID_START_SITES[:2]]),
+    ("nonroot", "required_rootable_kernel_unavailable", [*ANDROID_START_SITES[:2], "boot", *ANDROID_START_SITES[2:5], "kill", "transport_retirement"]),
+    ("exited", "emulator_exited_during_boot", [*ANDROID_START_SITES[:2], "transport_retirement"]),
 ])
 def test_android_start_value_and_lifetime_guards_remain_fatal_and_unattributed(monkeypatch, tmp_path, fault, code, expected):
     script = scripted_android(monkeypatch, tmp_path)

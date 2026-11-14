@@ -181,7 +181,7 @@ def test_retirement_waits_for_owned_adb_listing_before_releasing_avd(monkeypatch
     root.mkdir()
     monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
     emulator = SimpleNamespace(sdk=tmp_path / "sdk", name=root.name, root=root, serial="emulator-5554",
-        old_environment={}, _boot_transport_owned=True,
+        old_environment={}, _transport_owned=True,
         process=SimpleNamespace(stdout=None, poll=lambda: 0))
     replies = iter(["List of devices attached\nemulator-5554\toffline\n"] * 2 + ["List of devices attached\n"])
     calls = []
@@ -193,7 +193,7 @@ def test_retirement_waits_for_owned_adb_listing_before_releasing_avd(monkeypatch
     monkeypatch.setattr(diagnostic.subprocess, "check_output", devices)
     monkeypatch.setattr(diagnostic.time, "sleep", lambda _: None)
     diagnostic.retire(emulator, diagnostic.BootConsole())
-    assert len(calls) == 3 and emulator._boot_transport_owned is False
+    assert len(calls) == 3 and emulator._transport_owned is False
     assert emulator.process is None and not root.exists()
 
 
@@ -203,7 +203,7 @@ def test_retirement_keeps_avd_when_transport_is_unresolved_or_foreign(monkeypatc
     root.mkdir()
     monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
     emulator = SimpleNamespace(sdk=tmp_path / "sdk", name=root.name, root=root, serial="emulator-5554",
-        old_environment={}, _boot_transport_owned=True,
+        old_environment={}, _transport_owned=True,
         process=SimpleNamespace(stdout=None, poll=lambda: 0))
     monkeypatch.setattr(diagnostic.subprocess, "check_output", lambda *a, **k:
         "List of devices attached\n" + ("unrelated-device\tdevice\n" if foreign else "emulator-5554\toffline\n"))
@@ -212,5 +212,5 @@ def test_retirement_keeps_avd_when_transport_is_unresolved_or_foreign(monkeypatc
     monkeypatch.setattr(diagnostic.time, "sleep", lambda seconds: now.__setitem__(0, now[0] + seconds))
     with pytest.raises(diagnostic.PeerFailure, match="unowned_android_device_present" if foreign else "emulator_transport_retirement_failed"):
         diagnostic.retire(emulator, diagnostic.BootConsole())
-    assert root.exists() and emulator._boot_transport_owned
+    assert root.exists() and emulator._transport_owned
     assert now[0] <= 30

@@ -20,7 +20,7 @@ import threading
 import time
 
 from native_interop_android_system import LOG_TAGS
-from native_interop_peers import AndroidEmulator, PeerFailure
+from native_interop_peers import AndroidEmulator, PeerFailure, wait_emulator_transport_retired
 from native_interop_android_observation import process_observation
 
 
@@ -134,23 +134,6 @@ def prepare_avd(emulator):
                    input=b"no\n", check=True, capture_output=True, timeout=120)
 
 
-def wait_transport_retired(emulator):
-    """An exited process can remain listed by ADB; retain custody until absent."""
-    deadline = time.monotonic() + 30
-    while (remaining := deadline - time.monotonic()) > 0:
-        devices = subprocess.check_output(
-            [str(emulator.sdk / "platform-tools/adb"), "devices"],
-            stderr=subprocess.DEVNULL, text=True, timeout=min(5, remaining))
-        serials = {line.split()[0] for line in devices.splitlines()[1:] if line.strip()}
-        if serials - {emulator.serial}:
-            raise PeerFailure("unowned_android_device_present")
-        if not serials:
-            emulator._boot_transport_owned = False
-            return
-        time.sleep(min(.25, max(0, deadline - time.monotonic())))
-    raise PeerFailure("emulator_transport_retirement_failed")
-
-
 def retire(emulator, console):
     """Keep exact process/reader/AVD custody when any retirement is unresolved."""
     process = emulator.process
@@ -167,8 +150,8 @@ def retire(emulator, console):
         if process.stdout is not None:
             console.finish(process.stdout)
         emulator.process = None
-    if getattr(emulator, "_boot_transport_owned", False):
-        wait_transport_retired(emulator)
+    if getattr(emulator, "_transport_owned", False):
+        wait_emulator_transport_retired(emulator)
     if emulator.root.parent != Path(os.environ["RUNNER_TEMP"]).resolve() or emulator.root.name != emulator.name:
         raise PeerFailure("emulator_cleanup_path_changed")
     if emulator.root.exists():
@@ -196,7 +179,7 @@ def run_case(variant, update):
         stage("launch")
         command, options = launch_command(emulator, variant)
         emulator.process = subprocess.Popen(command, **options)
-        emulator._boot_transport_owned = True
+        emulator._transport_owned = True
         if emulator.process.stdout is not None:
             console.start(emulator.process.stdout)
         stage("boot")
