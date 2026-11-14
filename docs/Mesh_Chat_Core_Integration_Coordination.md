@@ -1,6 +1,17 @@
 # Core integration coordination — 2026-11-09
 
-Current November 14 integration: `ec81f1f` full/native and call CI are active;
+Current November 14 integration: `ec81f1f` full/call and `40645d5` R8 runs are
+closed failed. Linux policy passed 7,563 cases, and the corrected type contract
+built R8's candidate successfully. The actual published installation matched
+both pinned files; its first GUI seed failed an ambiguous startup check.
+Root's `71aacee` separates identity and readiness and retains fixed booleans;
+22 Node and 14 Python tests pass, with C review. The C/D public partition lane
+through `83a1392` passes 87 combined local checks, including cleanup and hosted
+admin replay; actual CI execution is pending. B fixes retry-route pinning and
+opaque-handle refresh recovery under A review. Root owns the coherent tested
+push, fresh full/native/call, R8 retry and separate partition execution.
+
+Earlier November 14 integration: `ec81f1f` full/native and call CI are active;
 layout/Android fail application typing. `6797f86` corrects the hook's return
 type and passes the actual project build check. R8 controller through `a9e650a`
 is reviewed and passes 14 Python plus 16 Node checks; root prepares its distinct

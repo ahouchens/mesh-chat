@@ -1,5 +1,46 @@
 # Connection runtime qualification ledger
 
+## Closed type failures and installed startup diagnosis — November 14, 2026
+
+Full `43586982197` and call `43586979596` at `ec81f1f`, attempt 1, are closed
+failed. Full jobs ended with six successes, five failures and nine skips; call
+jobs ended with two failures and four skips. Linux policy passed 7,563 cases
+with no failures or skips, including the corrected Windows-path witness fixture.
+Artifact `14111065842` has ZIP SHA-256
+`398934f5d595c03a87a1f61e7253dc03de01a4f6533d5ce36bd3072af3e157e6`.
+Both verification jobs passed 8,789 Python cases with 54 skips before the
+application type failure. Both Windows jobs failed the same frontend build
+before private admission. Direct Windows/Linux and Android compile jobs passed;
+cross-platform native and actual call roles did not execute. The type cause and
+`6797f86` correction are described below.
+
+R8 run `43587844641`, attempt 1 at `40645d5`, built its exact candidate NSIS
+successfully, confirming that the actual build type check now passes. It then
+installed the pinned published 0.9.66 NSIS on a fresh Windows runner. Installer
+exit, job retirement and both installed file hashes matched their pins. The
+first GUI seed failed `ui_source_mismatch`; the old driver combined native
+source, version, root mount and title in one immediate check. The report cannot
+identify which condition failed. No seed, switch or candidate reopen succeeded.
+Report artifact `14111056724` has ZIP SHA-256
+`6f248447c881306e0c17183061720bdb3c8c139e2d2cbc541326f33eec94b622`.
+Browser policy cleanup passed; positive app retirement was not established.
+
+Correction `71aacee` separates native identity from UI readiness under one
+20-second startup deadline. Wrong source/version still fails promptly; missing
+bridge and mount/title readiness have distinct timeout outcomes. Failure reports
+retain only six strictly checked booleans, with CDP and cleanup failures kept
+distinct. Root passed 22 Node and 14 Python checks; A reviewed the design and C
+reviewed the implementation. Actual installed execution remains required.
+
+The public partition diagnostic through `83a1392` applies an owned Android
+app-UID IPv4/IPv6 network block, exercises ordinary installed public SDK roles,
+and requires counted drops, no premature delivery, restored authenticated
+receipts, unchanged authority and positive gateway cleanup. Outer timeout
+margin and parent SIGTERM cleanup are included. Root passed 87 combined flow,
+action, sealed exchange, gateway and hosted admin-replay checks. These are local
+fixture/host tests, not an executed installed partition. Pinned WebRTC is
+unchanged; selected ICE carrier type and full SC04/SC21 acceptance remain open.
+
 ## Application type correction and disposable release continuity lane — November 14, 2026
 
 Corrected fixture source `ec81f1f` started full run `43586982197` and

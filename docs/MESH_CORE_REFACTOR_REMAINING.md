@@ -51,7 +51,16 @@ the specification's IDs or imply equal effort. Several packages overlap.
 
 ## Current checkpoint
 
-- Active `ec81f1f` full/call runs are `43586982197` and `43586979596`. Layout
+- `ec81f1f` full/call runs `43586982197` and `43586979596` are closed failed.
+  Linux policy passed 7,563 cases without skips; native/call roles never ran.
+  The corrected type declaration built the R8 candidate successfully at
+  `40645d5`. R8 run `43587844641` verified the old installation, then failed
+  the combined GUI startup check before seeding. Correction `71aacee` separates
+  identity from bounded readiness and passes 22 Node plus 14 Python checks.
+  The real OS-network public partition diagnostic through `83a1392` passes
+  87 combined local checks; actual installed execution and carrier-type proof
+  remain open. See the ledger for exact artifacts and limits.
+- Earlier `ec81f1f` checkpoint: layout
   and Android builds exposed an optional hook return-type declaration. Correction
   `6797f86` matches the hook's always-present methods; actual `tsc -b --force`
   passes. The earlier root-config no-emit command did not check application
