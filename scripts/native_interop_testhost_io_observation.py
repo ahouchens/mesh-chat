@@ -63,6 +63,13 @@ class TesthostIoStatus:
         if previous and row["ordinal"] > previous[-1]["last"]["ordinal"] + 1:
             previous = ()
         same = previous[-1] if previous and previous[-1]["last"]["ordinal"] == row["ordinal"] else None
+        required = {"snapshot_flush_complete": "snapshot_dispatch_enter",
+                    "initialize_return": "initialize_dispatch_enter",
+                    "initialize_flush_complete": "initialize_return"}.get(row["stage"])
+        if required is not None and not (same and same[required]):
+            # Instrumentation status can be partial. An orphan milestone is
+            # unknown, not a reason to discard independent process evidence.
+            return
         entry = {"last": row, **{name: bool(same and same[name]) or row["stage"] == name
                                  for name in MILESTONES}}
         self._latest = tuple(item for item in previous if item["last"]["ordinal"] == row["ordinal"] - 1)[-1:] + (entry,)

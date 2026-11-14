@@ -135,6 +135,22 @@ def test_invalid_or_throwing_initialize_keeps_error_status_without_false_return(
                                 **presence()}, 4) is None
 
 
+def test_orphan_initialize_milestones_do_not_erase_pre_probe_evidence(monkeypatch):
+    peer = AndroidPeer(b"k" * 32)
+    peer.process = SimpleNamespace(poll=lambda: 255)
+    peer.socket = SimpleNamespace(settimeout=lambda _: None, sendall=lambda _: None, recv=lambda _: b"")
+    peer._testhost_io.observe(line(1, "initialize_return"))
+    peer._testhost_io.observe(line(1, "initialize_flush_complete"))
+    assert peer._testhost_io.matching(1) == []
+    monkeypatch.setattr("native_interop_peers.control_path_presence", lambda *_: presence("offline", "unknown", "unknown"))
+    with pytest.raises(PeerFailure, match="peer_closed") as caught:
+        peer._request("initialize", {})
+    observed = peer.failure_testhost_observation(caught.value)
+    assert observed["device"] == "offline" and observed["statuses"] == []
+    assert observed["pre_probe"]["statuses"] == []
+    assert observed["pre_probe"]["instrumentation_process"] == {"state": "exited", "exit_status": 255}
+
+
 def subprocess_adb(monkeypatch, replies):
     """Run each pinned probe against a real short-lived child process."""
     launch = subprocess.Popen
