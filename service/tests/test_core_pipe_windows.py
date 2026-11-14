@@ -282,15 +282,17 @@ def frame(operation, params=None, request_id="process:1"):
     return json.dumps({"api_version": 1, "request_id": request_id,
         "operation": operation, "params": params or {}}, separators=(",", ":")).encode() + b"\n"
 
-client = connect(pipe, 5)
+client = None
 try:
     if mode == "unregistered":
+        client = connect(pipe, 5)
         try: client.write(frame("runtime.capabilities"))
         except OSError: pass
         print(json.dumps({"closed": client.readline() == b""}), flush=True)
     else:
         token = sys.stdin.buffer.readline().strip()
         assert len(token) == 64
+        client = connect(pipe, 5)
         client.write(b"MESH-HELPER/1 " + token + b"\n" + frame("runtime.capabilities"))
         first = json.loads(client.readline())
         print(json.dumps({"ok": first["ok"], "profile": first["result"]["profiles"][0]}), flush=True)
@@ -301,14 +303,19 @@ try:
         second = json.loads(client.readline())
         print(json.dumps({"ok": second["ok"], "code": second.get("error", {}).get("code")}), flush=True)
 finally:
-    client.close()
+    if client is not None: client.close()
 '''
 
 
-def _process_line(child, timeout=10):
+def _process_line(child, readers, timeout=10):
     lines = queue.Queue(maxsize=1)
-    threading.Thread(target=lambda: lines.put(child.stdout.readline()), daemon=True).start()
+    reader = threading.Thread(target=lambda: lines.put(child.stdout.readline()), daemon=True)
+    readers.append(reader)
+    reader.start()
     line = lines.get(timeout=timeout)
+    reader.join(timeout=5)
+    assert not reader.is_alive(), "same-image output reader did not retire"
+    readers.remove(reader)
     assert line, f"same-image child exited: {child.poll()}"
     return json.loads(line)
 
@@ -327,6 +334,7 @@ def test_real_windows_process_roster_and_pipe_chain(service):
         scope="owner", private_profile_bootstrap=True)
     server = PipeEndpoint(name, options, admit_client=callback)
     owner = helper = None
+    readers = []
     source = str(Path(__file__).resolve().parents[1] / "src")
     environment = dict(os.environ, PYTHONPATH=source + os.pathsep + os.environ.get("PYTHONPATH", ""))
     try:
@@ -352,13 +360,13 @@ def test_real_windows_process_roster_and_pipe_chain(service):
         invitation = roster.register_helper(helper.pid)
         helper.stdin.write(invitation.token.encode("ascii") + b"\n")
         helper.stdin.flush()
-        first = _process_line(helper)
+        first = _process_line(helper, readers)
         assert first == {"ok": True, "profile": profile}
         with service._dispatch_lock:
             assert roster.remove_helper(helper.pid) is True
         helper.stdin.write(b"go\n")
         helper.stdin.flush()
-        second = _process_line(helper)
+        second = _process_line(helper, readers)
         assert second == {"ok": False, "code": "unauthenticated"}
         helper.stdin.close()
         assert helper.wait(timeout=10) == 0, helper.stderr.read()[:300]
@@ -371,6 +379,9 @@ def test_real_windows_process_roster_and_pipe_chain(service):
             if helper.poll() is None:
                 helper.kill()
                 helper.wait(timeout=5)
+            for reader in readers:
+                reader.join(timeout=5)
+            assert all(not reader.is_alive() for reader in readers)
             for stream in (helper.stdin, helper.stdout, helper.stderr):
                 if stream is not None and not stream.closed:
                     stream.close()
