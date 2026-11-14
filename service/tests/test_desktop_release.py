@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from scripts.build_desktop import tauri_build_command
 from scripts.publish_desktop_release import (
     ReleaseValidationError,
     WindowsVersion,
@@ -17,6 +18,26 @@ from scripts.publish_desktop_release import (
 # generic means a routine version bump does not require editing packaging tests.
 VERSION = "9.8.7"
 TARGET = "x86_64-pc-windows-msvc"
+
+
+@pytest.mark.parametrize(
+    ("windows", "expected"),
+    [
+        (
+            True,
+            [
+                "cmd.exe", "/d", "/c", "pnpm.cmd", "tauri", "build", "--ci",
+                "--no-binary-patching",
+            ],
+        ),
+        (False, ["pnpm", "tauri", "build", "--ci"]),
+    ],
+)
+def test_tauri_build_command_skips_patching_on_windows_only(
+    windows: bool, expected: list[str]
+) -> None:
+    pnpm_command = ["cmd.exe", "/d", "/c", "pnpm.cmd"] if windows else ["pnpm"]
+    assert tauri_build_command(pnpm_command, windows=windows) == expected
 
 
 def _write_release_tree(root: Path) -> Path:

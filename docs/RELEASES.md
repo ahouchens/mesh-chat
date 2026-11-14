@@ -1115,6 +1115,10 @@ copy below `dist/desktop/releases`. Release testing must use that versioned copy
 or an installer extracted from the same verified set, never a pre-existing
 unversioned Cargo output.
 
+On Windows, this command passes `--no-binary-patching` to Tauri so the current
+unsigned MSI and NSIS builds contain the executable that the release manifest
+hashes. Revisit this setting if updater support must distinguish MSI from NSIS.
+
 Development builds are not automatically signed. Follow Tauri's
 [distribution guidance](https://v2.tauri.app/distribute/) before publishing a
 package to other users.

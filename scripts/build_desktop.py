@@ -11,6 +11,15 @@ from pathlib import Path
 REPOSITORY = Path(__file__).resolve().parents[1]
 
 
+def tauri_build_command(pnpm_command: list[str], *, windows: bool) -> list[str]:
+    command = [*pnpm_command, "tauri", "build", "--ci"]
+    if windows:
+        # The publisher hashes Tauri's restored main binary after bundling.
+        # Keep Windows installer contents identical to that staged binary.
+        command.append("--no-binary-patching")
+    return command
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Build, verify, and immutably publish a desktop release"
@@ -57,7 +66,7 @@ def main() -> int:
             pnpm,
         ]
     subprocess.run(
-        [*pnpm_command, "tauri", "build", "--ci"],
+        tauri_build_command(pnpm_command, windows=os.name == "nt"),
         cwd=REPOSITORY,
         check=True,
         env=environment,
