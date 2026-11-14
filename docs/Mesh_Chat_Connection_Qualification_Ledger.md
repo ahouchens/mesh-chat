@@ -1,5 +1,31 @@
 # Connection runtime qualification ledger
 
+## Windows installed-byte repair verified; capture still failed — November 14, 2026
+
+Run [43557685270](https://github.com/ahouchens/mesh-chat/actions/runs/43557685270),
+attempt 1 at `92e50bb11b72e5fb86c379167b79bbfefa6fe60f`, tree
+`2bba9680c95d490d23a46794487cac8e91e4c8a8`, passed broad verification and the
+Windows host job. Windows `--no-binary-patching` repaired the installed-byte
+gate: application size 8,690,688, SHA256
+`1233b83fcb8000bcc82e6f24da8cc9445fb59e31fe70bf6ebdf39900244c88ef`, and
+sidecar size 54,669,904, SHA256
+`a75a2544f6e23c05e1b369daaf86afedbb590045fe6ee2957b20c236a819a617`
+both match the immutable manifest. Installer exit and retirement were confirmed.
+
+The media job then failed at `webview2_capture` with `probe_output_invalid`.
+The report retains no capture checks. That label covers invalid output count or
+schema; the artifact does not retain the Node failure stage, so a specific
+WebView2 or media cause is not established. App and preflight-child retirement
+were confirmed. Capture and CallDialog/messaging coexistence remain open.
+
+Root independently validated the four bounded JSON entries in artifact
+`14099398725`, 3,757 bytes, ZIP SHA256
+`5f9ed5103d1975a3213abda151bea135b12e641dba6e8e6651d0e9ee87e951b0`.
+The archive and source-bound validation are retained in
+`.test-tmp/media-92e50bb.zip` and `.test-tmp/media-92e50bb-validated.json`.
+The artifact contains reports, not installed executable copies; installed byte
+values are the source-bound preflight's observations.
+
 ## Public shell admission repair and fresh native retry — November 14, 2026
 
 Public run [43556580958](https://github.com/ahouchens/mesh-chat/actions/runs/43556580958),
