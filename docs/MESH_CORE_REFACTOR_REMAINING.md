@@ -69,10 +69,13 @@ the specification's IDs or imply equal effort. Several packages overlap.
   releasing its AVD. Successor `43536862480` launched both cases and isolated a
   stdio conflict in the instrumented launcher. Candidate `563b91a` removes the
   extra kernel console while retaining filtered Android logs; 2,072 harness
-  checks pass. Real boot verification and the original cold-restart fix remain.
+  checks pass. Run `43537710895` then booted both variants and retired them cleanly.
+  Same-source run `43538167917` is executing three declared packaged reopen
+  attempts; the original cold-restart and Windows inventory failures remain open.
 - Invitation dismissal now retains its operation identity across uncertain replies
   within the current profile lifetime (195 UI tests and TypeScript checks passed).
-  Reducer event classification adds eight cases; packaged acceptance remains open.
+  Reducer event classification adds eight cases; signed collision/replay adds a
+  component interleaving trace (65 related tests pass). Packaged acceptance remains open.
 - Full native acceptance, shared-owner promotion and the complete refactor are
   still open. Test count growth is not a measure of roadmap completion.
 
@@ -84,11 +87,11 @@ its owned checkout and reports source evidence and gaps before integration.
 
 | Owner | Roadmap batch | Exclusive file scope / concrete deliverable | Next milestone |
 | --- | --- | --- | --- |
-| Lead, D reviewing | R1 | Boot comparison cleanup now fences the next launch until the exact owned ADB transport retires. | Reviewed focused boot comparison, then cold-restart investigation and unchanged full acceptance. |
+| Lead | R1 | Reviewed boot repair passed on CI; three packaged reopen attempts are running. | Original cold-restart investigation and unchanged full native acceptance. |
 | C | R0 | Mixed-actor and event-classification tests integrated; physical baseline provenance remains unresolved. | Reconcile remaining adapter and protocol boundary evidence. |
 | B | R3/R5 and R8 review | UI invitation dismissal integrated; independently review A's compatibility fixture repairs. | Reviewed fixture; packaged UI/media coexistence remains open. |
 | A | R8 | Repaired candidate fixture integrated after B review; 18 local tests pass. | Exact-source installed Windows execution using existing CI artifacts. |
-| D | R9/R1 review | Focused workflow and reopen runner integrated; independent boot-cleanup review. | Diagnostic-only reproduction using explicit artifact origins. |
+| D | R9/R8 | Focused Android runner integrated; implementing opt-in installed Windows candidate execution with exact same-run artifacts. | Reviewed fixture execution; no mixed-source acceptance. |
 
 R2 helper retirement remains gated. R6/R7 implementation is not assigned by these
 preparation batches. Focused runs never close the full native or public-consumer

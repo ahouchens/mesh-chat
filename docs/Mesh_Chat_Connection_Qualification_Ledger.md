@@ -1,5 +1,36 @@
 # Connection runtime qualification ledger
 
+## Repaired boot comparison passed; packaged reopen next — November 13, 2026
+
+Run [43537710895](https://github.com/ahouchens/mesh-chat/actions/runs/43537710895)
+at `304f8638d2c60811f53c86110962a8f730e84ae3` passed its declared baseline/current
+boot pair. Both booted and retired without cleanup failure on emulator `37.2.13`
+and API35 image revision 9, matching the failing comparison. The repaired logcat
+case drained 1,112 lines, with zero stdio/serial conflict signatures and normal
+EOF. No raw console content is retained. Artifact `14090686609`, ZIP SHA256
+`bc85930341183771309b35d07f646c82ca51ef77512b8820b498fe917eb10ea2`, is retained
+as `.test-tmp/focused-boot-304f863-artifact.zip` with extracted report and job log.
+This establishes the scoped boot repair, not native or cold-restart acceptance.
+
+The same reviewed source is now running three declared packaged reopen attempts
+in [43538167917](https://github.com/ahouchens/mesh-chat/actions/runs/43538167917).
+Its freeze is `.test-tmp/focused-reopen-304f863-freeze.json`. It builds same-source
+APKs, preserves every attempt, and fences later attempts on uncertain cleanup.
+It has no Windows partner or full traffic/receipt prefix; all prior failures
+remain open until their relevant reproduction or disposition is established.
+
+C's signed reconnect test `52643a2` is integrated as `a65ba9d`. It exercises real
+signature creation/validation and executor/reducer interleaving with simulated
+mailbox/native ports. Root's protocol/adapter selection passed **65 cases**,
+zero skips, 1.02 seconds (`.test-tmp/r0-signaling.xml`). This strengthens SC02's
+component evidence without claiming real-network or packaged qualification.
+
+Further byte-verified archives recovered 109,301,029 bytes from 33 historical
+local-evidence directories and 311,144,006 bytes from 61 historical CI directories.
+Their inventories are `.test-tmp/historical-local-evidence-archive-receipt.json`
+and `.test-tmp/historical-ci-before-noon-archive-receipt.json`. b8, 82 and the
+current focused-run evidence remain loose. No application database was removed.
+
 ## Emulator console conflict isolated — November 13, 2026
 
 Run [43536862480](https://github.com/ahouchens/mesh-chat/actions/runs/43536862480)
