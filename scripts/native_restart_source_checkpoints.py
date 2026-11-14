@@ -59,17 +59,13 @@ def worktree_mode(path):
     return None
 
 
-def entries_from_diff(raw):
-    if len(raw) > MAX_DIFF_BYTES:
-        return [], None, True
+def changed_paths(raw):
     if not raw:
-        return [], 0, False
+        return
     fields = raw.split(b"\0")
     if fields.pop() != b"":
         raise ValueError("Incomplete tracked name-status inventory")
-    entries = []
     index = 0
-    total = 0
     while index < len(fields):
         status = fields[index].decode("ascii")
         if not re.fullmatch(r"[ACDMRTUXB][0-9]*", status):
@@ -78,33 +74,51 @@ def entries_from_diff(raw):
         names = fields[index + 1:index + 1 + count]
         if len(names) != count or any(not name for name in names):
             raise ValueError("Incomplete tracked change path")
-        if len(entries) < MAX_ENTRIES:
-            item = {"status": status, **safe_path(names[-1])}
-            if count == 2:
-                item["previous"] = safe_path(names[0])
-            if "path" in item:
-                name = item["path"]
-                path = ROOT.joinpath(*name.split("/"))
-                item["head_mode"] = tracked_mode(("ls-tree", "HEAD"), name)
-                item["index_mode"] = tracked_mode(("ls-files", "--stage"), name)
-                item["worktree_mode"] = worktree_mode(path)
-                item["sha256"] = (sha256(path) if path.is_file() and not path.is_symlink()
-                                  and path.resolve().is_relative_to(ROOT) else None)
-            else:
-                item.update(head_mode=None, index_mode=None, worktree_mode=None, sha256=None)
-            entries.append(item)
+        yield status, names
         index += count + 1
-        total += 1
     if index != len(fields):
         raise ValueError("Incomplete tracked change inventory")
-    return entries, total, total > MAX_ENTRIES
+
+
+def entries_from_diff(raw, worktree_raw=None):
+    if len(raw) + len(worktree_raw or b"") > MAX_DIFF_BYTES:
+        return [], None, True
+    layers = ((None, raw),) if worktree_raw is None else (
+        ("index_status", raw), ("worktree_status", worktree_raw))
+    changes = {}
+    for layer, payload in layers:
+        for status, names in changed_paths(payload):
+            item = changes.setdefault(names[-1], {"status": status, **safe_path(names[-1])})
+            if layer:
+                item.setdefault("index_status", None)
+                item.setdefault("worktree_status", None)
+                item[layer] = status
+            if len(names) == 2:
+                item["previous"] = safe_path(names[0])
+    entries = list(changes.values())[:MAX_ENTRIES]
+    for item in entries:
+        if "path" in item:
+            name = item["path"]
+            path = ROOT.joinpath(*name.split("/"))
+            item["head_mode"] = tracked_mode(("ls-tree", "HEAD"), name)
+            item["index_mode"] = tracked_mode(("ls-files", "--stage"), name)
+            item["worktree_mode"] = worktree_mode(path)
+            item["sha256"] = (sha256(path) if path.is_file() and not path.is_symlink()
+                              and path.resolve().is_relative_to(ROOT) else None)
+        else:
+            item.update(head_mode=None, index_mode=None, worktree_mode=None, sha256=None)
+    return entries, len(changes), len(changes) > MAX_ENTRIES
 
 
 def snapshot(expected):
     source = git("rev-parse", "HEAD").decode("ascii").strip()
     tree = git("rev-parse", "HEAD^{tree}").decode("ascii").strip()
     dirty = bool(git("status", "--porcelain", "--untracked-files=no"))
-    entries, count, truncated = entries_from_diff(git("diff", "--name-status", "-z", "HEAD", "--"))
+    # HEAD-to-worktree alone hides staged changes undone only in the worktree.
+    # Disable rename inference so both inventories merge by the same exact path.
+    entries, count, truncated = entries_from_diff(
+        git("diff", "--cached", "--no-renames", "--name-status", "-z", "HEAD", "--"),
+        git("diff", "--no-renames", "--name-status", "-z", "--"))
     return {"source_commit": source, "source_tree": tree, "source_matches_expected": source == expected,
             "tracked_clean": not dirty, "changed_count": count, "entries_truncated": truncated,
             "entries": entries}
