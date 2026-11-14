@@ -328,7 +328,6 @@ class ScopedBrowserPolicy:
     def __init__(self, flags: str):
         self.flags = flags
         self.registry = importlib.import_module("winreg")
-        self.created_paths = []
         self.installed = False
 
     def _access(self):
@@ -337,15 +336,6 @@ class ScopedBrowserPolicy:
 
     def install(self):
         registry = self.registry
-        parts = WEBVIEW_POLICY_PATH.split("\\")
-        for depth in range(2, len(parts) + 1):
-            path = "\\".join(parts[:depth])
-            try:
-                with registry.OpenKey(registry.HKEY_LOCAL_MACHINE, path, 0,
-                                      registry.KEY_QUERY_VALUE | registry.KEY_WOW64_64KEY):
-                    pass
-            except FileNotFoundError:
-                self.created_paths.append(path)
         key = registry.CreateKeyEx(registry.HKEY_LOCAL_MACHINE, WEBVIEW_POLICY_PATH, 0, self._access())
         with key:
             try:
@@ -372,10 +362,6 @@ class ScopedBrowserPolicy:
                     self.installed = False
                 else:
                     raise PreflightFailure("browser_policy_cleanup_unconfirmed")
-        while self.created_paths:
-            registry.DeleteKeyEx(registry.HKEY_LOCAL_MACHINE, self.created_paths[-1],
-                                 access=registry.KEY_WOW64_64KEY)
-            self.created_paths.pop()
         return True
 
 

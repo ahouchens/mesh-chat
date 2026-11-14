@@ -292,7 +292,7 @@ class PublishedCandidateTests(unittest.TestCase):
         self.assertFalse(result["browser_policy_retired"])
         self.assertEqual(result["failure"], "browser_policy_cleanup_unconfirmed")
 
-    def test_scoped_browser_policy_refuses_foreign_value_and_cleans_exact_own_value(self):
+    def test_scoped_browser_policy_cleans_only_owned_value_and_preserves_foreign_data(self):
         class Registry:
             HKEY_LOCAL_MACHINE = 1
             KEY_QUERY_VALUE = 2
@@ -303,6 +303,8 @@ class PublishedCandidateTests(unittest.TestCase):
             def __init__(self):
                 self.paths = {"SOFTWARE"}
                 self.value = None
+                self.foreign_values = {}
+                self.subkeys = set()
 
             def __enter__(self):
                 return self
@@ -339,18 +341,19 @@ class PublishedCandidateTests(unittest.TestCase):
                 self.value = None
 
             def DeleteKeyEx(self, hive, path, *, access):
-                assert (hive, access) == (self.HKEY_LOCAL_MACHINE, self.KEY_WOW64_64KEY)
-                assert path in self.paths and not any(item.startswith(path + "\\") for item in self.paths)
-                assert path != preflight.WEBVIEW_POLICY_PATH or self.value is None
-                self.paths.remove(path)
+                raise AssertionError("policy cleanup must not delete a key")
 
         registry = Registry()
         with patch.object(preflight.importlib, "import_module", return_value=registry):
             owned = preflight.ScopedBrowserPolicy("--remote-debugging-port=12345")
             owned.install()
             self.assertEqual(registry.value, (owned.flags, registry.REG_SZ))
+            registry.foreign_values["other-app.exe"] = ("foreign flags", registry.REG_SZ)
+            registry.subkeys.add(preflight.WEBVIEW_POLICY_PATH + "\\foreign-subkey")
             self.assertTrue(owned.remove())
-            self.assertEqual(registry.paths, {"SOFTWARE"})
+            self.assertIn(preflight.WEBVIEW_POLICY_PATH, registry.paths)
+            self.assertEqual(registry.foreign_values["other-app.exe"], ("foreign flags", registry.REG_SZ))
+            self.assertIn(preflight.WEBVIEW_POLICY_PATH + "\\foreign-subkey", registry.subkeys)
 
             registry.CreateKeyEx(registry.HKEY_LOCAL_MACHINE, preflight.WEBVIEW_POLICY_PATH, 0, 14)
             registry.value = ("foreign", registry.REG_SZ)
