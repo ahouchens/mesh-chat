@@ -6,7 +6,7 @@ import { pairingFailureSummary, runPairing } from "./pairing-check.mjs";
 import { Helper, HelperCoreError } from "./public-process-helper.mjs";
 import { launchRuntime } from "./runtime.mjs";
 
-const SCOPE = "Installed public SDK Windows paired process recovery after explicit approval on one same-image caller; application-side discarded enqueue reply, pending replay and later single delivery; no cross-app caller isolation or full SC22/SC23/SC24 acceptance";
+const SCOPE = "Installed public SDK Windows paired process recovery and event resynchronization after explicit approval on one same-image caller; discarded enqueue reply, pending replay, snapshot watermark, persisted event resume and later single delivery; no cursor expiry, cross-app isolation or full SC22/SC23/SC24 acceptance";
 const TOTAL_MS = 360000;
 const PENDING = new Set(["waiting_for_keys", "queued", "sending", "stored_for_delivery"]);
 const FAILURE_CAUSES = new Set([
@@ -18,6 +18,10 @@ const FAILURE_CAUSES = new Set([
   "helper_reply", "helper_output_closed", "helper_unavailable", "helper_frame_budget",
   "helper_write", "helper_request_pending", "helper_exit", "public_pairing_deadline",
   "pairing_retired", "retirement_incomplete", "client_detach_incomplete",
+  "initial_resync_missing", "event_snapshot_page", "event_snapshot_watermark",
+  "event_snapshot_record", "event_ack", "event_ack_changed_pending",
+  "event_resume", "event_page", "delivery_event", "delivery_event_replay",
+  "event_ack_changed_delivery",
 ]);
 
 function fixedCause(error) {
@@ -75,6 +79,67 @@ async function pending(peer, read, text, handle, recordId) {
   return { handle: row.message, recordId: visible.id };
 }
 
+async function eventSnapshot(peer, helper, work, api) {
+  const read = (operation, fields, key) => helper.request(operation, fields,
+    performance.now() + api.budget(), key);
+  try {
+    await read("events.poll", { profile: peer.profile, cursor: null, limit: 128 });
+    throw new Error("initial_resync_missing");
+  } catch (error) {
+    if (!(error instanceof HelperCoreError) || error.code !== "resync_required") throw error;
+  }
+  const rows = [];
+  const cursors = new Set();
+  let cursor = null, watermark = null;
+  for (let pageNumber = 0; pageNumber < 4; pageNumber++) {
+    const page = await read("message.list", { profile: peer.profile, cursor, limit: 16 });
+    if (!Array.isArray(page.messages) || page.messages.length > 16
+        || !page.messages.every(item => item && typeof item === "object")) {
+      throw new Error("event_snapshot_page");
+    }
+    rows.push(...page.messages);
+    if (page.next_cursor === null) {
+      if (typeof page.events_cursor !== "string" || !page.events_cursor) {
+        throw new Error("event_snapshot_watermark");
+      }
+      watermark = page.events_cursor;
+      break;
+    }
+    if (typeof page.next_cursor !== "string" || !page.next_cursor || page.events_cursor !== null
+        || cursors.has(page.next_cursor)) throw new Error("event_snapshot_page");
+    cursors.add(page.next_cursor);
+    cursor = page.next_cursor;
+  }
+  if (!watermark) throw new Error("event_snapshot_watermark");
+  const matching = rows.filter(item => item.message === work.handle && item.text === work.text
+    && item.recipient === peer.contact.core_handle);
+  if (matching.length !== 1 || !PENDING.has(matching[0].state)) {
+    throw new Error("event_snapshot_record");
+  }
+  const before = await read("message.query", { profile: peer.profile, message: work.handle });
+  const ack = await read("events.ack", { profile: peer.profile, cursor: watermark }, randomUUID());
+  const after = await read("message.query", { profile: peer.profile, message: work.handle });
+  if (ack.profile !== peer.profile || ack.acknowledged !== true
+      || typeof ack.checkpoint !== "string" || !ack.checkpoint) {
+    throw new Error("event_ack");
+  }
+  if (!PENDING.has(before.state) || after.state !== before.state || after.message !== work.handle) {
+    throw new Error("event_ack_changed_pending");
+  }
+  return watermark;
+}
+
+function eventPage(page) {
+  if (!page || !Array.isArray(page.events) || page.events.length > 128
+      || typeof page.next_cursor !== "string" || !page.next_cursor || typeof page.more !== "boolean"
+      || page.events.some(item => !item || typeof item.id !== "string" || !item.id
+        || typeof item.message !== "string" || typeof item.type !== "string"
+        || typeof item.direction !== "string")) throw new Error("event_page");
+  const ids = page.events.map(item => item.id);
+  if (new Set(ids).size !== ids.length) throw new Error("event_page");
+  return page;
+}
+
 async function reopen(previous, executable, api) {
   const peer = { ...previous, runtime: null, cleanup: null, client: null,
     clients: new Set(), transports: new Set(), retired: false, pairing: null };
@@ -115,6 +180,8 @@ async function pairedProcessLifetime(executable, offerer, answerer, receipts, ow
     if (first.discardedReplies !== 1) throw new Error("reply_not_discarded");
     work.handle = observed.handle;
     work.recordId = observed.recordId;
+    stage("event_resnapshot");
+    await eventSnapshot(sender, first, work, api);
     stage("first_helper_stop");
     await first.closeInput(performance.now() + api.budget());
     positiveHelpers++;
@@ -138,6 +205,12 @@ async function pairedProcessLifetime(executable, offerer, answerer, receipts, ow
       (op, fields) => second.request(op, fields, performance.now() + api.budget()),
       work.text, work.handle, work.recordId);
     if (!before) throw new Error("pending_not_reopened");
+    stage("event_resume");
+    const resumed = eventPage(await second.request("events.poll",
+      { profile: senderReopened.profile, cursor: null, limit: 128 }, performance.now() + api.budget()));
+    if (resumed.profile !== senderReopened.profile || resumed.more
+        || resumed.events.some(item => item.message !== work.handle)) throw new Error("event_resume");
+    let eventCursor = resumed.next_cursor;
     stage("replay_and_conflict");
     const replay = await second.request("message.enqueue", params, performance.now() + api.budget(), work.key);
     if (replay.accepted !== true || replay.message !== work.handle) throw new Error("replay_handle_changed");
@@ -154,11 +227,6 @@ async function pairedProcessLifetime(executable, offerer, answerer, receipts, ow
     if (!after || after.handle !== before.handle || after.recordId !== before.recordId) {
       throw new Error("duplicate_after_replay");
     }
-    stage("second_helper_stop");
-    await second.closeInput(performance.now() + api.budget());
-    positiveHelpers++;
-    second = null;
-
     stage("receiver_reopen");
     receiverReopened = await reopen(receiver, executable, context);
     await authority(receiverReopened, parentRead(receiverReopened));
@@ -177,6 +245,59 @@ async function pairedProcessLifetime(executable, offerer, answerer, receipts, ow
     if (inbound.length !== 1 || inbound[0].contact_id !== receiverReopened.contact.id
         || outbound.length !== 1 || outbound[0].id !== work.recordId
         || outbound[0].state !== "delivered") throw new Error("receipt_records_changed");
+    stage("event_delivery");
+    let delivery, replayCursor;
+    await api.wait(async () => {
+      const startingCursor = eventCursor;
+      const page = eventPage(await second.request("events.poll", {
+        profile: senderReopened.profile, cursor: startingCursor, limit: 128,
+      }, performance.now() + api.budget()));
+      if (page.profile !== senderReopened.profile) throw new Error("event_page");
+      eventCursor = page.next_cursor;
+      const matching = page.events.filter(item => item.message === work.handle
+        && item.type === "message.changed" && item.direction === "outbound"
+        && item.state === "delivered");
+      if (matching.length > 1) throw new Error("delivery_event");
+      if (matching.length === 1) { delivery = matching[0]; replayCursor = startingCursor; }
+      return delivery;
+    });
+    if (!delivery || !replayCursor) throw new Error("delivery_event");
+    const appliedEventIds = new Set();
+    const applyOnce = event => {
+      if (appliedEventIds.has(event.id)) return false;
+      appliedEventIds.add(event.id);
+      return true;
+    };
+    if (!applyOnce(delivery)) throw new Error("delivery_event_replay");
+    const repeated = eventPage(await second.request("events.poll", {
+      profile: senderReopened.profile, cursor: replayCursor, limit: 128,
+    }, performance.now() + api.budget()));
+    const replayed = repeated.events.filter(item => item.id === delivery.id);
+    if (replayed.length !== 1 || replayed[0].message !== delivery.message
+        || replayed[0].state !== delivery.state || repeated.profile !== senderReopened.profile
+        || repeated.events.filter(item => item.message === work.handle && item.state === "delivered")
+          .some(applyOnce) || appliedEventIds.size !== 1) {
+      throw new Error("delivery_event_replay");
+    }
+    const beforeAck = await second.request("message.query", {
+      profile: senderReopened.profile, message: work.handle,
+    }, performance.now() + api.budget());
+    const deliveryAck = await second.request("events.ack", {
+      profile: senderReopened.profile, cursor: eventCursor,
+    }, performance.now() + api.budget(), randomUUID());
+    const afterAck = await second.request("message.query", {
+      profile: senderReopened.profile, message: work.handle,
+    }, performance.now() + api.budget());
+    if (deliveryAck.profile !== senderReopened.profile || deliveryAck.acknowledged !== true
+        || typeof deliveryAck.checkpoint !== "string" || !deliveryAck.checkpoint
+        || beforeAck.state !== "delivered"
+        || afterAck.state !== beforeAck.state || afterAck.message !== work.handle) {
+      throw new Error("event_ack_changed_delivery");
+    }
+    stage("second_helper_stop");
+    await second.closeInput(performance.now() + api.budget());
+    positiveHelpers++;
+    second = null;
     stage("final_stop");
     await api.retire(receiverReopened);
     await api.retire(senderReopened);
@@ -189,7 +310,10 @@ async function pairedProcessLifetime(executable, offerer, answerer, receipts, ow
       current_authority_preserved: true, same_key_original_handle: true,
       changed_payload_conflict: true, single_outbound_record: true,
       receiver_reopened: true, authenticated_delivery_receipt: true,
-      single_inbound_record: true, positive_helper_exits: positiveHelpers };
+      single_inbound_record: true, initial_null_cursor_resync: true,
+      terminal_snapshot_watermark: true, ack_preserved_pending_state: true,
+      same_caller_progress_resumed_after_restart: true, delivered_event_replayed_once: true,
+      ack_preserved_delivered_state: true, positive_helper_exits: positiveHelpers };
   } finally {
     for (const helper of [first, second]) if (helper) await helper.dispose();
   }
@@ -231,6 +355,12 @@ async function main(args) {
       receiver_reopened: paired.receiver_reopened,
       authenticated_delivery_receipt: paired.authenticated_delivery_receipt,
       single_inbound_record: paired.single_inbound_record,
+      initial_null_cursor_resync: paired.initial_null_cursor_resync,
+      terminal_snapshot_watermark: paired.terminal_snapshot_watermark,
+      ack_preserved_pending_state: paired.ack_preserved_pending_state,
+      same_caller_progress_resumed_after_restart: paired.same_caller_progress_resumed_after_restart,
+      delivered_event_replayed_once: paired.delivered_event_replayed_once,
+      ack_preserved_delivered_state: paired.ack_preserved_delivered_state,
       positive_owner_exits: paired.clean_host_exits,
       positive_helper_exits: paired.positive_helper_exits,
     }, duration_ms: duration };

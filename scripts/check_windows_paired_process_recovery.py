@@ -24,12 +24,13 @@ FIXTURE = "paired-process-recovery-check.mjs"
 REPORT = ROOT / "dist/reports/windows-independent-paired-process-recovery.json"
 LEVEL = "windows_installed_public_sdk_paired_consumer_process_recovery"
 SCOPE = ("Outside-checkout Windows TypeScript public SDK and frozen normal hosts; two explicitly approved "
-         "profiles, distinct same-image consumer processes, application-side discarded enqueue reply, pending "
-         "replay across trusted owner reopen and one authenticated delivery after receiver reopen; no cross-app "
+         "profiles, distinct same-image consumer processes, discarded enqueue reply, pending replay and event "
+         "resynchronization across trusted owner reopen, then authenticated delivery; no cursor expiry, cross-app "
          "caller isolation, selected path, impairment or full SC22/SC23/SC24/R7 acceptance")
-FIXTURE_SCOPE = ("Installed public SDK Windows paired process recovery after explicit approval on one same-image "
-                 "caller; application-side discarded enqueue reply, pending replay and later single delivery; "
-                 "no cross-app caller isolation or full SC22/SC23/SC24 acceptance")
+FIXTURE_SCOPE = ("Installed public SDK Windows paired process recovery and event resynchronization after explicit "
+                 "approval on one same-image caller; discarded enqueue reply, pending replay, snapshot watermark, "
+                 "persisted event resume and later single delivery; no cursor expiry, cross-app isolation or full "
+                 "SC22/SC23/SC24 acceptance")
 FIXTURE_CHECKS = {"approved_profiles": 2, "authenticated_pre_recovery_receipts": 2,
                   "max_owner_sdk_sessions": 2, "distinct_helper_processes": 2,
                   "discarded_application_reply": True, "independent_pending_commit_observed": True,
@@ -37,7 +38,11 @@ FIXTURE_CHECKS = {"approved_profiles": 2, "authenticated_pre_recovery_receipts":
                   "current_authority_preserved": True, "same_key_original_handle": True,
                   "changed_payload_conflict": True, "single_outbound_record": True,
                   "receiver_reopened": True, "authenticated_delivery_receipt": True,
-                  "single_inbound_record": True, "positive_owner_exits": 4,
+                  "single_inbound_record": True, "initial_null_cursor_resync": True,
+                  "terminal_snapshot_watermark": True, "ack_preserved_pending_state": True,
+                  "same_caller_progress_resumed_after_restart": True,
+                  "delivered_event_replayed_once": True, "ack_preserved_delivered_state": True,
+                  "positive_owner_exits": 4,
                   "positive_helper_exits": 2}
 CHECKS = {**FIXTURE_CHECKS, "efs_profile_directories": 2, "efs_vault_files": 2}
 MAX_STDOUT = 4096
@@ -45,8 +50,9 @@ FIXTURE_SECONDS = 360
 TOTAL_SECONDS = 600
 FIXTURE_FAILURE_STAGES = frozenset({
     "arguments", "initial_pairing", "initial_authority", "receiver_stop", "first_helper",
-    "enqueue_and_pending", "first_helper_stop", "sender_stop", "sender_reopen", "second_helper",
-    "replay_and_conflict", "second_helper_stop", "receiver_reopen", "delivery_receipt",
+    "enqueue_and_pending", "event_resnapshot", "first_helper_stop", "sender_stop", "sender_reopen", "second_helper",
+    "event_resume", "replay_and_conflict", "second_helper_stop", "receiver_reopen", "delivery_receipt",
+    "event_delivery",
     "final_stop", "success_contract",
 })
 FIXTURE_FAILURE_CAUSES = frozenset({
@@ -58,6 +64,9 @@ FIXTURE_FAILURE_CAUSES = frozenset({
     "helper_reply", "helper_output_closed", "helper_unavailable", "helper_frame_budget",
     "helper_write", "helper_request_pending", "helper_exit", "public_pairing_deadline",
     "pairing_retired", "retirement_incomplete", "client_detach_incomplete", "helper_core_error",
+    "initial_resync_missing", "event_snapshot_page", "event_snapshot_watermark",
+    "event_snapshot_record", "event_ack", "event_ack_changed_pending", "event_resume",
+    "event_page", "delivery_event", "delivery_event_replay", "event_ack_changed_delivery",
     "unavailable",
 })
 PAIRING_PREFIX_PHASES = frozenset({"fresh_profiles", "public_pairing", "explicit_approval",

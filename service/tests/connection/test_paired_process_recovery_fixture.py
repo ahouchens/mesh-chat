@@ -157,9 +157,40 @@ for await(const line of createInterface({input:process.stdin})){
       state:work.state,contact_id:'CONTACT_OFFER'}]:[]};
   else if(command.operation==='message.list')result={messages:work?[{profile:'PROFILE_OFFER',
     message:'HANDLE_ONE',recipient:'PEER_ANSWER',kind:'text',text:work.text,state:work.state,
-    created_at:1}]:[],next_cursor:null,events_cursor:'CURSOR'};
+    created_at:1}]:[],next_cursor:null,
+    events_cursor:process.env.PAIR_FAULT==='missing_watermark'?null:'CURSOR_ZERO'};
   else if(command.operation==='message.query')result={message:'HANDLE_ONE',text:work.text,
     recipient:'PEER_ANSWER',state:work.state};
+  else if(command.operation==='events.poll'){
+    const current=state();
+    if(command.params.cursor===null&&(!current.ackCursor
+        || process.env.PAIR_FAULT==='resume_requires_resync')
+        && process.env.PAIR_FAULT!=='initial_resync_missing'){
+      process.stdout.write(JSON.stringify({id:command.id,ok:false,
+        error:{code:'resync_required'}})+'\n');continue;
+    }
+    const delivered=command.params.cursor==='CURSOR_ZERO'&&work?.state==='delivered';
+    const event=delivered&&process.env.PAIR_FAULT!=='no_delivery_event'
+      ? {id:process.env.PAIR_FAULT==='event_replay_changed'&&current.deliveryPollCount>0
+          ? 'EVENT_CHANGED':'EVENT_ONE',message:'HANDLE_ONE',type:'message.changed',
+        state:'delivered',direction:'outbound',timestamp:1}:null;
+    if(delivered){current.deliveryPollCount=(current.deliveryPollCount||0)+1;save(current);}
+    result={profile:'PROFILE_OFFER',events:event?[event]:[],
+      next_cursor:event?'CURSOR_ONE':'CURSOR_ZERO',more:false};
+  }
+  else if(command.operation==='events.ack'){
+    const current=state();
+    current.ackCursor=command.params.cursor;
+    if(process.env.PAIR_FAULT==='ack_changes_pending'&&current.message?.state==='queued'){
+      current.message.state='delivered';
+    }
+    if(process.env.PAIR_FAULT==='ack_changes_delivery'&&command.params.cursor==='CURSOR_ONE'){
+      current.message.state='queued';
+    }
+    save(current);
+    result={profile:'PROFILE_OFFER',checkpoint:'CHECKPOINT',acknowledged:true,
+      acknowledged_at:1,expires_at:2};
+  }
   else if(command.operation==='message.enqueue'){
     if(!work){
       first=true;
@@ -261,18 +292,28 @@ def test_distinct_children_discarded_reply_and_later_single_receipt(tmp_path):
     assert report["checks"]["same_key_original_handle"] is True
     assert report["checks"]["changed_payload_conflict"] is True
     assert report["checks"]["single_inbound_record"] is True
+    for key in ("initial_null_cursor_resync", "terminal_snapshot_watermark",
+                "ack_preserved_pending_state", "same_caller_progress_resumed_after_restart",
+                "delivered_event_replayed_once", "ack_preserved_delivered_state"):
+        assert report["checks"][key] is True
     starts = [item for item in events if item["event"] == "child_start"]
     exits = [item for item in events if item["event"] == "child_exit"]
     assert len(starts) == len(exits) == 2 and len({item["pid"] for item in starts}) == 2
     assert [item["code"] for item in exits] == [0, 0]
     assert len([item for item in events if item["event"] == "owner_exit"]) == 4
     assert state["message"]["state"] == "delivered" and state["message"]["inbound"] is True
+    operations = [item["operation"] for item in events if item["event"] == "command"]
+    assert operations.count("events.ack") == 2
+    assert operations.count("events.poll") >= 4
+    assert operations.index("events.poll") < operations.index("events.ack")
     assert "HANDLE_ONE" not in completed.stdout and "RECORD_ONE" not in completed.stdout
 
 
 @pytest.mark.parametrize("fault", ["initial_pairing_timeout", "missing_pending", "duplicate_pending", "replay_new_handle",
                                    "conflict_accepted", "changed_trust", "no_receipt",
-                                   "duplicate_inbound", "first_child_nonzero"])
+                                   "duplicate_inbound", "first_child_nonzero", "initial_resync_missing",
+                                   "missing_watermark", "ack_changes_pending", "resume_requires_resync",
+                                   "no_delivery_event", "event_replay_changed", "ack_changes_delivery"])
 def test_mutated_public_observation_or_child_exit_cannot_pass(tmp_path, fault):
     completed, report, events, state = execute(tmp_path, fault)
     assert completed.returncode == 1
@@ -289,6 +330,13 @@ def test_mutated_public_observation_or_child_exit_cannot_pass(tmp_path, fault):
         "no_receipt": ("delivery_receipt", "unavailable"),
         "duplicate_inbound": ("delivery_receipt", "duplicate_public_record"),
         "first_child_nonzero": ("first_helper_stop", "helper_exit"),
+        "initial_resync_missing": ("event_resnapshot", "initial_resync_missing"),
+        "missing_watermark": ("event_resnapshot", "event_snapshot_watermark"),
+        "ack_changes_pending": ("event_resnapshot", "event_ack_changed_pending"),
+        "resume_requires_resync": ("event_resume", "helper_core_error"),
+        "no_delivery_event": ("event_delivery", "unavailable"),
+        "event_replay_changed": ("event_delivery", "delivery_event_replay"),
+        "ack_changes_delivery": ("event_delivery", "event_ack_changed_delivery"),
     }
     assert (report["stage"], report["cause"]) == expected[fault]
     if fault == "initial_pairing_timeout":

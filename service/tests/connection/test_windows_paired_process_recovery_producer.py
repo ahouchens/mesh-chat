@@ -39,6 +39,9 @@ def test_fixture_frame_requires_exact_bounded_delivered_recovery():
                 fixture_bytes().replace(b'"passed":true', b'"passed":false'),
                 fixture_bytes().replace(b'"positive_owner_exits":4', b'"positive_owner_exits":3'),
                 fixture_bytes().replace(b'"single_inbound_record":true', b'"single_inbound_record":1'),
+                fixture_bytes().replace(b'"terminal_snapshot_watermark":true', b'"terminal_snapshot_watermark":false'),
+                fixture_bytes().replace(b'"same_caller_progress_resumed_after_restart":true',
+                                        b'"same_caller_progress_resumed_after_restart":false'),
                 fixture_bytes().replace(b'"duration_ms":71', b'"duration_ms":360000'),
                 b"PRIVATE_MESSAGE\n", b"x" * (producer.MAX_STDOUT + 1)):
         with pytest.raises((ValueError, UnicodeError)):
@@ -48,6 +51,8 @@ def test_fixture_frame_requires_exact_bounded_delivered_recovery():
 def test_failed_fixture_frame_selects_only_fixed_stage_and_cause():
     assert producer.fixture_failure(failure_bytes()) == {
         "stage": "enqueue_and_pending", "cause": "pending_record_changed"}
+    assert producer.fixture_failure(failure_bytes("event_delivery", "delivery_event_replay")) == {
+        "stage": "event_delivery", "cause": "delivery_event_replay"}
     for raw in (failure_bytes() + b"extra\n", failure_bytes().rstrip(b"\n"),
                 failure_bytes().replace(b'"v":1', b'"v":1,"v":1'),
                 failure_bytes().replace(b'"passed":false', b'"passed":true'),
