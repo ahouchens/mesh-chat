@@ -8,6 +8,11 @@ on:
         type: boolean
         required: false
         default: false
+      public_pair_producer:
+        description: Isolate the public fresh-pair producer from ordinary CI concurrency
+        type: boolean
+        required: false
+        default: false
   workflow_dispatch:
     inputs:
       windows_candidate_pair:
@@ -25,8 +30,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}${{ inputs.b8_diagnostic_producer && '-b8-first-cold' || github.event_name == 'workflow_dispatch' && inputs.packaged_media_preflight && '-media-preflight' || '' }}
-  cancel-in-progress: ${{ !(inputs.b8_diagnostic_producer || (github.event_name == 'workflow_dispatch' && inputs.packaged_media_preflight)) }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}${{ inputs.b8_diagnostic_producer && '-b8-first-cold' || inputs.public_pair_producer && '-public-pair' || github.event_name == 'workflow_dispatch' && inputs.packaged_media_preflight && '-media-preflight' || '' }}
+  cancel-in-progress: ${{ !(inputs.b8_diagnostic_producer || inputs.public_pair_producer || (github.event_name == 'workflow_dispatch' && inputs.packaged_media_preflight)) }}
 
 jobs:
   media_preflight:

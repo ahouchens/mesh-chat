@@ -12,19 +12,32 @@ on:
         type: boolean
         required: false
         default: false
+      public_pair_diagnostic:
+        description: Run one installed public Windows and Android fresh-pair diagnostic
+        type: boolean
+        required: false
+        default: false
   workflow_call:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.event_name == 'workflow_dispatch' && inputs.b8_first_cold_diagnostic && 'connection-b8-diagnostic' || 'connection-qualification' }}-${{ github.ref }}
-  cancel-in-progress: ${{ !(github.event_name == 'workflow_dispatch' && inputs.b8_first_cold_diagnostic) }}
+  group: ${{ github.event_name == 'workflow_dispatch' && inputs.b8_first_cold_diagnostic && inputs.public_pair_diagnostic && 'connection-diagnostic-conflict' || github.event_name == 'workflow_dispatch' && inputs.b8_first_cold_diagnostic && 'connection-b8-diagnostic' || github.event_name == 'workflow_dispatch' && inputs.public_pair_diagnostic && 'connection-public-pair-diagnostic' || 'connection-qualification' }}-${{ github.ref }}
+  cancel-in-progress: ${{ !(github.event_name == 'workflow_dispatch' && (inputs.b8_first_cold_diagnostic || inputs.public_pair_diagnostic)) }}
 
 jobs:
+  diagnostic_conflict:
+    name: Reject conflicting manual diagnostics
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.b8_first_cold_diagnostic && inputs.public_pair_diagnostic }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: exit 1
+
   plan:
     name: Select dependent qualification suites
-    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.b8_first_cold_diagnostic) }}
+    if: ${{ !(github.event_name == 'workflow_dispatch' && (inputs.b8_first_cold_diagnostic || inputs.public_pair_diagnostic)) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -83,15 +96,22 @@ jobs:
       workload: ${{ needs.plan.outputs.native_workload }}
 
   b8_first_cold_diagnostic:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.b8_first_cold_diagnostic }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.b8_first_cold_diagnostic && !inputs.public_pair_diagnostic }}
     permissions:
       contents: read
       actions: read
     uses: ./.github/workflows/native-interop-b8-diagnostic.yml
 
+  public_pair_diagnostic:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.public_pair_diagnostic && !inputs.b8_first_cold_diagnostic }}
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/public-core-pair-diagnostic.yml
+
   gate:
     name: Required connection qualification gate
-    if: ${{ always() && !(github.event_name == 'workflow_dispatch' && inputs.b8_first_cold_diagnostic) }}
+    if: ${{ always() && !(github.event_name == 'workflow_dispatch' && (inputs.b8_first_cold_diagnostic || inputs.public_pair_diagnostic)) }}
     needs: [plan, policy, verification, android, direct, layout, native_interop]
     runs-on: ubuntu-latest
     timeout-minutes: 5

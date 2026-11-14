@@ -1,0 +1,184 @@
+name: Installed public Windows Android fresh-pair diagnostic
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: public-core-pair-diagnostic-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verification:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    uses: ./.github/workflows/ci.yml
+    with:
+      public_pair_producer: true
+
+  android:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    uses: ./.github/workflows/android-webrtc.yml
+    with:
+      public_pair_producer: true
+
+  windows_public:
+    name: Installed public Windows pair role
+    needs: [verification, android]
+    if: ${{ needs.verification.result == 'success' && needs.android.result == 'success' }}
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: service/requirements-dev.lock
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - run: python -m pip install --disable-pip-version-check -r service/requirements-dev.lock
+      - run: npm ci --ignore-scripts --prefix scripts/native-interop-artifact
+      - name: Download exact-source Windows public SDK and bootstrap report
+        uses: actions/download-artifact@v4
+        with:
+          name: desktop-transport-${{ github.sha }}
+          path: dist/reports
+      - name: Download exact-source tested Windows sidecar
+        uses: actions/download-artifact@v4
+        with:
+          name: native-windows-tested-${{ github.sha }}
+          path: .
+      - name: Run public Windows pair role with Actions artifact runtime
+        uses: ./scripts/public-core-pair-action
+        with:
+          role: windows
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      - name: Retain public Windows role and original producer report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: public-core-pair-windows-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            dist/reports/public-core-pair-windows.json
+            dist/reports/windows-independent-bootstrap.json
+          if-no-files-found: error
+          retention-days: 14
+
+  android_public:
+    name: Installed public Android pair role on KVM
+    needs: [verification, android]
+    if: ${{ needs.verification.result == 'success' && needs.android.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: service/requirements-dev.lock
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v4
+      - run: python -m pip install --disable-pip-version-check -r service/requirements-dev.lock
+      - run: npm ci --ignore-scripts --prefix scripts/native-interop-artifact
+      - name: Download exact-source installed Android consumer and distribution report
+        uses: actions/download-artifact@v4
+        with:
+          name: android-webrtc-debug
+          path: .
+      - name: Enable KVM for the disposable public pair emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Run public Android pair role while the emulator is alive
+        uses: reactivecircus/android-emulator-runner@v2
+        timeout-minutes: 35
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          INPUT_ROLE: android
+          INPUT_PYTHON: python
+          INPUT_DISPOSABLE-EMULATOR-SERIAL: emulator-5554
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          emulator-port: 5554
+          disable-animations: true
+          script: node scripts/public-core-pair-action/action.mjs
+      - name: Retain public Android role and original producer report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: public-core-pair-android-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            dist/reports/public-core-pair-android.json
+            dist/reports/android-independent-distribution.json
+          if-no-files-found: error
+          retention-days: 14
+
+  public_pair_check:
+    name: Check same-run installed public fresh pair
+    needs: [verification, android, windows_public, android_public]
+    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - run: python -m pip install --disable-pip-version-check -r service/requirements-dev.lock
+      - name: Download public Windows role report and original bootstrap
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: public-core-pair-windows-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist/qualification/public-pair/windows
+      - name: Download public Android role report and original distribution
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: public-core-pair-android-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist/qualification/public-pair/android
+      - name: Check public fresh-pair diagnostic only
+        env:
+          PUBLIC_PAIR_NEEDS: ${{ toJSON(needs) }}
+        run: >-
+          python scripts/check_public_core_pair.py
+          --expected-source "${{ github.sha }}"
+          --windows-report dist/qualification/public-pair/windows/public-core-pair-windows.json
+          --android-report dist/qualification/public-pair/android/public-core-pair-android.json
+          --windows-bootstrap dist/qualification/public-pair/windows/windows-independent-bootstrap.json
+          --android-distribution dist/qualification/public-pair/android/android-independent-distribution.json
+          --output dist/reports/public-core-pair-summary.json
+      - name: Retain distinct public fresh-pair diagnostic
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: public-core-pair-summary-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            dist/reports/public-core-pair-summary.json
+            dist/qualification/public-pair/windows/public-core-pair-windows.json
+            dist/qualification/public-pair/android/public-core-pair-android.json
+            dist/qualification/public-pair/windows/windows-independent-bootstrap.json
+            dist/qualification/public-pair/android/android-independent-distribution.json
+          if-no-files-found: error
+          retention-days: 14

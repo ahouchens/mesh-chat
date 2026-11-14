@@ -8,6 +8,11 @@ on:
         type: boolean
         required: false
         default: false
+      public_pair_producer:
+        description: Isolate the public fresh-pair producer from ordinary Android concurrency
+        type: boolean
+        required: false
+        default: false
   workflow_dispatch:
     inputs:
       network_inventory:
@@ -46,8 +51,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: android-webrtc-${{ github.ref }}${{ github.event_name == 'workflow_dispatch' && ((inputs.restart_diagnostic && (inputs.gateway_probe || inputs.network_inventory || inputs.public_core_session)) || (inputs.gateway_probe && (inputs.network_inventory || inputs.public_core_session)) || (inputs.network_inventory && inputs.public_core_session)) && '-conflict' || github.event_name == 'workflow_dispatch' && inputs.public_core_session && '-public-session' || github.event_name == 'workflow_dispatch' && inputs.restart_diagnostic && '-restart' || github.event_name == 'workflow_dispatch' && inputs.gateway_probe && '-gateway' || github.event_name == 'workflow_dispatch' && inputs.network_inventory && '-inventory' || '' }}${{ inputs.b8_diagnostic_producer && '-b8-first-cold' || '' }}
-  cancel-in-progress: ${{ !inputs.b8_diagnostic_producer && !(github.event_name == 'workflow_dispatch' && inputs.public_core_session) }}
+  group: android-webrtc-${{ github.ref }}${{ github.event_name == 'workflow_dispatch' && ((inputs.restart_diagnostic && (inputs.gateway_probe || inputs.network_inventory || inputs.public_core_session)) || (inputs.gateway_probe && (inputs.network_inventory || inputs.public_core_session)) || (inputs.network_inventory && inputs.public_core_session)) && '-conflict' || github.event_name == 'workflow_dispatch' && inputs.public_core_session && '-public-session' || github.event_name == 'workflow_dispatch' && inputs.restart_diagnostic && '-restart' || github.event_name == 'workflow_dispatch' && inputs.gateway_probe && '-gateway' || github.event_name == 'workflow_dispatch' && inputs.network_inventory && '-inventory' || '' }}${{ inputs.b8_diagnostic_producer && '-b8-first-cold' || inputs.public_pair_producer && '-public-pair' || '' }}
+  cancel-in-progress: ${{ !inputs.b8_diagnostic_producer && !inputs.public_pair_producer && !(github.event_name == 'workflow_dispatch' && inputs.public_core_session) }}
 
 jobs:
   diagnostic_conflict:
