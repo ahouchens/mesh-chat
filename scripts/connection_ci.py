@@ -228,37 +228,63 @@ def manifest(plan, collected, jobs):
             "report_sha256": collected.get("report_sha256"), "jobs": jobs}
 
 
+def failure_manifest(plan, needs, stage):
+    jobs = {}
+    for name in ("plan", *SUITES):
+        job = needs.get(name) if isinstance(needs, dict) else None
+        result = job.get("result") if isinstance(job, dict) else None
+        jobs[name] = result if result in ("success", "failure", "cancelled", "skipped") else "unknown"
+    return {"version": 1, "passed": False,
+            "scope": "Rejected qualification diagnostic; no component or release acceptance",
+            "source_commit": plan["source_commit"] if plan else None,
+            "source_tree": plan["source_tree"] if plan else None,
+            "failure_stage": stage, "jobs": jobs}
+
+
+def write_report(path, result):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--check-plan", type=Path)
     parser.add_argument("--evidence-dir", type=Path)
     args = parser.parse_args()
-    plan = current_plan()
-    if args.check_plan:
-        recorded = json.loads(args.check_plan.read_text(encoding="utf-8"))
-        if recorded != plan:
-            raise ValueError("Selected workflow manifest does not match the current source and event")
-        needs = json.loads(os.environ["QUALIFICATION_NEEDS"])
-        if needs.get("plan", {}).get("result") != "success":
-            raise ValueError("Selection job did not succeed")
-        jobs = {name: value for name, value in needs.items() if name != "plan"}
-        validate(plan, jobs)
-        if args.evidence_dir is None:
-            raise ValueError("Required component evidence directory is missing")
-        from connection_matrix import collect
-        collected = collect(args.evidence_dir, plan["source_commit"], plan["source_tree"], plan["required"],
-                            native_workload=plan["native_workload"])
-        result = manifest(plan, collected,
-                          {name: value["result"] for name, value in jobs.items()})
-    else:
-        result = plan
-        with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
-            for suite in SUITES:
-                output.write(f"{suite}={str(suite in plan['required']).lower()}\n")
-            output.write(f"native_workload={plan['native_workload']}\n")
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    plan, needs, stage = None, None, "source"
+    try:
+        plan = current_plan()
+        if args.check_plan:
+            stage = "selection"
+            recorded = json.loads(args.check_plan.read_text(encoding="utf-8"))
+            if recorded != plan:
+                raise ValueError("Selected workflow manifest does not match the current source and event")
+            stage = "workflow_results"
+            needs = json.loads(os.environ["QUALIFICATION_NEEDS"])
+            if needs.get("plan", {}).get("result") != "success":
+                raise ValueError("Selection job did not succeed")
+            jobs = {name: value for name, value in needs.items() if name != "plan"}
+            validate(plan, jobs)
+            stage = "component_evidence"
+            if args.evidence_dir is None:
+                raise ValueError("Required component evidence directory is missing")
+            from connection_matrix import collect
+            collected = collect(args.evidence_dir, plan["source_commit"], plan["source_tree"], plan["required"],
+                                native_workload=plan["native_workload"])
+            result = manifest(plan, collected,
+                              {name: value["result"] for name, value in jobs.items()})
+        else:
+            result = plan
+            with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+                for suite in SUITES:
+                    output.write(f"{suite}={str(suite in plan['required']).lower()}\n")
+                output.write(f"native_workload={plan['native_workload']}\n")
+    except Exception:
+        if args.check_plan:
+            write_report(args.output, failure_manifest(plan, needs, stage))
+        raise
+    write_report(args.output, result)
     print(json.dumps(result))
 
 

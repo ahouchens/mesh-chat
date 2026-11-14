@@ -181,6 +181,28 @@ def test_gate_revalidates_policy_inventory_and_both_platform_component_reports(t
     assert result["core_windows_boundary_tests"] == 9
 
 
+def test_gate_cli_writes_success_only_after_real_component_validation(tmp_path, monkeypatch):
+    import connection_ci as ci
+
+    source, tree, _ = fixture(tmp_path)
+    plan = {**ci.select(["README.md"]), "source_commit": source, "source_tree": tree}
+    selection = tmp_path / "selection.json"
+    selection.write_text(json.dumps(plan), encoding="utf-8")
+    output = tmp_path / "qualification.json"
+    jobs = {name: {"result": "success" if name in ("plan", *plan["required"]) else "skipped"}
+            for name in ("plan", *ci.SUITES)}
+    monkeypatch.setattr(ci, "current_plan", lambda: plan)
+    monkeypatch.setenv("QUALIFICATION_NEEDS", json.dumps(jobs))
+    monkeypatch.setattr(sys, "argv", ["connection_ci.py", "--check-plan", str(selection),
+                                     "--evidence-dir", str(tmp_path), "--output", str(output)])
+    ci.main()
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert report["passed"] is True
+    assert report["components"]["policy_tests_executed"] == 1
+    assert report["suites"] and report["report_sha256"]
+    assert "failure_stage" not in report
+
+
 @pytest.mark.parametrize("fault", ["missing", "source", "sidecar", "build", "manifest", "package", "version",
     "notice", "dll", "owner", "license_claim", "project_license", "scope", "module", "notice_count"])
 def test_required_runtime_materials_cannot_qualify_a_different_or_partial_archive(tmp_path, fault):
