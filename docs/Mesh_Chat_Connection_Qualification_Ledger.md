@@ -1,5 +1,29 @@
 # Connection runtime qualification ledger
 
+## Installed Android public session passed — November 13, 2026
+
+Run [43549708208](https://github.com/ahouchens/mesh-chat/actions/runs/43549708208),
+attempt 1 at `c5f44845e88ec50c49085871ddc7d68466f4fadd`, tree
+`e9886e2d92a2fb7c8e9364d8f1d83aaca5ebf270`, passed. Required Android qualification
+passed **56/56** cases across WebRTC 25, signaling 10, Core API 13, Core consumer
+6 and independent consumer 2. The separate installed ordinary app's public
+Binder SDK session passed all six checks, six public requests, explicit shutdown
+and cleanup on API35/x86_64 emulator `emulator-5554` in 2.98 seconds.
+
+Required artifact `14096856474` has ZIP SHA256
+`bc22cfb857895d4d4eedc9bebef03984c98b6115d8c647292726bdca66a3093d`.
+Public-session artifact `14095819383` has ZIP SHA256
+`57fb6a68d1ca021b860efd4e232451a26048415153626769e60048f55a17b74e`.
+Root verified both archive digests, single bounded report entries, matching
+source/tree, passed/cleanup fields and identical independent-distribution
+artifact hashes across the two reports. Evidence is retained under
+`.test-tmp/android-public-c5f4484*`.
+
+This closes the initial installed Android public profile/session execution gap.
+It does not establish cross-platform pairing, peer receipts, restart recovery,
+media or physical-device acceptance. The later reusable adapter commits are
+covered locally and still need their own controller/platform execution.
+
 ## Shared pytest imports blocked the independent Python test — November 13, 2026
 
 Windows public/media run

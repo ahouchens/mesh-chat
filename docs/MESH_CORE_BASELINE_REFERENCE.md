@@ -1,17 +1,50 @@
 # Mesh Core R0 baseline reference
 
-Status: **unresolved** as of 2026-11-13. The available records do not identify an exact historical `main` commit and artifact pair that was physically verified as a working Windows/Android product. Do not use the current `main` tip or a Mesh Core refactor build as that baseline.
+Status: **user-identified working release; exact installed bytes still unconfirmed** as of 2026-11-13. The user identifies **0.9.66 from `main`** as the last known working build on their physical Windows and Android devices. This establishes a useful behavioral reference despite the architectural changes. The release tag and published artifact metadata are pinned below; neither the current `main` tip nor a refactor build substitutes for that historical release. The user's statement does not establish that every acceptance scenario was exercised.
+
+## User-identified release pins
+
+The remote annotated tag `v0.9.66` has tag object
+`964848e68ed54ceffcbbb8b4a2355f46995e2efa` and resolves to commit
+`7c40f7b23eab3e9d83ff7ca1075c90c4d84ce516`, tree
+`96daefa74c38a5cfd7863e37e3effcb7a06dc6cd`. This is the October 29, 2026
+main-branch merge of PR #34. The published
+[Mesh Chat 0.9.66 release](https://github.com/ahouchens/mesh-chat/releases/tag/v0.9.66)
+has release ID `428222939`, targets `main`, and was published at
+`2026-10-29T18:04:32Z`. Its GitHub asset metadata supplies these pins:
+
+| Asset | Asset ID | Bytes | SHA-256 from publisher metadata |
+| --- | --- | --- | --- |
+| `Mesh-Chat_0.9.66_x64-setup.exe` | 689437206 | 28012178 | `a20b381a8c7199c40aeba0487634c1302043c3e07d8b66c7838be8abfc050e23` |
+| `Mesh-Chat_0.9.66_x64_en-US.msi` | 689437207 | 30011392 | `dadbffdedb39c1714abc426d9a2ded1eb815d84be0dfb11e7c7c88c332f2f34e` |
+| `mesh-chat-0.9.66-android-arm64-release.apk` | 689437208 | 46971989 | `ea5d18576e36c6562a25902620b131f21096d27ac90031c64fbcdff45958a5f6` |
+| `SHA256SUMS.txt` | 689437204 | 303 | `6306c25b130e10287b857829a29a6ea9b4dbfa27acaa9c1a25550e95345410a4` |
+
+Metadata is retained in `.test-tmp/baseline-v0.9.66-release.json`. The binaries
+were not downloaded or executed during this lookup; hashes are publisher
+metadata, not hashes measured from the user's installed files. Release/source
+identity is now a concrete comparison candidate. Exact on-device bytes, the
+Windows installer variant, build-manifest provenance and the physically tested
+flow list remain unconfirmed. This does not block continued automated work.
+The remote `main` tip observed during this lookup is
+`13fda6f20c4eafdaf30611c547b76973814029b1`, a later preview-card change from
+October 30. The user's version/branch identification alone does not distinguish
+the published release from a later local build off `main`; do not assert that
+the physical devices ran the tag's exact bytes.
 
 ## Provenance and confidence
 
 | Evidence | What it establishes | Limit |
 | --- | --- | --- |
+| User reply on November 13, 2026: last known working build was 0.9.66 off `main` | User-attested working physical Windows/Android release baseline. | No claim that all scenarios passed or that published asset bytes were measured on the devices. Architectural changes affect test applicability, not the value of the observed product behavior. |
 | `TESTING.md`, “Recorded 0.2.7 desktop-reply concurrency verification” (lines 4748–4763) | A physical 0.2.6 Windows/Android run delivered the phone's first direct message to the desktop. Process inspection in a later attempted retest identified the running Windows `mesh-chat.exe` as version 0.2.6, SHA-256 `42A320E157B2C2743CA87127E00E8BB1E55E6C2DE8C7F80D9434307933908DCA`, and its sidecar as SHA-256 `9901F7844739DABA0D0FF37B298A108C91B0305B504DE99C43AC9025D4EE4107`. The release table also records the 0.2.6 Android debug APK SHA-256 `C67159232A3F45628F039E97E67914A47487C36BFE6B0ABB0C18EF4DD0441D44`. | The desktop reply failed in the physical run. The record does not establish that the APK's bytes were inspected on the phone, nor identify the source commit used to build the binaries. This is a partially successful, **failed** candidate, not a working baseline. Confidence: high for the recorded behavior and Windows process hashes; low for APK-on-device byte identity. |
 | `TESTING.md`, 0.2.4–0.2.6 physical-run sections (lines 4550–4682) | The preceding physical runs reached approval on the prior release, connected peers on 0.2.4 but did not show the first chat, and completed invitation/acceptance on 0.2.5 but did not deliver the phone's chat. | None proves a complete bidirectional conversation. Confidence: high for the documented outcomes. |
 | `TESTING.md`, 0.2.7 package section (lines 4835–4858) | 0.2.7 packages were built and inspected. | The exact 0.2.7 pair was explicitly awaiting a physical reply retest. Confidence: high. |
 | `git log main`, `git blame TESTING.md`, and local tags | The current local `main` tip is `7c40f7b23eab3e9d83ff7ca1075c90c4d84ce516` (0.9.66). The 0.2.6 physical-run account entered this repository in the 2026-10-06 import commit `428986596da6f146287a453ab3908863896e1e0b`. | The import commit is the **documentation provenance**, not the 0.2.6 build source. The local history and tags do not bind a physically successful later build to a historical `main` SHA. Confidence: high for the Git provenance; unresolved for the requested build identity. |
 
-The Mesh Core restart handoff states that the last physically verified product came from `main`, but names no commit or artifact. This assertion is a lead for further investigation, not sufficient provenance to promote a particular SHA. Its R0 roadmap likewise says the exact verified artifact remains unidentified.
+The older restart handoff and R0 roadmap predate the user's release identification.
+Their unidentified-version gap is superseded by the reply and release lookup
+above. Exact installed-artifact and scenario provenance remain separate gaps.
 
 ## Comparison scope after the reference is found
 
@@ -19,7 +52,12 @@ Compare the historical product and integrated Mesh Core on the user-visible flow
 
 ## Evidence searched and next step
 
-Searched `TESTING.md`, `README.md`, `docs/RELEASES.md`, the Mesh Core coordination/qualification/roadmap documents, the restart handoff and remaining-work roadmap, the local `main` history/tags/blame, and the parallel-worker reports. The available records establish failed or partial physical runs and many automated/package results, but no exact *working* physical baseline. Obtain the successful run's date/version, installed Windows and Android artifact hashes or immutable release URLs, and the source SHA or build provenance that binds those artifacts to historical `main`. Verify the claimed flows against that record before naming a regression baseline.
+The earlier search of `TESTING.md`, release and refactor documents, local history,
+tags/blame and worker reports found only partial/failed physical records. The
+user has now supplied the missing working release identity. Use the pinned
+0.9.66 release for applicable behavioral comparisons, and verify downloaded
+bytes and release build provenance before any automated installed comparison.
+Keep device-specific observations and automated results labeled separately.
 
 ## R0 policy and timing audit at integration commit `82c3364`
 
