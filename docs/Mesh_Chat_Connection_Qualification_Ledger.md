@@ -1,5 +1,23 @@
 # Connection runtime qualification ledger
 
+## Bounded Android control-path observation reviewed — November 14, 2026
+
+Worker commits `57b32bd`, `3b584cd` and `ed28196`, integrated as `bcaf041`,
+`1f8b624` and `2479d28`, observe only the pinned device, owned forward and fixed
+guest app at an existing header EOF before cleanup. The shared 3.4-second budget
+reserves subprocess cleanup. Remote `pidof` completion is required before an
+absent-app label, so a lost ADB transport is not mistaken for app termination.
+Only fixed categories are retained; matching testhost status is captured after
+the probes to include late output. Original failure and cleanup precedence remain.
+
+The forward parser now accepts the canonical extra newline emitted by
+[ADB's query command](https://android.googlesource.com/platform/packages/modules/adb/+/refs/heads/main/client/commandline.cpp).
+Prior `forward: unknown` reports cannot establish whether that formatting issue
+or a different failure occurred. No product transport or WebRTC code changed.
+Root passed 2,118 affected harness tests, including real bounded subprocess
+regressions; independent review found no blocker after the deadline and
+remote-completion corrections. Actual Android observation awaits a fresh run.
+
 ## Installed separate-process lifetime verified — November 14, 2026
 
 Run [43561536224](https://github.com/ahouchens/mesh-chat/actions/runs/43561536224),

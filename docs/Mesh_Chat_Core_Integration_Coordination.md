@@ -1,11 +1,14 @@
 # Core integration coordination — 2026-11-09
 
-Current November 13 handoff: use [the compact work register](MESH_CORE_REFACTOR_REMAINING.md)
+Current November 14 handoff: use [the compact work register](MESH_CORE_REFACTOR_REMAINING.md)
 and [focused restart strategy](MESH_CORE_RESTART_STRATEGY_HANDOFF.md). Independent
 R0/R3/R5/R8/R9 batches proceed under their explicit file ownership. R2 retirement
-and shared-owner promotion remain gated. The 82c3364 native Android boot failure
-and 694e390 local scheduler evidence are recorded in the qualification ledger;
-the following b8e3e20 checkpoint is historical.
+and shared-owner promotion remain gated. Installed Windows separate-process
+lifetime passed at `ebcfa38`. Public roles passed at `dd9e4cd`, but aggregate
+source-byte checks failed on checkout line endings; the LF repair is integrated
+as `0826869`. Native first-cold snapshot EOF and WebView2 target discovery remain
+under investigation. Latest exact reports and limits are in the qualification
+ledger; the following b8e3e20 checkpoint is historical.
 
 
 Full run [43520421850](https://github.com/ahouchens/mesh-chat/actions/runs/43520421850)
