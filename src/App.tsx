@@ -3462,7 +3462,7 @@ const workspaceAccessOwner = (workspace: Workspace) => workspace.local_role === 
   && workspace.local_device_id === workspace.authority_device_id
   && workspace.state === "active" && !workspace.authority_loss;
 const workspaceAccessSendScope = (workspace: Workspace) => JSON.stringify([
-  workspace.core_handle ?? workspace.id, workspace.id, workspace.local_device_id,
+  workspace.id, workspace.local_device_id,
   workspace.authority_device_id, workspace.epoch, workspace.manifest_hash, workspaceAccessOwner(workspace),
 ]);
 const workspaceAdminRequestScope = (workspace: Workspace) => JSON.stringify([
@@ -4349,7 +4349,10 @@ type WorkspaceMessageInvalidations = Record<string, {
 function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageInvalidations, promptDismissalKeys, notificationTarget, onNotificationHandled, onLock, initialInvitation, onInvitationHandled, initialPairingCode = "", initialWebRTCJoin = false, onWebRTCJoinHandled, onPairingHandled }: { snapshot: Snapshot; theme: Theme; onThemeChange: (theme: Theme) => void; refresh: (afterCurrent?: boolean) => Promise<Snapshot>; workspaceMessageInvalidations: WorkspaceMessageInvalidations; promptDismissalKeys: Map<string, string>; notificationTarget: NotificationOpenTarget | null; onNotificationHandled: () => void; onLock: () => Promise<void>; initialInvitation: string; onInvitationHandled: () => void; initialPairingCode?: string; initialWebRTCJoin?: boolean; onWebRTCJoinHandled?: () => void; onPairingHandled?: () => void }) {
   const profileEffects = useProfileEffectScope();
   const workspaceAccessSendRecovery = useRef(new Map<string, WorkspaceAccessSendRecovery>());
-  const adminRequestAttempts = useRef(new Map<string, { scope: string; operationId: string; inFlight: boolean; accepted: boolean; attempted: boolean }>());
+  const adminRequestAttempts = useRef(new Map<string, {
+    scope: string; operationId: string; inFlight: boolean; accepted: boolean; attempted: boolean;
+    route: "core" | "legacy" | null; workspaceHandle: string | null; targetHandle: string | null;
+  }>());
   const adminRequestInFlightScope = useRef<string | null>(null);
   const admitProfileRequest = useProfileRequestAdmission();
   const lifetime = useProfileLifetime();
@@ -5574,7 +5577,8 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     const targetHandle = member?.core_handle ?? null;
     const intent = JSON.stringify([scope, requestKind, targetMemberId, requestedRole, ""]);
     const attempt = adminRequestAttempts.current.get(intent)
-      ?? { scope, operationId: newOperationId(), inFlight: false, accepted: false, attempted: false };
+      ?? { scope, operationId: newOperationId(), inFlight: false, accepted: false, attempted: false,
+        route: null, workspaceHandle: null, targetHandle: null };
     if (attempt.inFlight) return;
     const priorAttempt = attempt.attempted;
     adminRequestAttempts.current.set(intent, attempt);
@@ -5585,18 +5589,31 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     try {
       if (!attempt.accepted) {
         attempt.attempted = true;
-        let submitted = false;
-        if (workspace.core_handle && (!targetMemberId || targetHandle)) {
+        if (!attempt.route) {
+          attempt.route = workspace.core_handle && (!targetMemberId || targetHandle) ? "core" : "legacy";
+          attempt.workspaceHandle = attempt.route === "core" ? workspace.core_handle! : null;
+          attempt.targetHandle = attempt.route === "core" ? targetHandle : null;
+        }
+        if (attempt.route === "core") {
           try {
             await coreApiWorkspaceAdminSubmit(
-              workspace.core_handle, requestKind, targetHandle, requestedRole, "",
+              attempt.workspaceHandle!, requestKind, attempt.targetHandle, requestedRole, "",
               attempt.operationId, admitProfileRequest);
-            submitted = true;
           } catch (reason) {
-            if (!String(reason).includes("core_api_unavailable")) throw reason;
+            // Only initial, explicit Core absence can select legacy. An uncertain
+            // Core call must replay through Core's own operation-id namespace.
+            if (priorAttempt || profileErrorCode(reason) !== "core_api_unavailable") throw reason;
+            attempt.route = "legacy";
+            attempt.workspaceHandle = null;
+            attempt.targetHandle = null;
+            await serviceCommand("submit_workspace_admin_request", {
+              workspace_id: workspace.id, request_kind: requestKind,
+              ...(targetMemberId ? { target_member_id: targetMemberId } : {}),
+              ...(requestedRole ? { requested_role: requestedRole } : {}),
+              note: "", operation_id: attempt.operationId,
+            }, admitProfileRequest);
           }
-        }
-        if (!submitted) {
+        } else {
           await serviceCommand("submit_workspace_admin_request", {
             workspace_id: workspace.id, request_kind: requestKind,
             ...(targetMemberId ? { target_member_id: targetMemberId } : {}),

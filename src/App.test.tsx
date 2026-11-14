@@ -5290,6 +5290,44 @@ describe("desktop workspaces", () => {
       expect(calls[0].operation_id).toBe(api.coreApiWorkspaceAdminSubmit.mock.calls[0][5]);
     });
 
+    it("keeps a legacy pending request on that route when Core handles appear", async () => {
+      const calls: Array<Record<string, unknown>> = [];
+      const legacy = { ...adminWorkspace, core_handle: undefined,
+        members: adminWorkspace.members.map((item) => ({ ...item, core_handle: undefined })) };
+      const control = mount((payload) => {
+        calls.push(payload);
+        if (calls.length === 1) throw new Error("legacy reply lost after commit");
+        return { state: "submitted" };
+      }, legacy);
+      const settings = await openPeople();
+      fireEvent.click(within(settings).getByRole("button", { name: "Request invitation" }));
+      await within(settings).findByRole("alert");
+      control.changeWorkspace(adminWorkspace);
+      await act(async () => { window.dispatchEvent(new Event("focus")); });
+      fireEvent.click(within(settings).getByRole("button", { name: "Request invitation" }));
+      await waitFor(() => expect(calls).toHaveLength(2));
+      expect(calls[1]).toEqual(calls[0]);
+      expect(api.coreApiWorkspaceAdminSubmit).not.toHaveBeenCalled();
+    });
+
+    it("keeps a Core pending request on that route when its handle disappears", async () => {
+      api.coreApiWorkspaceAdminSubmit
+        .mockRejectedValueOnce(new Error("Core reply lost after commit"))
+        .mockRejectedValueOnce(new Error("core_api_unavailable"));
+      const legacyCalls: Array<Record<string, unknown>> = [];
+      const control = mount((payload) => { legacyCalls.push(payload); return { state: "submitted" }; });
+      const settings = await openPeople();
+      fireEvent.click(within(settings).getByRole("button", { name: "Request invitation" }));
+      await waitFor(() => expect(within(settings).getByRole("alert").textContent).toMatch(/not confirmed/i));
+      control.changeWorkspace({ ...adminWorkspace, core_handle: undefined });
+      await act(async () => { window.dispatchEvent(new Event("focus")); });
+      fireEvent.click(within(settings).getByRole("button", { name: "Request invitation" }));
+      await waitFor(() => expect(api.coreApiWorkspaceAdminSubmit).toHaveBeenCalledTimes(2));
+      expect(api.coreApiWorkspaceAdminSubmit.mock.calls[1]).toEqual(api.coreApiWorkspaceAdminSubmit.mock.calls[0]);
+      expect(legacyCalls).toHaveLength(0);
+      expect(within(settings).getByRole("alert").textContent).toMatch(/not confirmed/i);
+    });
+
     it("keeps an earlier uncertain request key when a later replay is refused", async () => {
       const calls: Array<Record<string, unknown>> = [];
       mount((payload) => {
@@ -7630,6 +7668,35 @@ describe("workspace access recommendations", () => {
     fireEvent.click(screen.getByRole("button", { name: "Retry send to workspace members" }));
     await screen.findByText(/Queued the recommendation for 1 active member device/);
     expect(new Set(sent).size).toBe(1);
+  });
+
+  it("retains an uncertain access send across an opaque workspace handle refresh", async () => {
+    const sent: string[] = [];
+    api.serviceCommand.mockImplementation((command: string, payload?: { operation_id?: string }) => {
+      if (command === "list_remote_profiles") return { profiles: [accessProfile] };
+      if (command === "list_workspace_access_recommendations") return { recommendations: [] };
+      if (command === "create_workspace_access_recommendation") return recommendation("MESHACCESS1:first");
+      if (command === "send_workspace_access_recommendation") {
+        sent.push(payload?.operation_id ?? "");
+        if (sent.length === 1) throw new Error("reply lost after commit");
+        return { sent_devices: 1 };
+      }
+      return {};
+    });
+    const lifetime = new ProfileLifetime();
+    const sendRecovery = new Map();
+    const view = renderAccess(lifetime, workspace, sendRecovery);
+    await prepareAccess();
+    fireEvent.click(screen.getByRole("button", { name: "Send to workspace members" }));
+    await screen.findByRole("button", { name: "Retry send to workspace members" });
+    view.rerender(<ProfileLifetimeContext.Provider value={lifetime}>
+      <WorkspaceAccessSettingsContent workspace={{ ...workspace, core_handle: "renewed-workspace-handle" }}
+        sendRecovery={sendRecovery} onSaved={async () => undefined} />
+    </ProfileLifetimeContext.Provider>);
+    fireEvent.click(screen.getByRole("button", { name: "Retry send to workspace members" }));
+    await screen.findByText(/Queued the recommendation for 1 active member device/);
+    expect(sent).toHaveLength(2);
+    expect(sent[1]).toBe(sent[0]);
   });
 
   it("keeps the uncertain key and signed document when settings close and reopen in one profile lifetime", async () => {
