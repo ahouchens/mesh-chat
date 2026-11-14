@@ -35,9 +35,11 @@ PROBE_STAGES = {"arguments", "target_discovery", "devtools_connect", "runtime_en
 PROBE_CODES = {"invalid_probe_arguments", "app_webview_unavailable", "devtools_deadline",
                "devtools_socket_failed", "devtools_command_failed", "invalid_media_probe", "unexpected"}
 DISCOVERY_FLAGS = {"endpoint_response_seen", "endpoint_non_ok_seen", "endpoint_invalid_json_seen",
-                   "endpoint_non_array_seen", "endpoint_list_seen"}
+                   "endpoint_non_array_seen", "endpoint_list_seen", "endpoint_response_over_limit_seen",
+                   "endpoint_target_limit_seen", "endpoint_malformed_list_seen"}
 DISCOVERY_COUNTS = {"targets_capped", "pages_capped", "pages_with_socket_capped",
-                    "expected_origin_pages_capped", "https_tauri_origin_pages_capped"}
+                    "expected_origin_pages_capped", "https_tauri_origin_pages_capped",
+                    "socket_rejected_pages_capped"}
 HEX64 = re.compile(r"[a-fA-F0-9]{64}\Z")
 HEX40 = re.compile(r"[a-f0-9]{40}\Z")
 VERSION = re.compile(r"(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\Z")

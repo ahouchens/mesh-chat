@@ -7,9 +7,11 @@ let probeStage = "arguments";
 const discovery = {
   endpoint_response_seen: false, endpoint_non_ok_seen: false,
   endpoint_invalid_json_seen: false, endpoint_non_array_seen: false,
+  endpoint_response_over_limit_seen: false, endpoint_target_limit_seen: false,
+  endpoint_malformed_list_seen: false,
   endpoint_list_seen: false, targets_capped: 0, pages_capped: 0,
   pages_with_socket_capped: 0, expected_origin_pages_capped: 0,
-  https_tauri_origin_pages_capped: 0,
+  https_tauri_origin_pages_capped: 0, socket_rejected_pages_capped: 0,
 };
 try {
 if (!Number.isInteger(port) || port < 1024 || port > 65535 || !Number.isInteger(timeout) || timeout < 1000 || timeout > 60000 ||
@@ -32,16 +34,53 @@ const withinDeadline = async (operation) => {
     clearTimeout(timer);
   }
 };
+// WebView2 may advertise localhost; connect to the already probed IPv4 loopback endpoint.
+const localDebuggerSocket = (address) => {
+  try {
+    const url = new URL(address);
+    if (url.protocol !== "ws:" || !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) ||
+        url.port !== String(port) || url.username || url.password || url.search || url.hash ||
+        !/^\/devtools\/page\/[A-Za-z0-9_-]{1,128}$/.test(url.pathname)) return null;
+    return `ws://127.0.0.1:${port}${url.pathname}`;
+  } catch {
+    return null;
+  }
+};
 const appTarget = (target) => {
   if (target.type !== "page" || typeof target.webSocketDebuggerUrl !== "string") return false;
   try {
     const url = new URL(target.url);
-    return (url.protocol === "http:" && url.hostname === "tauri.localhost") ||
-      (url.protocol === "tauri:" && url.hostname === "localhost");
+    return ((url.protocol === "http:" && url.hostname === "tauri.localhost") ||
+      (url.protocol === "tauri:" && url.hostname === "localhost")) &&
+      localDebuggerSocket(target.webSocketDebuggerUrl) !== null;
   } catch {
     return false;
   }
 };
+const boundedTargetBody = async (response) => {
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("target_body_unavailable");
+  const chunks = [];
+  let size = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > 65536) {
+      discovery.endpoint_response_over_limit_seen = true;
+      // Do not let a peer-controlled cancellation delay the discovery deadline.
+      void reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(Buffer.from(value));
+  }
+  return new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks, size));
+};
+const admittedTargetList = (targets) => targets.length <= 128 && targets.every((target) =>
+  target !== null && typeof target === "object" && !Array.isArray(target) &&
+  typeof target.type === "string" && (target.type !== "page" ||
+    (typeof target.url === "string" &&
+      (target.webSocketDebuggerUrl === undefined || typeof target.webSocketDebuggerUrl === "string"))));
 const capped = (count) => Math.min(32, count);
 const observeTargets = (targets) => {
   discovery.targets_capped = Math.max(discovery.targets_capped, capped(targets.length));
@@ -49,6 +88,7 @@ const observeTargets = (targets) => {
   let pagesWithSocket = 0;
   let expectedOriginPages = 0;
   let httpsTauriOriginPages = 0;
+  let socketRejectedPages = 0;
   for (const target of targets) {
     if (target?.type !== "page") continue;
     pages++;
@@ -56,7 +96,11 @@ const observeTargets = (targets) => {
     try {
       const url = new URL(target.url);
       if ((url.protocol === "http:" && url.hostname === "tauri.localhost") ||
-          (url.protocol === "tauri:" && url.hostname === "localhost")) expectedOriginPages++;
+          (url.protocol === "tauri:" && url.hostname === "localhost")) {
+        expectedOriginPages++;
+        if (typeof target.webSocketDebuggerUrl === "string" &&
+            localDebuggerSocket(target.webSocketDebuggerUrl) === null) socketRejectedPages++;
+      }
       if (url.protocol === "https:" && url.hostname === "tauri.localhost") httpsTauriOriginPages++;
     } catch { /* Only fixed counts are retained. */ }
   }
@@ -64,6 +108,7 @@ const observeTargets = (targets) => {
   discovery.pages_with_socket_capped = Math.max(discovery.pages_with_socket_capped, capped(pagesWithSocket));
   discovery.expected_origin_pages_capped = Math.max(discovery.expected_origin_pages_capped, capped(expectedOriginPages));
   discovery.https_tauri_origin_pages_capped = Math.max(discovery.https_tauri_origin_pages_capped, capped(httpsTauriOriginPages));
+  discovery.socket_rejected_pages_capped = Math.max(discovery.socket_rejected_pages_capped, capped(socketRejectedPages));
 };
 
 let target;
@@ -73,17 +118,24 @@ while (Date.now() < deadline) {
     const response = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(1000) });
     discovery.endpoint_response_seen = true;
     if (response.ok) {
-      let targets;
-      try { targets = await response.json(); }
-      catch { discovery.endpoint_invalid_json_seen = true; throw new Error("invalid_target_json"); }
-      if (Array.isArray(targets)) {
-        discovery.endpoint_list_seen = true;
-        observeTargets(targets);
-        target = targets.find(appTarget);
-      } else {
-        discovery.endpoint_non_array_seen = true;
+      const body = await boundedTargetBody(response);
+      if (body !== null) {
+        let targets;
+        try { targets = JSON.parse(body); }
+        catch { discovery.endpoint_invalid_json_seen = true; throw new Error("invalid_target_json"); }
+        if (Array.isArray(targets)) {
+          discovery.endpoint_list_seen = true;
+          if (targets.length > 128) discovery.endpoint_target_limit_seen = true;
+          else if (!admittedTargetList(targets)) discovery.endpoint_malformed_list_seen = true;
+          else {
+            observeTargets(targets);
+            target = targets.find(appTarget);
+          }
+        } else {
+          discovery.endpoint_non_array_seen = true;
+        }
+        if (target) break;
       }
-      if (target) break;
     } else {
       discovery.endpoint_non_ok_seen = true;
     }
@@ -95,7 +147,7 @@ while (Date.now() < deadline) {
 if (!target) throw new Error("app_webview_unavailable");
 
 probeStage = "devtools_connect";
-const socket = new WebSocket(target.webSocketDebuggerUrl);
+const socket = new WebSocket(localDebuggerSocket(target.webSocketDebuggerUrl));
 try {
 const pending = new Map();
 let nextId = 1;

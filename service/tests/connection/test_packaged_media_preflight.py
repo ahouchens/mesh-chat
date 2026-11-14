@@ -33,7 +33,7 @@ class PublishedCandidateTests(unittest.TestCase):
         self.assertEqual(preflight.bounded_probe_failure(probe.stderr),
                          {"stage": "arguments", "code": "invalid_probe_arguments"})
 
-    def _node_discovery_failure(self, payload: bytes, status: int = 200):
+    def _node_probe_failure(self, payload, status: int = 200):
         node = shutil.which("node")
         if node is None:
             self.skipTest("Node is unavailable")
@@ -43,11 +43,12 @@ class PublishedCandidateTests(unittest.TestCase):
 
         class EmptyTargets(BaseHTTPRequestHandler):
             def do_GET(self):
+                body = payload(self.server.server_port) if callable(payload) else payload
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(payload)))
+                self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
-                self.wfile.write(payload)
+                self.wfile.write(body)
 
             def log_message(self, _format, *_args):
                 pass
@@ -65,9 +66,14 @@ class PublishedCandidateTests(unittest.TestCase):
         self.assertEqual(probe.returncode, 1)
         self.assertEqual(probe.stdout, "")
         failure = preflight.bounded_probe_failure(probe.stderr)
-        self.assertEqual((probe.returncode, failure["stage"], failure["code"]),
-                         (1, "target_discovery", "app_webview_unavailable"))
-        return failure["discovery"], probe.stderr
+        self.assertIsNotNone(failure)
+        return failure, probe.stderr
+
+    def _node_discovery_failure(self, payload, status: int = 200):
+        failure, stderr = self._node_probe_failure(payload, status)
+        self.assertEqual((failure["stage"], failure["code"]),
+                         ("target_discovery", "app_webview_unavailable"))
+        return failure["discovery"], stderr
 
     def test_real_node_reports_bounded_target_discovery_observations(self):
         empty, _ = self._node_discovery_failure(b"[]")
@@ -108,6 +114,54 @@ class PublishedCandidateTests(unittest.TestCase):
         non_array, _ = self._node_discovery_failure(b"{}")
         self.assertTrue(non_array["endpoint_non_array_seen"])
         self.assertFalse(non_array["endpoint_list_seen"])
+
+    def test_real_node_bounds_response_and_rejects_malformed_target_lists(self):
+        oversized, _ = self._node_discovery_failure(b" " * 65537)
+        self.assertTrue(oversized["endpoint_response_over_limit_seen"])
+        self.assertFalse(oversized["endpoint_invalid_json_seen"])
+
+        too_many = json.dumps([{"type": "other"} for _ in range(129)]).encode()
+        limited, _ = self._node_discovery_failure(too_many)
+        self.assertTrue(limited["endpoint_list_seen"])
+        self.assertTrue(limited["endpoint_target_limit_seen"])
+        self.assertEqual(limited["targets_capped"], 0)
+
+        def null_before_page(port):
+            return json.dumps([None, {"type": "page", "url": "http://tauri.localhost/",
+                                      "webSocketDebuggerUrl":
+                                      f"ws://localhost:{port}/devtools/page/ABC123"}]).encode()
+
+        malformed, _ = self._node_discovery_failure(null_before_page)
+        self.assertTrue(malformed["endpoint_malformed_list_seen"])
+        self.assertEqual(malformed["targets_capped"], 0)
+
+    def test_real_node_rejects_foreign_debugger_sockets_and_accepts_local_form(self):
+        def unsafe_pages(port):
+            addresses = [f"ws://example.invalid:{port}/devtools/page/ABC123",
+                         f"ws://127.0.0.1:{port + 1}/devtools/page/ABC123",
+                         f"ws://user@localhost:{port}/devtools/page/ABC123",
+                         f"ws://localhost:{port}/devtools/browser/ABC123",
+                         f"ws://localhost:{port}/devtools/page/ABC123?token=private",
+                         f"wss://localhost:{port}/devtools/page/ABC123"]
+            return json.dumps([{"type": "page", "url": "http://tauri.localhost/private",
+                                "webSocketDebuggerUrl": address} for address in addresses]).encode()
+
+        rejected, stderr = self._node_discovery_failure(unsafe_pages)
+        self.assertEqual(rejected["expected_origin_pages_capped"], 6)
+        self.assertEqual(rejected["pages_with_socket_capped"], 6)
+        self.assertEqual(rejected["socket_rejected_pages_capped"], 6)
+        self.assertNotIn("private", stderr)
+        self.assertNotIn("example.invalid", stderr)
+
+        def local_page(port):
+            return json.dumps([{"type": "page", "url": "http://tauri.localhost/",
+                                "webSocketDebuggerUrl":
+                                f"ws://localhost:{port}/devtools/page/ABC123"}]).encode()
+
+        failure, _ = self._node_probe_failure(local_page)
+        self.assertEqual(failure["stage"], "devtools_connect")
+        self.assertIn(failure["code"], {"devtools_socket_failed", "devtools_deadline"})
+        self.assertNotIn("discovery", failure)
 
     def test_probe_failure_diagnostic_is_bounded_and_allowlisted(self):
         marker = preflight.PROBE_FAILURE_PREFIX + json.dumps(
