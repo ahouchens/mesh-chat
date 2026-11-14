@@ -35,6 +35,7 @@ PIPE_UNLIMITED_INSTANCES = 255
 BUFFER_BYTES = 65536
 WAIT_OBJECT_0 = 0
 WAIT_TIMEOUT = 258
+WAIT_FAILED = 0xFFFFFFFF
 ERROR_IO_PENDING = 997
 ERROR_OPERATION_ABORTED = 995
 ERROR_PIPE_CONNECTED = 535
@@ -45,6 +46,11 @@ TOKEN_QUERY = 0x0008
 TOKEN_USER = 1
 SDDL_REVISION_1 = 1
 PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+RETIRE_JOIN_SECONDS = 5.0
+
+
+class PipeRetirementPending(RuntimeError):
+    """A pipe worker or exact handle still belongs to the endpoint."""
 
 
 class SECURITY_ATTRIBUTES(ctypes.Structure):
@@ -56,6 +62,15 @@ class OVERLAPPED(ctypes.Structure):
     _fields_ = [("Internal", ctypes.c_size_t), ("InternalHigh", ctypes.c_size_t),
                 ("Offset", wintypes.DWORD), ("OffsetHigh", wintypes.DWORD),
                 ("hEvent", wintypes.HANDLE)]
+
+
+def _cancel_and_complete(kernel, handle, overlapped, transferred):
+    """A cancellation request does not retire the pending OVERLAPPED state."""
+    try:
+        kernel.CancelIoEx(handle, ctypes.byref(overlapped))
+    finally:
+        kernel.GetOverlappedResult(handle, ctypes.byref(overlapped),
+                                   ctypes.byref(transferred), True)
 
 
 def _bind():
@@ -163,14 +178,22 @@ class _Duplex:
                 if error in {ERROR_BROKEN_PIPE, ERROR_PIPE_NOT_CONNECTED, ERROR_OPERATION_ABORTED}:
                     return b""
                 raise OSError(error, "Core API pipe read failed")
-            while self._kernel.WaitForSingleObject(event, 50) == WAIT_TIMEOUT:
+            outcome = self._kernel.WaitForSingleObject(event, 50)
+            while outcome == WAIT_TIMEOUT:
                 if (self._stop.is_set()
                         or time.monotonic() - self._last_activity >= self._idle_timeout):
-                    self._kernel.CancelIoEx(self._handle, ctypes.byref(overlapped))
-                    self._kernel.GetOverlappedResult(self._handle, ctypes.byref(overlapped),
-                                                     ctypes.byref(read), False)
-                    self._kernel.CloseHandle(event)
+                    try:
+                        _cancel_and_complete(self._kernel, self._handle, overlapped, read)
+                    finally:
+                        self._kernel.CloseHandle(event)
                     return b""
+                outcome = self._kernel.WaitForSingleObject(event, 50)
+            if outcome != WAIT_OBJECT_0:
+                try:
+                    _cancel_and_complete(self._kernel, self._handle, overlapped, read)
+                finally:
+                    self._kernel.CloseHandle(event)
+                raise OSError("Core API pipe read wait failed")
         if not self._finish(overlapped, read, event):
             return b""
         self._last_activity = time.monotonic()
@@ -191,13 +214,21 @@ class _Duplex:
                 if error != ERROR_IO_PENDING:
                     self._kernel.CloseHandle(event)
                     raise OSError(error, "Core API pipe write failed")
-                while self._kernel.WaitForSingleObject(event, 50) == WAIT_TIMEOUT:
+                outcome = self._kernel.WaitForSingleObject(event, 50)
+                while outcome == WAIT_TIMEOUT:
                     if self._stop.is_set():
-                        self._kernel.CancelIoEx(self._handle, ctypes.byref(overlapped))
-                        self._kernel.GetOverlappedResult(self._handle, ctypes.byref(overlapped),
-                                                         ctypes.byref(written), False)
-                        self._kernel.CloseHandle(event)
+                        try:
+                            _cancel_and_complete(self._kernel, self._handle, overlapped, written)
+                        finally:
+                            self._kernel.CloseHandle(event)
                         raise OSError(ERROR_OPERATION_ABORTED, "Core API pipe write canceled")
+                    outcome = self._kernel.WaitForSingleObject(event, 50)
+                if outcome != WAIT_OBJECT_0:
+                    try:
+                        _cancel_and_complete(self._kernel, self._handle, overlapped, written)
+                    finally:
+                        self._kernel.CloseHandle(event)
+                    raise OSError("Core API pipe write wait failed")
             if not self._finish(overlapped, written, event) or written.value == 0:
                 raise OSError("Core API pipe write failed")
             self._last_activity = time.monotonic()
@@ -293,18 +324,43 @@ class PipeEndpoint:
     def close(self):
         self._stop.set()
         with self._lock:
-            handles = tuple(self._handles)
-        for handle in handles:
-            # Cancels a pending accept/read so the worker returns instead of
-            # blocking on a synchronous handle close.
-            self.kernel.CancelIoEx(handle, None)
+            for handle in tuple(self._handles):
+                # This requests cancellation; the worker still owns its handle
+                # until the pending OVERLAPPED operation and worker complete.
+                try:
+                    self.kernel.CancelIoEx(handle, None)
+                except OSError:
+                    pass
+        deadline = time.monotonic() + RETIRE_JOIN_SECONDS
         for thread in self._threads:
-            thread.join(5)
+            thread.join(max(0.0, deadline - time.monotonic()))
+        if any(thread.is_alive() for thread in self._threads):
+            raise PipeRetirementPending("Core API pipe workers are still active")
         with self._lock:
-            stale = tuple(self._handles)
-            self._handles.clear()
-        for handle in stale:
-            self.kernel.CloseHandle(handle)
+            for handle in tuple(self._handles):
+                self._close_handle_locked(handle)
+            if self._handles:
+                raise PipeRetirementPending("Core API pipe handles are not retired")
+
+    def _close_handle_locked(self, handle):
+        """Only a positive CloseHandle releases endpoint custody."""
+        try:
+            closed = self.kernel.CloseHandle(handle)
+        except Exception:
+            closed = False
+        if closed:
+            self._handles.discard(handle)
+        elif self.failure is None:
+            self.failure = "Core API pipe handle close failed"
+        return bool(closed)
+
+    def _retire_worker_handle(self, handle):
+        try:
+            self.kernel.DisconnectNamedPipe(handle)
+        except Exception:
+            pass  # Closing the exact handle still retires a disconnected pipe.
+        with self._lock:
+            return self._close_handle_locked(handle)
 
     def _serve_client(self, service, handle):
         while not self._stop.is_set():
@@ -315,34 +371,32 @@ class PipeEndpoint:
                     self.failure = f"{type(error).__name__}: {error}"[:120]
                     return
             try:
-                if not self._connect(handle):
-                    continue
-                image = self._client_image(handle)
-                if not image_allowed(image, self._images):
-                    with self._lock:
-                        self.rejected += 1
-                    continue
-                with self._lock:
-                    self.accepted += 1
-                session = host.bind_host_stream(service, caller=self._grant.caller,
-                                                permissions=self._grant.permissions,
-                                                profiles=self._grant.profiles,
-                                                scope=self._scope,
-                                                private_native=self._private_native,
-                                                private_profile_bootstrap=self._private_profile_bootstrap,
-                                                private_composer_legacy=self._private_composer_legacy)
-                session.serve(_Duplex(self.kernel, handle, self._stop, self._idle_timeout),
-                              _Duplex(self.kernel, handle, self._stop, self._idle_timeout))
+                if self._connect(handle):
+                    image = self._client_image(handle)
+                    if not image_allowed(image, self._images):
+                        with self._lock:
+                            self.rejected += 1
+                    else:
+                        with self._lock:
+                            self.accepted += 1
+                        session = host.bind_host_stream(service, caller=self._grant.caller,
+                                                        permissions=self._grant.permissions,
+                                                        profiles=self._grant.profiles,
+                                                        scope=self._scope,
+                                                        private_native=self._private_native,
+                                                        private_profile_bootstrap=self._private_profile_bootstrap,
+                                                        private_composer_legacy=self._private_composer_legacy)
+                        session.serve(_Duplex(self.kernel, handle, self._stop, self._idle_timeout),
+                                      _Duplex(self.kernel, handle, self._stop, self._idle_timeout))
             except (OSError, ValueError) as error:
                 if self._stop.is_set():
                     return
                 self.failure = f"{type(error).__name__}: {error}"[:120]
             finally:
-                with self._lock:
-                    self._handles.discard(handle)
-                self.kernel.DisconnectNamedPipe(handle)
-                self.kernel.CloseHandle(handle)
+                retired = self._retire_worker_handle(handle)
                 handle = None
+            if not retired:
+                return  # Keep the exact handle for close() to retry.
 
     def _security(self):
         token = wintypes.HANDLE()
@@ -406,10 +460,24 @@ class PipeEndpoint:
                 if error in {ERROR_BROKEN_PIPE, ERROR_PIPE_NOT_CONNECTED, ERROR_ACCESS_DENIED}:
                     return False
                 raise OSError(error, "Core API endpoint cannot accept a client")
-            while self.kernel.WaitForSingleObject(event, 50) == WAIT_TIMEOUT:
+            outcome = self.kernel.WaitForSingleObject(event, 50)
+            while outcome == WAIT_TIMEOUT:
                 if self._stop.is_set():
-                    self.kernel.CancelIoEx(handle, ctypes.byref(overlapped))
+                    transferred = wintypes.DWORD()
+                    _cancel_and_complete(self.kernel, handle, overlapped, transferred)
                     raise OSError(ERROR_OPERATION_ABORTED, "Core API endpoint stopped")
+                outcome = self.kernel.WaitForSingleObject(event, 50)
+            if outcome != WAIT_OBJECT_0:
+                transferred = wintypes.DWORD()
+                _cancel_and_complete(self.kernel, handle, overlapped, transferred)
+                raise OSError("Core API pipe accept wait failed")
+            transferred = wintypes.DWORD()
+            if not self.kernel.GetOverlappedResult(handle, ctypes.byref(overlapped),
+                                                   ctypes.byref(transferred), False):
+                error = ctypes.get_last_error()
+                if error in {ERROR_BROKEN_PIPE, ERROR_PIPE_NOT_CONNECTED, ERROR_OPERATION_ABORTED}:
+                    return False
+                raise OSError(error, "Core API endpoint cannot accept a client")
             return True
         finally:
             self.kernel.CloseHandle(event)

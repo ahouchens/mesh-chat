@@ -396,10 +396,19 @@ def main() -> int:
         return 3
     finally:
         if core_api_endpoint is not None:
-            try:
-                core_api_endpoint.close()
-            except Exception as exc:
-                report_failure("shutdown", exc, command, requests)
+            retirement_reported = False
+            while True:
+                try:
+                    core_api_endpoint.close()
+                    break
+                except Exception as exc:
+                    if not retirement_reported:
+                        report_failure("shutdown", exc, command, requests)
+                        retirement_reported = True
+                    # Each close attempt has one bounded worker-join budget.
+                    # Keep the dependent native/service owners until it proves
+                    # every pipe worker and exact handle has retired.
+                    time.sleep(.05)
         if desktop_transport is not None:
             desktop_transport.shutdown()
         if native_webrtc is not None:

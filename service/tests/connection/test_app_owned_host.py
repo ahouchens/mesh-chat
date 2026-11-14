@@ -8,6 +8,7 @@ import pytest
 
 from mesh_chat import app_owned_host as host
 from mesh_chat.core_api import host as core_host
+from mesh_chat.core_api.pipe_endpoint import PipeRetirementPending
 from mesh_chat.core_api.wire_codec import decode_frame, encode_frame
 from mesh_chat.errors import ValidationError
 from mesh_chat.service import MeshChatService, NativeStartupIncomplete
@@ -93,6 +94,36 @@ def test_deferred_retirement_retains_key_and_exclusive_owner_until_ack(runtime):
     value.service.close = original
     assert value.close() and value.store._key is None and shutdown == [True]
     assert start().service._identity is None
+
+
+def test_incomplete_pipe_retirement_keeps_endpoint_and_withholds_stopped(tmp_path, monkeypatch):
+    monkeypatch.setattr(host, "_require_windows", lambda: None)
+    environment = {"MESH_CHAT_APP_DATA_DIRECTORY": str(tmp_path),
+        "MESH_CHAT_CORE_API_PIPE": config(tmp_path).pipe,
+        "MESH_CHAT_CORE_API_CLIENT_IMAGE": config(tmp_path).client_image,
+        "MESH_CHAT_APP_PARENT_PID": "42"}
+    events, status = [], []
+    class Endpoint:
+        attempts = 0
+        def close(self):
+            self.attempts += 1
+            events.append("endpoint")
+            if self.attempts == 1:
+                raise PipeRetirementPending("worker active")
+    endpoint = Endpoint()
+    runtime = object.__new__(host.AppOwnedRuntime)
+    runtime.endpoint = endpoint
+    runtime.service = SimpleNamespace(close=lambda: events.append("service"), _store_closed=True)
+    runtime.store = None
+    runtime.host = SimpleNamespace(shutdown=lambda: events.append("native"))
+    runtime.lease = SimpleNamespace(close=lambda: events.append("lease"))
+    assert host.run(io.BytesIO(), SimpleNamespace(write=status.append),
+        watch_parent=lambda _: None, environment=environment,
+        runtime_factory=lambda _: runtime) == 0
+    assert [item["type"] for item in status] == [
+        "runtime_started", "runtime_retiring", "runtime_stopped"]
+    assert events == ["endpoint", "endpoint", "service", "native", "lease"]
+    assert endpoint.attempts == 2 and runtime.endpoint is None
 
 
 def test_incomplete_constructor_keeps_exact_service_and_key_owner(runtime):
