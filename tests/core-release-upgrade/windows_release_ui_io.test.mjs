@@ -3,7 +3,13 @@ import { spawn } from "node:child_process";
 import { test } from "node:test";
 import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
-import { boundedCdpFrame, closeBoundedSocket, closeCheckedSocket, completeAfterCleanup, readBoundedInput, withDeadline } from "../../scripts/windows_release_ui_io.mjs";
+import { boundedCdpFrame, closeBoundedSocket, closeCheckedSocket, completeAfterCleanup, fixedUiFailure, readBoundedInput, UiCleanupFailure, withDeadline } from "../../scripts/windows_release_ui_io.mjs";
+
+test("only fixed UI codes pass through diagnostic attribution", () => {
+  assert.equal(fixedUiFailure(new Error("ui_source_mismatch")), "ui_source_mismatch");
+  assert.equal(fixedUiFailure(new Error("secret path C:\\user\\profile")), "ui_contract_failed");
+  assert.equal(fixedUiFailure({ message: "ui_source_mismatch" }), "ui_contract_failed");
+});
 
 test("oversized unterminated stdin is refused before EOF", async () => {
   const input = new PassThrough();
@@ -82,7 +88,15 @@ test("success cannot be emitted before cleanup; failed cleanup rejects it", asyn
   assert.equal(completed, true);
   await assert.rejects(completeAfterCleanup(async () => "ready", async () => {
     throw new Error("retirement_failed");
-  }), /retirement_failed/);
+  }), (error) => error instanceof UiCleanupFailure
+    && error.actionFailed === false && error.cleanup.message === "retirement_failed");
+  await assert.rejects(completeAfterCleanup(async () => {
+    throw new Error("ui_source_mismatch");
+  }, async () => {
+    throw new Error("ui_socket_retirement_failed");
+  }), (error) => error instanceof UiCleanupFailure
+    && error.actionFailed === true && error.primary.message === "ui_source_mismatch"
+    && error.cleanup.message === "ui_socket_retirement_failed");
 });
 
 test("protocol fault during final socket retirement defeats successful readback", async () => {
@@ -105,7 +119,8 @@ test("protocol fault during final socket retirement defeats successful readback"
   });
   await assert.rejects(
     completeAfterCleanup(async () => "successful_readback", () => closeCheckedSocket(socket, () => protocolFailed)),
-    /ui_cdp_frame_invalid/
+    (error) => error instanceof UiCleanupFailure
+      && error.actionFailed === false && error.cleanup.message === "ui_cdp_frame_invalid"
   );
   assert.equal(socket.readyState, 3);
   assert.equal(protocolFailed, true);
@@ -129,12 +144,13 @@ function invokeWithoutEof(data) {
 }
 
 test("driver refuses oversized and missing-EOF input with sanitized output", async () => {
-  for (const data of ["x".repeat(2_049), '{"phase":"seed"}']) {
+  for (const [data, code] of [["x".repeat(2_049), "ui_config_unbounded"],
+                              ['{"phase":"seed"}', "ui_config_deadline"]]) {
     const result = await invokeWithoutEof(data);
     assert.equal(result.code, 1);
     assert.deepEqual(JSON.parse(result.output), {
       v: 1, passed: false, evidence_level: "windows_release_ui_seed_readback_contract_only",
-      failure_kind: "ui_contract_failed",
+      failure_kind: code,
     });
     assert.equal(result.output.includes(data.slice(0, 20)), false);
   }

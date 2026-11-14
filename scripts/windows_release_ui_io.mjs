@@ -1,4 +1,32 @@
 // Bounded transport helpers shared by the UI driver and focused behavior tests.
+const UI_FAILURE_CODES = new Set([
+  "ui_cdp_failed", "ui_cdp_frame_invalid", "ui_cdp_frame_unbounded",
+  "ui_channel_missing", "ui_config_deadline", "ui_config_invalid",
+  "ui_config_stream_failed", "ui_config_unbounded", "ui_control_unavailable",
+  "ui_deadline_invalid", "ui_draft_missing", "ui_hashes_invalid",
+  "ui_input_limits_invalid", "ui_markers_not_distinct", "ui_message_missing",
+  "ui_message_not_visible", "ui_observation_failed", "ui_port_invalid",
+  "ui_profile_not_fresh", "ui_readback_deadline", "ui_readback_invalid",
+  "ui_socket_closed", "ui_socket_deadline", "ui_socket_failed",
+  "ui_socket_retirement_deadline", "ui_socket_retirement_failed",
+  "ui_source_mismatch", "ui_step_deadline", "ui_target_ambiguous",
+  "ui_target_invalid", "ui_target_unavailable", "ui_workspace_missing",
+]);
+
+export function fixedUiFailure(error) {
+  return error instanceof Error && UI_FAILURE_CODES.has(error.message)
+    ? error.message : "ui_contract_failed";
+}
+
+export class UiCleanupFailure extends Error {
+  constructor(primary, cleanup, actionFailed) {
+    super("ui_cleanup_failed");
+    this.primary = primary;
+    this.cleanup = cleanup;
+    this.actionFailed = actionFailed;
+  }
+}
+
 export function withDeadline(promise, milliseconds, code, timers = globalThis) {
   if (!Number.isInteger(milliseconds) || milliseconds < 1 || milliseconds > 60_000) {
     throw new Error("ui_deadline_invalid");
@@ -91,7 +119,11 @@ export async function closeCheckedSocket(socket, protocolFailed) {
 
 export async function completeAfterCleanup(action, cleanup) {
   let value;
+  let primary, actionFailed = false;
   try { value = await action(); }
-  finally { await cleanup(); }
+  catch (error) { primary = error; actionFailed = true; }
+  try { await cleanup(); }
+  catch (error) { throw new UiCleanupFailure(primary, error, actionFailed); }
+  if (actionFailed) throw primary;
   return value;
 }

@@ -1,6 +1,6 @@
 // Drive only visible released-app controls; read back through two read-only commands.
 import { checkedConfig, checkedReadback, EVIDENCE_LEVEL, projectReadback } from "./windows_release_ui_contract.mjs";
-import { boundedCdpFrame, closeCheckedSocket, completeAfterCleanup, readBoundedInput, withDeadline } from "./windows_release_ui_io.mjs";
+import { boundedCdpFrame, closeCheckedSocket, completeAfterCleanup, fixedUiFailure, readBoundedInput, UiCleanupFailure, withDeadline } from "./windows_release_ui_io.mjs";
 
 const START_MS = 20_000;
 const STEP_MS = 20_000;
@@ -281,8 +281,12 @@ async function main() {
 
 try {
   process.stdout.write(JSON.stringify(await main()) + "\n");
-} catch {
-  process.stdout.write(JSON.stringify({ v: 1, passed: false, evidence_level: EVIDENCE_LEVEL,
-    failure_kind: "ui_contract_failed" }) + "\n");
+} catch (error) {
+  const dual = error instanceof UiCleanupFailure;
+  const primary = dual ? (error.actionFailed ? error.primary : null) : error;
+  const failure = { v: 1, passed: false, evidence_level: EVIDENCE_LEVEL,
+    failure_kind: fixedUiFailure(primary) };
+  if (dual) failure.cleanup_failure_kind = fixedUiFailure(error.cleanup);
+  process.stdout.write(JSON.stringify(failure) + "\n");
   process.exitCode = 1;
 }

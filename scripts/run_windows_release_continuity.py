@@ -34,10 +34,31 @@ VERSION = "0.9.66"
 WEBVIEW_CLIENT = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 LEVEL = "disposable_windows_installed_same_version_continuity_attempt"
 MAX_DRIVER_OUTPUT = 16 * 1024
+UI_FAILURE_CODES = frozenset({
+    "ui_cdp_failed", "ui_cdp_frame_invalid", "ui_cdp_frame_unbounded",
+    "ui_channel_missing", "ui_config_deadline", "ui_config_invalid",
+    "ui_config_stream_failed", "ui_config_unbounded", "ui_control_unavailable",
+    "ui_contract_failed", "ui_deadline_invalid", "ui_draft_missing",
+    "ui_hashes_invalid", "ui_input_limits_invalid", "ui_markers_not_distinct",
+    "ui_message_missing", "ui_message_not_visible", "ui_observation_failed",
+    "ui_port_invalid", "ui_profile_not_fresh", "ui_readback_deadline",
+    "ui_readback_invalid", "ui_socket_closed", "ui_socket_deadline",
+    "ui_socket_failed", "ui_socket_retirement_deadline",
+    "ui_socket_retirement_failed", "ui_source_mismatch", "ui_step_deadline",
+    "ui_target_ambiguous", "ui_target_invalid", "ui_target_unavailable",
+    "ui_workspace_missing",
+})
 
 
 class ContinuityFailure(RuntimeError):
     pass
+
+
+class UiDriverFailure(ContinuityFailure):
+    def __init__(self, code: str, cleanup_code: str | None):
+        super().__init__("ui_driver_failed")
+        self.code = code
+        self.cleanup_code = cleanup_code
 
 
 class CREDENTIALW(ctypes.Structure):
@@ -151,14 +172,34 @@ def run_ui(node: Path, port: int, config: dict) -> dict:
         raise ContinuityFailure("ui_config_oversized")
     probe = subprocess.run([str(node), str(DRIVER), str(port)], cwd=ROOT, input=payload,
                            capture_output=True, timeout=100, creationflags=subprocess.CREATE_NO_WINDOW)
-    if probe.returncode or len(probe.stdout) > MAX_DRIVER_OUTPUT or probe.stderr or probe.stdout.count(b"\n") != 1:
-        raise ContinuityFailure("ui_driver_failed")
-    value = json.loads(probe.stdout)
+    if (probe.returncode not in (0, 1) or len(probe.stdout) > MAX_DRIVER_OUTPUT
+            or probe.stderr or probe.stdout.count(b"\n") != 1):
+        raise ContinuityFailure("ui_driver_report_invalid")
+    try:
+        value = json.loads(probe.stdout)
+    except (ValueError, UnicodeDecodeError) as error:
+        raise ContinuityFailure("ui_driver_report_invalid") from error
+    if isinstance(value, dict) and value.get("passed") is False:
+        fields = {"v", "passed", "evidence_level", "failure_kind"}
+        if "cleanup_failure_kind" in value:
+            fields.add("cleanup_failure_kind")
+        if (probe.returncode != 1 or set(value) != fields
+                or type(value.get("v")) is not int or value["v"] != 1
+                or value.get("evidence_level") != "windows_release_ui_seed_readback_contract_only"
+                or not isinstance(value.get("failure_kind"), str)
+                or value["failure_kind"] not in UI_FAILURE_CODES
+                or ("cleanup_failure_kind" in value
+                    and (not isinstance(value["cleanup_failure_kind"], str)
+                         or value["cleanup_failure_kind"] not in UI_FAILURE_CODES))):
+            raise ContinuityFailure("ui_driver_report_invalid")
+        raise UiDriverFailure(value["failure_kind"], value.get("cleanup_failure_kind"))
     if (not isinstance(value, dict)
+            or probe.returncode != 0
             or set(value) != {"v", "passed", "evidence_level", "source_commit", "installed_version",
                               "phase", "hashes", "native_upgrade_qualified", "peer_receipt_qualified",
                               "schema_refusal_qualified", "physical_device_identity_qualified"}
-            or value.get("v") != 1 or value.get("passed") is not True
+            or type(value.get("v")) is not int or value["v"] != 1
+            or value.get("passed") is not True
             or value.get("evidence_level") != "windows_release_ui_seed_readback_contract_only"
             or value.get("phase") != config["phase"]
             or value.get("source_commit") != config["expected_source"]
@@ -212,6 +253,10 @@ def launch_and_observe(app_path: Path, node: Path, config: dict, observation: di
         return report
     except BaseException as error:
         primary_failure = error
+        if isinstance(error, UiDriverFailure):
+            observation["ui_failure_kind"] = error.code
+            if error.cleanup_code is not None:
+                observation["ui_cleanup_failure_kind"] = error.cleanup_code
         cleanup = getattr(error, "release_cleanup", None)
         if isinstance(cleanup, dict):
             observation["launch_cleanup"] = {

@@ -190,6 +190,28 @@ class ContinuityTests(unittest.TestCase):
         with patch.object(continuity.subprocess, "run", return_value=response({**report, "hashes": {"profile": "secret"}})):
             with self.assertRaisesRegex(continuity.ContinuityFailure, "ui_driver_report_invalid"):
                 continuity.run_ui(Path("node"), 1000, config)
+        failure = {"v": 1, "passed": False,
+                   "evidence_level": "windows_release_ui_seed_readback_contract_only",
+                   "failure_kind": "ui_source_mismatch",
+                   "cleanup_failure_kind": "ui_socket_retirement_failed"}
+        with patch.object(continuity.subprocess, "run", return_value=subprocess.CompletedProcess(
+                [], 1, (json.dumps(failure) + "\n").encode(), b"")):
+            with self.assertRaises(continuity.UiDriverFailure) as caught:
+                continuity.run_ui(Path("node"), 1000, config)
+        self.assertEqual(caught.exception.code, "ui_source_mismatch")
+        self.assertEqual(caught.exception.cleanup_code, "ui_socket_retirement_failed")
+        with patch.object(continuity.subprocess, "run", return_value=subprocess.CompletedProcess(
+                [], 1, (json.dumps({**failure, "failure_kind": "ui_contract_failed"}) + "\n").encode(), b"")):
+            with self.assertRaises(continuity.UiDriverFailure) as caught:
+                continuity.run_ui(Path("node"), 1000, config)
+        self.assertEqual(caught.exception.code, "ui_contract_failed")
+        for malformed in ({**failure, "failure_kind": "secret path"},
+                          {**failure, "failure_kind": []},
+                          {**failure, "raw_error": "secret"}):
+            with patch.object(continuity.subprocess, "run", return_value=subprocess.CompletedProcess(
+                    [], 1, (json.dumps(malformed) + "\n").encode(), b"")):
+                with self.assertRaisesRegex(continuity.ContinuityFailure, "ui_driver_report_invalid"):
+                    continuity.run_ui(Path("node"), 1000, config)
 
     def test_primary_ui_failure_survives_policy_cleanup_failure(self):
         class FakeOwned:
@@ -204,11 +226,14 @@ class ContinuityTests(unittest.TestCase):
              patch.object(continuity.media, "token_elevated", return_value=True), \
              patch.object(continuity.media, "ScopedBrowserPolicy", FakePolicy), \
              patch.object(continuity.OwnedApp, "launch", return_value=FakeOwned()), \
-             patch.object(continuity, "run_ui", side_effect=continuity.ContinuityFailure("ui_driver_failed")):
+             patch.object(continuity, "run_ui", side_effect=continuity.UiDriverFailure(
+                 "ui_source_mismatch", "ui_socket_retirement_failed")):
             with self.assertRaisesRegex(continuity.ContinuityFailure, "ui_driver_failed"):
                 continuity.launch_and_observe(Path("app.exe"), Path("node"), config, observation)
         self.assertEqual(observation["app_retired"], True)
         self.assertEqual(observation["browser_policy_retired"], False)
+        self.assertEqual(observation["ui_failure_kind"], "ui_source_mismatch")
+        self.assertEqual(observation["ui_cleanup_failure_kind"], "ui_socket_retirement_failed")
         self.assertNotIn("ui_report", observation)
 
     def test_changed_reopen_hashes_leave_all_bounded_observations_in_failed_report(self):
