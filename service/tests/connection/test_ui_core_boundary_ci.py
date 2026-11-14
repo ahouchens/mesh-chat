@@ -91,6 +91,25 @@ def test_normal_installed_windows_runtime_is_a_required_distinct_artifact_bound_
         "dist/reports/windows-independent-sdk/**")) for step in uploads)
 
 
+def test_separate_process_fixture_runs_after_exact_bootstrap_and_retains_its_own_report():
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+    steps = workflow["jobs"]["desktop-host"]["steps"]
+    bootstrap = next(index for index, step in enumerate(steps)
+                     if "scripts/check_independent_core_consumers.py" in step.get("run", ""))
+    separate = next(index for index, step in enumerate(steps)
+                    if "scripts/check_windows_separate_process_consumer.py" in step.get("run", ""))
+    pairing = next(index for index, step in enumerate(steps)
+                   if "scripts/check_independent_core_pairing.py" in step.get("run", ""))
+    assert bootstrap < separate < pairing
+    assert steps[separate]["run"] == (
+        'python scripts/check_windows_separate_process_consumer.py --expected-source "${{ github.sha }}"')
+    assert "continue-on-error" not in steps[separate] and "if" not in steps[separate]
+    upload = next(step for step in steps if step.get("uses", "").startswith("actions/upload-artifact@")
+                  and step.get("with", {}).get("name") == "desktop-transport-${{ github.sha }}")
+    assert upload["if"] == "always()"
+    assert "dist/reports/windows-independent-separate-process.json" in upload["with"]["path"]
+
+
 def test_required_lifetime_evidence_keeps_bootstrap_and_session_scope_distinct():
     import check_independent_core_consumers as bootstrap
     import check_independent_core_pairing as pairing

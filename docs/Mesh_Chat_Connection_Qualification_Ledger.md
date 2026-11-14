@@ -1,5 +1,25 @@
 # Connection runtime qualification ledger
 
+## Installed separate-process runner integrated — November 14, 2026
+
+Commits `f750d1d` and `8442151` stage the reviewed public fixture and add a
+distinct installed Windows producer. It reuses the existing exact-source
+bootstrap, SDK and frozen-runtime checks, installs outside the checkout,
+requires bounded child output and positive process exit, checks EFS and final
+input hashes, then cleans only its owned successful workspace. Failed or
+uncertain execution preserves that workspace. Cleanup waits consume one shared
+child deadline; elapsed time is checked again after workspace cleanup. Failed
+fixtures retain only their existing allowlisted phase, never raw output.
+
+Root's integrated suite passed **670 tests**, with one non-Windows admission
+case inapplicable on Windows; `.test-tmp/separate-process-installed-integration.xml`.
+This includes actual public SDK archive installation outside the checkout.
+Independent review found no blocker after the deadline corrections. The
+Windows CI step follows normal bootstrap and uploads a distinct
+`windows-independent-separate-process.json`. Actual installed runtime execution
+is still pending; no caller isolation, pending-work, SC22/SC26 or full-refactor
+acceptance is claimed.
+
 ## Reviewed media observation and separate-process fixture — November 14, 2026
 
 Source `061ae8870e4c4a2d1e708cbed22c8e5336c24c69` adds an allowlisted media

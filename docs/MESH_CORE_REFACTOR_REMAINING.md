@@ -101,7 +101,7 @@ its owned checkout and reports source evidence and gaps before integration.
 | Owner | Roadmap batch | Exclusive file scope / concrete deliverable | Next milestone |
 | --- | --- | --- | --- |
 | Lead | R0/R6/R9 | Working 0.9.66 baseline identified; public pair controller, strict checker and isolated workflow integrated and reviewed. | Integrate reviewed fixes and bind platform results to the roadmap; full acceptance remains open. |
-| C | R1/R6/R7 | Separate-process fixture integrated through `d2a3c66`; eight local tests pass and independent review is clear. | Implement bounded installed execution using existing source/SDK/bootstrap checks; preserve five parked native interop files. |
+| C | R1/R6/R7 | Separate-process fixture and installed runner integrated through `8442151`; 670 related tests pass and independent review is clear. | Execute the new Windows CI step on exact artifacts; preserve five parked native interop files. |
 | B | R3/R5/R8 | Windows packaging repair verified; bounded capture-failure observation integrated through `061ae88`. | Monitor media diagnostic `43560834395`, then prepare CallDialog plus messaging after capture passes. |
 | A | R6/R8 | First public run failed at Android wrapper admission; shell-boundary repair integrated as `dd9e4cd`. | Monitor replacement `43559770732`, then address its result before restart and partition extensions. |
 | D | R1/R9 | Native observer instrumentation compiled, but run `43557683098` failed downloading the emulator image before execution. | Monitor fresh exact-source reproduction `43559773977`; retain the first causal failure or paired result. |
