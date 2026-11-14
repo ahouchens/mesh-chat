@@ -23,6 +23,8 @@ serialized report is capped at 16 KiB before any temporary file is written.
 When the Node probe exits before producing checks and emits its fixed failure
 marker, the report retains only an allowlisted stage and code. It never records
 raw DevTools output, page content, URLs, or the probe's stderr.
+An outer Node process timeout remains the primary failure even when its captured
+stderr contains a valid marker; the launched app still follows normal retirement.
 After the probe it rechecks source,
 both provenance files, installed binaries and driver bytes, then retires the app
 and requires the DevTools port to close. The CI route must supply the two expected

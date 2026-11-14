@@ -55,6 +55,7 @@ if (!target) throw new Error("app_webview_unavailable");
 
 probeStage = "devtools_connect";
 const socket = new WebSocket(target.webSocketDebuggerUrl);
+try {
 const pending = new Map();
 let nextId = 1;
 const connect = new Promise((resolve, reject) => {
@@ -79,7 +80,6 @@ const command = (method, params = {}) => {
     .finally(() => pending.delete(id));
 };
 
-try {
   probeStage = "runtime_enable";
   await command("Runtime.enable");
   const expression = `(() => new Promise(async (resolve) => {

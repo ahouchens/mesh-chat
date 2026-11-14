@@ -44,23 +44,52 @@ class PreflightFailure(RuntimeError):
     pass
 
 
-def bounded_probe_failure(stderr: str) -> dict[str, str] | None:
+def bounded_probe_failure(stderr: str | bytes | None) -> dict[str, str] | None:
     """Retain only one fixed-stage driver failure, never raw DevTools output."""
-    if len(stderr) > 8192:
+    if stderr is None or len(stderr) > 8192:
+        return None
+    if isinstance(stderr, bytes):
+        try:
+            stderr = stderr.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+    if not isinstance(stderr, str):
         return None
     markers = [line.removeprefix(PROBE_FAILURE_PREFIX) for line in stderr.splitlines()
                if line.startswith(PROBE_FAILURE_PREFIX)]
     if len(markers) != 1:
         return None
+
+    def unique_fields(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        value: dict[str, object] = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError("duplicate_probe_field")
+            value[key] = item
+        return value
+
     try:
-        value = json.loads(markers[0])
-    except json.JSONDecodeError:
+        value = json.loads(markers[0], object_pairs_hook=unique_fields)
+    except (json.JSONDecodeError, ValueError):
         return None
     if (not isinstance(value, dict) or set(value) != {"stage", "code"}
             or type(value["stage"]) is not str or value["stage"] not in PROBE_STAGES
             or type(value["code"]) is not str or value["code"] not in PROBE_CODES):
         return None
     return value
+
+
+def run_probe(node: Path, port: int, source: str, report: dict) -> subprocess.CompletedProcess[str]:
+    try:
+        probe = subprocess.run([str(node), str(DRIVER), str(port), "60000", source], cwd=ROOT,
+                               text=True, capture_output=True, timeout=65)
+    except subprocess.TimeoutExpired as error:
+        if failure := bounded_probe_failure(error.stderr):
+            report["probe_failure"] = failure
+        raise
+    if failure := bounded_probe_failure(probe.stderr):
+        report["probe_failure"] = failure
+    return probe
 
 
 def regular_input(path: Path, limit: int) -> int:
@@ -373,10 +402,7 @@ def main() -> int:
         report["phase"] = "webview2_capture"
         process = subprocess.Popen([str(args.app.resolve())], cwd=args.app.parent, env=environment,
                                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        probe = subprocess.run([str(args.node), str(DRIVER), str(port), "60000", source], cwd=ROOT,
-                               text=True, capture_output=True, timeout=65)
-        if failure := bounded_probe_failure(probe.stderr):
-            report["probe_failure"] = failure
+        probe = run_probe(args.node, port, source, report)
         lines = probe.stdout.splitlines()
         if len(lines) != 1:
             raise PreflightFailure("probe_output_invalid")

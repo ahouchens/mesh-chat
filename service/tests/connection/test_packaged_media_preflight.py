@@ -4,10 +4,12 @@ from contextlib import redirect_stdout
 from io import StringIO
 from importlib.util import module_from_spec, spec_from_file_location
 import json
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+from threading import Thread
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -31,26 +33,61 @@ class PublishedCandidateTests(unittest.TestCase):
         self.assertEqual(preflight.bounded_probe_failure(probe.stderr),
                          {"stage": "arguments", "code": "invalid_probe_arguments"})
 
+    def test_real_node_reports_target_discovery_failure(self):
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("Node is unavailable")
+        version = subprocess.check_output([node, "--version"], text=True).strip()
+        if int(version.removeprefix("v").split(".")[0]) < 24:
+            self.skipTest("Node 24 fetch and WebSocket are required")
+
+        class EmptyTargets(BaseHTTPRequestHandler):
+            def do_GET(self):
+                payload = b"[]"
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def log_message(self, _format, *_args):
+                pass
+
+        with ThreadingHTTPServer(("127.0.0.1", 0), EmptyTargets) as server:
+            thread = Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                probe = subprocess.run([node, str(SCRIPT.with_suffix(".mjs")),
+                                        str(server.server_port), "1000", "a" * 40],
+                                       text=True, capture_output=True, timeout=5)
+            finally:
+                server.shutdown()
+                thread.join(timeout=2)
+        self.assertEqual(probe.returncode, 1)
+        self.assertEqual(probe.stdout, "")
+        self.assertEqual(preflight.bounded_probe_failure(probe.stderr),
+                         {"stage": "target_discovery", "code": "app_webview_unavailable"})
+
     def test_probe_failure_diagnostic_is_bounded_and_allowlisted(self):
         marker = preflight.PROBE_FAILURE_PREFIX + json.dumps(
             {"stage": "target_discovery", "code": "app_webview_unavailable"})
         self.assertEqual(preflight.bounded_probe_failure(marker),
                          {"stage": "target_discovery", "code": "app_webview_unavailable"})
         for stderr in (marker + "\n" + marker,
+                       (marker + "\n").encode("utf-8") + b"\xff",
                        preflight.PROBE_FAILURE_PREFIX + json.dumps({"stage": "target_discovery", "code": "secret"}),
                        preflight.PROBE_FAILURE_PREFIX + json.dumps({"stage": [], "code": "unexpected"}),
+                       preflight.PROBE_FAILURE_PREFIX + '{"stage":"target_discovery","stage":"runtime_enable","code":"unexpected"}',
                        preflight.PROBE_FAILURE_PREFIX + json.dumps({"stage": "target_discovery", "code": "unexpected", "url": "private"}),
                        "private" * 2000 + marker):
             with self.subTest(stderr=stderr[:70]):
                 self.assertIsNone(preflight.bounded_probe_failure(stderr))
 
-    def test_probe_failure_stage_reaches_report_without_raw_stderr(self):
+    def _mocked_preflight_probe(self, probe_outcome):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             output = root / "preflight.json"
             source, tree = "a" * 40, "b" * 40
-            marker = preflight.PROBE_FAILURE_PREFIX + json.dumps(
-                {"stage": "target_discovery", "code": "app_webview_unavailable"})
             arguments = ["packaged_media_preflight.py", "--app", str(root / "mesh-chat.exe"),
                          "--release-manifest", str(root / "manifest.json"),
                          "--expected-manifest-sha256", "c" * 64,
@@ -59,7 +96,6 @@ class PublishedCandidateTests(unittest.TestCase):
                          "--expected-source", source, "--expected-tree", tree,
                          "--run-id", "12345", "--run-attempt", "1", "--output", str(output)]
             node_version = subprocess.CompletedProcess([], 0, stdout="v24.0.0\n", stderr="")
-            node_probe = subprocess.CompletedProcess([], 1, stdout="", stderr=marker + "\nprivate detail")
             with patch.object(preflight.sys, "argv", arguments), patch.object(preflight.sys, "platform", "win32"), \
                     patch.dict(preflight.os.environ, {"GITHUB_RUN_ID": "12345", "GITHUB_RUN_ATTEMPT": "1",
                                                     "APPDATA": str(root), "LOCALAPPDATA": str(root)}, clear=True), \
@@ -73,18 +109,39 @@ class PublishedCandidateTests(unittest.TestCase):
                     patch.object(preflight, "known_folder", return_value=root), \
                     patch.object(preflight, "require_fresh_app_data"), \
                     patch.object(preflight, "reserve_port", return_value=12345), \
-                    patch.object(preflight, "retire", return_value=True), \
+                    patch.object(preflight, "retire", return_value=True) as retirement, \
                     patch.object(preflight.subprocess, "Popen") as launch, \
-                    patch.object(preflight.subprocess, "run", side_effect=[node_version, node_probe]):
+                    patch.object(preflight.subprocess, "run", side_effect=[node_version, probe_outcome]):
                 with redirect_stdout(StringIO()):
                     self.assertEqual(preflight.main(), 1)
                 launch.assert_called_once()
+                retirement.assert_called_once()
             result = json.loads(output.read_text(encoding="utf-8"))
-            self.assertEqual(result["failure"], "probe_output_invalid")
-            self.assertEqual(result["phase"], "webview2_capture")
-            self.assertEqual(result["probe_failure"],
-                             {"stage": "target_discovery", "code": "app_webview_unavailable"})
-            self.assertNotIn("private detail", output.read_text(encoding="utf-8"))
+            return result, output.read_text(encoding="utf-8")
+
+    def test_probe_failure_stage_reaches_report_without_raw_stderr(self):
+        marker = preflight.PROBE_FAILURE_PREFIX + json.dumps(
+            {"stage": "target_discovery", "code": "app_webview_unavailable"})
+        node_probe = subprocess.CompletedProcess([], 1, stdout="", stderr=marker + "\nprivate detail")
+        result, raw = self._mocked_preflight_probe(node_probe)
+        self.assertEqual(result["failure"], "probe_output_invalid")
+        self.assertEqual(result["phase"], "webview2_capture")
+        self.assertTrue(result["app_retired"])
+        self.assertEqual(result["probe_failure"],
+                         {"stage": "target_discovery", "code": "app_webview_unavailable"})
+        self.assertNotIn("private detail", raw)
+
+    def test_probe_timeout_keeps_primary_failure_and_bounded_marker(self):
+        marker = preflight.PROBE_FAILURE_PREFIX + json.dumps(
+            {"stage": "devtools_connect", "code": "devtools_deadline"})
+        timeout = subprocess.TimeoutExpired(["node"], 65, stderr=(marker + "\nprivate detail").encode("utf-8"))
+        result, raw = self._mocked_preflight_probe(timeout)
+        self.assertEqual(result["failure"], "TimeoutExpired")
+        self.assertEqual(result["phase"], "webview2_capture")
+        self.assertTrue(result["app_retired"])
+        self.assertEqual(result["probe_failure"],
+                         {"stage": "devtools_connect", "code": "devtools_deadline"})
+        self.assertNotIn("private detail", raw)
 
     def test_cli_refuses_mismatched_run_before_launch(self):
         with tempfile.TemporaryDirectory() as directory:
