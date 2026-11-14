@@ -9,6 +9,11 @@ from ctypes import wintypes
 import io
 import json
 import os
+from pathlib import Path
+import queue
+import subprocess
+import sys
+import threading
 import time
 import uuid
 
@@ -18,6 +23,10 @@ if os.name != "nt":
     pytest.skip("Windows named pipes are required", allow_module_level=True)
 
 from mesh_chat.core_api.pipe_endpoint import PipeClientAdmission, PipeConfig, PipeEndpoint
+from mesh_chat.app_owned_admission import AppOwnedAdmission
+from mesh_chat.app_owned_host import AppOwnedPipeAdmission
+from mesh_chat.app_owned_windows_process import WindowsProcessPort
+from mesh_chat.core_api.host import OWNER_PERMISSIONS
 from mesh_chat.service import MeshChatService
 from mesh_chat.vault import VaultStore
 
@@ -262,6 +271,121 @@ def test_opt_in_admission_reuses_preface_stream_and_rechecks_grant(service):
     finally:
         server.close()
     assert gate["released"] == 1 and server._admissions == set()
+
+
+_PROCESS_CLIENT = r'''
+import json, sys
+from mesh_chat.core_api.pipe_client import connect
+
+pipe, mode = sys.argv[1:3]
+def frame(operation, params=None, request_id="process:1"):
+    return json.dumps({"api_version": 1, "request_id": request_id,
+        "operation": operation, "params": params or {}}, separators=(",", ":")).encode() + b"\n"
+
+client = connect(pipe, 5)
+try:
+    if mode == "unregistered":
+        try: client.write(frame("runtime.capabilities"))
+        except OSError: pass
+        print(json.dumps({"closed": client.readline() == b""}), flush=True)
+    else:
+        token = sys.stdin.buffer.readline().strip()
+        assert len(token) == 64
+        client.write(b"MESH-HELPER/1 " + token + b"\n" + frame("runtime.capabilities"))
+        first = json.loads(client.readline())
+        print(json.dumps({"ok": first["ok"], "profile": first["result"]["profiles"][0]}), flush=True)
+        assert sys.stdin.buffer.readline() == b"go\n"
+        client.write(frame("settings.update", {"profile": first["result"]["profiles"][0],
+            "settings": {"nearby_discovery": sys.argv[3] == "1", "lan_fallback": False,
+                         "help_route": True}}, "process:2"))
+        second = json.loads(client.readline())
+        print(json.dumps({"ok": second["ok"], "code": second.get("error", {}).get("code")}), flush=True)
+finally:
+    client.close()
+'''
+
+
+def _process_line(child, timeout=10):
+    lines = queue.Queue(maxsize=1)
+    threading.Thread(target=lambda: lines.put(child.stdout.readline()), daemon=True).start()
+    line = lines.get(timeout=timeout)
+    assert line, f"same-image child exited: {child.poll()}"
+    return json.loads(line)
+
+
+def test_real_windows_process_roster_and_pipe_chain(service):
+    """Component proof with real Windows PIDs/handles; storage remains a test fixture."""
+    image = current_image()
+    port = WindowsProcessPort()
+    owner_pin = port.open(os.getpid())
+    roster = AppOwnedAdmission(owner_pin, image, port)
+    callback = AppOwnedPipeAdmission(roster, port)
+    name = pipe_name()
+    options = PipeConfig(caller="mesh-core-independent-application",
+        permissions=tuple(sorted(OWNER_PERMISSIONS | {"profile_owner"})),
+        allowed_images=(image,), max_clients=3, idle_timeout=60,
+        scope="owner", private_profile_bootstrap=True)
+    server = PipeEndpoint(name, options, admit_client=callback)
+    owner = helper = None
+    source = str(Path(__file__).resolve().parents[1] / "src")
+    environment = dict(os.environ, PYTHONPATH=source + os.pathsep + os.environ.get("PYTHONPATH", ""))
+    try:
+        server.start(service)
+        owner = connect(name)
+        owner.write(request("runtime.capabilities"))
+        owner_reply = json.loads(owner.readline())
+        assert owner_reply["ok"] is True
+        profile = owner_reply["result"]["profiles"][0]
+        owner.write(request("settings.query", profile=profile))
+        before = json.loads(owner.readline())["result"]["settings"]
+        target = not before["nearby_discovery"]
+
+        outsider = subprocess.run([image, "-u", "-c", _PROCESS_CLIENT, name, "unregistered"],
+            capture_output=True, env=environment, timeout=10, creationflags=subprocess.CREATE_NO_WINDOW)
+        assert outsider.returncode == 0, outsider.stderr[:300]
+        assert json.loads(outsider.stdout) == {"closed": True}
+
+        helper = subprocess.Popen([image, "-u", "-c", _PROCESS_CLIENT, name, "helper",
+                                   "1" if target else "0"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            env=environment, creationflags=subprocess.CREATE_NO_WINDOW)
+        invitation = roster.register_helper(helper.pid)
+        helper.stdin.write(invitation.token.encode("ascii") + b"\n")
+        helper.stdin.flush()
+        first = _process_line(helper)
+        assert first == {"ok": True, "profile": profile}
+        with service._dispatch_lock:
+            assert roster.remove_helper(helper.pid) is True
+        helper.stdin.write(b"go\n")
+        helper.stdin.flush()
+        second = _process_line(helper)
+        assert second == {"ok": False, "code": "unauthenticated"}
+        helper.stdin.close()
+        assert helper.wait(timeout=10) == 0, helper.stderr.read()[:300]
+        owner.write(request("settings.query", profile=profile))
+        after = json.loads(owner.readline())["result"]["settings"]
+        assert after == before
+        assert server.accepted == 2 and server.rejected >= 1
+    finally:
+        if helper is not None:
+            if helper.poll() is None:
+                helper.kill()
+                helper.wait(timeout=5)
+            for stream in (helper.stdin, helper.stdout, helper.stderr):
+                if stream is not None and not stream.closed:
+                    stream.close()
+        with service._dispatch_lock:
+            roster.fence()
+        if owner is not None:
+            owner.close()
+        server.close()
+        assert all(not thread.is_alive() for thread in server._threads)
+        assert not server._handles and not server._query_handles and not server._admissions
+        assert roster.retire() is True
+        assert callback.retire() is True
+        assert port.retire() is True
+        with pytest.raises(ValueError, match="closed"):
+            owner_pin.is_alive()
 
 
 def test_clients_are_served_one_at_a_time(service):
