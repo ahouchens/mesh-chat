@@ -23,6 +23,24 @@ def producer_inputs(role, context, tree):
     return verify(record, context, tree, identity)
 
 
+def verify_downloads(role, expected_source, tree, inputs):
+    """Reject missing or changed platform bytes before publishing setup keys."""
+    if role == "windows":
+        from windows_public_consumer_session import verified_inputs
+        _, binding, _, report_hash = verified_inputs(expected_source,
+            ROOT / "dist/reports/windows-independent-bootstrap.json")
+        if (binding["source_tree"] != tree or report_hash != inputs["bootstrap_report_sha256"]
+                or any(binding[key] != inputs[key] for key in
+                       ("sidecar_sha256", "build_input_sha256", "build_manifest_sha256"))):
+            raise ValueError("windows_download_binding")
+    else:
+        from check_android_independent_public_session import verified_distribution
+        identity, artifacts = verified_distribution(expected_source)
+        if (identity != {"source_commit": expected_source, "source_tree": tree}
+                or artifacts != inputs["artifacts"]):
+            raise ValueError("android_download_binding")
+
+
 def admitted_context(role, expected_source, serial):
     from public_core_pair_rendezvous import JOBS, context_from_environment
     if (role not in JOBS or os.environ.get("GITHUB_JOB") != JOBS[role]
@@ -93,6 +111,7 @@ def run(role, expected_source, serial=None, *, clock=time.monotonic):
         _, tree = evidence.source_identity(expected_source)
         inputs = producer_inputs(role, context, tree)
         result.update(context=context, source_tree=tree, inputs=inputs)
+        verify_downloads(role, expected_source, tree, inputs)
         phase = "setup"
         temporary = tempfile.TemporaryDirectory(prefix="mesh-public-pair-setup-", dir=parent)
         exchange = create_exchange(context, role, Path(temporary.name))

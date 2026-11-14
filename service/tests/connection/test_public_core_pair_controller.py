@@ -46,6 +46,7 @@ def setup(monkeypatch, tmp_path, role="windows", *, failed_phase=None):
         event("inputs")
         return {"artifact": "d" * 64}
     monkeypatch.setattr(controller, "producer_inputs", inputs)
+    monkeypatch.setattr(controller, "verify_downloads", lambda *args: event("download_bytes"))
     monkeypatch.setattr(controller, "create_peer", lambda *args: peer)
     monkeypatch.setattr(controller, "create_exchange", lambda *args: exchange)
     flow = {"public_request_count": 20}
@@ -68,17 +69,20 @@ def test_owned_session_finishes_before_successful_cleanup(monkeypatch, tmp_path,
     result = controller.run(role, SOURCE, clock=clock)
     assert result["passed"] is True and result["session"] == {"finished": True, "cleanup": True}
     assert calls.index("connect") < calls.index("open") < calls.index("flow") < calls.index("finish")
+    assert calls.index("download_bytes") < calls.index("connect")
     ending = "workspace_cleanup" if role == "windows" else "android_close"
     assert calls.index("finish") < calls.index(ending) < calls.index("exchange_close")
     assert not list(tmp_path.glob("mesh-public-pair-setup-*"))
 
 
-@pytest.mark.parametrize("phase", ["connect", "open", "flow", "finish", "workspace_cleanup", "exchange_close"])
+@pytest.mark.parametrize("phase", ["download_bytes", "connect", "open", "flow", "finish", "workspace_cleanup", "exchange_close"])
 def test_failure_preserves_primary_outcome_and_prevents_success(monkeypatch, tmp_path, phase):
     calls, peer, clock = setup(monkeypatch, tmp_path, failed_phase=phase)
     result = controller.run("windows", SOURCE, clock=clock)
     assert result["passed"] is False
     assert "sensitive" not in str(result)
+    if phase == "download_bytes":
+        assert "connect" not in calls and "open" not in calls
     if phase in {"open", "flow", "finish"}:
         assert "workspace_cleanup" not in calls
         assert result["session"]["cleanup"] is False
