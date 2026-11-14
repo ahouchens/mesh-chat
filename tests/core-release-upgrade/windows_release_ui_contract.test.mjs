@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
 import { checkedConfig, checkedReadback, compareReports, EVIDENCE_LEVEL, projectReadback, RELEASE_SOURCE, sameReadback } from "../../scripts/windows_release_ui_contract.mjs";
+import { readInstalledUi, settledUiReadback } from "../../scripts/windows_release_ui_readback.mjs";
 
 const markers = {
   phase: "seed", expected_source: "7c40f7b23eab3e9d83ff7ca1075c90c4d84ce516",
@@ -24,6 +25,107 @@ function sample() {
     page: { messages: [{ id: "message-1", text: markers.message_text }] },
   };
 }
+
+function readbackHost(candidate, overrides = {}) {
+  const value = sample();
+  value.snapshot.workspaces[0].core_handle = "b".repeat(64);
+  value.snapshot.workspace_channels[0].core_handle = "c".repeat(64);
+  const profile = { profile: "d".repeat(64), destination: "a".repeat(32) };
+  const calls = [];
+  const invoke = async (command, payload) => {
+    calls.push({ command, payload });
+    if (command in overrides) return overrides[command](payload, calls);
+    if (candidate) {
+      assert.notEqual(command, "service_command");
+      if (command === "core_api_profile") return profile;
+      assert.equal(command, "core_api_request");
+      assert.equal(payload.idempotencyKey, null);
+      if (payload.operation === "application.snapshot") {
+        assert.deepEqual(JSON.parse(JSON.stringify(payload.params)), {});
+        return value.snapshot;
+      }
+      assert.deepEqual(JSON.parse(JSON.stringify(payload)), { operation: "workspace.timeline_query",
+        params: { profile: profile.profile, workspace: "b".repeat(64), view: "channel_messages",
+          channel: "channel-1", cursor: null, limit: 50 }, idempotencyKey: null });
+      return { profile: profile.profile, workspace: "b".repeat(64), result: value.page };
+    }
+    assert.equal(command, "service_command");
+    if (payload.command === "snapshot") return value.snapshot;
+    assert.deepEqual(JSON.parse(JSON.stringify(payload)), { command: "list_workspace_messages",
+      payload: { workspace_id: "workspace-1", channel_id: "channel-1", cursor: null, limit: 50 } });
+    return value.page;
+  };
+  return { ...value, profile, calls, invoke };
+}
+
+test("released and candidate readback use their supported read-only APIs and preserve IDs", async () => {
+  const hashes = [];
+  for (const candidate of [false, true]) {
+    const host = readbackHost(candidate);
+    const isolated = runInNewContext(`(${readInstalledUi.toString()})`);
+    const result = await isolated(host.invoke, { ...markers, phase: candidate ? "observe" : "seed" }, projectReadback);
+    assert.deepEqual(Object.keys(result), ["hashes"]);
+    hashes.push(result.hashes);
+    assert.equal(host.calls.length, candidate ? 4 : 2);
+  }
+  assert.deepEqual(hashes[0], hashes[1]);
+});
+
+test("candidate readback fails closed on missing handles and profile changes", async () => {
+  for (const field of ["handle", "snapshot", "after", "response"]) {
+    const host = readbackHost(true);
+    if (field === "handle") delete host.snapshot.workspaces[0].core_handle;
+    if (field === "snapshot") host.snapshot.profile.destination_hash = "e".repeat(32);
+    const invoke = async (command, payload) => {
+      const result = await host.invoke(command, payload);
+      if (field === "after" && command === "core_api_profile" && host.calls.length === 4) {
+        return { ...result, profile: "f".repeat(64) };
+      }
+      if (field === "response" && payload?.operation === "workspace.timeline_query") {
+        return { ...result, workspace: "f".repeat(64) };
+      }
+      return result;
+    };
+    const result = await readInstalledUi(invoke, { ...markers, phase: "observe" }, projectReadback);
+    assert.deepEqual(result, { failure_kind: "ui_profile_changed" });
+    assert.equal(host.calls.some(call => call.command === "service_command"), false);
+  }
+});
+
+test("readback retains a fixed failing operation without raw bridge errors or retained content", async () => {
+  for (const operation of ["profile", "application.snapshot", "workspace.timeline_query"]) {
+    const host = readbackHost(true);
+    const result = await readInstalledUi(async (command, payload) => {
+      if ((operation === "profile" && command === "core_api_profile") || payload?.operation === operation) {
+        throw new Error("private native path and message text");
+      }
+      return host.invoke(command, payload);
+    }, { ...markers, phase: "observe" }, projectReadback);
+    assert.deepEqual(result, { failure_kind: { profile: "ui_profile_unavailable",
+      "application.snapshot": "ui_snapshot_unavailable", "workspace.timeline_query": "ui_timeline_unavailable" }[operation] });
+  }
+  const host = readbackHost(true);
+  host.snapshot.workspace_drafts = [];
+  assert.deepEqual(await readInstalledUi(host.invoke, { ...markers, phase: "observe" }, projectReadback),
+    { failure_kind: "ui_draft_missing" });
+});
+
+test("bounded readback retries initialization but retains the last failure at its deadline", async () => {
+  let time = 0, attempts = 0;
+  const clock = { now: () => time, pause: async ms => { time += ms; } };
+  await assert.rejects(settledUiReadback(async remaining => {
+    assert.equal(remaining, 400 - time);
+    attempts++;
+    throw new Error("ui_snapshot_unavailable");
+  }, 400, clock), /ui_snapshot_unavailable/);
+  assert.equal(attempts, 2);
+  assert.equal(time, 400);
+  attempts = 0;
+  assert.equal(await settledUiReadback(async () => {
+    if (++attempts === 1) throw new Error("ui_profile_unavailable");
+    return "ready";
+  }, 400, clock), "ready");
+});
 
 test("configuration accepts only bounded synthetic markers and exact source", () => {
   assert.deepEqual(checkedConfig({ ...markers }), markers);

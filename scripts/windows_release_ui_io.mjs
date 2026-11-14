@@ -12,6 +12,7 @@ const UI_FAILURE_CODES = new Set([
   "ui_socket_retirement_deadline", "ui_socket_retirement_failed",
   "ui_source_mismatch", "ui_step_deadline", "ui_target_ambiguous",
   "ui_target_invalid", "ui_target_unavailable", "ui_workspace_missing",
+  "ui_profile_unavailable", "ui_profile_changed", "ui_snapshot_unavailable", "ui_timeline_unavailable",
 ]);
 
 export function fixedUiFailure(error) {

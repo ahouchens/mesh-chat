@@ -3,6 +3,7 @@ import { checkedConfig, checkedReadback, EVIDENCE_LEVEL, projectReadback } from 
 import { boundedCdpFrame, closeCheckedSocket, completeAfterCleanup, fixedUiFailure, readBoundedInput, UiCleanupFailure, withDeadline } from "./windows_release_ui_io.mjs";
 import { emptyStartupObservation, observeStartup, UiStartupFailure, waitForStartup } from "./windows_release_ui_startup.mjs";
 import { seedReleasedUi, UiSeedFailure } from "./windows_release_ui_seed.mjs";
+import { readInstalledUi, settledUiReadback } from "./windows_release_ui_readback.mjs";
 
 const START_MS = 20_000;
 const STEP_MS = 20_000;
@@ -202,29 +203,23 @@ class Gui {
     await this.command("Input.insertText", { text: value });
   }
 
-  async readback(markers) {
+  async readback(markers, deadlineMs) {
     const expression = `(async () => {
       const invoke = window.__TAURI_INTERNALS__?.invoke;
       if (typeof invoke !== 'function') throw new Error('ui_bridge_unavailable');
-      const snapshot = await invoke('service_command', {command:'snapshot',payload:{}});
-      const workspaces = snapshot?.workspaces?.filter(item => item?.name === ${JSON.stringify(markers.workspace_name)});
-      if (workspaces?.length !== 1) throw new Error('ui_workspace_missing');
-      const channels = snapshot?.workspace_channels?.filter(item => item?.workspace_id === workspaces[0].id && item.name === 'general');
-      if (channels?.length !== 1) throw new Error('ui_channel_missing');
-      const page = await invoke('service_command', {command:'list_workspace_messages',payload:{
-        workspace_id:workspaces[0].id,channel_id:channels[0].id,cursor:null,limit:50}});
-      return (${projectReadback.toString()})(snapshot,page,${JSON.stringify(markers)});
+      return (${readInstalledUi.toString()})(invoke,${JSON.stringify(markers)},${projectReadback.toString()});
     })()`;
-    return checkedReadback(await this.evaluate(expression, true));
+    const value = await this.evaluate(expression, true, deadlineMs);
+    if (value && Object.keys(value).join(",") === "failure_kind"
+        && typeof value.failure_kind === "string") {
+      throw new Error(fixedUiFailure(new Error(value.failure_kind)));
+    }
+    if (!value || Object.keys(value).join(",") !== "hashes") throw new Error("ui_readback_invalid");
+    return checkedReadback(value.hashes);
   }
 
   async settledReadback(markers) {
-    const until = Date.now() + READBACK_MS;
-    while (Date.now() < until) {
-      try { return await this.readback(markers); }
-      catch { await pause(200); }
-    }
-    throw new Error("ui_readback_deadline");
+    return settledUiReadback(remaining => this.readback(markers, remaining), READBACK_MS);
   }
 
   async waitMessage(text) {
