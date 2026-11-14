@@ -1,5 +1,4 @@
 """Normal, empty, independently installed Windows application runtime host."""
-from contextlib import nullcontext
 from dataclasses import dataclass
 import json
 import os
@@ -186,6 +185,11 @@ class AppOwnedRuntime:
                 if self.service is not None else None)
             self.service = service_factory(self.store, directory, lambda _: None,
                 connection_policy="shared-native", native_webrtc_host=self.host)
+            if config.private_admission:
+                lock = getattr(self.service, "_dispatch_lock", None)
+                if (lock is None or not callable(getattr(lock, "__enter__", None))
+                        or not callable(getattr(lock, "__exit__", None))):
+                    raise NativeUnavailable("Private service dispatch lock is unavailable")
             config_pipe = PipeConfig(caller="mesh-core-independent-application",
                 permissions=tuple(sorted(OWNER_PERMISSIONS | {"profile_owner"})),
                 allowed_images=(config.client_image,), max_clients=2, idle_timeout=300,
@@ -216,7 +220,9 @@ class AppOwnedRuntime:
     def close(self):
         if self.admission is not None:
             lock = getattr(self.service, "_dispatch_lock", None)
-            with lock if lock is not None else nullcontext():
+            if lock is None:
+                raise RuntimeError("Private service dispatch lock is unavailable")
+            with lock:
                 self.admission.fence()
         if self.endpoint is not None:
             self.endpoint.close()
@@ -329,10 +335,12 @@ def _serve_owner_controls(reader, runtime, publish):
 def run(reader, writer, *, watch_parent, environment=None, runtime_factory=AppOwnedRuntime):
     """Inherited stdin controls lifetime by EOF only; SDK traffic uses the pipe."""
     runtime, status = None, 0
-    def publish(value):
+    def publish(value, *, required=False):
         try:
             writer.write(value)
         except (OSError, ValueError):
+            if required:
+                raise
             pass  # A lost status pipe cannot surrender native/store custody.
     try:
         _require_windows()
@@ -343,9 +351,10 @@ def run(reader, writer, *, watch_parent, environment=None, runtime_factory=AppOw
             watch_parent(config.parent_pid)
         runtime = (runtime_factory(config, private_input=reader) if config.private_admission
                    else runtime_factory(config))
-        publish({"v": 1, "type": "runtime_started", "pipe": config.pipe})
+        publish({"v": 1, "type": "runtime_started", "pipe": config.pipe},
+                required=config.private_admission)
         if config.private_admission:
-            _serve_owner_controls(reader, runtime, publish)
+            _serve_owner_controls(reader, runtime, lambda value: publish(value, required=True))
         elif reader.read(1):
             raise ValidationError("App-owned lifetime stream accepts only EOF")
         if pairing_diagnostics:

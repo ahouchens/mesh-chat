@@ -58,7 +58,12 @@ class FrameWriter:
     def write(self, value: dict[str, Any]) -> None:
         frame = encode_frame(value)
         with self._lock:
-            self._stream.write(frame)
+            offset = 0
+            while offset < len(frame):
+                written = self._stream.write(frame[offset:])
+                if type(written) is not int or not 1 <= written <= len(frame) - offset:
+                    raise OSError("IPC frame write was incomplete")
+                offset += written
             self._stream.flush()
 
 

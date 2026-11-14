@@ -89,10 +89,11 @@ class Watcher:
 
 
 class Service:
-    def __init__(self, store, events):
+    def __init__(self, store, events, *, dispatch_lock=True):
         self.store = store
         self.events = events
-        self._dispatch_lock = RLock()
+        if dispatch_lock:
+            self._dispatch_lock = RLock()
         self._store_closed = False
 
     def close(self):
@@ -101,7 +102,7 @@ class Service:
         self._store_closed = True
 
 
-def private_runtime(tmp_path, reader, events):
+def private_runtime(tmp_path, reader, events, *, dispatch_lock=True):
     port = Port(events)
     created = []
     class Store:
@@ -120,7 +121,8 @@ def private_runtime(tmp_path, reader, events):
         assert config.private_admission and private_input is reader
         value = host.AppOwnedRuntime(config, private_input=private_input,
             key_loader=lambda _: b"k" * 32, store_factory=lambda *_: Store(),
-            service_factory=lambda store, *_args, **_kwargs: Service(store, events),
+            service_factory=lambda store, *_args, **_kwargs: Service(store, events,
+                dispatch_lock=dispatch_lock),
             host_factory=lambda _: SimpleNamespace(shutdown=lambda: events.append("native")),
             endpoint_factory=endpoint, process_port_factory=lambda: port,
             watcher_factory=watcher)
@@ -225,6 +227,39 @@ def test_rejected_owner_pin_stays_with_failed_startup_until_cleanup(tmp_path):
     assert len(port.handles) == 1 and not port.handles[0].closed
     assert runtime.close() is True
     assert port.handles[0].closed and events.index("pin:41") < events.index("service")
+
+
+@pytest.mark.parametrize("failed_type", ["runtime_started", "helper_registered"])
+def test_private_required_write_failure_retires_without_reporting_success(
+        tmp_path, monkeypatch, failed_type):
+    monkeypatch.setattr(host, "_require_windows", lambda: None)
+    reader = Reader(b"REGISTER/1 00000001 42\n")
+    events, messages = [], []
+    factory, created, port, environment = private_runtime(tmp_path, reader, events)
+    def write(value):
+        if value["type"] == failed_type:
+            raise OSError("status pipe unavailable")
+        messages.append(value)
+    assert host.run(reader, SimpleNamespace(write=write), watch_parent=lambda _: None,
+                    environment=environment, runtime_factory=factory) == 2
+    assert [value["type"] for value in messages] == (
+        ["runtime_failed", "runtime_stopped"] if failed_type == "runtime_started"
+        else ["runtime_started", "runtime_failed", "runtime_stopped"])
+    assert all(handle.closed for handle in port.handles)
+    assert events.index("endpoint") < events.index("watcher") < events.index("pin:41")
+
+
+def test_missing_private_dispatch_lock_fails_before_process_pin_and_cleans_up(tmp_path):
+    reader = Reader(b"")
+    events = []
+    factory, created, port, environment = private_runtime(
+        tmp_path, reader, events, dispatch_lock=False)
+    config = host.AppOwnedConfig.from_environment(environment)
+    with pytest.raises(host.AppOwnedStartupIncomplete) as failure:
+        factory(config, private_input=reader)
+    assert port.handles == []
+    assert failure.value.runtime.close() is True
+    assert "service" in events and "native" in events
 
 
 @pytest.mark.parametrize("value", ["true", "", "2", True, 1])
