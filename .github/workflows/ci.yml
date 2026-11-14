@@ -3,6 +3,12 @@ name: CI
 on:
   workflow_call:
   workflow_dispatch:
+    inputs:
+      windows_candidate_pair:
+        description: Run the diagnostic Windows SDK candidate pair on the current sidecar
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -16,6 +22,8 @@ jobs:
     name: Verify and test
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    outputs:
+      candidate_sdk_artifact_id: ${{ steps.candidate_sdk_upload.outputs.artifact-id }}
 
     steps:
       - name: Check out repository
@@ -74,6 +82,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
       - name: Retain candidate public SDK staging inputs
+        id: candidate_sdk_upload
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -87,6 +96,8 @@ jobs:
 
   desktop-host:
     name: Check Windows desktop host
+    needs: verify
+    if: ${{ always() && (inputs.windows_candidate_pair != true || needs.verify.result == 'success') }}
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
@@ -159,6 +170,30 @@ jobs:
         run: python scripts/test_packaged_transport.py --expected-source "${{ github.sha }}"
       - name: Qualify explicit first-time approval and paired messaging
         run: python scripts/test_packaged_transport.py --pairing --expected-source "${{ github.sha }}"
+      - name: Download exact-run candidate SDK staging
+        if: ${{ always() && inputs.windows_candidate_pair == true && needs.verify.result == 'success' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: core-sdk-verification-${{ github.sha }}
+          path: dist
+      - name: Assemble exact Windows candidate pair inputs
+        id: candidate_assembly
+        if: ${{ always() && inputs.windows_candidate_pair == true && needs.verify.result == 'success' }}
+        run: python scripts/assemble_windows_candidate_pair.py --expected-source "${{ github.sha }}" --verification-artifact-id "${{ needs.verify.outputs.candidate_sdk_artifact_id }}" --output-dir "$env:RUNNER_TEMP\mesh-windows-candidate-pair-input" --report dist/reports/windows-candidate-pair-assembly.json --retained-manifest dist/reports/windows-candidate-pair-manifest.json
+      - name: Exercise installed Windows candidate pair
+        if: ${{ always() && inputs.windows_candidate_pair == true && steps.candidate_assembly.outcome == 'success' }}
+        run: python tests/core-sdk-upgrade/windows_candidate_pair.py --manifest "$env:RUNNER_TEMP\mesh-windows-candidate-pair-input\manifest.json" --expected-source "${{ github.sha }}" --output dist/reports/windows-candidate-pair.json
+      - name: Retain diagnostic Windows candidate pair evidence
+        if: ${{ always() && inputs.windows_candidate_pair == true }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-candidate-pair-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            dist/reports/windows-candidate-pair-assembly.json
+            dist/reports/windows-candidate-pair.json
+            dist/reports/windows-candidate-pair-manifest.json
+          if-no-files-found: warn
+          retention-days: 14
       - uses: actions/upload-artifact@v4
         if: always()
         with:
