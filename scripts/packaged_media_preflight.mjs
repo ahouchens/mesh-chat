@@ -3,6 +3,8 @@
 const [portText, timeoutText, expectedSource] = process.argv.slice(2);
 const port = Number(portText);
 const timeout = Number(timeoutText);
+let probeStage = "arguments";
+try {
 if (!Number.isInteger(port) || port < 1024 || port > 65535 || !Number.isInteger(timeout) || timeout < 1000 || timeout > 60000 ||
     !/^[a-f0-9]{40}$/.test(expectedSource ?? "")) {
   throw new Error("invalid_probe_arguments");
@@ -35,6 +37,7 @@ const appTarget = (target) => {
 };
 
 let target;
+probeStage = "target_discovery";
 while (Date.now() < deadline) {
   try {
     const response = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(1000) });
@@ -50,6 +53,7 @@ while (Date.now() < deadline) {
 }
 if (!target) throw new Error("app_webview_unavailable");
 
+probeStage = "devtools_connect";
 const socket = new WebSocket(target.webSocketDebuggerUrl);
 const pending = new Map();
 let nextId = 1;
@@ -76,6 +80,7 @@ const command = (method, params = {}) => {
 };
 
 try {
+  probeStage = "runtime_enable";
   await command("Runtime.enable");
   const expression = `(() => new Promise(async (resolve) => {
     const until = Date.now() + 10000;
@@ -112,7 +117,9 @@ try {
       resolve({appMounted, tauriBridge, mediaApi, peerApi, buildCommitMatches, captured: false, stopped: false});
     }
   }))()`;
+  probeStage = "runtime_evaluate";
   const result = await command("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true });
+  probeStage = "result_validation";
   const value = result?.result?.value;
   const fields = ["appMounted", "tauriBridge", "mediaApi", "peerApi", "buildCommitMatches", "captured", "stopped"];
   if (result?.exceptionDetails || !value || fields.some((field) => typeof value[field] !== "boolean") ||
@@ -121,4 +128,11 @@ try {
   if (fields.some((field) => !value[field])) process.exitCode = 1;
 } finally {
   socket.close();
+}
+} catch (error) {
+  const known = new Set(["invalid_probe_arguments", "app_webview_unavailable", "devtools_deadline",
+    "devtools_socket_failed", "devtools_command_failed", "invalid_media_probe"]);
+  const code = known.has(error?.message) ? error.message : "unexpected";
+  process.stderr.write("mesh_media_probe_failure_v1:" + JSON.stringify({ stage: probeStage, code }) + "\n");
+  process.exitCode = 1;
 }

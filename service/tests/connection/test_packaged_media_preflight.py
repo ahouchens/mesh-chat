@@ -5,6 +5,7 @@ from io import StringIO
 from importlib.util import module_from_spec, spec_from_file_location
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 from types import SimpleNamespace
@@ -19,6 +20,72 @@ SPEC.loader.exec_module(preflight)
 
 
 class PublishedCandidateTests(unittest.TestCase):
+    def test_probe_emits_only_fixed_argument_failure(self):
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("Node is unavailable")
+        probe = subprocess.run([node, str(SCRIPT.with_suffix(".mjs")), "invalid", "1000", "a" * 40],
+                               text=True, capture_output=True, timeout=5)
+        self.assertNotEqual(probe.returncode, 0)
+        self.assertEqual(probe.stdout, "")
+        self.assertEqual(preflight.bounded_probe_failure(probe.stderr),
+                         {"stage": "arguments", "code": "invalid_probe_arguments"})
+
+    def test_probe_failure_diagnostic_is_bounded_and_allowlisted(self):
+        marker = preflight.PROBE_FAILURE_PREFIX + json.dumps(
+            {"stage": "target_discovery", "code": "app_webview_unavailable"})
+        self.assertEqual(preflight.bounded_probe_failure(marker),
+                         {"stage": "target_discovery", "code": "app_webview_unavailable"})
+        for stderr in (marker + "\n" + marker,
+                       preflight.PROBE_FAILURE_PREFIX + json.dumps({"stage": "target_discovery", "code": "secret"}),
+                       preflight.PROBE_FAILURE_PREFIX + json.dumps({"stage": [], "code": "unexpected"}),
+                       preflight.PROBE_FAILURE_PREFIX + json.dumps({"stage": "target_discovery", "code": "unexpected", "url": "private"}),
+                       "private" * 2000 + marker):
+            with self.subTest(stderr=stderr[:70]):
+                self.assertIsNone(preflight.bounded_probe_failure(stderr))
+
+    def test_probe_failure_stage_reaches_report_without_raw_stderr(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "preflight.json"
+            source, tree = "a" * 40, "b" * 40
+            marker = preflight.PROBE_FAILURE_PREFIX + json.dumps(
+                {"stage": "target_discovery", "code": "app_webview_unavailable"})
+            arguments = ["packaged_media_preflight.py", "--app", str(root / "mesh-chat.exe"),
+                         "--release-manifest", str(root / "manifest.json"),
+                         "--expected-manifest-sha256", "c" * 64,
+                         "--delivery-report", str(root / "build.json"),
+                         "--expected-delivery-report-sha256", "d" * 64,
+                         "--expected-source", source, "--expected-tree", tree,
+                         "--run-id", "12345", "--run-attempt", "1", "--output", str(output)]
+            node_version = subprocess.CompletedProcess([], 0, stdout="v24.0.0\n", stderr="")
+            node_probe = subprocess.CompletedProcess([], 1, stdout="", stderr=marker + "\nprivate detail")
+            with patch.object(preflight.sys, "argv", arguments), patch.object(preflight.sys, "platform", "win32"), \
+                    patch.dict(preflight.os.environ, {"GITHUB_RUN_ID": "12345", "GITHUB_RUN_ATTEMPT": "1",
+                                                    "APPDATA": str(root), "LOCALAPPDATA": str(root)}, clear=True), \
+                    patch.object(preflight, "source_identity", return_value=(source, tree)), \
+                    patch.object(preflight, "published_bytes", return_value={"application_sha256": "e" * 64,
+                                                                            "application_size": 1,
+                                                                            "sidecar_sha256": "f" * 64,
+                                                                            "sidecar_size": 1}), \
+                    patch.object(preflight, "delivery_provenance", return_value="d" * 64), \
+                    patch.object(preflight, "digest", return_value="0" * 64), \
+                    patch.object(preflight, "known_folder", return_value=root), \
+                    patch.object(preflight, "require_fresh_app_data"), \
+                    patch.object(preflight, "reserve_port", return_value=12345), \
+                    patch.object(preflight, "retire", return_value=True), \
+                    patch.object(preflight.subprocess, "Popen") as launch, \
+                    patch.object(preflight.subprocess, "run", side_effect=[node_version, node_probe]):
+                with redirect_stdout(StringIO()):
+                    self.assertEqual(preflight.main(), 1)
+                launch.assert_called_once()
+            result = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(result["failure"], "probe_output_invalid")
+            self.assertEqual(result["phase"], "webview2_capture")
+            self.assertEqual(result["probe_failure"],
+                             {"stage": "target_discovery", "code": "app_webview_unavailable"})
+            self.assertNotIn("private detail", output.read_text(encoding="utf-8"))
+
     def test_cli_refuses_mismatched_run_before_launch(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "result.json"

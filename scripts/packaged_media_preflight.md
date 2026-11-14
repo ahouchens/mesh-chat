@@ -20,6 +20,9 @@ and exercises real `getUserMedia` audio capture and track/peer closure with
 WebView2's virtual device flags. The result contains only bounded boolean checks,
 hashes, source/run binding, a stable release version and a failure phase. The
 serialized report is capped at 16 KiB before any temporary file is written.
+When the Node probe exits before producing checks and emits its fixed failure
+marker, the report retains only an allowlisted stage and code. It never records
+raw DevTools output, page content, URLs, or the probe's stderr.
 After the probe it rechecks source,
 both provenance files, installed binaries and driver bytes, then retires the app
 and requires the DevTools port to close. The CI route must supply the two expected

@@ -29,6 +29,11 @@ ROOT = Path(__file__).resolve().parents[1]
 DRIVER = ROOT / "scripts/packaged_media_preflight.mjs"
 LEVEL = "windows_packaged_app_webview2_media_preflight_only"
 FIELDS = {"appMounted", "tauriBridge", "mediaApi", "peerApi", "buildCommitMatches", "captured", "stopped"}
+PROBE_FAILURE_PREFIX = "mesh_media_probe_failure_v1:"
+PROBE_STAGES = {"arguments", "target_discovery", "devtools_connect", "runtime_enable",
+                "runtime_evaluate", "result_validation"}
+PROBE_CODES = {"invalid_probe_arguments", "app_webview_unavailable", "devtools_deadline",
+               "devtools_socket_failed", "devtools_command_failed", "invalid_media_probe", "unexpected"}
 HEX64 = re.compile(r"[a-fA-F0-9]{64}\Z")
 HEX40 = re.compile(r"[a-f0-9]{40}\Z")
 VERSION = re.compile(r"(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\Z")
@@ -37,6 +42,25 @@ MAX_REPORT_BYTES = 16 * 1024
 
 class PreflightFailure(RuntimeError):
     pass
+
+
+def bounded_probe_failure(stderr: str) -> dict[str, str] | None:
+    """Retain only one fixed-stage driver failure, never raw DevTools output."""
+    if len(stderr) > 8192:
+        return None
+    markers = [line.removeprefix(PROBE_FAILURE_PREFIX) for line in stderr.splitlines()
+               if line.startswith(PROBE_FAILURE_PREFIX)]
+    if len(markers) != 1:
+        return None
+    try:
+        value = json.loads(markers[0])
+    except json.JSONDecodeError:
+        return None
+    if (not isinstance(value, dict) or set(value) != {"stage", "code"}
+            or type(value["stage"]) is not str or value["stage"] not in PROBE_STAGES
+            or type(value["code"]) is not str or value["code"] not in PROBE_CODES):
+        return None
+    return value
 
 
 def regular_input(path: Path, limit: int) -> int:
@@ -351,6 +375,8 @@ def main() -> int:
                                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         probe = subprocess.run([str(args.node), str(DRIVER), str(port), "60000", source], cwd=ROOT,
                                text=True, capture_output=True, timeout=65)
+        if failure := bounded_probe_failure(probe.stderr):
+            report["probe_failure"] = failure
         lines = probe.stdout.splitlines()
         if len(lines) != 1:
             raise PreflightFailure("probe_output_invalid")
