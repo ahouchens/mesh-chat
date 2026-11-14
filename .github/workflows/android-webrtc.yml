@@ -14,18 +14,35 @@ on:
         type: boolean
         required: false
         default: false
+      restart_diagnostic:
+        description: Packaged Android cold reopen diagnostic (not qualification)
+        type: boolean
+        required: false
+        default: false
+      restart_repetitions:
+        description: Independent restart attempts (1 to 3)
+        type: number
+        required: false
+        default: 1
 
 permissions:
   contents: read
 
 concurrency:
-  group: android-webrtc-${{ github.ref }}${{ github.event_name == 'workflow_dispatch' && inputs.gateway_probe && '-gateway' || github.event_name == 'workflow_dispatch' && inputs.network_inventory && '-inventory' || '' }}
+  group: android-webrtc-${{ github.ref }}${{ github.event_name == 'workflow_dispatch' && inputs.restart_diagnostic && '-restart' || github.event_name == 'workflow_dispatch' && inputs.gateway_probe && '-gateway' || github.event_name == 'workflow_dispatch' && inputs.network_inventory && '-inventory' || '' }}
   cancel-in-progress: true
 
 jobs:
+  diagnostic_conflict:
+    name: Reject conflicting manual diagnostic modes
+    if: ${{ github.event_name == 'workflow_dispatch' && ((inputs.restart_diagnostic && (inputs.network_inventory || inputs.gateway_probe)) || (inputs.network_inventory && inputs.gateway_probe)) }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: exit 1
+
   android:
     name: Android build and optimized native Chromium interop
-    if: ${{ !(github.event_name == 'workflow_dispatch' && (inputs.network_inventory || inputs.gateway_probe)) }}
+    if: ${{ !(github.event_name == 'workflow_dispatch' && (inputs.network_inventory || inputs.gateway_probe || inputs.restart_diagnostic)) }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -130,7 +147,7 @@ jobs:
 
   network_inventory:
     name: Read-only emulator network inventory (not qualification)
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.network_inventory && !inputs.gateway_probe }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.network_inventory && !inputs.gateway_probe && !inputs.restart_diagnostic }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -162,7 +179,7 @@ jobs:
 
   gateway_probe:
     name: Disposable emulator host gateway capability (not qualification)
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.gateway_probe }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.gateway_probe && !inputs.network_inventory && !inputs.restart_diagnostic }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -191,3 +208,10 @@ jobs:
           path: dist/reports/android-gateway-probe.json
           if-no-files-found: error
           retention-days: 14
+
+  restart_diagnostic:
+    name: Packaged Android reopen diagnostic only
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.restart_diagnostic && !inputs.network_inventory && !inputs.gateway_probe }}
+    uses: ./.github/workflows/native-restart-diagnostic.yml
+    with:
+      repetitions: ${{ inputs.restart_repetitions }}
