@@ -1,7 +1,7 @@
 """Strict evidence for one public Windows owner restart with Android held alive.
 
-This is a separate diagnostic from the fresh-pair report. The controller and
-workflow that collect these role reports are intentionally supplied later.
+This is a separate diagnostic from the fresh-pair report; a successful restart
+cannot substitute for broader lifecycle or native topology acceptance.
 """
 
 import math

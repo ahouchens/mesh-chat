@@ -1,7 +1,17 @@
-name: Installed public Windows Android fresh-pair diagnostic
+name: Installed public Windows Android pair diagnostic
 
 on:
   workflow_call:
+    inputs:
+      owner_restart:
+        description: Restart the Windows owner while the Android public session stays alive
+        type: boolean
+        required: false
+        default: false
+
+env:
+  PUBLIC_PAIR_SCENARIO: ${{ inputs.owner_restart && 'owner_restart' || 'fresh' }}
+  PUBLIC_REPORT_PREFIX: ${{ inputs.owner_restart && 'public-core-restart' || 'public-core-pair' }}
 
 permissions:
   contents: read
@@ -58,15 +68,16 @@ jobs:
         uses: ./scripts/public-core-pair-action
         with:
           role: windows
+          scenario: ${{ env.PUBLIC_PAIR_SCENARIO }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
       - name: Retain public Windows role and original producer report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: public-core-pair-windows-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ env.PUBLIC_REPORT_PREFIX }}-windows-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            dist/reports/public-core-pair-windows.json
+            dist/reports/${{ env.PUBLIC_REPORT_PREFIX }}-windows.json
             dist/reports/windows-independent-bootstrap.json
           if-no-files-found: error
           retention-days: 14
@@ -113,6 +124,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           INPUT_ROLE: android
           INPUT_PYTHON: python
+          INPUT_SCENARIO: ${{ env.PUBLIC_PAIR_SCENARIO }}
         with:
           api-level: 35
           arch: x86_64
@@ -124,15 +136,15 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: public-core-pair-android-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ env.PUBLIC_REPORT_PREFIX }}-android-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            dist/reports/public-core-pair-android.json
+            dist/reports/${{ env.PUBLIC_REPORT_PREFIX }}-android.json
             dist/reports/android-independent-distribution.json
           if-no-files-found: error
           retention-days: 14
 
   public_pair_check:
-    name: Check same-run installed public fresh pair
+    name: Check same-run installed public pair scenario
     needs: [verification, android, windows_public, android_public]
     if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
@@ -149,15 +161,16 @@ jobs:
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
-          name: public-core-pair-windows-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ env.PUBLIC_REPORT_PREFIX }}-windows-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: dist/qualification/public-pair/windows
       - name: Download public Android role report and original distribution
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
-          name: public-core-pair-android-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ env.PUBLIC_REPORT_PREFIX }}-android-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: dist/qualification/public-pair/android
       - name: Check public fresh-pair diagnostic only
+        if: ${{ !inputs.owner_restart }}
         env:
           PUBLIC_PAIR_NEEDS: ${{ toJSON(needs) }}
         run: >-
@@ -168,15 +181,27 @@ jobs:
           --windows-bootstrap dist/qualification/public-pair/windows/windows-independent-bootstrap.json
           --android-distribution dist/qualification/public-pair/android/android-independent-distribution.json
           --output dist/reports/public-core-pair-summary.json
-      - name: Retain distinct public fresh-pair diagnostic
+      - name: Check public owner-restart diagnostic only
+        if: ${{ inputs.owner_restart }}
+        env:
+          PUBLIC_PAIR_NEEDS: ${{ toJSON(needs) }}
+        run: >-
+          python scripts/check_public_core_restart.py
+          --expected-source "${{ github.sha }}"
+          --windows-report dist/qualification/public-pair/windows/public-core-restart-windows.json
+          --android-report dist/qualification/public-pair/android/public-core-restart-android.json
+          --windows-bootstrap dist/qualification/public-pair/windows/windows-independent-bootstrap.json
+          --android-distribution dist/qualification/public-pair/android/android-independent-distribution.json
+          --output dist/reports/public-core-restart-summary.json
+      - name: Retain distinct public pair diagnostic
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: public-core-pair-summary-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ env.PUBLIC_REPORT_PREFIX }}-summary-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            dist/reports/public-core-pair-summary.json
-            dist/qualification/public-pair/windows/public-core-pair-windows.json
-            dist/qualification/public-pair/android/public-core-pair-android.json
+            dist/reports/${{ env.PUBLIC_REPORT_PREFIX }}-summary.json
+            dist/qualification/public-pair/windows/${{ env.PUBLIC_REPORT_PREFIX }}-windows.json
+            dist/qualification/public-pair/android/${{ env.PUBLIC_REPORT_PREFIX }}-android.json
             dist/qualification/public-pair/windows/windows-independent-bootstrap.json
             dist/qualification/public-pair/android/android-independent-distribution.json
           if-no-files-found: error

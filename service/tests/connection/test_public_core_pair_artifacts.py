@@ -220,7 +220,10 @@ def test_public_exchange_exposes_only_flow_setup_interface(tmp_path):
 @pytest.mark.parametrize("role,phase", [("windows", "key"), ("android", "key"),
     ("windows", "offer_code"), ("android", "invitation_accepted"),
     ("windows", "approved"), ("windows", "ready"), ("android", "ready"),
-    ("windows", "done"), ("android", "done")])
+    ("windows", "done"), ("android", "done"),
+    ("windows", "owner_stopped"), ("windows", "owner_reopened"), ("android", "android_continuous"),
+    ("windows", "restart_ready"), ("android", "restart_ready"),
+    ("windows", "restart_done"), ("android", "restart_done")])
 def test_real_node_helper_admits_every_public_phase_with_fake_sdk(tmp_path, role, phase):
     node = os.environ.get("MESH_NODE") or shutil.which("node")
     assert node
@@ -266,7 +269,7 @@ export class DefaultArtifactClient {
         receiver.close()
 
 
-@pytest.mark.parametrize("fault", ["native_job", "wrong_source", "extra_plaintext", "unknown_phase", "wrong_pair"])
+@pytest.mark.parametrize("fault", ["native_job", "wrong_source", "extra_plaintext", "unknown_phase", "wrong_pair", "wrong_restart_sender"])
 def test_real_node_helper_rejects_native_or_plaintext_admission(tmp_path, fault):
     node = os.environ.get("MESH_NODE") or shutil.which("node")
     assert node
@@ -283,6 +286,7 @@ def test_real_node_helper_rejects_native_or_plaintext_admission(tmp_path, fault)
         if fault == "extra_plaintext": value["pairing_code"] = "MESHPAIR2.private"
         if fault == "unknown_phase": value["phase"] = "cold_complete_1"
         if fault == "wrong_pair": value["context"]["pair_id"] = "0" * 32
+        if fault == "wrong_restart_sender": value["phase"] = "android_continuous"
         bundle = tmp_path / "bundle.json"
         bundle.write_bytes(pair.canonical(value))
         identity = tmp_path / "identity.json"

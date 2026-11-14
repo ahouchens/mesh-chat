@@ -50,6 +50,9 @@ print("PRIVATE_PRODUCT_OUTPUT")
 print("PRIVATE_EXCEPTION_OUTPUT", file=sys.stderr)
 raise SystemExit(7 if os.environ.get("MESH_TEST_FAIL") else 0)
 ''', encoding="utf-8")
+    (root / "scripts/public_core_restart_controller.py").write_text(
+        controller.read_text().replace('"role":a.role',
+            '"scenario":os.environ.get("PUBLIC_PAIR_SCENARIO"),"role":a.role'), encoding="utf-8")
     return script, root
 
 
@@ -73,7 +76,8 @@ def invoke(script, env):
 def test_action_metadata_is_an_independent_node24_entry():
     value = yaml.safe_load((SOURCE / "action.yml").read_text(encoding="utf-8"))
     assert value["runs"] == {"using": "node24", "main": "action.mjs"}
-    assert set(value["inputs"]) == {"role", "python", "disposable-emulator-serial"}
+    assert set(value["inputs"]) == {"role", "python", "disposable-emulator-serial", "scenario"}
+    assert value["inputs"]["scenario"]["default"] == "fresh"
     assert value["inputs"]["role"]["required"] is True
 
 
@@ -92,6 +96,7 @@ def test_real_action_invokes_only_exact_role_controller_and_discards_output(tmp_
 
 
 @pytest.mark.parametrize("field,bad", [
+    ("INPUT_SCENARIO", "../other"), ("INPUT_SCENARIO", "restart"),
     ("INPUT_ROLE", "native"), ("GITHUB_JOB", "native_windows_peer"),
     ("GITHUB_EVENT_NAME", "push"), ("GITHUB_ACTIONS", "false"),
     ("GITHUB_SHA", "A" * 40), ("GITHUB_RUN_ID", "0"),
@@ -156,3 +161,16 @@ def test_timeout_waits_for_exact_child_close_then_fails(tmp_path):
     assert result.returncode == 1 and result.stderr == ""
     assert result.stdout == "Public Core pair windows controller failed.\n"
     assert not (root / "dist/reports/public-core-pair-windows.json").exists()
+
+
+@pytest.mark.parametrize("role", ["windows", "android"])
+def test_restart_routes_exact_controller_and_admission_without_fresh_report(tmp_path, role):
+    script, root = action(tmp_path)
+    result = invoke(script, {**environment(role), "INPUT_SCENARIO": "owner_restart",
+                             "PUBLIC_PAIR_SCENARIO": "untrusted-parent-value"})
+    assert result.returncode == 0 and result.stderr == ""
+    report = json.loads((root / f"dist/reports/public-core-restart-{role}.json").read_text())
+    assert report["scenario"] == "owner_restart" and report["role"] == role
+    assert report["source"] == "a" * 40
+    assert report["serial"] == ("emulator-5554" if role == "android" else None)
+    assert not (root / f"dist/reports/public-core-pair-{role}.json").exists()

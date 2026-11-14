@@ -31,6 +31,10 @@ def peers():
     ("windows", "approved", {}),
     ("windows", "ready", {}), ("android", "ready", {}),
     ("windows", "done", {}), ("android", "done", {}),
+    ("windows", "owner_stopped", {}), ("android", "android_continuous", {}),
+    ("windows", "owner_reopened", {}),
+    ("windows", "restart_ready", {}), ("android", "restart_ready", {}),
+    ("windows", "restart_done", {}), ("android", "restart_done", {}),
 ])
 def test_each_allowed_sealed_setup_phase_round_trips(role, phase, payload):
     windows, android = peers()
@@ -71,6 +75,24 @@ def test_caller_cannot_publish_product_or_other_role_phase():
             windows.seal("offer_code", {"pairing_code": "MESHPAIR2.synthetic", "text": "private"})
         with pytest.raises(ValueError):
             android.open("approved", {"text": "private"})
+    finally:
+        windows.close()
+        android.close()
+
+
+@pytest.mark.parametrize("phase,role", [("owner_stopped", "windows"),
+    ("owner_reopened", "windows"), ("android_continuous", "android"),
+    ("restart_ready", "windows"), ("restart_done", "android")])
+def test_restart_controls_reject_product_payload_and_wrong_owner(phase, role):
+    windows, android = peers()
+    try:
+        sender, other = (windows, android) if role == "windows" else (android, windows)
+        with pytest.raises(ValueError):
+            sender.seal(phase, {"message": "private"})
+        if phase not in {"restart_ready", "restart_done"}:
+            with pytest.raises(ValueError):
+                other.seal(phase, {})
+        assert pair.checked_payload(phase, {}) == {}
     finally:
         windows.close()
         android.close()

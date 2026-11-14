@@ -1,6 +1,7 @@
 """The fresh public pair runs only through its isolated manual route."""
 
 import ast
+from itertools import product
 from pathlib import Path
 import os
 import re
@@ -38,23 +39,27 @@ def test_parent_manual_modes_are_mutually_exclusive_and_do_not_run_required_gate
     dispatch = parent.get("on", parent.get(True))["workflow_dispatch"]["inputs"]
     assert dispatch["public_pair_diagnostic"]["type"] == "boolean"
     assert dispatch["public_pair_diagnostic"]["default"] is False
+    assert dispatch["public_restart_diagnostic"]["type"] == "boolean"
+    assert dispatch["public_restart_diagnostic"]["default"] is False
     jobs = parent["jobs"]
     assert jobs["public_pair_diagnostic"]["uses"] == "./.github/workflows/public-core-pair-diagnostic.yml"
     assert jobs["public_pair_diagnostic"]["permissions"] == {"contents": "read", "actions": "read"}
     names = ("diagnostic_conflict", "plan", "b8_first_cold_diagnostic", "public_pair_diagnostic", "gate")
     for event in ("workflow_dispatch", "push", "workflow_call"):
-        for b8 in (False, True):
-            for public in (False, True):
-                flags = {"b8_first_cold_diagnostic": b8, "public_pair_diagnostic": public}
-                selected = {name for name in names if value(jobs[name]["if"], event, **flags)}
-                expected = ({"diagnostic_conflict"} if b8 and public else
-                            {"b8_first_cold_diagnostic"} if b8 else
-                            {"public_pair_diagnostic"} if public else {"plan", "gate"})
-                if event != "workflow_dispatch":
-                    expected = {"plan", "gate"}
-                assert selected == expected
-                cancellation = value(parent["concurrency"]["cancel-in-progress"], event, **flags)
-                assert cancellation is (event != "workflow_dispatch" or not (b8 or public))
+        for b8, public, restart in product((False, True), repeat=3):
+            flags = {"b8_first_cold_diagnostic": b8, "public_pair_diagnostic": public,
+                     "public_restart_diagnostic": restart}
+            selected = {name for name in names if value(jobs[name]["if"], event, **flags)}
+            expected = ({"diagnostic_conflict"} if sum((b8, public, restart)) > 1 else
+                        {"b8_first_cold_diagnostic"} if b8 else
+                        {"public_pair_diagnostic"} if public or restart else {"plan", "gate"})
+            if event != "workflow_dispatch":
+                expected = {"plan", "gate"}
+            assert selected == expected
+            cancellation = value(parent["concurrency"]["cancel-in-progress"], event, **flags)
+            assert cancellation is (event != "workflow_dispatch" or not (b8 or public or restart))
+            if "public_pair_diagnostic" in selected:
+                assert value(jobs["public_pair_diagnostic"]["with"]["owner_restart"], event, **flags) is restart
 
 
 def test_public_diagnostic_uses_two_producers_before_concurrent_pair_roles():
@@ -89,7 +94,7 @@ def test_role_downloads_run_action_with_exact_emulator_lifetime_and_retain_prove
     ]
     action = named_step(windows, "Run public Windows pair role with Actions artifact runtime")
     assert action["uses"] == "./scripts/public-core-pair-action"
-    assert action["with"] == {"role": "windows"}
+    assert action["with"] == {"role": "windows", "scenario": "${{ env.PUBLIC_PAIR_SCENARIO }}"}
     assert action["env"]["GITHUB_TOKEN"] == "${{ github.token }}"
     android = jobs["android_public"]
     download = named_step(android, "Download exact-source installed Android consumer and distribution report")
@@ -101,14 +106,15 @@ def test_role_downloads_run_action_with_exact_emulator_lifetime_and_retain_prove
         "env 'INPUT_DISPOSABLE-EMULATOR-SERIAL=emulator-5554' "
         "node scripts/public-core-pair-action/action.mjs")
     assert emulator["env"] == {
-        "GITHUB_TOKEN": "${{ github.token }}", "INPUT_ROLE": "android", "INPUT_PYTHON": "python"}
+        "GITHUB_TOKEN": "${{ github.token }}", "INPUT_ROLE": "android", "INPUT_PYTHON": "python",
+        "INPUT_SCENARIO": "${{ env.PUBLIC_PAIR_SCENARIO }}"}
     for role, report in (("windows", "windows-independent-bootstrap.json"),
                          ("android", "android-independent-distribution.json")):
         upload = named_step(jobs[f"{role}_public"], f"Retain public {role.title()} role and original producer report")
         assert upload["if"] == "always()"
         assert upload["with"]["name"] == (
-            f"public-core-pair-{role}-${{{{ github.sha }}}}-${{{{ github.run_id }}}}-${{{{ github.run_attempt }}}}")
-        assert f"dist/reports/public-core-pair-{role}.json" in upload["with"]["path"]
+            f"${{{{ env.PUBLIC_REPORT_PREFIX }}}}-{role}-${{{{ github.sha }}}}-${{{{ github.run_id }}}}-${{{{ github.run_attempt }}}}")
+        assert f"dist/reports/${{{{ env.PUBLIC_REPORT_PREFIX }}}}-{role}.json" in upload["with"]["path"]
         assert f"dist/reports/{report}" in upload["with"]["path"]
 
 
@@ -127,9 +133,9 @@ def test_checker_receives_four_exact_needs_and_original_producer_reports():
         assert f"--{flag} dist/qualification/public-pair/{path}" in checker["run"]
     assert '--expected-source "${{ github.sha }}"' in checker["run"]
     assert "--output dist/reports/public-core-pair-summary.json" in checker["run"]
-    summary = named_step(job, "Retain distinct public fresh-pair diagnostic")
+    summary = named_step(job, "Retain distinct public pair diagnostic")
     assert summary["if"] == "always()"
-    assert "dist/reports/public-core-pair-summary.json" in summary["with"]["path"]
+    assert "dist/reports/${{ env.PUBLIC_REPORT_PREFIX }}-summary.json" in summary["with"]["path"]
 
 
 def test_android_emulator_shell_restores_declared_hyphenated_input_after_shell_boundary():
@@ -148,6 +154,7 @@ def test_android_emulator_shell_restores_declared_hyphenated_input_after_shell_b
         environment["PATH"] = "/usr/bin:" + environment["PATH"]
     environment["GITHUB_TOKEN"] = "test-github-token"
     environment["ACTIONS_RUNTIME_TOKEN"] = "test-runtime-token"
+    environment["INPUT_SCENARIO"] = "owner_restart"
     environment["INPUT_DISPOSABLE-EMULATOR-SERIAL"] = "emulator-5554"
     inherited = subprocess.run([shell, "-c", "/usr/bin/env"], env=environment,
                                capture_output=True, text=True, timeout=10, check=True)
@@ -159,6 +166,28 @@ def test_android_emulator_shell_restores_declared_hyphenated_input_after_shell_b
     assert "INPUT_DISPOSABLE-EMULATOR-SERIAL=emulator-5554" in restored.stdout
     assert "GITHUB_TOKEN=test-github-token" in restored.stdout
     assert "ACTIONS_RUNTIME_TOKEN=test-runtime-token" in restored.stdout
+    assert "INPUT_SCENARIO=owner_restart" in restored.stdout
+
+
+@pytest.mark.parametrize("restart", [False, True])
+def test_scenario_selects_one_checker_and_distinct_artifact_paths(restart):
+    paired = workflow("public-core-pair-diagnostic.yml")
+    env = {key: value(expression, "workflow_dispatch", owner_restart=restart)
+           for key, expression in paired["env"].items()}
+    assert env == {"PUBLIC_PAIR_SCENARIO": "owner_restart" if restart else "fresh",
+                   "PUBLIC_REPORT_PREFIX": "public-core-restart" if restart else "public-core-pair"}
+    job = paired["jobs"]["public_pair_check"]
+    checkers = [step for step in job["steps"] if step.get("name", "").startswith("Check public")]
+    selected = [step for step in checkers if value(step["if"], "workflow_dispatch", owner_restart=restart)]
+    assert len(selected) == 1
+    checker = selected[0]
+    script = "check_public_core_restart.py" if restart else "check_public_core_pair.py"
+    assert f"python scripts/{script}" in checker["run"]
+    assert checker["env"]["PUBLIC_PAIR_NEEDS"] == "${{ toJSON(needs) }}"
+    for role in ("windows", "android"):
+        assert f"--{role}-report dist/qualification/public-pair/{role}/{env['PUBLIC_REPORT_PREFIX']}-{role}.json" in checker["run"]
+    assert "--windows-bootstrap dist/qualification/public-pair/windows/windows-independent-bootstrap.json" in checker["run"]
+    assert "--android-distribution dist/qualification/public-pair/android/android-independent-distribution.json" in checker["run"]
 
 
 def test_staged_typescript_application_hashes_match_windows_and_linux_checkouts():

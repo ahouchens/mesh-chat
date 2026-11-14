@@ -65,13 +65,41 @@ the artifact runtime authority. The checker accepts `--windows-report`,
 It derives the pair ID from CI context; an optional `--pair-id` must match.
 
 The `connection-qualification.yml` manual input `public_pair_diagnostic=true`
-selects `public-core-pair-diagnostic.yml`; it conflicts with the first-cold
-diagnostic input. Both are false by default. Separate concurrency groups keep
+selects `public-core-pair-diagnostic.yml`; `public_restart_diagnostic=true` selects
+the owner-restart scenario in that workflow. Both conflict with each other and
+the first-cold diagnostic input. All three are false by default. Separate concurrency groups keep
 the public run and its producers from canceling ordinary qualification or the
 native diagnostic. The Android wrapper runs inside the emulator runner's live
 script, which inherits the Node Action environment. The initial key exchange
 allows up to 600 seconds for platform setup skew, within the unchanged
 1200-second controller limit; application sessions begin afterward.
+
+## Windows owner restart with Android held alive
+
+The restart flow first proves the unchanged fresh-pair scenario. Windows then
+positively finishes its original owner and reopens the same encrypted data under
+a new owner process. Android retains its original process and public protocol
+session, checking durable facts while Windows is stopped and after it reopens.
+Both roles verify the original profile, approved contact and message records,
+then send one new public message each and require its delivery receipt and one
+matching inbound record. Restart readiness and the five new setup phases carry
+only empty sealed control payloads.
+
+`public_core_restart_controller.py` keeps the existing 1200-second outer budget.
+The flow reserves 360 seconds from the original session for restart work and
+90 seconds for final retirement; reopening cannot extend the initial deadline.
+Windows request counts are separate per owner. Android stays within 126 requests
+to leave room for protocol finish. Strict report validation and setup-resource
+retirement precede deletion of successful Windows data. Failed Windows flows
+retain data and report unknown owner-retirement counts as null.
+
+The Node Action admits only `fresh` or `owner_restart`, passes its selected
+scenario explicitly to the child, and chooses a fixed controller/output path.
+Restart role and aggregate artifacts use `public-core-restart-*` names and the
+distinct `check_public_core_restart.py` schema. The same four prerequisite jobs
+and exact producer bytes remain mandatory. This scenario does not prove pending
+or offline work, network partition, Android restart, media, physical devices,
+or full SC21 acceptance.
 
 ## Verification and limits
 

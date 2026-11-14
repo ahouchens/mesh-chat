@@ -1,6 +1,10 @@
 name: Installed public Core pair diagnostic role
 description: Run one exact-source public consumer role with the Actions artifact runtime.
 inputs:
+  scenario:
+    description: fresh or owner_restart
+    required: false
+    default: fresh
   role:
     description: windows or android
     required: true

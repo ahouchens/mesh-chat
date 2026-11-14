@@ -22,7 +22,9 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 JOBS = {"windows": "windows_public", "android": "android_public"}
 SENDERS = {"offer_code": {"windows"}, "invitation_accepted": {"android"},
-           "approved": {"windows"}, "ready": set(JOBS), "done": set(JOBS)}
+           "approved": {"windows"}, "ready": set(JOBS), "done": set(JOBS),
+           "owner_stopped": {"windows"}, "android_continuous": {"android"},
+           "owner_reopened": {"windows"}, "restart_ready": set(JOBS), "restart_done": set(JOBS)}
 PHASES = frozenset(SENDERS)
 DOMAIN = b"public-core-pair:v1:"
 KEY_TTL = 1800
@@ -91,7 +93,7 @@ def checked_payload(phase, value):
         valid = (set(value) == {"pairing_code"} and type(code) is str
                  and 10 < len(code.encode("utf-8")) <= MAX_CODE
                  and re.fullmatch(r"MESHPAIR2\.[A-Za-z0-9_-]+", code) is not None)
-    elif phase in {"invitation_accepted", "approved", "ready", "done"}:
+    elif phase in PHASES - {"offer_code"}:
         valid = value == {}
     else:
         valid = False

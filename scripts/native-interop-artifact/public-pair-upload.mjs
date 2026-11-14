@@ -16,6 +16,8 @@ try {
   const phases = {
     offer_code: ["windows"], invitation_accepted: ["android"], approved: ["windows"],
     ready: ["windows", "android"], done: ["windows", "android"],
+    owner_stopped: ["windows"], android_continuous: ["android"], owner_reopened: ["windows"],
+    restart_ready: ["windows", "android"], restart_done: ["windows", "android"],
   };
   const phase = value.public_key ? "key" : value.phase;
   const owns = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
