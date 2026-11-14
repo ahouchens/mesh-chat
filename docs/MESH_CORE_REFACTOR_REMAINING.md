@@ -51,6 +51,19 @@ the specification's IDs or imply equal effort. Several packages overlap.
 
 ## Current checkpoint
 
+- `e543df1` full/call CI exposed a Linux Windows-path fixture mismatch and an
+  unsupported idempotency key in the installed private-admission settings probe.
+  Both are corrected (`4585da2`, `3fc6590`, strict bridge count `227630b`). Root
+  reproduced the installed failure, then passed all 11 corrected fixture checks
+  against the unchanged CI sidecar, including revocation and owner EOF/death;
+  EFS and owned workspace cleanup passed. Fresh exact-source CI remains required.
+  The 14 affected producer/bridge checks pass. See the latest ledger entry for
+  exact source, artifacts and the distinction from qualification.
+- Recommendation-send UI recovery through `85cdf56` passes 283 App/profile
+  tests and TypeScript checking. R8's bounded UI readback contract through
+  `983ce05` passes 15 Node tests; the disposable installed continuity controller
+  is under review. These advances do not close native, media or upgrade gates.
+- Earlier checkpoint before the `e543df1` execution:
 - Both `a9f10b3` runs are closed failed. Full-run Windows job `132410157418`
   passed installed image admission, pairing and paired consumer recovery;
   exact artifact and binary validation confirms receiver reopen and authenticated

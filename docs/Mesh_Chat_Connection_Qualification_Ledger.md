@@ -1,5 +1,48 @@
 # Connection runtime qualification ledger
 
+## Private admission fixture failure reproduced and corrected — November 14, 2026
+
+Full run `43584028427` and installed-call run `43584025870`, attempt 1 at
+`e543df1da3757f2587a185bf6a121006c27aadef`, exposed two test-fixture defects.
+Linux policy passed 7,562 cases and failed only the private Node protocol bridge;
+full verification passed 8,788 cases with 54 skips and the same failure. The
+Windows process-witness helper used host-platform path rules, rejecting a valid
+Windows path on Linux. Correction `4585da2` explicitly uses `path.win32`.
+Policy artifact `14110400333` has ZIP SHA-256
+`a2a3e683c3a8650845ec2d9438208607b3ef5b116d88cc6e605985dcdbcfaf54`.
+
+Both Windows jobs passed image admission, then failed private admission at
+`removed_helper`. Exact report archives `14110147751` and `14110675724` have
+ZIP SHA-256 `fbe123b7424eb7f394e95f92beac64cea9b9a6f26d807f29857b0063aef4d6f5`
+and `d048887745d2a7241d2a9728e2e65f9d48b1de09e3afac28317755491b0cff20`.
+Root reproduced the failure with the frozen CI sidecar and SDK, then narrowed
+it to the first owner `settings.update` returning `invalid_request`, before
+helper removal. The fixture supplied an idempotency key to an operation whose
+public parser forbids that field. Correction `3fc6590`, independently reviewed
+by A, removes the unsupported owner and helper probe keys. It preserves the
+positive mutation control and exact `unauthenticated` revocation requirement.
+
+The corrected fixture passed all 11 checks in 26.962 seconds against unchanged
+`e543df1` sidecar SHA-256
+`7e15b4420c18d05d1d04dad7f01d4252a7d1575be5d2aad59e0bc0fb08ae6f9e` and SDK
+SHA-256 `cf17cc59a89a3236b585f1464e9712c085b3c53333ad405a08dc842e2c023dac`.
+Checks cover same-image denial, registered helper use and revocation, one-use
+replay, wrong and expired invitations, continued owner use, owner EOF and owner
+death. EFS profile/vault protection and removal of the owned temporary workspace
+after process absence also passed. This is a corrected-fixture reproduction
+against frozen earlier bytes, not fresh exact-source CI qualification. All 14
+producer/bridge checks passed after `227630b` updated the strict TAP count for
+the new regression. No production admission rules or default changed.
+
+UI recommendation-send recovery `d3ca3fd`/`85cdf56` passed 283 application and
+profile-lifecycle tests plus TypeScript no-emit checking. An uncertain send keeps
+its operation ID through settings close/reopen; confirmed deliberate resends use
+a new ID, stale authority/profile results are fenced, and removed workspace
+state is pruned. R8's released-app UI contract through `983ce05` passed 15 Node
+checks. Its disposable installed continuity controller is under review. Native
+cross-platform and actual installed call roles were skipped after prerequisites
+failed; the refactor and R2/default promotion remain open.
+
 ## Installed Windows recovery verified; successor locally validated — November 14, 2026
 
 Full run `43581311705`, attempt 1 at `a9f10b3`, closed failed: seven jobs

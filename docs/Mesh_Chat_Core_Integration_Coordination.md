@@ -1,6 +1,17 @@
 # Core integration coordination — 2026-11-09
 
-Current November 14 integration: `de7c54f` passed 7,204 connection tests, two
+Current November 14 integration: `e543df1` CI failures are reproduced and
+corrected through `227630b`: Windows path semantics in the portable witness
+test, plus unsupported settings keys in the installed private fixture. The
+corrected fixture passed all 11 checks against the exact earlier CI binary;
+EFS, positive retirement and temporary workspace cleanup passed. The strict
+producer/Node bridge passes 14 checks. UI retry changes through `85cdf56` pass
+283 App/profile tests and TypeScript. C's disposable released-app continuity
+controller is under root/A/D review. Root owns the next tested source push,
+fresh full/native/call CI and failure disposition. Default/R2 promotion and
+overall refactor completion remain gated.
+
+Earlier November 14 integration: `de7c54f` passed 7,204 connection tests, two
 platform skips, exact SDK staging, strict types and 44 affected service tests.
 Image failure attribution `4a92903` then passed 161 affected checks with one
 platform skip. Both `a9f10b3` CI runs are closed failed on Linux mock setup;
