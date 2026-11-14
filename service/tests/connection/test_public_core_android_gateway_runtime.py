@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import signal
 import sys
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -180,3 +181,41 @@ def test_parent_writes_gateway_witness_only_after_positive_cleanup(tmp_path, mon
     report = json.loads(output.read_text())
     assert report["passed"] is False
     assert "gateway" not in report or report["gateway"] is None
+
+
+def test_parent_sigterm_enters_owned_cleanup_and_restores_handler(tmp_path, monkeypatch):
+    output = tmp_path / "role.json"
+    temporary = tmp_path / "owned"
+    temporary.mkdir()
+    cleaned = []
+    previous = signal.getsignal(signal.SIGTERM)
+
+    class FakeGateway:
+        def __init__(self, commands): pass
+        def create(self, path): pass
+        def close(self): cleaned.append("namespace")
+
+    class FakeChild:
+        def __init__(self, host, args):
+            self.failed_operation = None
+            self.profile = SimpleNamespace(close=lambda: cleaned.append("profile"))
+        def begin(self): pass
+        def receive_until_closed(self, deadline):
+            signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
+        def close(self): cleaned.append("child")
+        def retire_helpers(self, host): cleaned.append("helpers")
+
+    monkeypatch.setattr(gateway, "Gateway", FakeGateway)
+    monkeypatch.setattr(gateway, "PublicChild", FakeChild)
+    monkeypatch.setattr(gateway, "_source", lambda source: None)
+    monkeypatch.setattr(gateway.tempfile, "mkdtemp", lambda **kwargs: str(temporary))
+    arguments = ["--role", "android", "--expected-source", "a" * 40,
+                 "--disposable-emulator-serial", gateway.SERIAL, "--output", str(output)]
+    with patch.object(gateway.sys, "platform", "linux"), patch.dict(os.environ,
+            {"GITHUB_ACTIONS": "true", "RUNNER_TEMP": str(tmp_path)}):
+        assert gateway.run_parent(arguments, output) == 1
+    assert signal.getsignal(signal.SIGTERM) is previous
+    assert cleaned == ["child", "helpers", "profile", "namespace"]
+    report = json.loads(output.read_text())
+    assert report["passed"] is False
+    assert report["host_gateway_failure"]["controller_failed"] is True

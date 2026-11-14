@@ -381,6 +381,19 @@ def _role_report(path):
 
 
 def run_parent(arguments, output):
+    previous_handler = signal.getsignal(signal.SIGTERM)
+
+    def terminate(_signal, _frame):
+        raise Unavailable("public_gateway_termination")
+
+    signal.signal(signal.SIGTERM, terminate)
+    try:
+        return _run_parent(arguments, output, lambda: signal.signal(signal.SIGTERM, signal.SIG_IGN))
+    finally:
+        signal.signal(signal.SIGTERM, previous_handler)
+
+
+def _run_parent(arguments, output, quiesce_termination):
     gateway = child = temporary = None
     failure = False
     cleanup_failures = []
@@ -412,6 +425,7 @@ def run_parent(arguments, output):
     except Exception:
         failure = True
     finally:
+        quiesce_termination()
         if child is not None:
             try: child.close()
             except Exception: cleanup_failures.append("child")
