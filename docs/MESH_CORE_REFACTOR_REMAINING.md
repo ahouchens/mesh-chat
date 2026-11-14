@@ -220,15 +220,21 @@ milestone and before final acceptance so CI repair does not become the project.
 
 ## Integration update — November 13, 2026
 
-Run 43529724766 at 82c3364 is closed failed. All ten prerequisite jobs passed;
-Android exited before boot, Windows exhausted its initial partner-key wait, and
-the aggregate correctly failed. The earlier cold initialize EOF remains unresolved.
-Exact results and review/test evidence are in the qualification ledger.
+Source `ef86e8f` is pushed on the isolated diagnostic branch. R1/R4 run
+`43544372506` exercises the six-path prefix and first paired cold cycle after its
+same-run package producers. The normal required qualification gate is excluded
+from this diagnostic route. R8 run `43544375713` retries the corrected installed
+Windows fixture. A monitors Windows and D monitors the paired run. The R6 audit
+identified staged Android public pairing/receipt instrumentation as the next
+cross-platform consumer batch. C is implementing a separate Python-owned Windows
+consumer to close the installed Python API gap without widening caller authority.
+B is preparing the first installed Windows app audio-call coexistence scenario;
+existing engine tests do not exercise calls and messaging through the app UI.
 
-R1 next executes one declared old/current boot pair through the reviewed focused
-workflow on an isolated diagnostic branch. It cannot qualify APK startup, the
-qualification network namespace, messaging or receipts. R2 remains gated.
-Reviewed A/B/C preparation and C's mixed-actor test are integrated through 694e390
-(323 focused cases passed). B's invitation-dismissal implementation and A's Windows
-candidate-pair fixture are ready for integration review. Baseline provenance is
-still unresolved; physical/publication and full automated gaps remain explicit.
+The preceding three packaged Android reopens passed at `6819084`; the historical
+six-path cold failure and Windows artifact-inventory failure remain unresolved.
+Invitation dismissal, channel creation and verified-contact invitation retry
+repairs are integrated. R2 remains gated on full native acceptance and failure
+disposition. Exact run outcomes, artifact hashes and component test evidence are
+in the ledger. Baseline provenance, full automated gaps and physical/publication
+deferrals remain explicit.

@@ -185,9 +185,9 @@ branches: compatibility inventory/fixtures, baseline comparison, consumer scenar
 preparation, documentation reconciliation, and review of UI/media coverage.
 Do not merge overlapping lifecycle changes while debugging the reproduction.
 
-Verify worker capacity before assigning work. The last coordination record said
-Worker C was quota-limited until November 19; refresh rather than assuming all
-four workers are available. Use one implementation owner and one reviewer for the
+Verify worker capacity before assigning work. All four existing workers resumed
+in the November 13 integration checkpoint; refresh their current state rather
+than relying on older quota or availability records. Use one implementation owner and one reviewer for the
 restart path. Other available workers should advance independent roadmap items
 instead of all reviewing the same diagnostic field.
 
@@ -210,15 +210,23 @@ validation explicitly deferred, not falsely checked off.
 
 ## Integration update — November 13, 2026
 
-Run 43529724766 at 82c3364 is closed failed. All ten prerequisite jobs passed;
-Android exited before boot, Windows exhausted its initial partner-key wait, and
-the aggregate correctly failed. The earlier cold initialize EOF remains unresolved.
-Exact results and review/test evidence are in the qualification ledger.
+Boot comparison `43537710895` and all three packaged reopen attempts in
+`43540388648` passed. The latter had clean tracked source at all five build
+checkpoints. These results validate scoped boot/build/cleanup repairs, not the
+historical failure after the six network scenarios.
 
-R1 next executes one declared old/current boot pair through the reviewed focused
-workflow on an isolated diagnostic branch. It cannot qualify APK startup, the
-qualification network namespace, messaging or receipts. R2 remains gated.
-Reviewed A/B/C preparation and C's mixed-actor test are integrated through 694e390
-(323 focused cases passed). B's invitation-dismissal implementation and A's Windows
-candidate-pair fixture are ready for integration review. Baseline provenance is
-still unresolved; physical/publication and full automated gaps remain explicit.
+Source `ef86e8f` is now running paired diagnostic `43544372506`: exact full
+six-path prefix, then one existing paired cold restart/identity/receipt/accounting
+cycle. It has a distinct report scope and cannot satisfy full qualification.
+Its parent and package producers have isolated concurrency. Windows candidate
+run `43544375713` separately tests the repaired old-client snapshot-field check;
+the preceding fixture failure remains retained. Refresh live outcomes before
+resuming. The ledger and shared plan contain exact source/run/artifact bindings.
+
+UI invitation dismissal, channel creation and verified-contact invitation retry
+repairs are integrated. The public-consumer and media gap audits are complete.
+C is preparing a separate Python-owned installed Windows consumer; B is preparing
+the first packaged app audio-call coexistence scenario while A/D monitor CI.
+The combined Windows–Android public-consumer scenario remains open. R2 remains gated. Baseline
+provenance and full available automated acceptance remain open; physical and
+publication requirements retain their explicit deferrals.
