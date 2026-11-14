@@ -112,3 +112,27 @@ pending/error presentation and no native or call teardown. The existing
 `App.test.tsx` happy-dismiss/error tests and Core atomicity test are the starting
 evidence. This remains a proposed implementation, not a completed flow or
 packaged acceptance claim.
+
+## Workspace prompt dismissal UI checkpoint
+
+The narrow R3/R5 slice above was implemented on source parent `82c3364` in
+`36b8d52386900f5f0eee2e7049f879aeca04ff3e`. `App.tsx` now keeps one opaque
+Core `prompt_dismiss` operation ID for each prompt in the mounted App's current
+profile generation and destination. An uncertain reply leaves the prompt visible
+with an explicit retry action, and retry sends the same ID. A full invitation
+snapshot that no longer contains the prompt clears its retained ID; a partial
+snapshot does not. A different prompt receives a different ID. Confirmed success
+removes the visible prompt; a definitive Core refusal keeps it visible with an
+error and retires that operation ID.
+
+The ID is held in memory for the mounted App lifetime. A Messenger presentation
+rerender can reuse it, but an App unmount or a new profile lifetime cannot
+automatically replay it. Profile lock and native host generation changes fence
+late responses from altering the new view. The change does not touch native
+carrier or browser media ownership. `src/App.test.tsx` covers lost replies,
+same-ID retry, stale and partial snapshots, distinct prompts, definitive refusal,
+profile retirement, App remount and host generation fencing. The complete App
+test file passed 195/195 on this commit; TypeScript build passed. This is UI
+component evidence only. Installed Windows and Android supported-facade flows,
+restart behavior and native/media coexistence remain open in the acceptance
+register.
