@@ -120,7 +120,8 @@ class BrowserProcess:
                 or response.get("ok") is not True or type(response.get("value")) is not dict):
             raise ValueError("browser_reply")
         if action == "close":
-            self.retired = (response["value"].get("browserRetired") is True
+            self.retired = (response["value"].get("stopped") is True
+                            and response["value"].get("browserRetired") is True
                             and response["value"].get("devtoolsClosed") is True
                             and response["value"].get("profileRemoved") is True)
         return response["value"]

@@ -19,8 +19,9 @@ function targetRect(kind, label, scope) {
   else if (kind === "peer") rows = [...root.querySelectorAll("button.contact-row")]
     .filter((row) => norm(row.querySelector(".contact-row__content strong")?.textContent) === label);
   else if (kind === "field") rows = [...root.querySelectorAll("label")]
-    .filter((row) => norm(row.querySelector("span")?.textContent) === label)
-    .map((row) => row.querySelector("input, textarea"))
+    .filter((row) => norm(row.querySelector("span")?.textContent || row.textContent) === label)
+    .map((row) => row.querySelector("input, textarea") ||
+      (row.htmlFor ? document.getElementById(row.htmlFor) : null))
     .filter(Boolean);
   else return null;
   if (rows.length !== 1 || rows[0].disabled || rows[0].readOnly) return null;
@@ -52,6 +53,8 @@ function readView(expectedText) {
       .some((row) => row.textContent?.trim() === "Independent peer"),
     relayOption: [...(dialog?.querySelectorAll("button") || [])].some((row) =>
       row.textContent?.replace(/\s+/g, " ").trim() === "Use the relay"),
+    relayPanelVisible: [...(dialog?.querySelectorAll("h3") || [])].some((row) =>
+      row.textContent?.trim() === "Internet relay is available"),
     contactPreview: [...(dialog?.querySelectorAll("button") || [])].some((row) =>
       row.textContent?.replace(/\s+/g, " ").trim() === "Accept contact"),
     matchedCount: Math.min(matched.length, 2),

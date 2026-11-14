@@ -276,7 +276,7 @@ async function runProtocol(executable) {
           value = await media.observe();
         } else if (request.action === "close") {
           value = await media.close();
-          retired = value.browserRetired && value.devtoolsClosed && value.profileRemoved;
+          retired = value.stopped && value.browserRetired && value.devtoolsClosed && value.profileRemoved;
         } else throw new Error("browser_action_invalid");
         process.stdout.write(JSON.stringify({ id: request.id, ok: true, value }) + "\n");
         if (retired) return;
@@ -288,7 +288,7 @@ async function runProtocol(executable) {
   } finally {
     if (!retired) {
       const value = await media.close();
-      if (!value.browserRetired || !value.devtoolsClosed || !value.profileRemoved) {
+      if (!value.stopped || !value.browserRetired || !value.devtoolsClosed || !value.profileRemoved) {
         throw new Error("browser_cleanup_unconfirmed");
       }
     }

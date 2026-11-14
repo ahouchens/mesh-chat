@@ -138,7 +138,7 @@ class Flow:
         self.wait("relay_option", lambda: True if self.gui_view()["relayOption"] else None,
                   seconds=30)
         self.gui_click("Use the relay")
-        self.wait("relay_consent", lambda: True if not self.gui_view()["relayOption"] else None)
+        self.wait("relay_consent", lambda: True if not self.gui_view()["relayPanelVisible"] else None)
         self.checks["gui_relay_consent"] = True
         self.gui_click("Join with WebRTC")
         self.peer.request("fill", label="Paste the signed WebRTC offer or mailbox code", value=code, scope="dialog")
@@ -246,15 +246,15 @@ class Flow:
             self.publish("call_active")
             self.receive("call_active")
             self.receive("during_peer_sent")
-            self.gui_inbound(text_for(self.pair_id, "peer", "during"))
             if not self.gui_view()["status"].startswith("In call ·"):
                 raise ValueError("call_gui_not_active_during_message")
             self.gui_click("Hang up")
             self.wait("gui_call_ended", lambda: True if self.gui_view()["status"] == "" and
                 self.gui_view()["dialogTitle"] == "Call Independent peer" else None)
             self.gui_click("Close")
+            self.gui_inbound(text_for(self.pair_id, "peer", "during"))
             self.publish("call_hungup")
-            self.checks["installed_gui_start_hangup_and_during_inbound"] = True
+            self.checks["gui_start_hangup_and_during_receipt_rendered_after"] = True
         else:
             self.receive("call_started")
             def incoming():
