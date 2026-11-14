@@ -100,3 +100,17 @@ streams. The test infrastructure must capture them in memory and keep them out
 of logs and retained reports. Retained qualification evidence must identify the
 installed SDK/runtime hashes, source, actual host platform and real authenticated
 receipt cases. Installing or syntax-checking this app alone is component evidence.
+
+`scripts/windows_public_consumer_session.py` adds a reusable Python controller
+for one installed ordinary Windows consumer process. It requires the exact
+source-bound normal bootstrap report and retained TypeScript SDK archive,
+installs this application outside the checkout, and validates the frozen host,
+SDK and copied application bytes before launch and after positive exit. Call
+`WindowsPublicConsumerSession(...).open()`, issue allowlisted `request(operation,
+params, key)` calls, then `finish()` or `close()` to close stdin and require
+consumer exit code zero. `runtime.mjs` requires the normal host's stopped marker
+and exact child exit before that consumer can exit successfully. The controller
+retains its owned workspace on timeout or failed retirement; remove it only
+after confirmed retirement with `cleanup_workspace()`. Its standalone smoke
+command creates and queries a fresh public profile only. No Windows–Android
+pairing, receipt, restart or network interruption has been executed by it yet.
