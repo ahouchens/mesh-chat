@@ -8,6 +8,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
 import native_interop_gateway_runtime as runtime
+import native_interop_gateway_probe as probe
 from native_interop_gateway_runtime import GatewayProfile
 
 
@@ -155,6 +156,139 @@ def test_gateway_close_confirms_absence_after_ambiguous_install():
     gateway.run = run
     gateway.clear_impairment()
     assert not gateway.impaired_links and all("del" not in call for call in calls)
+
+
+def directional_gateway(*, fail_add=False, foreign=False):
+    gateway = probe.Gateway(SimpleNamespace())
+    gateway.check_links = lambda: None
+    state = {"host": "noqueue", "guest": "noqueue", "dropped": 0, "calls": []}
+    noqueue = "qdisc noqueue 0: root refcnt 2\n"
+    def command(*args):
+        state["calls"].append(args)
+        if args[:4] == ("tc", "qdisc", "show", "dev"):
+            link = "host" if args[4] == gateway.host else "guest"
+            return noqueue if state[link] == "noqueue" else (
+                "qdisc fq_codel 900: root refcnt 2\n" if state[link] == "foreign" else
+                "qdisc netem a101: root refcnt 2 limit 1000 loss 100%\n")
+        if args[:5] == ("tc", "-s", "qdisc", "show", "dev"):
+            assert args[5] == gateway.host
+            if state["host"] == "foreign":
+                return "qdisc fq_codel 900: root refcnt 2\n"
+            return ("qdisc netem a101: root refcnt 2 limit 1000 loss 100%\n"
+                    f" Sent 0 bytes 0 pkt (dropped {state['dropped']}, overlimits 0 requeues 0)\n")
+        if args[:3] == ("tc", "qdisc", "add"):
+            state["host"] = "loss"
+            if fail_add:
+                raise RuntimeError("ambiguous_add")
+            return ""
+        if args[:3] == ("tc", "qdisc", "del"):
+            state["host"] = "noqueue"
+            return ""
+        pytest.fail(f"unexpected gateway command: {args}")
+    gateway.run = command
+    gateway.inside = command
+    if foreign:
+        state["host"] = "foreign"
+        gateway.directional_loss = True
+    return gateway, state
+
+
+def test_directional_loss_uses_only_owned_host_qdisc_and_recovers_counted_echo():
+    gateway, state = directional_gateway()
+    gateway.install_directional_loss()
+    assert state["host"] == "loss" and state["guest"] == "noqueue"
+    before = gateway.directional_loss_counters()
+    state["dropped"] = 2
+    assert probe.counter_delta(before, gateway.directional_loss_counters())["dropped"] == 2
+    gateway.clear_directional_loss()
+    assert state["host"] == state["guest"] == "noqueue"
+    assert not gateway.directional_loss
+    assert [args for args in state["calls"] if args[:3] == ("tc", "qdisc", "add")] == [
+        ("tc", "qdisc", "add", "dev", gateway.host, "root", "handle", gateway.handles[gateway.host],
+         "netem", "loss", "100%")]
+    assert len([args for args in state["calls"] if args[:3] == ("tc", "qdisc", "del")]) == 1
+
+
+@pytest.mark.parametrize("fault", ["wrong_handle", "delay", "second_qdisc", "missing_counters"])
+def test_directional_counter_parser_requires_one_exact_owned_loss_qdisc(fault):
+    row = ("qdisc netem a101: root refcnt 2 limit 1000 loss 100%\n"
+           " Sent 0 bytes 0 pkt (dropped 2, overlimits 0 requeues 0)\n")
+    if fault == "wrong_handle": row = row.replace("a101:", "a103:")
+    elif fault == "delay": row = row.replace("limit 1000 loss", "limit 1000 delay 75ms loss")
+    elif fault == "second_qdisc": row += "qdisc fq_codel 900: parent a101:1\n"
+    else: row = row.replace(" Sent 0 bytes 0 pkt", " stats unavailable")
+    with pytest.raises(probe.Unavailable, match="owned_directional_loss_unavailable"):
+        probe.parse_directional_loss(row, "a101:")
+
+
+@pytest.mark.parametrize("fault", ["none", "bypass", "uncounted", "recovery"])
+def test_directional_control_requires_absent_echo_counted_drop_and_recovery(fault):
+    events = []
+    class Gateway:
+        installed = False
+        def clear_impairment(self): events.append("symmetric_removed")
+        def require_noqueue(self): events.append("noqueue")
+        def install_directional_loss(self): self.installed = True; events.append("host_loss")
+        def directional_loss_counters(self):
+            return {"bytes": 0, "packets": 0, "dropped": 1 if self.installed and len(events) > 4
+                    and fault != "uncounted" else 0}
+        def clear_directional_loss(self): self.installed = False; events.append("loss_removed")
+    class Child:
+        def echo(self, gateway, port):
+            events.append("echo")
+            if gateway.installed:
+                return fault == "bypass"
+            return fault != "recovery" or "host_loss" not in events
+    gateway = Gateway()
+    if fault == "none":
+        result = probe.exercise_directional_loss(gateway, Child(), 10001)
+        assert result == {"kind": "owned_host_veth_egress_netem_100pct",
+                          "host_qdisc_delta": {"bytes": 0, "packets": 0, "dropped": 1},
+                          "guest_echo_received": False}
+        assert events == ["symmetric_removed", "noqueue", "echo", "host_loss", "echo",
+                          "loss_removed", "noqueue", "echo"]
+    else:
+        with pytest.raises(probe.Unavailable, match={
+                "bypass": "directional_loss_echo_bypassed", "uncounted": "directional_loss_not_counted",
+                "recovery": "directional_recovery_echo_failed"}[fault]):
+            probe.exercise_directional_loss(gateway, Child(), 10001)
+
+
+def test_directional_partial_add_is_retired_only_after_owned_profile_proof():
+    gateway, state = directional_gateway(fail_add=True)
+    with pytest.raises(RuntimeError, match="ambiguous_add"):
+        gateway.install_directional_loss()
+    assert gateway.directional_loss and state["host"] == "loss"
+    gateway.close()
+    assert state["host"] == "noqueue" and not gateway.directional_loss
+    assert len([args for args in state["calls"] if args[:3] == ("tc", "qdisc", "del")]) == 1
+
+
+def test_directional_failed_add_with_no_qdisc_confirms_absence_without_delete():
+    gateway, state = directional_gateway()
+    def fail_without_add(*args):
+        if args[:3] == ("tc", "qdisc", "add"):
+            state["calls"].append(args)
+            raise RuntimeError("add_refused")
+        return original(*args)
+    original = gateway.run
+    gateway.run = fail_without_add
+    with pytest.raises(RuntimeError, match="add_refused"):
+        gateway.install_directional_loss()
+    assert gateway.directional_loss and state["host"] == "noqueue"
+    gateway.close()
+    assert not gateway.directional_loss
+    assert not any(args[:3] == ("tc", "qdisc", "del") for args in state["calls"])
+
+
+def test_directional_foreign_qdisc_refuses_delete_and_gateway_cleanup_fails_closed():
+    gateway, state = directional_gateway(foreign=True)
+    gateway.resources = ["veth"]
+    with pytest.raises(probe.Unavailable, match="gateway_cleanup_incomplete"):
+        gateway.close()
+    assert state["host"] == "foreign" and gateway.directional_loss
+    assert not any(args[:3] == ("tc", "qdisc", "del") or args[:3] == ("ip", "link", "del")
+                   for args in state["calls"])
 
 
 @pytest.mark.parametrize("fault", ["missing", "failed", "helpers", "guest_claim"])

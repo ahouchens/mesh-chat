@@ -90,6 +90,23 @@ def wait_for_guest_echo(child, gateway, port, attempts):
     return False
 
 
+def exercise_directional_loss(gateway, child, port):
+    """Probe one host-to-guest loss edge, then prove its owned recovery."""
+    gateway.clear_impairment()
+    gateway.require_noqueue()
+    require(wait_for_guest_echo(child, gateway, port, 3), "unimpaired_echo_failed")
+    gateway.install_directional_loss()
+    before = gateway.directional_loss_counters()
+    require(not child.echo(gateway, port), "directional_loss_echo_bypassed")
+    delta = counter_delta(before, gateway.directional_loss_counters())
+    require(delta["dropped"] > 0, "directional_loss_not_counted")
+    gateway.clear_directional_loss()
+    gateway.require_noqueue()
+    require(wait_for_guest_echo(child, gateway, port, 3), "directional_recovery_echo_failed")
+    return {"kind": "owned_host_veth_egress_netem_100pct",
+            "host_qdisc_delta": delta, "guest_echo_received": False}
+
+
 def firewall_shape(text):
     return "\n".join(re.sub(r"^(\S+\s+\S+) \[[0-9]+:[0-9]+\]$", r"\1 [counters]", line)
                      if line.startswith(":") else line
@@ -136,6 +153,17 @@ def parse_netem(text, handle):
     return dict(zip(("bytes", "packets", "dropped"), map(int, matches[0])))
 
 
+def parse_directional_loss(text, handle):
+    """Read counters only from the sole owned, delay-free 100% loss qdisc."""
+    pattern = (r"^qdisc netem " + re.escape(handle)
+               + r" root(?: refcnt [0-9]+)? limit [0-9]+ loss 100(?:\.0+)?%\n"
+               + r"\s*Sent ([0-9]+) bytes ([0-9]+) pkt \(dropped ([0-9]+),")
+    match = re.search(pattern, text)
+    require(match is not None and len(re.findall(r"(?m)^qdisc ", text)) == 1,
+            "owned_directional_loss_unavailable")
+    return dict(zip(("bytes", "packets", "dropped"), map(int, match.groups())))
+
+
 class Commands:
     def __init__(self, report):
         self.report = report
@@ -173,6 +201,7 @@ class Gateway:
         self.dns_path = Path("/etc/netns") / self.ns
         self.handles = {self.host: "a101:", self.guest: "a102:"}
         self.impaired_links = []
+        self.directional_loss = False
 
     def run(self, *args):
         return self.commands.run(*args, privileged=True)
@@ -338,6 +367,45 @@ class Gateway:
                     "owned_veth_qdisc_remains")
             self.impaired_links.remove(name)
 
+    def require_noqueue(self):
+        self.check_links()
+        for name in (self.host, self.guest):
+            command = self.inside if name == self.guest else self.run
+            current = command("tc", "qdisc", "show", "dev", name)
+            require(re.fullmatch(r"qdisc noqueue 0: root(?: refcnt [0-9]+)?\s*", current) is not None,
+                    "owned_veth_qdisc_remains")
+
+    def install_directional_loss(self):
+        require(not self.impaired_links and not self.directional_loss, "directional_loss_already_installed")
+        self.require_noqueue()
+        # Reserve cleanup before the add; a failed command can still install a qdisc.
+        self.directional_loss = True
+        self.run("tc", "qdisc", "add", "dev", self.host, "root", "handle", self.handles[self.host],
+                 "netem", "loss", "100%")
+
+    def directional_loss_counters(self):
+        require(self.directional_loss, "directional_loss_not_installed")
+        self.check_links()
+        guest = self.inside("tc", "qdisc", "show", "dev", self.guest)
+        require(re.fullmatch(r"qdisc noqueue 0: root(?: refcnt [0-9]+)?\s*", guest) is not None,
+                "guest_qdisc_changed")
+        return parse_directional_loss(
+            self.run("tc", "-s", "qdisc", "show", "dev", self.host), self.handles[self.host])
+
+    def clear_directional_loss(self):
+        if not self.directional_loss:
+            return
+        self.check_links()
+        guest = self.inside("tc", "qdisc", "show", "dev", self.guest)
+        require(re.fullmatch(r"qdisc noqueue 0: root(?: refcnt [0-9]+)?\s*", guest) is not None,
+                "guest_qdisc_changed")
+        current = self.run("tc", "qdisc", "show", "dev", self.host)
+        if not re.fullmatch(r"qdisc noqueue 0: root(?: refcnt [0-9]+)?\s*", current):
+            self.directional_loss_counters()
+            self.run("tc", "qdisc", "del", "dev", self.host, "root", "handle", self.handles[self.host])
+        self.require_noqueue()
+        self.directional_loss = False
+
     def counters(self):
         self.check_links()
         result = {}
@@ -368,6 +436,13 @@ class Gateway:
         # Cleanup has its own command/output allowance after a failed probe.
         self.cleanup_record = {"commands": []}
         self.commands = Commands(self.cleanup_record)
+        for name, pending, clear in (("directional_qdisc", self.directional_loss, self.clear_directional_loss),
+                                     ("symmetric_qdisc", bool(self.impaired_links), self.clear_impairment)):
+            if pending:
+                try:
+                    clear()
+                except Exception:
+                    errors.append(name)
         for rule in reversed(self.rules[:]):
             try:
                 self.delete_rule(rule)
@@ -383,6 +458,7 @@ class Gateway:
                 errors.append("chain")
         if "veth" in self.resources:
             try:
+                require(not self.directional_loss and not self.impaired_links, "owned_qdisc_cleanup_unproven")
                 current = self.link(self.host)
                 require(current["ifindex"] == self.identities[self.host]["ifindex"]
                         and current.get("link_index") == self.identities[self.host].get("link_index"), "veth_identity_changed")
@@ -871,6 +947,8 @@ def main():
         final = gateway.counters()
         for name in after:
             counter_delta(after[name], final[name])
+        report["phase"] = "directional_loss"
+        report["directional_loss"] = exercise_directional_loss(gateway, child, echo.port)
         require(time.monotonic() <= deadline, "probe_deadline_exceeded")
         report["passed"] = True
     except Exception as error:
