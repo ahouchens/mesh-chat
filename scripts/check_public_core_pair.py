@@ -142,21 +142,28 @@ def read_report(path):
     return value, {"sha256": hashlib.sha256(data).hexdigest(), "size_bytes": len(data)}
 
 
-def prerequisite_inputs(windows, android, context, tree, identities):
+def windows_inputs(windows, context, tree, identity):
     verify_windows_bootstrap(windows, context["source_commit"], tree)
     current_files = {name: digest(APPLICATION / name) for name in FILES}
     if windows["application"]["application_files"] != current_files:
         raise ValueError("windows_application_inputs")
+    return {**{key: windows[key] for key in
+        ("sidecar_sha256", "build_input_sha256", "build_manifest_sha256", "sdk_sha256")},
+        "bootstrap_report_sha256": identity["sha256"], "application_files": current_files}
+
+
+def android_inputs(android, context, tree, identity):
     verify_android_distribution(android, {"source_commit": context["source_commit"], "source_tree": tree},
                                 android.get("artifacts", {}))
     verify_source_inputs(android)
+    return {"distribution_report_sha256": identity["sha256"],
+            "artifacts": android["artifacts"], "application_files": android["application_files"]}
+
+
+def prerequisite_inputs(windows, android, context, tree, identities):
     return {
-        "windows": {**{key: windows[key] for key in
-            ("sidecar_sha256", "build_input_sha256", "build_manifest_sha256", "sdk_sha256")},
-            "bootstrap_report_sha256": identities["windows_bootstrap"]["sha256"],
-            "application_files": current_files},
-        "android": {"distribution_report_sha256": identities["android_distribution"]["sha256"],
-                    "artifacts": android["artifacts"], "application_files": android["application_files"]},
+        "windows": windows_inputs(windows, context, tree, identities["windows_bootstrap"]),
+        "android": android_inputs(android, context, tree, identities["android_distribution"]),
     }
 
 

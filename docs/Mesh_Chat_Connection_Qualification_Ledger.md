@@ -1,5 +1,34 @@
 # Connection runtime qualification ledger
 
+## Installed Python consumer passed; media installer mismatch — November 13, 2026
+
+Run [43551698115](https://github.com/ahouchens/mesh-chat/actions/runs/43551698115),
+attempt 1 at `ceb84c5db95a40cf1e41964f6ff4d2a1525acf37`, tree
+`2f8416ca0f9f471bc2a7e42afe2dbbb5e24f603d`, passed broad verification and the
+Windows desktop host job. Its installed Python consumer passed the public
+profile bootstrap, identical-key replay and changed-payload rejection,
+same-identity reopen, two clean host exits and actual EFS protection checks in
+6.43 s. The TypeScript current/old SDK candidate pair also passed. The Python
+result is public API execution, beyond the candidate fixture's wheel-install
+check; neither fixture establishes Python peer messaging or native upgrade.
+
+Root validated API source/run metadata, ZIP digests and bounded entries for
+Python artifact `14096798693` (SHA256
+`e974a287710770ffb56f2c093181572bb05d09ca31c6195dd148a5c63f834d8d`) and candidate
+artifact `14096403949` (SHA256
+`4aa933f47551a8265beb7c451b15f61a14db28333b2e14e86cc1518c911a8400`). The Python
+report passes its strict validator and matches the retained wheel hash; the
+candidate report matches its retained manifest hash. Reports are retained in
+`.test-tmp/windows-ceb84c5-validated.json` and the corresponding ZIPs.
+
+The separate media job failed at **installation**, before capture. NSIS exited
+zero and its direct child retired, but `installed_bytes_mismatch` rejected an
+installed application or sidecar against the source-bound publisher manifest.
+The current failure report does not identify which byte comparison differed;
+root cause remains under investigation. Media artifact `14097261681` has ZIP
+SHA256 `edc11cc14827f0c3fdd5d17bcc94fd5d07bd82ad4af1d9bcdcc2e17cfd4558f2`.
+No WebView2 capture or CallDialog result exists from this run.
+
 ## Reusable Windows public session adapter — November 13, 2026
 
 Commits `ecd42bc` and `e5e0e01` add a bounded controller adapter around the
