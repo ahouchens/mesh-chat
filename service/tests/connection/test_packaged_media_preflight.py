@@ -33,7 +33,7 @@ class PublishedCandidateTests(unittest.TestCase):
         self.assertEqual(preflight.bounded_probe_failure(probe.stderr),
                          {"stage": "arguments", "code": "invalid_probe_arguments"})
 
-    def test_real_node_reports_target_discovery_failure(self):
+    def _node_discovery_failure(self, payload: bytes, status: int = 200):
         node = shutil.which("node")
         if node is None:
             self.skipTest("Node is unavailable")
@@ -43,8 +43,7 @@ class PublishedCandidateTests(unittest.TestCase):
 
         class EmptyTargets(BaseHTTPRequestHandler):
             def do_GET(self):
-                payload = b"[]"
-                self.send_response(200)
+                self.send_response(status)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(payload)))
                 self.end_headers()
@@ -65,25 +64,83 @@ class PublishedCandidateTests(unittest.TestCase):
                 thread.join(timeout=2)
         self.assertEqual(probe.returncode, 1)
         self.assertEqual(probe.stdout, "")
-        self.assertEqual(preflight.bounded_probe_failure(probe.stderr),
-                         {"stage": "target_discovery", "code": "app_webview_unavailable"})
+        failure = preflight.bounded_probe_failure(probe.stderr)
+        self.assertEqual((probe.returncode, failure["stage"], failure["code"]),
+                         (1, "target_discovery", "app_webview_unavailable"))
+        return failure["discovery"], probe.stderr
+
+    def test_real_node_reports_bounded_target_discovery_observations(self):
+        empty, _ = self._node_discovery_failure(b"[]")
+        self.assertTrue(empty["endpoint_response_seen"])
+        self.assertTrue(empty["endpoint_list_seen"])
+        self.assertEqual(empty["targets_capped"], 0)
+        self.assertEqual(empty["pages_capped"], 0)
+
+        alternate = json.dumps([{"type": "page", "url": "https://tauri.localhost/private-token",
+                                 "webSocketDebuggerUrl": "wss://private-socket"}]).encode()
+        observed, stderr = self._node_discovery_failure(alternate)
+        self.assertEqual(observed["targets_capped"], 1)
+        self.assertEqual(observed["pages_capped"], 1)
+        self.assertEqual(observed["pages_with_socket_capped"], 1)
+        self.assertEqual(observed["expected_origin_pages_capped"], 0)
+        self.assertEqual(observed["https_tauri_origin_pages_capped"], 1)
+        self.assertNotIn("private-token", stderr)
+        self.assertNotIn("private-socket", stderr)
+
+        many_pages = json.dumps([{"type": "page", "url": "http://tauri.localhost/private-token"}
+                                 for _ in range(40)]).encode()
+        capped, stderr = self._node_discovery_failure(many_pages)
+        self.assertEqual(capped["targets_capped"], 32)
+        self.assertEqual(capped["pages_capped"], 32)
+        self.assertEqual(capped["expected_origin_pages_capped"], 32)
+        self.assertEqual(capped["pages_with_socket_capped"], 0)
+        self.assertNotIn("private-token", stderr)
+
+        non_ok, _ = self._node_discovery_failure(b"[]", 503)
+        self.assertTrue(non_ok["endpoint_response_seen"])
+        self.assertTrue(non_ok["endpoint_non_ok_seen"])
+        self.assertFalse(non_ok["endpoint_list_seen"])
+
+        invalid, _ = self._node_discovery_failure(b"not-json")
+        self.assertTrue(invalid["endpoint_invalid_json_seen"])
+        self.assertFalse(invalid["endpoint_list_seen"])
+
+        non_array, _ = self._node_discovery_failure(b"{}")
+        self.assertTrue(non_array["endpoint_non_array_seen"])
+        self.assertFalse(non_array["endpoint_list_seen"])
 
     def test_probe_failure_diagnostic_is_bounded_and_allowlisted(self):
         marker = preflight.PROBE_FAILURE_PREFIX + json.dumps(
             {"stage": "target_discovery", "code": "app_webview_unavailable"})
         self.assertEqual(preflight.bounded_probe_failure(marker),
                          {"stage": "target_discovery", "code": "app_webview_unavailable"})
+        discovery = {field: False for field in preflight.DISCOVERY_FLAGS}
+        discovery.update({field: 0 for field in preflight.DISCOVERY_COUNTS})
+        detailed = {"stage": "target_discovery", "code": "app_webview_unavailable",
+                    "discovery": discovery}
+        self.assertEqual(preflight.bounded_probe_failure(preflight.PROBE_FAILURE_PREFIX + json.dumps(detailed)),
+                         detailed)
+        malformed = []
+        for changed in ({**discovery, "targets_capped": 33}, {**discovery, "targets_capped": -1},
+                        {**discovery, "targets_capped": True}, {**discovery, "endpoint_list_seen": 1},
+                        {**discovery, "raw_url": "private"}):
+            malformed.append(preflight.PROBE_FAILURE_PREFIX + json.dumps({**detailed, "discovery": changed}))
+        malformed.append(preflight.PROBE_FAILURE_PREFIX +
+                         '{"stage":"target_discovery","code":"app_webview_unavailable",'
+                         '"discovery":{"targets_capped":0,"targets_capped":1}}')
+        malformed.append(preflight.PROBE_FAILURE_PREFIX + json.dumps(
+            {**detailed, "stage": "runtime_enable"}))
         for stderr in (marker + "\n" + marker,
                        (marker + "\n").encode("utf-8") + b"\xff",
                        preflight.PROBE_FAILURE_PREFIX + json.dumps({"stage": "target_discovery", "code": "secret"}),
                        preflight.PROBE_FAILURE_PREFIX + json.dumps({"stage": [], "code": "unexpected"}),
                        preflight.PROBE_FAILURE_PREFIX + '{"stage":"target_discovery","stage":"runtime_enable","code":"unexpected"}',
                        preflight.PROBE_FAILURE_PREFIX + json.dumps({"stage": "target_discovery", "code": "unexpected", "url": "private"}),
-                       "private" * 2000 + marker):
+                       "private" * 2000 + marker, *malformed):
             with self.subTest(stderr=stderr[:70]):
                 self.assertIsNone(preflight.bounded_probe_failure(stderr))
 
-    def _mocked_preflight_probe(self, probe_outcome):
+    def _mocked_preflight_probe(self, probe_outcome, app_exit=None):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             output = root / "preflight.json"
@@ -112,9 +169,14 @@ class PublishedCandidateTests(unittest.TestCase):
                     patch.object(preflight, "retire", return_value=True) as retirement, \
                     patch.object(preflight.subprocess, "Popen") as launch, \
                     patch.object(preflight.subprocess, "run", side_effect=[node_version, probe_outcome]):
+                launch.return_value.poll.return_value = app_exit
                 with redirect_stdout(StringIO()):
                     self.assertEqual(preflight.main(), 1)
                 launch.assert_called_once()
+                self.assertEqual(launch.call_args.args[0], [str((root / "mesh-chat.exe").resolve())])
+                self.assertEqual(launch.call_args.kwargs["env"]["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"],
+                                 "--remote-debugging-port=12345 --use-fake-device-for-media-stream "
+                                 "--use-fake-ui-for-media-stream")
                 retirement.assert_called_once()
             result = json.loads(output.read_text(encoding="utf-8"))
             return result, output.read_text(encoding="utf-8")
@@ -127,9 +189,17 @@ class PublishedCandidateTests(unittest.TestCase):
         self.assertEqual(result["failure"], "probe_output_invalid")
         self.assertEqual(result["phase"], "webview2_capture")
         self.assertTrue(result["app_retired"])
+        self.assertTrue(result["app_running_after_probe"])
         self.assertEqual(result["probe_failure"],
                          {"stage": "target_discovery", "code": "app_webview_unavailable"})
         self.assertNotIn("private detail", raw)
+
+    def test_probe_reports_when_owned_app_exited_before_discovery(self):
+        marker = preflight.PROBE_FAILURE_PREFIX + json.dumps(
+            {"stage": "target_discovery", "code": "app_webview_unavailable"})
+        result, _ = self._mocked_preflight_probe(
+            subprocess.CompletedProcess([], 1, stdout="", stderr=marker), app_exit=7)
+        self.assertFalse(result["app_running_after_probe"])
 
     def test_probe_timeout_keeps_primary_failure_and_bounded_marker(self):
         marker = preflight.PROBE_FAILURE_PREFIX + json.dumps(

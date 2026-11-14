@@ -34,6 +34,10 @@ PROBE_STAGES = {"arguments", "target_discovery", "devtools_connect", "runtime_en
                 "runtime_evaluate", "result_validation"}
 PROBE_CODES = {"invalid_probe_arguments", "app_webview_unavailable", "devtools_deadline",
                "devtools_socket_failed", "devtools_command_failed", "invalid_media_probe", "unexpected"}
+DISCOVERY_FLAGS = {"endpoint_response_seen", "endpoint_non_ok_seen", "endpoint_invalid_json_seen",
+                   "endpoint_non_array_seen", "endpoint_list_seen"}
+DISCOVERY_COUNTS = {"targets_capped", "pages_capped", "pages_with_socket_capped",
+                    "expected_origin_pages_capped", "https_tauri_origin_pages_capped"}
 HEX64 = re.compile(r"[a-fA-F0-9]{64}\Z")
 HEX40 = re.compile(r"[a-f0-9]{40}\Z")
 VERSION = re.compile(r"(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\Z")
@@ -44,7 +48,7 @@ class PreflightFailure(RuntimeError):
     pass
 
 
-def bounded_probe_failure(stderr: str | bytes | None) -> dict[str, str] | None:
+def bounded_probe_failure(stderr: str | bytes | None) -> dict | None:
     """Retain only one fixed-stage driver failure, never raw DevTools output."""
     if stderr is None or len(stderr) > 8192:
         return None
@@ -72,9 +76,21 @@ def bounded_probe_failure(stderr: str | bytes | None) -> dict[str, str] | None:
         value = json.loads(markers[0], object_pairs_hook=unique_fields)
     except (json.JSONDecodeError, ValueError):
         return None
-    if (not isinstance(value, dict) or set(value) != {"stage", "code"}
+    if (not isinstance(value, dict) or not {"stage", "code"} <= set(value)
             or type(value["stage"]) is not str or value["stage"] not in PROBE_STAGES
             or type(value["code"]) is not str or value["code"] not in PROBE_CODES):
+        return None
+    if "discovery" in value:
+        if (set(value) != {"stage", "code", "discovery"}
+                or value["stage"] != "target_discovery" or value["code"] != "app_webview_unavailable"):
+            return None
+        discovery = value["discovery"]
+        if (not isinstance(discovery, dict) or set(discovery) != DISCOVERY_FLAGS | DISCOVERY_COUNTS
+                or any(type(discovery[field]) is not bool for field in DISCOVERY_FLAGS)
+                or any(type(discovery[field]) is not int or not 0 <= discovery[field] <= 32
+                       for field in DISCOVERY_COUNTS)):
+            return None
+    elif set(value) != {"stage", "code"}:
         return None
     return value
 
@@ -402,7 +418,13 @@ def main() -> int:
         report["phase"] = "webview2_capture"
         process = subprocess.Popen([str(args.app.resolve())], cwd=args.app.parent, env=environment,
                                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        probe = run_probe(args.node, port, source, report)
+        try:
+            probe = run_probe(args.node, port, source, report)
+        finally:
+            try:
+                report["app_running_after_probe"] = process.poll() is None
+            except Exception:
+                pass
         lines = probe.stdout.splitlines()
         if len(lines) != 1:
             raise PreflightFailure("probe_output_invalid")

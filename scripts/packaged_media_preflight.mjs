@@ -4,6 +4,13 @@ const [portText, timeoutText, expectedSource] = process.argv.slice(2);
 const port = Number(portText);
 const timeout = Number(timeoutText);
 let probeStage = "arguments";
+const discovery = {
+  endpoint_response_seen: false, endpoint_non_ok_seen: false,
+  endpoint_invalid_json_seen: false, endpoint_non_array_seen: false,
+  endpoint_list_seen: false, targets_capped: 0, pages_capped: 0,
+  pages_with_socket_capped: 0, expected_origin_pages_capped: 0,
+  https_tauri_origin_pages_capped: 0,
+};
 try {
 if (!Number.isInteger(port) || port < 1024 || port > 65535 || !Number.isInteger(timeout) || timeout < 1000 || timeout > 60000 ||
     !/^[a-f0-9]{40}$/.test(expectedSource ?? "")) {
@@ -35,16 +42,50 @@ const appTarget = (target) => {
     return false;
   }
 };
+const capped = (count) => Math.min(32, count);
+const observeTargets = (targets) => {
+  discovery.targets_capped = Math.max(discovery.targets_capped, capped(targets.length));
+  let pages = 0;
+  let pagesWithSocket = 0;
+  let expectedOriginPages = 0;
+  let httpsTauriOriginPages = 0;
+  for (const target of targets) {
+    if (target?.type !== "page") continue;
+    pages++;
+    if (typeof target.webSocketDebuggerUrl === "string") pagesWithSocket++;
+    try {
+      const url = new URL(target.url);
+      if ((url.protocol === "http:" && url.hostname === "tauri.localhost") ||
+          (url.protocol === "tauri:" && url.hostname === "localhost")) expectedOriginPages++;
+      if (url.protocol === "https:" && url.hostname === "tauri.localhost") httpsTauriOriginPages++;
+    } catch { /* Only fixed counts are retained. */ }
+  }
+  discovery.pages_capped = Math.max(discovery.pages_capped, capped(pages));
+  discovery.pages_with_socket_capped = Math.max(discovery.pages_with_socket_capped, capped(pagesWithSocket));
+  discovery.expected_origin_pages_capped = Math.max(discovery.expected_origin_pages_capped, capped(expectedOriginPages));
+  discovery.https_tauri_origin_pages_capped = Math.max(discovery.https_tauri_origin_pages_capped, capped(httpsTauriOriginPages));
+};
 
 let target;
 probeStage = "target_discovery";
 while (Date.now() < deadline) {
   try {
     const response = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(1000) });
+    discovery.endpoint_response_seen = true;
     if (response.ok) {
-      const targets = await response.json();
-      if (Array.isArray(targets)) target = targets.find(appTarget);
+      let targets;
+      try { targets = await response.json(); }
+      catch { discovery.endpoint_invalid_json_seen = true; throw new Error("invalid_target_json"); }
+      if (Array.isArray(targets)) {
+        discovery.endpoint_list_seen = true;
+        observeTargets(targets);
+        target = targets.find(appTarget);
+      } else {
+        discovery.endpoint_non_array_seen = true;
+      }
       if (target) break;
+    } else {
+      discovery.endpoint_non_ok_seen = true;
     }
   } catch {
     // WebView2 starts after the native app process.
@@ -133,6 +174,8 @@ const command = (method, params = {}) => {
   const known = new Set(["invalid_probe_arguments", "app_webview_unavailable", "devtools_deadline",
     "devtools_socket_failed", "devtools_command_failed", "invalid_media_probe"]);
   const code = known.has(error?.message) ? error.message : "unexpected";
-  process.stderr.write("mesh_media_probe_failure_v1:" + JSON.stringify({ stage: probeStage, code }) + "\n");
+  const failure = { stage: probeStage, code };
+  if (probeStage === "target_discovery" && code === "app_webview_unavailable") failure.discovery = discovery;
+  process.stderr.write("mesh_media_probe_failure_v1:" + JSON.stringify(failure) + "\n");
   process.exitCode = 1;
 }
