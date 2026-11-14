@@ -78,14 +78,20 @@ jobs:
         with:
           workspaces: src-tauri -> target
           shared-key: pr-android-arm64-debug
-          cache-on-failure: true
+          save-if: 'false'
       - if: ${{ inputs.probe == 'reopen' }}
         run: pnpm install --frozen-lockfile
       - if: ${{ inputs.probe == 'reopen' }}
         run: python -m pip install --disable-pip-version-check -r service/requirements-dev.lock
+      - name: Record tracked source before app build
+        if: ${{ inputs.probe == 'reopen' }}
+        run: python -B scripts/native_restart_source_checkpoints.py --expected-source "$GITHUB_SHA" --stage before_app --output dist/reports/native-restart-source-checkpoints.json
       - name: Build the same-source Android app
         if: ${{ inputs.probe == 'reopen' }}
         run: python scripts/build_android.py
+      - name: Record tracked source after app build
+        if: ${{ !cancelled() && inputs.probe == 'reopen' }}
+        run: python -B scripts/native_restart_source_checkpoints.py --expected-source "$GITHUB_SHA" --stage after_app --output dist/reports/native-restart-source-checkpoints.json
       - name: Build the existing optimized native host
         if: ${{ inputs.probe == 'reopen' }}
         working-directory: src-tauri/gen/android
@@ -93,12 +99,18 @@ jobs:
       - name: Verify optimized WebRTC JNI classes
         if: ${{ inputs.probe == 'reopen' }}
         run: python scripts/verify_android_webrtc.py plugins/tauri-plugin-mesh-runtime/android/webrtc-smoke/build/outputs/apk/release/webrtc-smoke-release.apk
+      - name: Record tracked source before instrumentation build
+        if: ${{ inputs.probe == 'reopen' }}
+        run: python -B scripts/native_restart_source_checkpoints.py --expected-source "$GITHUB_SHA" --stage before_test --output dist/reports/native-restart-source-checkpoints.json
       - name: Build the existing instrumentation host
         if: ${{ inputs.probe == 'reopen' }}
         working-directory: src-tauri/gen/android
         run: |
           node ../../../scripts/build_desktop_transport_fixture.mjs
           ./gradlew :webrtc-smoke:assembleReleaseAndroidTest -PmeshWebRtcSmoke=true -PmeshRuntimeAbis=x86_64 --no-configuration-cache
+      - name: Record tracked source after instrumentation build
+        if: ${{ !cancelled() && inputs.probe == 'reopen' }}
+        run: python -B scripts/native_restart_source_checkpoints.py --expected-source "$GITHUB_SHA" --stage after_test --output dist/reports/native-restart-source-checkpoints.json
       - name: Free disk for the emulator system image
         if: ${{ inputs.probe == 'reopen' }}
         run: |
@@ -114,6 +126,9 @@ jobs:
           sudo udevadm trigger --name-match=kvm
       - name: Install the native peer system image
         run: sdkmanager "emulator" "platform-tools" "system-images;android-35;google_apis;x86_64"
+      - name: Record tracked source before reopen probe
+        if: ${{ inputs.probe == 'reopen' }}
+        run: python -B scripts/native_restart_source_checkpoints.py --expected-source "$GITHUB_SHA" --stage before_probe --output dist/reports/native-restart-source-checkpoints.json
       - name: Run bounded reopen observations
         if: ${{ inputs.probe == 'reopen' }}
         env:
@@ -134,6 +149,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: native-restart-diagnostic-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: dist/reports/native-restart-diagnostic.json
+          path: |
+            dist/reports/native-restart-diagnostic.json
+            dist/reports/native-restart-source-checkpoints.json
           if-no-files-found: error
           retention-days: 14

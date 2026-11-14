@@ -458,7 +458,8 @@ def test_boot_comparison_skips_package_build_and_reopen_uses_only_its_runner():
                                         "actions/setup-java@v5", "android-actions/setup-android@v4"} or name in {
                                             "Enable KVM for the packaged peer", "Install the native peer system image"}
         else:
-            assert condition in {"${{ inputs.probe == 'reopen' }}", "${{ inputs.probe == 'boot_comparison' }}"}
+            assert condition in {"${{ inputs.probe == 'reopen' }}", "${{ inputs.probe == 'boot_comparison' }}",
+                                 "${{ !cancelled() && inputs.probe == 'reopen' }}"}
     boot = next(step for step in steps if step.get("name") == "Compare emulator boot launchers")
     reopen = next(step for step in steps if step.get("name") == "Run bounded reopen observations")
     assert "scripts/native_emulator_boot_diagnostic.py" in boot["run"]
