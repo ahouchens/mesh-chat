@@ -123,10 +123,17 @@ class _Capture:
                 self.fault.set()
 
 
-def run_fixture(node, directory, runtime, data, overall_deadline):
+def run_fixture(node, directory, runtime, data, overall_deadline, *, fixture="separate_process"):
     """Own exactly one child, its bounded readers and one monotonic retirement window."""
+    # The image fixture owns a full 120-second inner window. Its outer process
+    # needs room to finish that window before this runner's retirement reserve.
+    scripts = {"separate_process": ("separate-process-check.mjs", CHILD_SECONDS),
+               "image_admission": ("image-admission-check.mjs", 150)}
+    if fixture not in scripts:
+        raise ValueError("fixture_selector")
+    script, child_seconds = scripts[fixture]
     started = time.monotonic()
-    deadline = min(overall_deadline, started + CHILD_SECONDS)
+    deadline = min(overall_deadline, started + child_seconds)
     if deadline <= started:
         raise TimeoutError("fixture_deadline")
     retirement_reserve = min(10, max(0.05, (deadline - started) / 4))
@@ -139,7 +146,7 @@ def run_fixture(node, directory, runtime, data, overall_deadline):
     output = _Capture(MAX_STDOUT, fault)
     error = _Capture(MAX_STDERR, fault)
     try:
-        process = subprocess.Popen([node, "separate-process-check.mjs", "--runtime", str(runtime),
+        process = subprocess.Popen([node, script, "--runtime", str(runtime),
             "--data-directory", str(data)], cwd=directory,
             env=bootstrap.application_environment(os.environ), stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
@@ -163,7 +170,9 @@ def run_fixture(node, directory, runtime, data, overall_deadline):
         if fault.is_set() or output.overflow or error.overflow or output.failed or error.failed:
             raise ValueError("fixture_process")
         if process.returncode != 0:
-            raise FixtureExecutionFailure(fixture_failure(bytes(output.data)) if not error.data else None)
+            phase = (fixture_failure(bytes(output.data)) if fixture == "separate_process" and not error.data
+                     else None)
+            raise FixtureExecutionFailure(phase)
         if error.data:
             raise ValueError("fixture_process")
         return bytes(output.data)
