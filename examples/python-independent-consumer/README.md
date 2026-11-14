@@ -11,6 +11,9 @@ outside the checkout. The application checks an empty host, explicit profile
 creation, same-key replay, conflict rejection, public profile query, clean host
 shutdown and the same public identity after reopening. The producer separately
 checks DPAPI/EFS protection and hashes the installed wheel and frozen host.
+It removes the temporary workspace only after both normal host shutdowns and
+their exact status/EOF sequences are confirmed. Uncertain shutdown retains the
+workspace for inspection; force-killing a failed child is not retirement proof.
 
 This fixture does not pair peers, deliver messages, exercise Android, or qualify
 SC21. A source-bound staging report is required before its platform run.

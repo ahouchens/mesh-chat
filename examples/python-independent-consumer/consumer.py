@@ -15,6 +15,7 @@ from uuid import uuid4
 
 STATUS_LIMIT = 4096
 STATUS_TIMEOUT = 30
+END_OF_STATUS = object()
 CHECKS = {
     "fresh_without_profile": True,
     "public_only_capabilities": True,
@@ -24,6 +25,7 @@ CHECKS = {
     "clean_host_exits": 2,
 }
 phase = "arguments"
+retirement_outcome = "not_started"
 
 
 def _exact(stream, count):
@@ -36,8 +38,11 @@ def _exact(stream, count):
     return bytes(chunks)
 
 
-def read_status(stream):
-    length = int.from_bytes(_exact(stream, 4), "big")
+def read_status(stream, header=None):
+    header = _exact(stream, 4) if header is None else header
+    if len(header) != 4:
+        raise ValueError("runtime_status_truncated")
+    length = int.from_bytes(header, "big")
     if not 2 <= length <= STATUS_LIMIT:
         raise ValueError("runtime_status_budget")
     value = json.loads(_exact(stream, length).decode("utf-8", "strict"))
@@ -76,7 +81,11 @@ class Runtime:
     def _read(self):
         try:
             while True:
-                self.statuses.put_nowait(read_status(self.process.stdout))
+                header = self.process.stdout.read(4)
+                if not header:
+                    self.statuses.put_nowait(END_OF_STATUS)
+                    return
+                self.statuses.put_nowait(read_status(self.process.stdout, header))
         except BaseException as error:
             try:
                 self.statuses.put_nowait(error)
@@ -121,6 +130,11 @@ class Runtime:
             code = self.process.wait(timeout=max(0, deadline - monotonic()))
             if code != 0:
                 raise ValueError("runtime_exit_unavailable")
+            if self._next(deadline - monotonic()) is not END_OF_STATUS:
+                raise ValueError("runtime_trailing_status")
+            self.reader.join(timeout=max(0, deadline - monotonic()))
+            if self.reader.is_alive() or not self.statuses.empty():
+                raise ValueError("runtime_trailing_status")
         except BaseException:
             if self.process.poll() is None:
                 self.process.kill()
@@ -145,11 +159,14 @@ def check(executable, directory, site):
         raise ValueError("private_or_uninstalled_sdk")
     key = uuid4().hex
     identity = None
-    global phase
+    global phase, retirement_outcome
     for incarnation in range(2):
         phase = "runtime_start"
+        retirement_outcome = "unconfirmed"
         runtime = Runtime(executable, directory)
         client = None
+        api_failure = None
+        api_phase = None
         try:
             phase = "capabilities"
             pipe = connect(runtime.pipe)
@@ -196,13 +213,28 @@ def check(executable, directory, site):
                 identity = profile["destination"]
             elif identity != profile["destination"]:
                 raise ValueError("reopened_identity_changed")
+        except Exception as error:
+            api_failure, api_phase = error, phase
         finally:
+            retirement_failure = None
             try:
                 if client is not None:
                     client.close()
-            finally:
-                phase = "retirement"
+            except Exception as error:
+                retirement_failure = error
+            try:
                 runtime.stop()
+            except Exception as error:
+                retirement_failure = error
+            if retirement_failure is None:
+                retirement_outcome = "confirmed"
+            elif api_failure is None:
+                phase = "retirement"
+                api_failure = retirement_failure
+        if api_failure is not None:
+            if api_phase is not None:
+                phase = api_phase
+            raise api_failure
     return CHECKS
 
 
@@ -219,7 +251,8 @@ def main():
     except Exception as error:
         candidate = getattr(error, "code", None)
         code = candidate if isinstance(candidate, str) and re.fullmatch(r"[a-z_]{1,64}", candidate) else "unavailable"
-        print(json.dumps({"passed": False, "phase": phase, "error_code": code}, separators=(",", ":")))
+        print(json.dumps({"passed": False, "phase": phase, "error_code": code,
+                          "retirement_outcome": retirement_outcome}, separators=(",", ":")))
         return 1
 
 

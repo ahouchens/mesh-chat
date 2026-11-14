@@ -36,7 +36,7 @@ SUCCESS_FIELDS = {"v", "passed", "source_commit", "source_tree", "evidence_level
                   "sdk_artifact", "runtime_installed_outside_checkout", "cleanup", "checks",
                   "application_files", "duration_seconds", "run_id", "sidecar_sha256",
                   "build_input_sha256", "build_manifest_sha256", "sdk_sha256",
-                  "sdk_staging_report_sha256"}
+                  "sdk_staging_report_sha256", "owner_retirement_confirmed", "workspace_retained"}
 
 
 def digest(path):
@@ -72,6 +72,8 @@ def verify_report(record, source, tree):
             or record.get("source_tree") != tree or record.get("evidence_level") != LEVEL
             or record.get("scope") != SCOPE or record.get("sdk_artifact") != SDK_ARTIFACT
             or record.get("runtime_installed_outside_checkout") is not True
+            or record.get("owner_retirement_confirmed") is not True
+            or record.get("workspace_retained") is not False
             or record.get("cleanup") != "passed" or record.get("checks") != CHECKS
             or not isinstance(record.get("application_files"), dict)
             or set(record["application_files"]) != set(FILES)
@@ -97,9 +99,11 @@ def main():
     parser.add_argument("--sdk-report", type=Path, default=ROOT / "dist/reports/core-sdk-distribution-staging.json")
     parser.add_argument("--output", type=Path, default=ROOT / "dist/reports/windows-independent-python.json")
     args = parser.parse_args()
-    result = {"v": 1, "passed": False, "evidence_level": LEVEL, "scope": SCOPE}
+    result = {"v": 1, "passed": False, "evidence_level": LEVEL, "scope": SCOPE,
+              "owner_retirement_confirmed": False, "workspace_retained": False}
     parent = Path(os.environ.get("RUNNER_TEMP") or tempfile.gettempdir())
     directory = None
+    owner_retired = False
     phase = "source_artifact_binding"
     started = time.monotonic()
     try:
@@ -143,9 +147,16 @@ def main():
                     and observed.get("phase") in {"arguments", "runtime_start", "capabilities", "fresh_state",
                        "profile_create", "key_replay", "changed_payload", "observations", "retirement"}
                     and isinstance(observed.get("error_code"), str)
-                    and re.fullmatch(r"[a-z_]{1,64}", observed["error_code"])):
-                result.update(application_phase=observed["phase"], error_code=observed["error_code"])
+                    and re.fullmatch(r"[a-z_]{1,64}", observed["error_code"])
+                    and observed.get("retirement_outcome") in {"not_started", "unconfirmed", "confirmed"}):
+                result.update(application_phase=observed["phase"], error_code=observed["error_code"],
+                              application_retirement_outcome=observed["retirement_outcome"])
             raise ValueError("Installed Python application bootstrap failed")
+        expected_application = {name: value for name, value in CHECKS.items() if not name.startswith("efs_")}
+        if observed != expected_application:
+            raise ValueError("Python application did not prove two clean owner shutdowns")
+        owner_retired = True
+        result["owner_retirement_confirmed"] = True
         checks = {**observed, **protected_profile(directory / "app-data")}
         if checks != CHECKS or any(type(checks[name]) is not type(expected) for name, expected in CHECKS.items()):
             raise ValueError("Python application omitted a required normal-host check")
@@ -168,10 +179,14 @@ def main():
         result.update(passed=False, phase=phase, failure_type=type(error).__name__)
     finally:
         if directory is not None:
-            try:
-                cleanup(directory, parent)
-            except (OSError, ValueError):
-                result.update(passed=False, cleanup_failed=True)
+            if owner_retired:
+                try:
+                    cleanup(directory, parent)
+                except (OSError, ValueError):
+                    result.update(passed=False, cleanup_failed=True, workspace_retained=True,
+                                  retained_workspace=directory.name)
+            else:
+                result.update(workspace_retained=True, retained_workspace=directory.name)
         result["duration_seconds"] = time.monotonic() - started
     if result["passed"]:
         result["cleanup"] = "passed"
