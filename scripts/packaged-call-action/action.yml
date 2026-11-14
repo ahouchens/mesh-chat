@@ -1,0 +1,13 @@
+name: Installed call diagnostic role
+description: Run one source-bound R5 role with the Actions artifact runtime.
+inputs:
+  role:
+    description: gui or peer
+    required: true
+  python:
+    description: Selected installed Python interpreter
+    required: false
+    default: python
+runs:
+  using: node24
+  main: action.mjs

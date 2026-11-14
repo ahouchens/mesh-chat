@@ -95,7 +95,9 @@ jobs:
           name: packaged-call-candidate-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: dist
       - name: Run installed GUI and seven-check capture before call
-        run: python scripts/packaged_call_controller.py --role gui --expected-source "${{ github.sha }}"
+        uses: ./scripts/packaged-call-action
+        with:
+          role: gui
         env:
           GITHUB_TOKEN: ${{ github.token }}
       - uses: actions/upload-artifact@v4
@@ -137,7 +139,9 @@ jobs:
           name: native-windows-tested-${{ github.sha }}
           path: .
       - name: Run ordinary public SDK peer and real browser answerer
-        run: python scripts/packaged_call_controller.py --role peer --expected-source "${{ github.sha }}"
+        uses: ./scripts/packaged-call-action
+        with:
+          role: peer
         env:
           GITHUB_TOKEN: ${{ github.token }}
       - uses: actions/upload-artifact@v4

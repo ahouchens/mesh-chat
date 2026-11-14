@@ -30,7 +30,7 @@ try {
       (!own(senders, phase) || !senders[phase].includes(role))
       || value.v !== 1 || value.producer_job !== jobs[role]
       || process.env.GITHUB_JOB !== jobs[role] || process.env.GITHUB_ACTIONS !== "true"
-      || process.env.GITHUB_EVENT_NAME !== "workflow_dispatch"
+      || !["workflow_dispatch", "push"].includes(process.env.GITHUB_EVENT_NAME)
       || context.repository !== process.env.GITHUB_REPOSITORY
       || context.repository_id !== Number(process.env.GITHUB_REPOSITORY_ID)
       || context.run_id !== Number(process.env.GITHUB_RUN_ID)
@@ -49,7 +49,8 @@ try {
     .digest("hex").slice(0, 32);
   const expectedName = `packaged-call-v1-${context.run_id}-${context.run_attempt}-`
     + `${context.source_commit.slice(0, 12)}-${context.pair_id}-${role}-${phase}`;
-  if (context.pair_id !== expectedPair || name !== expectedName || !process.env.ACTIONS_RUNTIME_TOKEN) throw new Error();
+  if (context.pair_id !== expectedPair || name !== expectedName
+      || !process.env.ACTIONS_RUNTIME_TOKEN || !process.env.ACTIONS_RESULTS_URL) throw new Error();
   const common = ["v", "context", "producer_job", "created_at", "expires_at"];
   const keys = phase === "key" ? [...common, "role", "public_key"]
     : [...common, "phase", "sender", "recipient", "nonce", "ciphertext"];
