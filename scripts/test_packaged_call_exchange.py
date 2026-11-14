@@ -44,6 +44,24 @@ class PackagedCallExchangeTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.peer.seal("offer_code", {"pairing_code": code})
 
+    def test_artifact_transport_admits_only_push_or_dispatch(self):
+        env = {"GITHUB_REPOSITORY": self.context["repository"],
+               "GITHUB_REPOSITORY_ID": str(self.context["repository_id"]),
+               "GITHUB_RUN_ID": str(self.context["run_id"]),
+               "GITHUB_RUN_ATTEMPT": str(self.context["run_attempt"]),
+               "GITHUB_SHA": self.context["source_commit"],
+               "PACKAGED_CALL_TREE": self.context["source_tree"],
+               "GITHUB_JOB": "call_gui", "GITHUB_ACTIONS": "true",
+               "GITHUB_TOKEN": "test-token"}
+        with tempfile.TemporaryDirectory() as temporary:
+            for event in ("push", "workflow_dispatch"):
+                with self.subTest(event=event):
+                    env["GITHUB_EVENT_NAME"] = event
+                    self.assertEqual(Artifacts(self.context, "gui", temporary, env=env).role, "gui")
+            env["GITHUB_EVENT_NAME"] = "pull_request"
+            with self.assertRaisesRegex(ValueError, "call_job_invalid"):
+                Artifacts(self.context, "gui", temporary, env=env)
+
     def test_ciphertext_and_run_identity_fail_closed(self):
         bundle = self.peer.seal("approved", {})
         changed = {**bundle, "ciphertext": bundle["ciphertext"][:-1] +

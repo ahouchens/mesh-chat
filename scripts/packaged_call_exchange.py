@@ -233,7 +233,8 @@ class Artifacts:
     def __init__(self, context, role, directory, node="node", env=os.environ, clock=time.monotonic):
         self.context = checked_context(context)
         if (role not in JOBS or env.get("GITHUB_JOB") != JOBS[role]
-                or env.get("GITHUB_ACTIONS") != "true" or env.get("GITHUB_EVENT_NAME") != "workflow_dispatch"
+                or env.get("GITHUB_ACTIONS") != "true"
+                or env.get("GITHUB_EVENT_NAME") not in {"workflow_dispatch", "push"}
                 or context_from_environment(env) != context):
             raise ValueError("call_job_invalid")
         self.token = env.get("GITHUB_TOKEN")

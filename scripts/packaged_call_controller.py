@@ -33,7 +33,7 @@ def admitted(role, source):
     if (sys.platform != "win32" or role not in {"gui", "peer"}
             or os.environ.get("GITHUB_JOB") != "call_" + role
             or os.environ.get("GITHUB_ACTIONS") != "true"
-            or os.environ.get("GITHUB_EVENT_NAME") != "workflow_dispatch"
+            or os.environ.get("GITHUB_EVENT_NAME") not in {"workflow_dispatch", "push"}
             or os.environ.get("GITHUB_SHA") != source
             or not os.environ.get("GITHUB_TOKEN") or not os.environ.get("ACTIONS_RUNTIME_TOKEN")
             or re.fullmatch(r"[a-f0-9]{40}", source) is None):
