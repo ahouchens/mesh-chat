@@ -4,7 +4,8 @@ import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { createInterface } from "node:readline";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const START_MS = 20_000;
 const COMMAND_MS = 25_000;
@@ -235,4 +236,49 @@ export class BrowserMedia {
     }
     return { stopped, browserRetired: this.exited === true, profileRemoved: !this.directory };
   }
+}
+
+async function runProtocol(executable) {
+  if (process.platform !== "win32" || typeof executable !== "string" || !executable.toLowerCase().endsWith("msedge.exe")) {
+    throw new Error("browser_executable_invalid");
+  }
+  const media = new BrowserMedia(executable, fileURLToPath(new URL("./browser-media.html", import.meta.url)));
+  let retired = false;
+  try {
+    await media.start();
+    process.stdout.write('{"ready":true}\n');
+    for await (const line of createInterface({ input: process.stdin, crlfDelay: Infinity })) {
+      if (Buffer.byteLength(line) > 256 * 1024) throw new Error("browser_frame_limit");
+      const request = JSON.parse(line);
+      if (!Number.isSafeInteger(request?.id) || request.id < 1) throw new Error("browser_request_invalid");
+      let value;
+      try {
+        if (request.action === "answer" && typeof request.offer === "string") {
+          value = await media.answer(request.offer, request.ice);
+        } else if (request.action === "observe") {
+          value = await media.observe();
+        } else if (request.action === "close") {
+          value = await media.close();
+          retired = value.browserRetired && value.profileRemoved;
+        } else throw new Error("browser_action_invalid");
+        process.stdout.write(JSON.stringify({ id: request.id, ok: true, value }) + "\n");
+        if (retired) return;
+      } catch (error) {
+        process.stdout.write(JSON.stringify({ id: request.id, ok: false,
+          error: /^[a-z_]+$/.test(error?.message || "") ? error.message : "browser_failed" }) + "\n");
+      }
+    }
+  } finally {
+    if (!retired) {
+      const value = await media.close();
+      if (!value.browserRetired || !value.profileRemoved) throw new Error("browser_cleanup_unconfirmed");
+    }
+  }
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  runProtocol(process.argv[2]).catch(() => {
+    process.stderr.write("browser_media_peer_failed\n");
+    process.exitCode = 1;
+  });
 }
