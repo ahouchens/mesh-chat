@@ -1,4 +1,4 @@
-"""INV02/03/05: interrupt every reachable phase, including both offer roles.
+"""INV02/03/04/09: interrupt every reachable phase, including both offer roles.
 
 This is deterministic production-reducer evidence, not native disposal or
 packaged Windows/Android parity. States come from actual successful traces.
