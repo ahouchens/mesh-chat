@@ -25,6 +25,11 @@ on:
         type: boolean
         required: false
         default: false
+      public_core_session:
+        description: Installed Android public Core session diagnostic (not qualification)
+        type: boolean
+        required: false
+        default: false
       restart_probe:
         description: Reopen packaged peer or compare emulator boot launchers
         type: choice
@@ -41,13 +46,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: android-webrtc-${{ github.ref }}${{ github.event_name == 'workflow_dispatch' && ((inputs.restart_diagnostic && (inputs.gateway_probe || inputs.network_inventory)) || (inputs.gateway_probe && inputs.network_inventory)) && '-conflict' || github.event_name == 'workflow_dispatch' && inputs.restart_diagnostic && '-restart' || github.event_name == 'workflow_dispatch' && inputs.gateway_probe && '-gateway' || github.event_name == 'workflow_dispatch' && inputs.network_inventory && '-inventory' || '' }}${{ inputs.b8_diagnostic_producer && '-b8-first-cold' || '' }}
-  cancel-in-progress: ${{ !inputs.b8_diagnostic_producer }}
+  group: android-webrtc-${{ github.ref }}${{ github.event_name == 'workflow_dispatch' && ((inputs.restart_diagnostic && (inputs.gateway_probe || inputs.network_inventory || inputs.public_core_session)) || (inputs.gateway_probe && (inputs.network_inventory || inputs.public_core_session)) || (inputs.network_inventory && inputs.public_core_session)) && '-conflict' || github.event_name == 'workflow_dispatch' && inputs.public_core_session && '-public-session' || github.event_name == 'workflow_dispatch' && inputs.restart_diagnostic && '-restart' || github.event_name == 'workflow_dispatch' && inputs.gateway_probe && '-gateway' || github.event_name == 'workflow_dispatch' && inputs.network_inventory && '-inventory' || '' }}${{ inputs.b8_diagnostic_producer && '-b8-first-cold' || '' }}
+  cancel-in-progress: ${{ !inputs.b8_diagnostic_producer && !(github.event_name == 'workflow_dispatch' && inputs.public_core_session) }}
 
 jobs:
   diagnostic_conflict:
     name: Reject conflicting manual diagnostic modes
-    if: ${{ github.event_name == 'workflow_dispatch' && ((inputs.restart_diagnostic && (inputs.network_inventory || inputs.gateway_probe)) || (inputs.network_inventory && inputs.gateway_probe)) }}
+    if: ${{ github.event_name == 'workflow_dispatch' && ((inputs.restart_diagnostic && (inputs.network_inventory || inputs.gateway_probe || inputs.public_core_session)) || (inputs.network_inventory && (inputs.gateway_probe || inputs.public_core_session)) || (inputs.gateway_probe && inputs.public_core_session)) }}
     runs-on: ubuntu-latest
     steps:
       - run: exit 1
@@ -116,6 +121,7 @@ jobs:
           rm -rf src-tauri/target node_modules src-tauri/gen/android/app/build || true
           df -h
       - name: Test Chromium interop and Android signalling mailbox recovery
+        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.public_core_session }}
         timeout-minutes: 45
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -124,6 +130,17 @@ jobs:
           target: google_apis
           disable-animations: true
           script: bash scripts/test_android_qualification.sh
+      - name: Test required Android suites and installed public Core session
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.public_core_session }}
+        timeout-minutes: 60
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          emulator-port: 5554
+          disable-animations: true
+          script: bash scripts/test_android_public_session_qualification.sh
       - name: Retain required run-bound Android evidence
         uses: actions/upload-artifact@v4
         if: always()
@@ -131,6 +148,14 @@ jobs:
           name: android-qualification-${{ github.sha }}
           path: dist/reports/android-qualification.json
           if-no-files-found: error
+      - name: Retain installed public Core session diagnostic
+        uses: actions/upload-artifact@v4
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.public_core_session }}
+        with:
+          name: android-independent-public-session-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist/reports/android-independent-public-session.json
+          if-no-files-found: error
+          retention-days: 14
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -159,7 +184,7 @@ jobs:
 
   network_inventory:
     name: Read-only emulator network inventory (not qualification)
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.network_inventory && !inputs.gateway_probe && !inputs.restart_diagnostic }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.network_inventory && !inputs.gateway_probe && !inputs.restart_diagnostic && !inputs.public_core_session }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -191,7 +216,7 @@ jobs:
 
   gateway_probe:
     name: Disposable emulator host gateway capability (not qualification)
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.gateway_probe && !inputs.network_inventory && !inputs.restart_diagnostic }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.gateway_probe && !inputs.network_inventory && !inputs.restart_diagnostic && !inputs.public_core_session }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -223,7 +248,7 @@ jobs:
 
   restart_diagnostic:
     name: Focused Android restart diagnostic only
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.restart_diagnostic && !inputs.network_inventory && !inputs.gateway_probe }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.restart_diagnostic && !inputs.network_inventory && !inputs.gateway_probe && !inputs.public_core_session }}
     uses: ./.github/workflows/native-restart-diagnostic.yml
     with:
       probe: ${{ inputs.restart_probe }}
