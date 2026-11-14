@@ -2969,7 +2969,7 @@ def test_root_failure_reports_only_checked_status_and_literal_reason(tmp_path, m
     assert run.record["preflight_failure_site"] == "android_root"
     assert run.record.get("preflight_exit_status") == 1
     assert run.record.get("preflight_root_reason") == "read_failure"
-    assert run.script.calls == ["android_devices", "android_avd_create", "boot", "android_root", "kill"]
+    assert run.script.calls == ["android_devices", "android_avd_create", "boot", "android_root", "kill", "transport_retirement"]
     assert run.events == [] and "PRIVATE_" not in run.output
     assert_android_cleaned(run.script)
 
@@ -2989,7 +2989,7 @@ def test_actual_root_connect_failure_retains_only_fixed_detail(tmp_path, monkeyp
     assert run.exit_code == 1 and run.record["passed"] is False
     assert run.record["preflight_root_reason"] == "connect_failure"
     assert run.record.get("preflight_root_connect_detail") == detail
-    assert run.script.calls == ["android_devices", "android_avd_create", "boot", "android_root", "kill"]
+    assert run.script.calls == ["android_devices", "android_avd_create", "boot", "android_root", "kill", "transport_retirement"]
     assert run.events == [] and "PRIVATE_" not in run.output and "adb:" not in run.output
     assert_android_cleaned(run.script)
 
@@ -3053,7 +3053,7 @@ def test_actual_precontroller_report_identifies_each_checked_command_only(tmp_pa
     sites = (*ANDROID_START_SITES, *ANDROID_ENVIRONMENT_SITES)
     expected = list(sites[:sites.index(site) + 1])
     if run.script.starts: expected.insert(2, "boot")
-    if run.script.starts: expected.append("kill")
+    if run.script.starts: expected.extend(("kill", "transport_retirement"))
     assert run.script.calls == expected and run.events == []
     assert "PRIVATE_" not in run.output
     assert_android_cleaned(run.script)
