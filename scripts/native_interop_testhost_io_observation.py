@@ -14,6 +14,7 @@ STAGES = frozenset({"read_header", "read_body", "dispatch", "write_header", "wri
                     "initialize_dispatch_enter", "initialize_return", "initialize_flush_complete"})
 MILESTONES = ("snapshot_dispatch_enter", "snapshot_flush_complete",
               "initialize_dispatch_enter", "initialize_return", "initialize_flush_complete")
+INITIALIZE_MILESTONES = MILESTONES[2:]
 CATEGORIES = frozenset({"none", "eof", "timeout", "io", "protocol", "other"})
 STATUS = re.compile(rb"INSTRUMENTATION_STATUS: mesh_interop_io=v1\|([1-9][0-9]{0,7})\|"
                     rb"(read_header|read_body|dispatch|write_header|write_body|flush|"
@@ -167,6 +168,20 @@ def failure_snapshot(value, ordinal):
         return None
     return {"statuses": rows, "device": value["device"], "forward": value["forward"],
             "app_process": value["app_process"], **({"pre_probe": pre} if pre is not None else {})}
+
+
+def initialize_failure_snapshot(value, ordinal):
+    """Bind any initialize milestone to the failed request, not its predecessor."""
+    selected = failure_snapshot(value, ordinal)
+    if selected is None:
+        return None
+    groups = [selected["statuses"]]
+    if "pre_probe" in selected:
+        groups.append(selected["pre_probe"]["statuses"])
+    if any(row["last"]["ordinal"] != ordinal and any(row[name] for name in INITIALIZE_MILESTONES)
+           for rows in groups for row in rows):
+        return None
+    return selected
 
 
 def _bounded_adb(argv, deadline, limit, cleanup_slice):

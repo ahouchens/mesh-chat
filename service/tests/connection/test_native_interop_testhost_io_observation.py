@@ -42,7 +42,12 @@ def test_kotlin_emits_only_the_exact_fixed_status_format_and_request_markers():
     assert '"mesh_interop_start_ordinal", str(self._sequence + 1)' in (ROOT / "scripts/native_interop_peers.py").read_text()
     assert 'reportIo(ordinal, "initialize_dispatch_enter", "none", started)' in source
     assert 'reportIo(ordinal, "initialize_return", "none", started)' in source
-    assert 'if (initializeRequest) reportIo(ordinal, "initialize_flush_complete", "none", started)' in source
+    assert 'var initializeCallReturned = false' in source
+    assert 'initializeCallReturned = true' in source
+    assert 'if (initializeCallReturned) reportIo(ordinal, "initialize_flush_complete", "none", started)' in source
+    assert source.index('qualification.callAttr("android_initialize"') < source.index('initializeCallReturned = true')
+    assert source.index('initializeCallReturned = true') < source.index('if (initializeCallReturned) reportIo(')
+    assert 'if (initializeRequest) reportIo(' not in source
     for stage in io.STAGES:
         assert f'"{stage}"' in source
         assert io.event(line(17, stage)) == {"ordinal": 17, "stage": stage, "category": "none",
@@ -109,6 +114,25 @@ def test_initialize_milestones_are_bounded_and_ordered():
     assert io.failure_snapshot({"statuses": [{**after[0], "initialize_return": False}],
                                 **presence()}, 2) is None
     assert io.event(line(2, "initialize_return", "PRIVATE")) is None
+
+
+def test_invalid_or_throwing_initialize_keeps_error_status_without_false_return():
+    invalid = io.TesthostIoStatus()
+    invalid.observe(line(3, "dispatch", "protocol"))
+    invalid_rows = invalid.matching(3)
+    assert not any(invalid_rows[0][name] for name in io.MILESTONES)
+    assert io.failure_snapshot({"statuses": invalid_rows, **presence()}, 3) is not None
+
+    thrown = io.TesthostIoStatus()
+    thrown.observe(line(4, "initialize_dispatch_enter"))
+    thrown.observe(line(4, "dispatch", "other"))
+    rows = thrown.matching(4)
+    assert rows[0]["initialize_dispatch_enter"] is True
+    assert rows[0]["initialize_return"] is False
+    assert rows[0]["initialize_flush_complete"] is False
+    assert io.failure_snapshot({"statuses": rows, **presence()}, 4) is not None
+    assert io.failure_snapshot({"statuses": [{**rows[0], "initialize_flush_complete": True}],
+                                **presence()}, 4) is None
 
 
 def subprocess_adb(monkeypatch, replies):

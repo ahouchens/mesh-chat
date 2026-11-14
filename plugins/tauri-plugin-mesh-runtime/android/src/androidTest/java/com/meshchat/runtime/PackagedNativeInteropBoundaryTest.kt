@@ -80,7 +80,7 @@ class PackagedNativeInteropBoundaryTest {
                         val action = frame.getString("action")
                         val payload = frame.getJSONObject("payload")
                         val snapshotRequest = action == "core" && payload.opt("operation") == "application.snapshot"
-                        val initializeRequest = action == "initialize"
+                        var initializeCallReturned = false
                         stage = "dispatch"
                         if (snapshotRequest) reportIo(ordinal, "snapshot_dispatch_enter", "none", started)
                         val diagnosticRequest = action == "inspect" && payload.opt("command") == "qualification.network_diagnostic"
@@ -108,6 +108,7 @@ class PackagedNativeInteropBoundaryTest {
                                     reportIo(ordinal, "initialize_dispatch_enter", "none", started)
                                     val initializedReply = qualification.callAttr("android_initialize", request.toString()).toString()
                                     reportIo(ordinal, "initialize_return", "none", started)
+                                    initializeCallReturned = true
                                     reply = JSONObject(initializedReply)
                                     initialized = reply.optBoolean("ok")
                                 }
@@ -211,7 +212,7 @@ class PackagedNativeInteropBoundaryTest {
                         stage = "flush"
                         output.flush()
                         if (snapshotRequest) reportIo(ordinal, "snapshot_flush_complete", "none", started)
-                        if (initializeRequest) reportIo(ordinal, "initialize_flush_complete", "none", started)
+                        if (initializeCallReturned) reportIo(ordinal, "initialize_flush_complete", "none", started)
                         if (!authenticated) error("Controller authentication failed")
                         } catch (failure: Throwable) {
                             val category = when (failure) {

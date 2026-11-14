@@ -3,7 +3,7 @@ import queue
 import subprocess
 
 from native_interop_android_observation import android_lifecycle_snapshot, android_transport_snapshot
-from native_interop_testhost_io_observation import failure_snapshot
+from native_interop_testhost_io_observation import initialize_failure_snapshot
 
 STAGES = frozenset({"port_wait", "port_validate", "forward", "forward_validate", "connect",
                     "authenticate", "initialize", "inventory", "binding"})
@@ -30,7 +30,7 @@ def start_observation(stage, error, *, peer_failure=False, transport=None, lifec
     if transport is not None: result["transport"] = transport
     if lifecycle is not None: result["initial_lifecycle"] = lifecycle
     if stage == "initialize" and code == "peer_closed" and testhost_io is not None:
-        selected = failure_snapshot(testhost_io, request_ordinal)
+        selected = initialize_failure_snapshot(testhost_io, request_ordinal)
         if selected is not None:
             result["testhost_io"] = selected
             result["request_ordinal"] = request_ordinal
@@ -60,7 +60,7 @@ def start_failure_snapshot(value):
         if key == "request_ordinal":
             continue
         selected = (android_transport_snapshot(value[key]) if key == "transport"
-                    else failure_snapshot(value[key], value["request_ordinal"]) if key == "testhost_io"
+                    else initialize_failure_snapshot(value[key], value["request_ordinal"]) if key == "testhost_io"
                     else android_lifecycle_snapshot(value[key]))
         if selected is None: return None
         result[key] = selected
