@@ -151,6 +151,61 @@ class NsIsCandidateTests(unittest.TestCase):
             launch.return_value.kill.assert_called_once_with()
             self.assertEqual(launch.return_value.wait.call_count, 2)
 
+    def test_installed_observation_identifies_each_mismatch_without_accepting_it(self):
+        candidate = runner.source_bound_candidate(self.delivery, self.source, self.tree)
+        installed = self.root / "installed"
+        installed.mkdir()
+        (installed / "mesh-chat.exe").write_bytes(self.files["application"][1])
+        (installed / "mesh-chat-service.exe").write_bytes(self.files["sidecar"][1])
+        self.assertTrue(runner.installed_artifacts_match(runner.installed_artifacts(installed, candidate)))
+        changed = b"changed sidecar bytes"
+        (installed / "mesh-chat-service.exe").write_bytes(changed)
+        observed = runner.installed_artifacts(installed, candidate)
+        self.assertTrue(observed["application"]["matches_expected"])
+        self.assertEqual(observed["sidecar"], {
+            "size_bytes": len(changed), "sha256": hashlib.sha256(changed).hexdigest(),
+            "matches_expected": False,
+        })
+        self.assertFalse(runner.installed_artifacts_match(observed))
+        (installed / "mesh-chat-service.exe").unlink()
+        missing = runner.installed_artifacts(installed, candidate)
+        self.assertEqual(missing["sidecar"], {"availability": "unavailable", "matches_expected": False})
+        self.assertFalse(runner.installed_artifacts_match(missing))
+
+    def test_install_mismatch_retains_both_observations_and_never_starts_capture(self):
+        output = self.root / "dist/reports/packaged-media-install.json"
+        candidate = runner.source_bound_candidate(self.delivery, self.source, self.tree)
+        changed = b"changed application bytes"
+
+        def installed_bytes(_installer, directory):
+            (directory / "mesh-chat.exe").write_bytes(changed)
+            (directory / "mesh-chat-service.exe").write_bytes(self.files["sidecar"][1])
+            return 0, True
+
+        args = ["run_packaged_media_preflight.py", "--expected-source", self.source,
+                "--expected-tree", self.tree, "--delivery-report", str(self.delivery),
+                "--run-id", "123", "--run-attempt", "1", "--output", str(output)]
+        env = {"GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1"}
+        with patch.object(runner.sys, "argv", args), patch.object(runner.sys, "platform", "win32"), \
+                patch.dict(runner.os.environ, env), \
+                patch.object(runner, "fresh_runner_temp", return_value=self.root), \
+                patch.object(runner, "fresh_user_app_data"), \
+                patch.object(runner.preflight, "source_identity", return_value=(self.source, self.tree)), \
+                patch.object(runner, "install", side_effect=installed_bytes), \
+                patch.object(runner, "run_preflight") as capture:
+            with redirect_stdout(StringIO()):
+                self.assertEqual(runner.main(), 1)
+        capture.assert_not_called()
+        report = json.loads(output.read_text(encoding="utf-8"))
+        self.assertEqual((report["phase"], report["failure"]), ("install", "installed_bytes_mismatch"))
+        self.assertEqual(report["application_size"], candidate["application_size"])
+        self.assertEqual(report["sidecar_size"], candidate["sidecar_size"])
+        self.assertEqual(report["installed_artifacts"]["application"], {
+            "size_bytes": len(changed), "sha256": hashlib.sha256(changed).hexdigest(),
+            "matches_expected": False,
+        })
+        self.assertTrue(report["installed_artifacts"]["sidecar"]["matches_expected"])
+
     def test_preflight_timeout_records_wrapper_retirement_and_app_uncertainty(self):
         args = SimpleNamespace(run_id="123", run_attempt=1, node=Path("node"),
                                preflight_output=self.root / "dist/reports/packaged-media-preflight.json")

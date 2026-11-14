@@ -181,6 +181,30 @@ def install(installer: Path, directory: Path) -> tuple[int, bool]:
         raise PreparationFailure("installer_timed_out") from error
 
 
+def installed_artifacts(directory: Path, candidate: dict) -> dict[str, dict]:
+    """Retain bounded observed bytes for each installed file, even on mismatch."""
+    observed = {}
+    for role, name in (("application", "mesh-chat.exe"), ("sidecar", "mesh-chat-service.exe")):
+        path = directory / name
+        try:
+            size = preflight.regular_input(path, 2 * 1024 * 1024 * 1024)
+            sha256 = preflight.digest(path)
+            # A same-size replacement between the size and digest reads is not
+            # accepted as an exact installed candidate.
+            if preflight.regular_input(path, 2 * 1024 * 1024 * 1024) != size:
+                raise preflight.PreflightFailure("input_changed_during_read")
+            observed[role] = {"size_bytes": size, "sha256": sha256,
+                              "matches_expected": size == candidate[role + "_size"]
+                              and sha256 == candidate[role + "_sha256"]}
+        except (OSError, preflight.PreflightFailure):
+            observed[role] = {"availability": "unavailable", "matches_expected": False}
+    return observed
+
+
+def installed_artifacts_match(observed: dict) -> bool:
+    return all(observed[role].get("matches_expected") is True for role in ("application", "sidecar"))
+
+
 def run_preflight(app: Path, candidate: dict, args: argparse.Namespace, result: dict) -> tuple[bool, str]:
     if args.preflight_output.exists():
         raise PreparationFailure("preflight_output_not_fresh")
@@ -256,7 +280,8 @@ def main() -> int:
         result["phase"] = "candidate_admission"
         candidate = source_bound_candidate(args.delivery_report, source, tree)
         result.update({key: candidate[key] for key in ("delivery_report_sha256", "release_manifest_sha256",
-                      "installer_sha256", "installer_size", "application_sha256", "sidecar_sha256")})
+                      "installer_sha256", "installer_size", "application_sha256", "application_size",
+                      "sidecar_sha256", "sidecar_size")})
         fresh_user_app_data()
         result["phase"] = "install"
         install_dir = Path(tempfile.mkdtemp(prefix="mesh-media-install-", dir=parent))
@@ -267,11 +292,8 @@ def main() -> int:
         if code != 0:
             raise PreparationFailure("installer_failed")
         app = install_dir / "mesh-chat.exe"
-        if (preflight.regular_input(app, 2 * 1024 * 1024 * 1024) != candidate["application_size"]
-                or preflight.digest(app) != candidate["application_sha256"]
-                or preflight.regular_input(install_dir / "mesh-chat-service.exe", 2 * 1024 * 1024 * 1024)
-                != candidate["sidecar_size"]
-                or preflight.digest(install_dir / "mesh-chat-service.exe") != candidate["sidecar_sha256"]):
+        result["installed_artifacts"] = installed_artifacts(install_dir, candidate)
+        if not installed_artifacts_match(result["installed_artifacts"]):
             raise PreparationFailure("installed_bytes_mismatch")
         result["phase"] = "capture_preflight"
         passed, report_sha = run_preflight(app, candidate, args, result)
@@ -280,13 +302,10 @@ def main() -> int:
         if not passed:
             raise PreparationFailure("capture_preflight_failed")
         result["phase"] = "final_binding"
+        result["installed_artifacts_after_capture"] = installed_artifacts(install_dir, candidate)
         if (preflight.source_identity(source, tree) != (source, tree)
                 or source_bound_candidate(args.delivery_report, source, tree) != candidate
-                or preflight.regular_input(app, 2 * 1024 * 1024 * 1024) != candidate["application_size"]
-                or preflight.digest(app) != candidate["application_sha256"]
-                or preflight.regular_input(install_dir / "mesh-chat-service.exe", 2 * 1024 * 1024 * 1024)
-                != candidate["sidecar_size"]
-                or preflight.digest(install_dir / "mesh-chat-service.exe") != candidate["sidecar_sha256"]):
+                or not installed_artifacts_match(result["installed_artifacts_after_capture"])):
             raise PreparationFailure("candidate_changed_during_run")
         result["passed"] = True
         result["phase"] = "complete"
