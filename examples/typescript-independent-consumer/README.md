@@ -79,7 +79,8 @@ child to detach and exit while the owner stays usable, then attaches a replaceme
 child. With the replacement attached, the owner stops the host and requires
 positive host retirement, failed post-stop child access and bounded child exit.
 It retains only fixed check counts, timing and a failure stage. The fixture is
-not yet in the installed staging list or qualification workflow. It does not
+included in the exact-source installed application inventory, with its separate
+installed execution producer pending qualification workflow wiring. It does not
 cover paired pending work, wrong-image callers, cross-application isolation or
 full SC22/SC26 acceptance: same-user Node processes with the exact allowed
 executable image currently receive the same owner grant.
