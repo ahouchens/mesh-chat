@@ -2,6 +2,23 @@
 
 ## Receiver-reopen fixture defect and installed-call candidate — November 14, 2026
 
+Local candidate `d73113f` completed 7,138 passing connection tests, two platform
+skips and two integration failures. The first was the new pipe shutdown test
+outside the suite that CI selects for pipe changes; `727c742` moves both shutdown
+cases into the required connection suite without weakening its selection guard.
+The second was the omission of new browser files from the explicit application
+staging inventory. That commit includes the browser module, HTML and component
+test, and enforces LF for HTML alongside the existing script rules. All 126
+focused selection, shutdown, source-inventory and uploader checks passed after
+correction. The original full run remains recorded as failed.
+
+R5 launch corrections `c566a88` and `603be1b` allow the bounded diagnostic branch
+push and execute each role through a local Node action, which supplies the
+artifact runtime environment to its Python child. The real uploader now accepts
+push and manual dispatch while rejecting other events. Its isolated regression
+uses a mocked artifact client; it is not an actual upload or call result. The
+final candidate requires another complete local run before its authorized push.
+
 Run [43575546186](https://github.com/ahouchens/mesh-chat/actions/runs/43575546186),
 attempt 1 at `98331429f7292c7b0cd59d2596ae1523e4f36ad2`, tree
 `4c2f209eef68b182cfd713bf668f8308fcf187e0`, closed failed. Ubuntu verification
