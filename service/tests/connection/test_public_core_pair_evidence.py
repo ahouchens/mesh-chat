@@ -1,6 +1,7 @@
 """Reject mismatched public-pair reports independently of the flow runner."""
 
 from copy import deepcopy
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -14,7 +15,9 @@ import verify_android_independent_consumer as android_distribution
 
 
 CONTEXT = {"repository": "owner/repository", "repository_id": 7, "run_id": 17,
-           "run_attempt": 1, "source_commit": "a" * 40, "pair_id": "b" * 32}
+           "run_attempt": 1, "source_commit": "a" * 40}
+CONTEXT["pair_id"] = hashlib.sha256(b"public-core-pair:v1:" +
+    json.dumps(CONTEXT, sort_keys=True, separators=(",", ":")).encode("ascii")).hexdigest()[:32]
 TREE = "c" * 40
 
 
@@ -65,6 +68,15 @@ def test_exact_pair_with_independent_producer_inputs_passes():
     reports, inputs, needs = valid_pair()
     assert checker.verify_pair(*reports, CONTEXT, TREE, inputs, needs) is True
     assert reports[0]["flow"]["outbound_text_sha256"] != reports[0]["flow"]["inbound_text_sha256"]
+
+
+def test_checker_and_setup_transport_bind_the_same_pair_identity():
+    from public_core_pair_rendezvous import checked_context
+    assert checked_context(CONTEXT) == checker.checked_context(CONTEXT)
+    changed = {**CONTEXT, "pair_id": "0" * 32}
+    for verify in (checked_context, checker.checked_context):
+        with pytest.raises(ValueError):
+            verify(changed)
 
 
 @pytest.mark.parametrize("field,value", [

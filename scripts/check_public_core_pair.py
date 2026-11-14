@@ -38,6 +38,11 @@ def hex_value(value, size=64):
     return type(value) is str and re.fullmatch(r"[a-f0-9]{" + str(size) + "}", value) is not None
 
 
+def pair_id_for(fields):
+    canonical = json.dumps(fields, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False)
+    return hashlib.sha256(b"public-core-pair:v1:" + canonical.encode("ascii")).hexdigest()[:32]
+
+
 def checked_context(value):
     fields = {"repository", "repository_id", "run_id", "run_attempt", "source_commit", "pair_id"}
     if (type(value) is not dict or set(value) != fields
@@ -46,7 +51,8 @@ def checked_context(value):
             or any(part in {".", ".."} for part in value["repository"].split("/"))
             or any(type(value[key]) is not int or value[key] <= 0
                    for key in ("repository_id", "run_id", "run_attempt"))
-            or not hex_value(value["source_commit"], 40) or not hex_value(value["pair_id"], 32)):
+            or not hex_value(value["source_commit"], 40) or not hex_value(value["pair_id"], 32)
+            or value["pair_id"] != pair_id_for({key: item for key, item in value.items() if key != "pair_id"})):
         raise ValueError("public_pair_context")
     return dict(value)
 
@@ -185,7 +191,7 @@ def write_summary(path, value):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--expected-source", required=True)
-    parser.add_argument("--pair-id", required=True)
+    parser.add_argument("--pair-id")
     for name in ("windows-report", "android-report", "windows-bootstrap", "android-distribution", "output"):
         parser.add_argument("--" + name, type=Path, required=True)
     args = parser.parse_args()
@@ -196,10 +202,10 @@ def main():
         if (environment.get("GITHUB_ACTIONS") != "true" or environment.get("GITHUB_EVENT_NAME") != "workflow_dispatch"
                 or environment.get("GITHUB_JOB") != "public_pair_check" or environment.get("GITHUB_SHA") != args.expected_source):
             raise ValueError("manual_public_pair_admission")
-        context = checked_context({"repository": environment["GITHUB_REPOSITORY"],
+        fields = {"repository": environment["GITHUB_REPOSITORY"],
             "repository_id": int(environment["GITHUB_REPOSITORY_ID"]), "run_id": int(environment["GITHUB_RUN_ID"]),
-            "run_attempt": int(environment["GITHUB_RUN_ATTEMPT"]), "source_commit": args.expected_source,
-            "pair_id": args.pair_id})
+            "run_attempt": int(environment["GITHUB_RUN_ATTEMPT"]), "source_commit": args.expected_source}
+        context = checked_context({**fields, "pair_id": args.pair_id or pair_id_for(fields)})
         _, tree = source_identity(args.expected_source)
         summary.update(context=context, source_tree=tree)
         phase = "reports"

@@ -189,8 +189,8 @@ def installed_artifacts(directory: Path, candidate: dict) -> dict[str, dict]:
         try:
             size = preflight.regular_input(path, 2 * 1024 * 1024 * 1024)
             sha256 = preflight.digest(path)
-            # A same-size replacement between the size and digest reads is not
-            # accepted as an exact installed candidate.
+            # Refuse a size change during observation; the digest must also
+            # match the exact source-bound candidate before capture can start.
             if preflight.regular_input(path, 2 * 1024 * 1024 * 1024) != size:
                 raise preflight.PreflightFailure("input_changed_during_read")
             observed[role] = {"size_bytes": size, "sha256": sha256,
