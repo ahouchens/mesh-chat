@@ -126,8 +126,8 @@ def _observe_pairing(service):
                                       "local_device_id": proof.identity_hash})
                 retirement = validated_pairing_retirement(owner.pairing_retirement_diagnostic(
                     key=key, runtime_epoch=proof.runtime_epoch, source=context["source"]))
-                if (proof.role == "offer" and retirement is not None
-                        and retirement["phase"] == "gather_offer"):
+                gather_phase = "gather_offer" if proof.role == "offer" else "gather_answer"
+                if retirement is not None and retirement["phase"] == gather_phase:
                     try:
                         provider = getattr(service, "_native_pairing_gather_failure_snapshot", None)
                         gather = validated_gather_for_retirement(

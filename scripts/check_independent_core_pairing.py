@@ -214,9 +214,10 @@ def invitation_observation_details(value):
                 raise ValueError("Invitation actor failure contains extra fields")
 
 
-def owner_offer_gather_details(intent, cause):
-    if (intent["role"] != "offer" or intent["state"] not in {"retiring", "retired"}
-            or cause is None or cause["phase"] != "gather_offer"):
+def owner_gather_details(intent, cause):
+    role = intent["role"]
+    if (role not in {"offer", "answer"} or intent["state"] not in {"retiring", "retired"}
+            or cause is None or cause["phase"] != ("gather_offer" if role == "offer" else "gather_answer")):
         raise ValueError("Owner gather attribution is invalid")
     failed = (cause["event"], cause["reason"]) == ("failed", "invalid_document")
     deadline = (cause["event"], cause["reason"]) == ("tick", "phase_timeout")
@@ -231,9 +232,13 @@ def owner_offer_gather_details(intent, cause):
     choices = {
         "as_of": {"failed_result" if failed else "phase_deadline"},
         "worker": {"queued", "started", "completed", "unknown"},
-        "stage": {"not_started", "ice_config", "native_offer", "offer_sign", "complete", "unknown"},
+        "stage": ({"not_started", "ice_config", "native_offer", "offer_sign", "complete", "unknown"}
+                  if role == "offer" else {"not_started", "ice_config", "native_accept", "answer_sign",
+                                           "bind_onboarding", "complete", "unknown"}),
         "stage_state": {"entered", "completed", "unknown"},
-        "last_completed": {"none", "ice_config", "native_offer", "offer_sign", "unknown"},
+        "last_completed": ({"none", "ice_config", "native_offer", "offer_sign", "unknown"}
+                           if role == "offer" else {"none", "ice_config", "native_accept", "answer_sign",
+                                                    "bind_onboarding", "unknown"}),
         "queue_age": ages, "stage_age": ages,
     }
     if any(value[key] not in allowed for key, allowed in choices.items()):
@@ -294,7 +299,7 @@ def owner_retirement_details(value):
                        for key, choices in (("phase", phases), ("event", events), ("reason", reasons)))):
             raise ValueError("Owner diagnostic retirement is invalid")
         if "gather_failure" in intent:
-            owner_offer_gather_details(intent, cause)
+            owner_gather_details(intent, cause)
 
 
 def failure_details(value):

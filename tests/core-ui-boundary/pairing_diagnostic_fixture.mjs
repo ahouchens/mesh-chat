@@ -65,6 +65,15 @@ function launch(_executable, directory, options = {}, rejected = false) {
         observed.intents[0].gather_failure.raw = "PRIVATE_PAYLOAD";
       }
     }
+    if (["answer_gather", "answer_gather_extra"].includes(process.env.PAIRING_OWNER_DIAGNOSTIC) && role === "answerer") {
+      observed.intents[0].retirement.phase = "gather_answer";
+      observed.intents[0].gather_failure = {as_of:"failed_result",worker:"started",stage:"native_accept",
+        stage_state:"entered",last_completed:"ice_config",queue_age:"lt1s",stage_age:"1to5s",
+        exception_kind:"native_unavailable",native_code:"no_candidates"};
+      if (process.env.PAIRING_OWNER_DIAGNOSTIC === "answer_gather_extra") {
+        observed.intents[0].gather_failure.raw = "PRIVATE_PAYLOAD";
+      }
+    }
     return {outcome:"received",observation:observed};
   },stop:async remaining => {
     stopRequested = true;

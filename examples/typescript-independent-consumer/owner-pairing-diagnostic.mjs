@@ -10,19 +10,27 @@ const states = new Set(["reserved", "offer_ready", "awaiting_approval", "transfe
 const fields = (value, names) => value !== null && typeof value === "object" && !Array.isArray(value)
   && Object.keys(value).sort().join() === names.split(",").sort().join();
 
-function offerGatherFailure(intent, retirement) {
+function gatherFailure(intent, retirement) {
   const value = intent.gather_failure;
-  if (intent.role !== "offer" || !["retiring", "retired"].includes(intent.state)
-      || retirement?.phase !== "gather_offer") throw new Error("invalid_owner_diagnostic");
+  const offer = intent.role === "offer";
+  const answer = intent.role === "answer";
+  if ((!offer && !answer) || !["retiring", "retired"].includes(intent.state)
+      || retirement?.phase !== (offer ? "gather_offer" : "gather_answer")) {
+    throw new Error("invalid_owner_diagnostic");
+  }
   const failed = retirement.event === "failed" && retirement.reason === "invalid_document";
   const deadline = retirement.event === "tick" && retirement.reason === "phase_timeout";
   const common = "as_of,worker,stage,stage_state,last_completed,queue_age,stage_age";
   if ((!failed && !deadline) || !fields(value, common + (failed ? ",exception_kind,native_code" : ""))
       || value.as_of !== (failed ? "failed_result" : "phase_deadline")
       || !["queued", "started", "completed", "unknown"].includes(value.worker)
-      || !["not_started", "ice_config", "native_offer", "offer_sign", "complete", "unknown"].includes(value.stage)
+      || !(offer ? ["not_started", "ice_config", "native_offer", "offer_sign", "complete", "unknown"]
+        : ["not_started", "ice_config", "native_accept", "answer_sign", "bind_onboarding", "complete", "unknown"])
+        .includes(value.stage)
       || !["entered", "completed", "unknown"].includes(value.stage_state)
-      || !["none", "ice_config", "native_offer", "offer_sign", "unknown"].includes(value.last_completed)
+      || !(offer ? ["none", "ice_config", "native_offer", "offer_sign", "unknown"]
+        : ["none", "ice_config", "native_accept", "answer_sign", "bind_onboarding", "unknown"])
+        .includes(value.last_completed)
       || ![value.queue_age, value.stage_age].every(age =>
         ["lt1s", "1to5s", "5to20s", "20to25s", "gte25s", "unknown"].includes(age))) {
     throw new Error("invalid_owner_diagnostic");
@@ -65,7 +73,7 @@ export function ownerPairingObservation(value) {
     retirement = {phase:cause.phase,event:cause.event,reason:cause.reason};
   }
   const projected = {role:intent.role,state:intent.state,retirement};
-  if (hasGather) projected.gather_failure = offerGatherFailure(intent, retirement);
+  if (hasGather) projected.gather_failure = gatherFailure(intent, retirement);
   return {status:"observed",total_intents:1,intents:[projected]};
 }
 

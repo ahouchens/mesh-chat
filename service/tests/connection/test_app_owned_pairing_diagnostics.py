@@ -14,12 +14,12 @@ from test_pairing_runtime import native_pairing, run_until
 
 
 def service_with_one_public_intent(*, capture=True, caller=diagnostics.APP_CALLER,
-                                   record_id="secret-row-id"):
+                                   record_id="secret-row-id", role="offer"):
     identity = object()
     source = Resource("native", "private-source")
     context = {"id": "native-private-id", "runtime_epoch": "current-epoch",
                "identity_hash": "identity-hash", "identity": lambda: identity,
-               "source": source, "role": "offer", "state": "retired"}
+               "source": source, "role": role, "state": "retired"}
     row = {"caller": caller, "profile": "local", "pairing": "opaque-pairing",
            "native_id": context["id"], "runtime_epoch": context["runtime_epoch"],
            "identity_hash": context["identity_hash"], "terminal_state": "retired",
@@ -94,6 +94,40 @@ def test_offer_gather_snapshot_stays_inside_bounded_owner_lock():
 
     service._native_pairing_gather_failure_snapshot = snapshot
     assert diagnostics.observe_pairing(service)["intents"][0]["gather_failure"] == gather
+
+
+@pytest.mark.parametrize("mode", ["valid", "wrong_phase", "wrong_stage", "malformed", "throwing"])
+def test_trusted_owner_answer_gather_failure_is_optional_and_phase_bound(mode):
+    service, context, _, _ = service_with_one_public_intent(role="answer")
+    retirement = {"phase": "gather_answer", "event": "failed", "reason": "invalid_document"}
+    if mode == "wrong_phase":
+        retirement["phase"] = "gather_offer"
+    service._connection_runtime.owner.pairing_retirement_diagnostic = lambda **_: retirement
+    gather = {"as_of": "failed_result", "worker": "started", "stage": "native_accept",
+        "stage_state": "entered", "last_completed": "ice_config", "queue_age": "lt1s",
+        "stage_age": "lt1s", "exception_kind": "native_unavailable", "native_code": "no_candidates"}
+    calls = []
+
+    def observed(*args):
+        calls.append(args)
+        if mode == "throwing":
+            raise RuntimeError("PRIVATE_FAILURE")
+        if mode == "wrong_stage":
+            return {**gather, "stage": "native_offer"}
+        if mode == "malformed":
+            return {**gather, "sdp": "PRIVATE_SDP"}
+        return gather
+
+    service._native_pairing_gather_failure_snapshot = observed
+    value = diagnostics.observe_pairing(service)
+    intent = value["intents"][0]
+    assert value["status"] == "observed" and intent["retirement"] == retirement
+    if mode == "valid":
+        assert intent["gather_failure"] == gather
+    else:
+        assert "gather_failure" not in intent
+    assert calls == ([] if mode == "wrong_phase" else [(context, retirement)])
+    assert "PRIVATE" not in str(value)
 
 
 def test_actual_public_admission_captures_vault_and_supervisor_proof(native_pairing):
@@ -173,6 +207,52 @@ def test_actual_public_offer_failure_reaches_trusted_owner_with_fixed_gather_fie
     assert service.store._db.execute(
         "SELECT kind,record_id,sealed FROM records ORDER BY kind,record_id").fetchall() == before
     assert "PRIVATE" not in str(observed)
+
+
+def test_actual_public_answer_native_failure_reaches_trusted_owner_with_fixed_gather_fields(native_pairing):
+    from uuid import uuid4
+    from test_core_pairing_intents import public_client
+
+    create, _ = native_pairing
+    offerer, *_ = create()
+    offer_id = str(uuid4())
+    offerer.native_pairing_begin(offer_id, role="offer", authorized=lambda: True)
+    run_until(offerer, lambda: bool(offerer.native_pairing_status(offer_id)["pairing_code"]))
+    code = offerer.native_pairing_status(offer_id)["pairing_code"]
+    answerer, native, created, *_ = create()
+    calls = []
+
+    def fail_answer(*args):
+        calls.append(1)
+        return '{"ok":false,"error":"native_webrtc_no_candidates"}'
+
+    native.acceptOffer = fail_answer
+    invoke, _, profile = public_client(answerer, caller=diagnostics.APP_CALLER)
+    begun = invoke("peer.pairing_begin", {"profile": profile, "role": "answer", "pairing_code": code},
+                   "owner-gather-answer-key")
+    assert begun["ok"]
+    pairing = begun["result"]["pairing"]
+
+    def state():
+        reply = invoke("peer.pairing_query", {"profile": profile, "pairing": pairing})
+        assert reply["ok"]
+        return reply["result"]["state"]
+
+    run_until(answerer, lambda: state() == "retired")
+    before = answerer.store._db.execute(
+        "SELECT kind,record_id,sealed FROM records ORDER BY kind,record_id").fetchall()
+    observed = diagnostics.observe_pairing(answerer)
+    intent = observed["intents"][0]
+    assert intent["role"] == "answer" and intent["state"] == "retired"
+    assert intent["retirement"] == {"phase": "gather_answer", "event": "failed", "reason": "invalid_document"}
+    gather = intent["gather_failure"]
+    assert (gather["as_of"], gather["stage"], gather["last_completed"],
+            gather["exception_kind"], gather["native_code"]) == (
+                "failed_result", "native_accept", "ice_config", "native_unavailable", "no_candidates")
+    assert calls == [1] and not created
+    assert answerer.store._db.execute(
+        "SELECT kind,record_id,sealed FROM records ORDER BY kind,record_id").fetchall() == before
+    assert code not in str(observed) and "PRIVATE" not in str(observed)
 
 
 def test_capture_failure_does_not_change_public_admission(native_pairing, monkeypatch):

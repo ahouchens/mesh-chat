@@ -26,6 +26,15 @@ def observation(as_of="failed_result"):
         gather_failure=gather)])
 
 
+def answer_observation(as_of="failed_result"):
+    value = observation(as_of)
+    intent = value["intents"][0]
+    intent["role"] = "answer"
+    intent["retirement"]["phase"] = "gather_answer"
+    intent["gather_failure"]["stage"] = "native_accept"
+    return value
+
+
 def project(value):
     node, _ = staging.tools()
     module = (ROOT / "examples/typescript-independent-consumer/owner-pairing-diagnostic.mjs").as_uri()
@@ -66,6 +75,33 @@ def test_offer_exception_labels_remain_bounded(kind, code):
     value["intents"][0]["gather_failure"].update(exception_kind=kind, native_code=code)
     assert project(value) == {"value": value}
     validate_report(value)
+
+
+@pytest.mark.parametrize("as_of", ["failed_result", "phase_deadline"])
+@pytest.mark.parametrize("stage,last_completed", [
+    ("not_started", "none"), ("ice_config", "none"), ("native_accept", "ice_config"),
+    ("answer_sign", "native_accept"), ("bind_onboarding", "answer_sign"),
+    ("complete", "bind_onboarding"), ("unknown", "unknown")])
+def test_answer_gather_survives_both_consumer_boundaries(as_of, stage, last_completed):
+    value = answer_observation(as_of)
+    value["intents"][0]["gather_failure"].update(stage=stage, last_completed=last_completed)
+    assert project(value) == {"value": value}
+    validate_report(value)
+
+
+@pytest.mark.parametrize("fault", ["offer_phase", "offer_stage", "offer_completed", "raw", "wrong_exception"])
+def test_answer_gather_rejects_wrong_attribution_or_unsafe_fields(fault):
+    value = answer_observation()
+    intent = value["intents"][0]
+    gather = intent["gather_failure"]
+    if fault == "offer_phase": intent["retirement"]["phase"] = "gather_offer"
+    elif fault == "offer_stage": gather["stage"] = "native_offer"
+    elif fault == "offer_completed": gather["last_completed"] = "offer_sign"
+    elif fault == "raw": gather["sdp"] = "PRIVATE_SDP"
+    else: gather["native_code"] = "not_applicable"
+    assert project(value) == {"rejected": True}
+    with pytest.raises(ValueError):
+        validate_report(value)
 
 
 @pytest.mark.parametrize("fault", ["answer_role", "answer_phase", "answer_stage", "answer_completed",
