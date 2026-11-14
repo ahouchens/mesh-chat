@@ -1,5 +1,41 @@
 # Connection runtime qualification ledger
 
+## Public shell admission repair and fresh native retry — November 14, 2026
+
+Public run [43556580958](https://github.com/ahouchens/mesh-chat/actions/runs/43556580958),
+attempt 1 at `4565ce1c7c265fa56acdc3990036cedf2277deeb`, completed failed.
+Both producers passed. Android booted, but the Node wrapper rejected admission
+before Python started; its artifact contains only the distribution report.
+Windows published its setup key, then exhausted the declared 600-second wait
+without an Android key. The strict checker failed on the missing Android role
+report. No public pairing or message flow ran.
+
+The workflow passed a hyphenated input through `/usr/bin/sh`; dash drops such
+inherited names. A real shell regression reproduced that loss and preservation
+when `env` sets the exact input after shell startup. The generic live admission
+message does not expose the failed predicate, so this is a supported causal
+inference. Repair `dd9e4cd` changes only the emulator script and focused tests;
+it does not relax action admission. Independent review found no blocker and
+40 integrated workflow/action/controller checks passed without skips.
+
+The prior native observer run
+[43557683098](https://github.com/ahouchens/mesh-chat/actions/runs/43557683098),
+attempt 1 at `92e50bb11b72e5fb86c379167b79bbfefa6fe60f`, also completed failed.
+Android built its debug, optimized host and instrumentation APKs, including the
+new observer source. System-image installation then failed with
+`Error reading Zip content from a SeekableByteChannel` before emulator startup.
+No native role or observer runtime evidence was produced. The retained producer
+artifact is preserved; no failed-job rerun, deletion or overwrite was used.
+
+The reviewed replacement source is
+`dd9e4cdb16df3c22e49ab1d176b59cb719ea1b19`. Fresh attempt-1 runs
+[43559770732](https://github.com/ahouchens/mesh-chat/actions/runs/43559770732)
+(public pair) and
+[43559773977](https://github.com/ahouchens/mesh-chat/actions/runs/43559773977)
+(native observer) have the correct separate job graphs. Their dispatch freeze
+is `.test-tmp/shell-input-dd9e4cd-freeze.json`. They remain active; no paired,
+restart, full-native or SC21 acceptance is inferred from dispatch.
+
 ## Reviewed native EOF observer and Windows reopen adapter — November 13, 2026
 
 Native observer commits `7c6fe3f` and `0c692d0` add test-harness observations at
