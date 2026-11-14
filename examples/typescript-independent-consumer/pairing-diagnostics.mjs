@@ -249,7 +249,7 @@ export function pairingDiagnostics(monotonicNow = () => performance.now()) {
     ownerProbe(value) { ownerDiagnostics = value; },
     owned(role, incarnation) {
       if (!["offerer", "answerer", "contender"].includes(role) || !Number.isInteger(incarnation)
-          || incarnation < 1 || incarnation > (role === "offerer" ? 2 : 1) || cleanup.length >= 4
+          || incarnation < 1 || incarnation > (role === "contender" ? 1 : 2) || cleanup.length >= 4
           || cleanup.some(item => item.role === role && item.incarnation === incarnation)) throw new Error("invalid_cleanup_slot");
       const facts = { role, incarnation, attempts: 0, detach: "not_attempted", stop: "not_attempted", retired: false };
       cleanup.push(facts);

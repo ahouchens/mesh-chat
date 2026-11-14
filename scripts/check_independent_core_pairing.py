@@ -87,7 +87,7 @@ def cleanup_details(rows):
         if (not isinstance(row, dict) or set(row) - {"role", "incarnation", "attempts", "detach", "stop", "retired", "budget_ms"}
                 or not {"role", "incarnation", "attempts", "detach", "stop", "retired"} <= set(row)
                 or type(row["role"]) is not str or row["role"] not in {"offerer", "answerer", "contender"}
-                or type(row["incarnation"]) is not int or not 1 <= row["incarnation"] <= (2 if row["role"] == "offerer" else 1)
+                or type(row["incarnation"]) is not int or not 1 <= row["incarnation"] <= (1 if row["role"] == "contender" else 2)
                 or type(row["attempts"]) is not int or not 0 <= row["attempts"] <= 2
                 or type(row["detach"]) is not str or row["detach"] not in {"not_attempted", "ok", "failed"}
                 or type(row["stop"]) is not str or row["stop"] not in {"not_attempted", "completed", "failed"}

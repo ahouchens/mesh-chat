@@ -809,6 +809,51 @@ console.log(JSON.stringify({diagnostics:diagnostics.failure(),subphases:[...SUBP
     assert peer["last_connections"] == {"total": 256, "checked": 256, "ready": 256, "counts_capped": True}
 
 
+def test_paired_receiver_reopen_reserves_real_cleanup_slot_before_runtime_custody():
+    node, _ = staging.tools()
+    script = """
+import {own} from './examples/typescript-independent-consumer/pairing-check.mjs';
+import {pairingDiagnostics} from './examples/typescript-independent-consumer/pairing-diagnostics.mjs';
+const peers = [];
+for (const role of ['offerer','answerer','offerer','answerer']) {
+  const peer = {role,runtime:null};
+  own(peers,peer);
+  if (!peer.cleanup || peer.cleanup.role !== role || peer.cleanup.incarnation !==
+      peers.filter(item => item.role === role).length) throw new Error('cleanup_not_reserved');
+}
+const refused = {role:'contender',runtime:null};
+let capped = false;
+try { own(peers,refused); } catch (error) { capped = error.message === 'invalid_cleanup_slot'; }
+const registry = pairingDiagnostics();
+registry.owned('offerer',1);
+let duplicate = false, unknown = false, contenderTwo = false;
+try { registry.owned('offerer',1); } catch (error) { duplicate = error.message === 'invalid_cleanup_slot'; }
+try { registry.owned('unknown',1); } catch (error) { unknown = error.message === 'invalid_cleanup_slot'; }
+try { registry.owned('contender',2); } catch (error) { contenderTwo = error.message === 'invalid_cleanup_slot'; }
+console.log(JSON.stringify({cleanup:peers.map(peer=>peer.cleanup),capped,duplicate,unknown,
+  contenderTwo,retained:peers.length,refusedRuntime:refused.runtime,refusedCleanup:refused.cleanup??null}));
+"""
+    completed = subprocess.run([node, "--import", (staging.ROOT /
+        "tests/core-ui-boundary/pairing_diagnostic_fixture.mjs").as_uri(),
+        "--input-type=module", "-e", script], cwd=staging.ROOT,
+        capture_output=True, text=True, check=True, timeout=15)
+    value = json.loads(completed.stdout)
+    assert [(row["role"], row["incarnation"]) for row in value["cleanup"]] == [
+        ("offerer", 1), ("answerer", 1), ("offerer", 2), ("answerer", 2)]
+    pairing.cleanup_details(value["cleanup"])
+    assert all(value[key] is True for key in ("capped", "duplicate", "unknown", "contenderTwo"))
+    assert value["retained"] == 4 and value["refusedRuntime"] is None
+    assert value["refusedCleanup"] is None
+
+
+def test_cleanup_report_accepts_second_answerer_but_rejects_second_contender():
+    row = {"role": "answerer", "incarnation": 2, "attempts": 0,
+           "detach": "not_attempted", "stop": "not_attempted", "retired": False}
+    pairing.cleanup_details([row])
+    with pytest.raises(ValueError, match="cleanup facts"):
+        pairing.cleanup_details([{**row, "role": "contender"}])
+
+
 def test_monotonic_stage_offsets_and_read_counts_clip_and_freeze_without_private_values():
     node, _ = staging.tools()
     script = """

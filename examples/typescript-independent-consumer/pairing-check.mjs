@@ -117,13 +117,15 @@ async function wait(read) {
   }
   throw workDeadline("wait_deadline");
 }
-function own(owned, peer) {
-  peer.incarnation = owned.filter(item => item.role === peer.role).length + 1;
+export function own(owned, peer) {
+  const incarnation = owned.filter(item => item.role === peer.role).length + 1;
+  const cleanup = diagnostics.owned(peer.role, incarnation);
+  peer.incarnation = incarnation;
+  peer.cleanup = cleanup;
   owned.push(peer);
 }
 function retainRuntime(peer, runtime) {
   peer.runtime = runtime;
-  peer.cleanup ??= diagnostics.owned(peer.role, peer.incarnation);
 }
 function one(rows, predicate) {
   const matches = rows.filter(predicate);
