@@ -1,5 +1,37 @@
 # Connection runtime qualification ledger
 
+## Paired diagnostic stopped in impaired receipts — November 13, 2026
+
+Run [43551695082](https://github.com/ahouchens/mesh-chat/actions/runs/43551695082),
+attempt 1 at `ceb84c5db95a40cf1e41964f6ff4d2a1525acf37`, tree
+`2f8416ca0f9f471bc2a7e42afe2dbbb5e24f603d`, failed before cold restart.
+Android recorded `peer_closed` at impaired receipt index 17, while waiting for
+the inbound record after its own outbound message reached `delivered`. The
+controller received one of four reply-header bytes, then EOF, on the
+ADB-forwarded instrumentation **control socket** for `application.snapshot`.
+This is not direct evidence of failure on the product WebRTC transport.
+
+Emulator and `adb shell am instrument` process snapshots still said running;
+the latter does not prove the Android test thread remained alive. No runtime
+crash marker was retained; the sole `adbd_exit` classification occurred during
+boot. Cleanup failed at `peer_stop`. The exact socket-close cause remains
+unresolved. The Android role failed within 385.2 seconds of its step starting,
+before the global controller/action/JUnit limits; exact instrumentation start
+and EOF timestamps were not retained. Absence of a crash marker is not proof
+that no crash occurred.
+
+Windows subsequently timed out at impaired receipt index 18 with its outgoing
+message still `queued` after 358 polls. Both reports precede cold-start work,
+so this run neither validates nor refutes the repaired `cold_complete_1`
+uploader path. The pair checker correctly retained failure as `pair_invalid`.
+
+Root independently verified summary artifact `14097776693`, ZIP SHA256
+`0824f2f393d7ae226c8694e483627d58cd3082afa4feac41d2024b28c8854613`, exact
+run/source/tree, bounded entries, and both report hash/size crosslinks.
+Evidence is retained in `.test-tmp/paired-ceb84c5-summary.zip` and
+`.test-tmp/paired-ceb84c5-validated.json`. No raw instrumentation/logcat artifact
+exists from this run; bounded observations are the available attribution evidence.
+
 ## Installed Python consumer passed; media installer mismatch — November 13, 2026
 
 Run [43551698115](https://github.com/ahouchens/mesh-chat/actions/runs/43551698115),
