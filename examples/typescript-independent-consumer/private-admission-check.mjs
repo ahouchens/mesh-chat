@@ -9,6 +9,7 @@ import { performance } from "node:perf_hooks";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { Helper, PrivateConsumerInput } from "./public-process-helper.mjs";
+import { requireRevokedHelper } from "./private-admission-evidence.mjs";
 import { launchRuntime } from "./runtime.mjs";
 
 const SOURCE = fileURLToPath(import.meta.url);
@@ -261,17 +262,12 @@ async function check(executable, dataDirectory) {
     if (restored.nearby_discovery !== before.nearby_discovery) throw new Error("mutation_restore");
     checks.owner_mutation_control = true;
     await runtime.removeHelper(helper.child.pid, budget(deadline, 5000));
-    let mutationDenied = false;
-    try {
-      await helper.request("settings.update", {profile: handle,
-        settings: changedSetting}, deadline, randomUUID());
-    } catch { mutationDenied = true; }
+    await requireRevokedHelper(helper, handle, changedSetting, deadline);
     const after = (await owner.request("settings.query", {profile: handle}, {timeoutMs: budget(deadline)})).settings;
-    if (!mutationDenied || after.nearby_discovery !== before.nearby_discovery) {
+    if (after.nearby_discovery !== before.nearby_discovery) {
       throw new Error("removed_helper_mutated");
     }
     checks.removed_helper_mutation_denied = true;
-    await helper.dispose();
     helper = null;
 
     phase = "one_use_replay";

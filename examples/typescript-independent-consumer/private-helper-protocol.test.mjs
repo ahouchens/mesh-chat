@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { test } from "node:test";
-import { Helper } from "./public-process-helper.mjs";
+import { Helper, HelperCoreError } from "./public-process-helper.mjs";
 import { observeRuntime } from "./runtime.mjs";
+import { requireRevokedHelper } from "./private-admission-evidence.mjs";
 
 const TOKEN = "a".repeat(64);
 const PIPE = "private-test-pipe";
@@ -228,4 +229,33 @@ test("failed private invitation write revokes the registered helper", { timeout:
     assert.deepEqual(removed, [child.pid]);
     assert.equal(helper.child, child);
   } finally { child.kill(); await childClose(child); }
+});
+
+test("removed helper evidence requires exact unauthenticated result and clean exit", async () => {
+  let closed = 0;
+  const helper = {
+    async request(operation, params, deadline, key) {
+      assert.equal(operation, "settings.update");
+      assert.deepEqual(params, {profile: "local", settings: {nearby_discovery: true}});
+      assert.equal(deadline, 12345);
+      assert.match(key, /^[0-9a-f-]{36}$/);
+      throw new HelperCoreError("unauthenticated");
+    },
+    async closeInput(deadline) { assert.equal(deadline, 12345); closed++; },
+  };
+  await requireRevokedHelper(helper, "local", {nearby_discovery: true}, 12345);
+  assert.equal(closed, 1);
+});
+
+test("transport errors, other Core errors, success and dirty exits cannot prove revocation", async () => {
+  for (const outcome of [new Error("transport_closed"), new HelperCoreError("forbidden"), null]) {
+    let closed = false;
+    const helper = {async request() { if (outcome) throw outcome; return {}; },
+      async closeInput() { closed = true; }};
+    await assert.rejects(requireRevokedHelper(helper, "local", {}, 12345));
+    assert.equal(closed, false);
+  }
+  const dirty = {async request() { throw new HelperCoreError("unauthenticated"); },
+    async closeInput() { throw new Error("helper_exit"); }};
+  await assert.rejects(requireRevokedHelper(dirty, "local", {}, 12345), /helper_exit/);
 });
