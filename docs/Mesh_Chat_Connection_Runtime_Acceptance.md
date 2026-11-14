@@ -2914,15 +2914,15 @@ never described as physical-device qualification.
 | SC01 | `component` | Packaged Windows peers exchange messages and authenticated receipts in both roles; no physical cross-device run. |
 | SC02 | `partial` | The supervisor trace proves bounded competing-actor admission, deterministic opposite-role scheduling, one current operation per key and duplicate completion fencing. Two-peer simultaneous signed-signaling and role-collision interleavings remain unqualified. |
 | SC03 | `local` | Old answers, late native callbacks and expired timers cannot advance state; exact orphan cleanup is asserted. |
-| SC04 | `partial` | Partitions are simulated deterministically; native five- and thirty-second packet partitions recovered with receipts under 30 and 240 seconds. The required 30-second partition under the specified 150 ms RTT impairment is not measured on the exact headless transports. |
-| SC05 | `partial` | Loss and delayed control are simulated; native duplicate-packet and packet-partition component checks now carry durable message traffic, but no run applies the specified 150 ms RTT impairment profile. |
+| SC04 | `partial` | Partitions are simulated deterministically; native five- and thirty-second component partitions use a test-only host-send fault boundary and recover with receipts. They are not OS-network partitions. The required 30-second total partition under the specified 150 ms RTT impairment remains unmeasured on the exact packaged pair. |
+| SC05 | `partial` | Loss and delayed control are simulated; native duplicate/partition component checks use test-only host-send faults. Existing symmetric gateway/path diagnostics do not establish one-way OS loss with delayed control on the exact packaged pair. Selected policy traffic, no false readiness/delivery, and bounded receipt recovery remain required. |
 | SC06 | `local` | Mailbox failure keeps a healthy carrier and reports degraded future reconnect separately. |
 | SC07 | `local` | Carrier failure with a healthy mailbox schedules a permitted new negotiation. |
 | SC08 | `component` | Packaged Windows kills the service and reclaims the same carrier binding without new negotiation. |
 | SC09 | `component` | Process and adapter restart produce a fresh epoch; packaged tests reopen the profile and preserve preferences. |
 | SC10 | `component` | Stop, lock, revocation and quarantine during native creation are fenced locally; Android instrumentation covers cancelled gathering. The 294-case reducer corpus covers interruption and late completion at all 14 phases, including replacement resource protection. Packaged phase-by-phase parity remains open. |
 | SC11 | `partial` | Execution-state changes are policy inputs with one owner; full Android background/foreground parity is open. |
-| SC12 | `partial` | Direct Fabric suites exercise real controlled paths and NAT filters, but selected-path and negative-control evidence is not bound to policy traffic. |
+| SC12 | `partial` | Direct Fabric suites exercise controlled paths and NAT filters. Source-bound packaged native diagnostics have completed their six-path prefix with selected-path and counted negative controls, but full reciprocal qualification and the separate NAT-rebinding scenario remain open. A completed prefix cannot satisfy the full native gate. |
 | SC13 | `local` | Six mixed contact/device/scope actors receive first and second turns within independently asserted finite bounds, with exact per-key resource ownership; no cross-device packaged run. |
 | SC14 | `local` | Delayed attachment and missing path are bounded with truthful readiness. |
 | SC15 | `component` | Lost receipts, duplicate packets and restart preserve one visible message per logical ID in packaged runs. |

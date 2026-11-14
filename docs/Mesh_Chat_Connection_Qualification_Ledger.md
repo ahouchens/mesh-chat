@@ -1,5 +1,63 @@
 # Connection runtime qualification ledger
 
+## Installed image-path admission prepared and validated locally — November 14, 2026
+
+The fixture stack `7232325`, `b1099bf`, `dc496b8`, producer `de79ee7`, and
+staging/CI wiring `dad4246` add a distinct Windows public-SDK admission case.
+A helper using the original Node image must connect and query a fresh profile.
+A hash-identical copy at a different absolute executable path must run and
+import the installed SDK, connect to the same OS pipe, then close before any
+Core reply. Timeout, unreachable pipe, received bytes, or generic process failure
+cannot count as denial. The original owner and a fresh allowed helper must
+continue working. Success also requires unchanged image/SDK bytes, positive
+owned-child and owner exits, EFS profile/vault evidence and workspace cleanup.
+
+File copying, hashing and deletion run in bounded owned children; deliberately
+stalled prepare/cleanup tests prove retirement before return and prevent late
+filesystem work. The 150-second outer wrapper preserves the fixture's complete
+120-second work/cleanup limit. The fixed success frame remains strictly below
+120 seconds. Independent reviews cleared the final fixture, producer and wiring.
+Root passed 518 affected tests, then the full connection suite at `dad4246`:
+6,952 passed, two existing platform skips, no failures, in 732.88 seconds.
+The skips are unavailable file symlinks and a refusal case specific to non-Windows.
+Installed CI execution remains pending; this does not close same-image cross-app
+isolation, pending work, replay, SC22 or R7.
+
+## Media endpoint failure and elevated-host correction — November 14, 2026
+
+Run [43564604081](https://github.com/ahouchens/mesh-chat/actions/runs/43564604081),
+attempt 1 at `0685cfbc81cce4c4f519f8e111e751f3aba8619f`, tree
+`978fe5fe8cb40b18c252b5ce93320ca464cebfa1`, failed the capture preflight.
+Verification and Windows desktop-host jobs passed. The retained discovery fields
+show no HTTP response from the reserved loopback endpoint during the original
+60-second window. The owned app remained running and subsequently retired.
+No capture checks passed; this alone does not prove whether a WebView existed.
+
+Root independently checked artifact `14103290204`, 3,947 bytes, ZIP SHA-256
+`9594c9479be996d260f880c336e5d0b3ac8b05ed5d9df4b60e939b55fb6959b6`,
+against API metadata and all four report hashes, source/run/attempt, manifest,
+build/install/capture cross-links and the exact dispatched Windows driver bytes.
+Installed application and sidecar matches are installer attestations bound to
+that manifest; the small artifact does not contain the binaries for local hashing.
+
+Microsoft documents that elevated WebView2 hosts ignore `WEBVIEW2_*` environment
+overrides and honor HKLM policy overrides. GitHub documents Windows hosted VMs
+as administrators with UAC disabled. These support a runner-privilege explanation,
+but the failed run did not measure token elevation. The correction measures the
+token and, only when elevated, installs the same existing capture flags under
+the app-specific `mesh-chat.exe` policy value. Non-elevated launch keeps child
+environment flags. Preexisting/changed values fail closed; cleanup removes only
+the exact owned value and preserves all registry keys, foreign values and subkeys.
+App retirement and policy-value removal are required for success.
+
+Worker `325cf5a` plus custody correction `c563bda` integrate as `5b26c1a` and
+`af1b323`. Independent review found no remaining blocker. Root passed all 42
+affected media tests, with the existing symlink skip. Actual endpoint/capture
+success and CallDialog coexistence remain unqualified. No binary patching,
+WebRTC change, media-permission relaxation, or new mocked capture API was added.
+See [Microsoft's elevated-host guidance](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/security)
+and [GitHub runner privileges](https://docs.github.com/en/actions/reference/runners/github-hosted-runners#administrative-privileges).
+
 ## Installed public fresh pair and aggregate passed — November 14, 2026
 
 Run [43564598454](https://github.com/ahouchens/mesh-chat/actions/runs/43564598454),
