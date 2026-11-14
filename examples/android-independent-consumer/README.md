@@ -33,8 +33,12 @@ nonce-protected loopback port and exercises multiple requests through one own
 Binder `CoreClient`. The first executable phases prove fresh public state,
 profile creation, profile query, and explicit runtime shutdown. It writes
 `dist/reports/android-independent-public-session.json` with source and artifact
-hashes, phase results and cleanup status. This runner requires an Android device
-with ADB and the staged distribution report; it does not build APKs.
+hashes, phase results and cleanup status. Invoke it with `--expected-source`
+set to the exact checkout commit and `--disposable-emulator-serial` set to the
+explicit ADB emulator serial. It verifies the emulator before changing installed
+packages. This runner requires the staged distribution report; it does not build
+APKs. The normal owner grant exposes one stable public profile handle before
+identity creation; the empty application snapshot establishes fresh identity.
 
 The test-only port accepts length-prefixed UTF-8 JSON objects. After
 `{"id":"auth","action":"authenticate","nonce":"<64 lowercase hex>"}`,
