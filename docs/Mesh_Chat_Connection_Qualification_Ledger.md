@@ -1,5 +1,52 @@
 # Connection runtime qualification ledger
 
+## Full native restart and directional gateway closures — November 14, 2026
+
+Full run [43568841923](https://github.com/ahouchens/mesh-chat/actions/runs/43568841923),
+attempt 1 at `d9ab09f5bf991afa69366bdc22e2389b94877453`, tree
+`c643d0e528ef004d19f78a4f581a8bbe0e34988e`, closed failed. Both native roles
+reached the first cold cycle; zero cold receipt cycles completed. Android's
+`initialize` received zero response-header bytes, and the host ADB instrumentation
+client exited 255. The emulator process remained running. Rollback subsequently
+observed `device_offline` during force-stop and forward removal. Windows timed
+out waiting for the partner's started barrier. This is downstream evidence, not
+a second demonstrated transport defect. The sole `adbd_exit` console label is
+from `boot`, consistent with the earlier `adb root` command; it does not explain
+the later failure. The Android restart cause remains unresolved.
+
+Root rehashed and bound both role archives to the exact run/source using retained
+GitHub artifact metadata: Windows artifact `14104552229`, ZIP SHA-256
+`cb50d880e192bc05cea9339ca9e1e9fc65d2a3be1ff8115b01f3602aabdee601`;
+Android artifact `14103974712`, ZIP SHA-256
+`c874f62cd93c704104c3bf530d876deb845348b1daf754f9955b2a741a28dfad`.
+The gate correctly rejected `native_interop: failure`, then failed to upload its
+summary because the rejection raised before writing it. This secondary reporting
+defect does not change the native result. The source's image-admission and separate
+media-capture passes below remain valid within their stated scopes.
+
+Gateway capability run
+[43571468699](https://github.com/ahouchens/mesh-chat/actions/runs/43571468699),
+attempt 1 at `12fd3429093636cd11826dc8a8851d45a4224e64`, failed during
+`directional_loss`. Actual Linux output included the valid suffix
+`loss 100% seed 17921061681230122703`. The strict parser omitted that suffix,
+rejected the owned qdisc and consequently could not authorize its cleanup.
+Probe and cleanup rows recorded 15 and 559 dropped packets respectively; these
+are diagnostic observations, not a completed directional-loss/recovery pass.
+Root independently verified artifact `14104238213`, ZIP SHA-256
+`eed81636a125ec6079b3802f7d011dbcd2c29d14070e49d8dbd9b97e2ff74412`.
+The bounded seed parser correction requires a new actual gateway execution.
+No unchanged rerun, selected-peer partition acceptance or full native acceptance
+is inferred from this diagnosis.
+
+The correction is integrated as `a63202e` with boundary coverage `13517f4`:
+54 gateway checks passed, and root replayed both retained Linux counter rows
+through the corrected parser. Only an optional canonical unsigned 64-bit seed
+is accepted; extra options and foreign qdiscs still fail ownership checks.
+Gate reporting correction `b151a0c` passed 313 focused selection, matrix, release,
+UI-boundary and failure-report checks plus independent review. Failed gates now
+retain a fixed `passed=false` stage/result summary and still raise; the positive
+path still requires actual component validation before emitting a passing manifest.
+
 ## Installed image admission and WebView2 capture passed — November 14, 2026
 
 At source `d9ab09f5bf991afa69366bdc22e2389b94877453`, tree
@@ -22,7 +69,7 @@ The policy artifact independently reconstructs 7,310 passes with no failures or
 skips; strict model/reducer typing passed. Android reports 25 WebRTC, 10 signaling,
 13 Core API, six consumer and two independent-consumer passes. The small Android
 report was source/run/hash checked; its APKs and individual case logs were not
-independently rehashed in this review. Full native acceptance is still pending.
+independently rehashed in this review. Full native subsequently failed as recorded above.
 
 Separate installed media run
 [43568844257](https://github.com/ahouchens/mesh-chat/actions/runs/43568844257),
@@ -105,7 +152,8 @@ The new full qualification
 [43568841923](https://github.com/ahouchens/mesh-chat/actions/runs/43568841923)
 and separate media run
 [43568844257](https://github.com/ahouchens/mesh-chat/actions/runs/43568844257)
-are active at `d9ab09f5bf991afa69366bdc22e2389b94877453`; their source includes
+closed native-failed and media-passed respectively at
+`d9ab09f5bf991afa69366bdc22e2389b94877453`; their source includes
 image admission and the elevated-host media correction, but predates paired
 consumer-process recovery.
 

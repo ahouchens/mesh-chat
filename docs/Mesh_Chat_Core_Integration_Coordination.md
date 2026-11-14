@@ -9,13 +9,21 @@ lifetime passed at `ebcfa38`. Public fresh roles and strict aggregate passed at
 through `a48f632`, with 390 affected tests passing and independent review.
 Owner-restart run `43567293402` failed its Android prerequisite at an ADB
 disconnect; neither public restart role ran. Full run `43568841923` at `d9ab09f`
-has passed the Windows/Android prerequisites, including installed image admission,
-and entered the actual native pair. Separate media run `43568844257` passed all
+passed the Windows/Android prerequisites, including installed image admission,
+then failed at Android's first cold `initialize` with control EOF and later ADB
+offline during rollback. Windows exhausted the partner started barrier. A owns
+the lifecycle audit and missing initialize-stage attribution; the cause is unproven.
+Separate media run `43568844257` passed all
 seven installed WebView2 capture checks and app/policy cleanup at that source.
 Paired recovery and checking observation through `6ec440a` passed 6,994 local
 connection tests with two existing platform skips, plus affected service tests
 and strict typing. Gateway `447e865` and Android harness through `e044ebb` passed
-their focused checks. Full native, owner-restart and CallDialog coexistence
+their focused checks. Actual gateway run `43571468699` at `12fd342` exposed a
+strict parser omission for Linux's numeric `seed` suffix; D owns its correction.
+Public owner-restart run `43571465943` remains active at `12fd342`, monitored by C.
+B is implementing actual installed CallDialog plus a separate public-SDK/browser
+peer and messaging receipts. Lead owns failure-summary retention in the required
+CI gate and source-bound closure/integration. Full native, owner-restart and CallDialog coexistence
 acceptance remain open. Latest exact evidence is in the ledger; the following
 b8e3e20 checkpoint is historical.
 

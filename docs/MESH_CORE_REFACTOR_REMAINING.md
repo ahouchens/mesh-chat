@@ -50,6 +50,13 @@ the specification's IDs or imply equal effort. Several packages overlap.
 
 ## Current checkpoint
 
+- Latest full run `43568841923` at `d9ab09f` closed failed at the first Android
+  cold `initialize`: control EOF, ADB instrumentation client exit 255, then
+  offline transport during rollback. Windows exhausted the partner started
+  barrier. The cause remains unresolved; image admission and the separate
+  installed capture pass remain valid. Gateway `43571468699` at `12fd342` failed
+  because its strict directional-loss parser omitted Linux's numeric seed field;
+  the correction and a new actual capability execution are required.
 - Core/API, SDK packages, typed UI migration and native transport implementations
   already exist. Do not restart them from scratch.
 - All ten nonnative jobs passed in historical full run `b8e3e20`. Both native peers
@@ -101,10 +108,10 @@ its owned checkout and reports source evidence and gaps before integration.
 | Owner | Roadmap batch | Exclusive file scope / concrete deliverable | Next milestone |
 | --- | --- | --- | --- |
 | Lead | R0/R6/R9 | Working 0.9.66 baseline identified; public pair controller, strict checker and isolated workflow integrated and reviewed. | Integrate reviewed fixes and bind platform results to the roadmap; full acceptance remains open. |
-| C | R1/R6/R7 | Paired consumer-process producer is integrated as `f7986e3`; independent fixture/producer reviews passed. | Trace the first-instrumentation ADB disconnect in `43567293402`; preserve parked native edits. |
+| C | R1/R6/R7 | Paired consumer-process producer and bounded Android per-case transport observations are integrated through `e044ebb`. | Monitor public owner-restart `43571465943` at `12fd342`, including actual paired recovery execution; preserve parked native edits. |
 | B | R3/R5/R8 | Media run `43568844257` at `d9ab09f` passed all seven installed WebView2 capture checks and app/policy cleanup. | Implement the next bounded actual CallDialog/media plus receipt scenario; preserve baseline modal semantics. |
-| A | R6/R8 | Public fresh pair and strict aggregate passed in `43564598454` at `0685cfb`. Trusted answerer gather observation integrated as `56f2481`; full-suite environmental failures resolved by exact reruns. | Trace the original pairing resource's checking timeout and later ordinary ready connection in `43564601560`; preserve consent and exact-resource ownership. |
-| D | R1/R4/R7/R9 | Paired consumer-process fixture and nine synthetic process regressions are integrated; fault/saturation/soak gaps are audited. | Review checking-timeout observation and design bounded directional OS-loss controls; full native gate remains open. |
+| A | R1/R6/R8 | Public fresh pair and strict aggregate passed in `43564598454` at `0685cfb`; checking-poll observation is integrated as `6ec440a`. | Investigate first-cold initialize failure in `43568841923` and cover missing failure attribution without retrying uncertain effects. |
+| D | R1/R4/R7/R9 | Paired consumer-process fixture is integrated; actual gateway output identified the directional seed-parser defect. | Correct the strict parser while preserving foreign-qdisc rejection; independently verify actual capability recovery and cleanup. |
 
 R2 helper retirement remains gated. R6 preparation is assigned; R7's installed
 process fixture and exact report validation passed for fresh-profile detach,
