@@ -21,13 +21,16 @@ def input_key(name):
     return "INPUT_" + name.replace(" ", "_").upper()
 
 
-def action(tmp_path, *, timeout_ms=None):
+def action(tmp_path, *, timeout_ms=None, partition_android_timeout_ms=None):
     root = tmp_path / "candidate"
     directory = root / "scripts/public-core-pair-action"
     directory.mkdir(parents=True)
     text = (SOURCE / "action.mjs").read_text(encoding="utf-8")
     if timeout_ms is not None:
         text = text.replace("const CONTROLLER_MS = 1_500_000;", f"const CONTROLLER_MS = {timeout_ms};")
+    if partition_android_timeout_ms is not None:
+        text = text.replace("const PARTITION_ANDROID_MS = 2_400_000;",
+                            f"const PARTITION_ANDROID_MS = {partition_android_timeout_ms};")
     script = directory / "action.mjs"
     script.write_text(text, encoding="utf-8")
     controller = root / "scripts/public_core_pair_controller.py"
@@ -40,7 +43,7 @@ p.add_argument("--output", required=True)
 p.add_argument("--disposable-emulator-serial")
 a=p.parse_args()
 if os.environ.get("MESH_TEST_SLEEP"):
-    time.sleep(5)
+    time.sleep(float(os.environ.get("MESH_TEST_SLEEP_SECONDS", 5)))
 path=pathlib.Path(a.output)
 path.parent.mkdir(parents=True, exist_ok=True)
 path.write_text(json.dumps({"role":a.role,"source":a.expected_source,"output":str(path),
@@ -165,6 +168,34 @@ def test_timeout_waits_for_exact_child_close_then_fails(tmp_path):
     assert result.returncode == 1 and result.stderr == ""
     assert result.stdout == "Public Core pair windows controller failed.\n"
     assert not (root / "dist/reports/public-core-pair-windows.json").exists()
+
+
+def test_android_partition_timeout_allows_gateway_cleanup_and_uses_separate_route(tmp_path):
+    source = (SOURCE / "action.mjs").read_text(encoding="utf-8")
+    assert "const CONTROLLER_MS = 1_500_000;" in source
+    assert "const RETIREMENT_MS = 15_000;" in source
+    assert "const PARTITION_ANDROID_MS = 2_400_000;" in source
+    assert "const PARTITION_ANDROID_RETIREMENT_MS = 120_000;" in source
+    assert 'const partitionAndroid = scenario === "partition" && role === "android";' in source
+    assert "partitionAndroid ? PARTITION_ANDROID_RETIREMENT_MS : RETIREMENT_MS" in source
+    assert "partitionAndroid ? PARTITION_ANDROID_MS : CONTROLLER_MS" in source
+
+    script, root = action(tmp_path, partition_android_timeout_ms=50)
+    env = {**environment("android"), "INPUT_SCENARIO": "partition",
+           "MESH_TEST_SLEEP": "1", "MESH_TEST_SLEEP_SECONDS": "0.3"}
+    partition = invoke(script, env)
+    assert partition.returncode == 1
+    assert partition.stdout == "Public Core pair android controller failed.\n"
+    assert not (root / "dist/reports/public-core-partition-android.json").exists()
+
+    fresh = invoke(script, {**env, "INPUT_SCENARIO": "fresh"})
+    assert fresh.returncode == 0
+    assert (root / "dist/reports/public-core-pair-android.json").exists()
+
+    windows = invoke(script, {**environment("windows"), "INPUT_SCENARIO": "partition",
+                              "MESH_TEST_SLEEP": "1", "MESH_TEST_SLEEP_SECONDS": "0.3"})
+    assert windows.returncode == 0
+    assert (root / "dist/reports/public-core-partition-windows.json").exists()
 
 
 @pytest.mark.parametrize("role", ["windows", "android"])

@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 
 const CONTROLLER_MS = 1_500_000; // 1200-second controller maximum plus bounded cleanup.
 const RETIREMENT_MS = 15_000;
+const PARTITION_ANDROID_MS = 2_400_000; // 35-minute gateway receive bound plus setup and cleanup.
+const PARTITION_ANDROID_RETIREMENT_MS = 120_000;
 
 function admitted() {
   const role = process.env.INPUT_ROLE;
@@ -27,6 +29,7 @@ function admitted() {
 }
 
 async function runExactChild(command, args, cwd, scenario, role) {
+  const partitionAndroid = scenario === "partition" && role === "android";
   const child = spawn(command, args, {
     cwd, env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1", PUBLIC_PAIR_SCENARIO: scenario },
     stdio: ["ignore", "pipe", "pipe"], windowsHide: true,
@@ -47,8 +50,8 @@ async function runExactChild(command, args, cwd, scenario, role) {
       clearTimeout(retirement);
       resolve({ ...result, expired, spawnFailed });
     };
-    // The partition's owned namespace includes emulator boot before the
-    // unchanged 1200-second public controller and bounded teardown.
+    // The Android gateway's 35-minute receive bound starts after setup.
+    // Leave time for exact gateway teardown before this outer backstop.
     const controller = setTimeout(() => {
       expired = true;
       try { child.kill(); } catch { /* Exact child may already have exited. */ }
@@ -58,8 +61,8 @@ async function runExactChild(command, args, cwd, scenario, role) {
         child.stderr.destroy();
         child.unref();
         finish({ closed: false, code: null });
-      }, RETIREMENT_MS);
-    }, scenario === "partition" && role === "android" ? 2_100_000 : CONTROLLER_MS);
+      }, partitionAndroid ? PARTITION_ANDROID_RETIREMENT_MS : RETIREMENT_MS);
+    }, partitionAndroid ? PARTITION_ANDROID_MS : CONTROLLER_MS);
     child.once("close", code => finish({ closed: true, code }));
   });
   return outcome.closed && !outcome.expired && !outcome.spawnFailed && outcome.code === 0;
