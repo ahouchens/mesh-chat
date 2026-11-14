@@ -164,6 +164,32 @@ def test_request_frames_are_numbered_and_typed_errors_keep_session(tmp_path):
         peer.request("native.command")
 
 
+def test_short_stdin_writes_send_the_complete_public_frame(tmp_path):
+    peer = ready_peer(tmp_path)
+    class ShortWriter(io.BytesIO):
+        def write(self, data):
+            return super().write(data[:3])
+    stream = ShortWriter()
+    peer.process = type("Process", (), {"stdin": stream})()
+    peer.responses.put(session.frame({"id": "win:1", "ok": True, "result": {"profiles": ["p"]}}))
+    assert peer.request("runtime.capabilities") == {"profiles": ["p"]}
+    assert stream.getvalue() == session.frame({"id": "win:1", "operation": "runtime.capabilities", "params": {}})
+    assert peer.faulted is False
+
+
+@pytest.mark.parametrize("progress", [0, None, -1, True, 100000])
+def test_stdin_write_without_valid_progress_faults_session(tmp_path, progress):
+    peer = ready_peer(tmp_path)
+    class StalledWriter(io.BytesIO):
+        def write(self, data):
+            return progress
+    stream = StalledWriter()
+    peer.process = type("Process", (), {"stdin": stream})()
+    with pytest.raises(RuntimeError, match="public_write_failed"):
+        peer.request("runtime.capabilities")
+    assert stream.getvalue() == b"" and peer.faulted is True
+
+
 def test_overall_deadline_rejects_write_before_sending(tmp_path):
     peer = ready_peer(tmp_path)
     peer.process = type("Process", (), {"stdin": io.BytesIO()})()

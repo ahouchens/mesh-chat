@@ -216,18 +216,30 @@ class WindowsPublicConsumerSession:
 
     def _write(self, data):
         remaining(self.deadline)
+        write_deadline = min(self.deadline, time.monotonic() + 30)
         done = threading.Event()
+        cancelled = threading.Event()
         errors = []
         def write():
             try:
-                self.process.stdin.write(data)
+                offset = 0
+                while offset < len(data):
+                    if cancelled.is_set() or time.monotonic() >= write_deadline:
+                        raise TimeoutError("public_write_deadline")
+                    count = self.process.stdin.write(data[offset:])
+                    if type(count) is not int or not 0 < count <= len(data) - offset:
+                        raise RuntimeError("public_write_progress")
+                    offset += count
+                if cancelled.is_set() or time.monotonic() >= write_deadline:
+                    raise TimeoutError("public_write_deadline")
                 self.process.stdin.flush()
             except Exception as error:
                 errors.append(error)
             finally: done.set()
         worker = threading.Thread(target=write, daemon=True)
         worker.start()
-        if not done.wait(remaining(self.deadline, 30)):
+        if not done.wait(max(0, write_deadline - time.monotonic())):
+            cancelled.set()
             raise TimeoutError("public_write_deadline")
         worker.join(timeout=1)
         if errors:
