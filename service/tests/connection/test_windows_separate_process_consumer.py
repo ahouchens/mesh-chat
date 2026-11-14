@@ -164,6 +164,7 @@ def node():
 
 def execute(tmp_path, mode="normal", *, mock_windows=True, relative_paths=False):
     shutil.copyfile(SCRIPT, tmp_path / SCRIPT.name)
+    shutil.copyfile(SCRIPT.with_name("public-process-helper.mjs"), tmp_path / "public-process-helper.mjs")
     (tmp_path / "preloader.mjs").write_text(PRELOADER, encoding="utf-8")
     (tmp_path / "consumer.mjs").write_text(CHILD, encoding="utf-8")
     marker = tmp_path / "stopped"
@@ -289,9 +290,10 @@ def test_unchanged_consumer_and_sdk_exit_after_post_stop_transport_close(tmp_pat
 
 def test_fixture_uses_only_attach_only_public_helper_and_fixed_report():
     source = SCRIPT.read_text(encoding="utf-8")
+    helper = SCRIPT.with_name("public-process-helper.mjs").read_text(encoding="utf-8")
     consumer = (SCRIPT.parent / "consumer.mjs").read_text(encoding="utf-8")
-    assert '["consumer.mjs", "--pipe", pipe]' in source
-    assert 'spawn(process.execPath' in source
+    assert '["consumer.mjs", "--pipe", pipe]' in helper
+    assert 'spawn(process.execPath' in helper
     assert 'args.length === 2 && args[0] === "--pipe"' in consumer
     assert 'if (runtime) await runtime.stop()' in consumer
     assert 'const completion = await runtime.stop' in source

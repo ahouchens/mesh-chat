@@ -2,8 +2,9 @@
 import { CoreClient, CoreError } from "@mesh-chat/core-client";
 import { connectNamedPipe } from "@mesh-chat/core-client/node";
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { setTimeout as pause } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
 import { launchRuntime, launchRefusedRuntime } from "./runtime.mjs";
 import { freshRelaySettings } from "./relay-settings.mjs";
 import { ERROR_CODES, invitationWaitObserver, pairingDiagnostics, probePairingFailure } from "./pairing-diagnostics.mjs";
@@ -312,10 +313,11 @@ async function sharedLifetime(executable, offerer, answerer, receipts, owned) {
   return checks;
 }
 
-async function check(executable, directory) {
+export async function runPairing(executable, directory, { afterPaired = sharedLifetime, totalMs = 240000 } = {}) {
+  if (![240000, 360000].includes(totalMs) || typeof afterPaired !== "function") throw new Error("pairing_mode");
   const owned = [];
   diagnostics.start();
-  deadline = Date.now() + 240000;
+  deadline = Date.now() + totalMs;
   let lifetime;
   try {
     phase = "fresh_profiles";
@@ -396,7 +398,8 @@ async function check(executable, directory) {
     diagnostics.enter("answerer_ready_recheck");
     await messagingReady(answerer);
     phase = "shared_host_lifetime";
-    lifetime = await sharedLifetime(executable, offerer, answerer, [sent, received], owned);
+    lifetime = await afterPaired(executable, offerer, answerer, [sent, received], owned,
+      { budget, request, attach, retire, own, retainRuntime, wait, snapshot });
   } catch (error) {
     freezeFailure(error);
     try { await probePairingFailure(owned, diagnostics); } catch { /* Diagnostic failure never replaces work failure. */ }
@@ -427,15 +430,17 @@ async function check(executable, directory) {
     ...lifetime, clean_host_exits: owned.filter(peer => !peer.rejected && peer.retired).length,
     owner_native_host_shutdown_acknowledgments: owned.filter(peer => !peer.rejected && peer.retired).length };
 }
-try {
-  const args = process.argv.slice(2);
-  if (args.length !== 4 || args[0] !== "--runtime" || args[2] !== "--data-directory") throw new Error();
-  process.stdout.write(JSON.stringify(await check(args[1], args[3])) + "\n");
-} catch (error) {
-  const code = primaryFailure && primaryFailure.error === error ? primaryFailure.code
-    : error instanceof CoreError && ERROR_CODES.has(error.code) ? error.code : "unavailable";
-  process.stdout.write(JSON.stringify({ passed: false, phase, error_code: code,
-    diagnostics: diagnostics.failure(failureDeadlineExhausted) }) + "\n");
-  process.stderr.write("Independent public pairing check failed.\n");
-  process.exitCode = 1;
+if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
+  try {
+    const args = process.argv.slice(2);
+    if (args.length !== 4 || args[0] !== "--runtime" || args[2] !== "--data-directory") throw new Error();
+    process.stdout.write(JSON.stringify(await runPairing(args[1], args[3])) + "\n");
+  } catch (error) {
+    const code = primaryFailure && primaryFailure.error === error ? primaryFailure.code
+      : error instanceof CoreError && ERROR_CODES.has(error.code) ? error.code : "unavailable";
+    process.stdout.write(JSON.stringify({ passed: false, phase, error_code: code,
+      diagnostics: diagnostics.failure(failureDeadlineExhausted) }) + "\n");
+    process.stderr.write("Independent public pairing check failed.\n");
+    process.exitCode = 1;
+  }
 }
