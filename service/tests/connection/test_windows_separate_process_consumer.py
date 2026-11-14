@@ -30,8 +30,14 @@ const snapshot = () => ({profile: created ? {destination_hash: destination,
   display_name: "Separate process"} : null, contacts: [], messages: []});
 globalThis.__separate = {
   launchRuntime: async (_executable, _directory, options) => {
+    if (process.env.FIXTURE_MODE === "wall_clock_jump") {
+      Date.now = () => 8_000_000_000_000_000;
+    }
     const runtime = {pipe: "PRIVATE_PIPE", async stop() {
       writeFileSync(process.env.FIXTURE_MARKER, "stopped");
+      if (process.env.FIXTURE_MODE === "early_exit") {
+        await new Promise(resolve => setTimeout(resolve, 150));
+      }
       return process.env.FIXTURE_MODE === "stop_fail"
         ? {stopped: false, exit_code: 1} : {stopped: true, exit_code: 0};
     }};
@@ -75,9 +81,15 @@ import { createInterface } from "node:readline";
 const log = value => appendFileSync(process.env.FIXTURE_LOG, JSON.stringify(value) + "\n");
 log({event: "start", pid: process.pid, parent: process.ppid});
 process.on("exit", code => log({event: "exit", pid: process.pid, code}));
+if (process.env.FIXTURE_MODE === "early_exit") {
+  const watcher = setInterval(() => {
+    if (existsSync(process.env.FIXTURE_MARKER)) process.exit(1);
+  }, 5);
+  watcher.unref();
+}
 for await (const line of createInterface({input: process.stdin})) {
   if (existsSync(process.env.FIXTURE_MARKER)) {
-    process.stderr.write("PRIVATE_HOST_CLOSED\n");
+    process.stderr.write("Independent public consumer failed.\n");
     process.exit(1);
   }
   const request = JSON.parse(line);
@@ -207,6 +219,21 @@ def test_malformed_helper_output_fails_closed_without_retaining_payload(tmp_path
     assert "PRIVATE_" not in completed.stdout + completed.stderr
     assert (tmp_path / "stopped").is_file()
     assert [item["code"] for item in events if item["event"] == "exit"] == [0]
+
+
+def test_early_helper_exit_cannot_count_as_post_stop_request_rejection(tmp_path):
+    completed, events = execute(tmp_path, "early_exit")
+    assert completed.returncode == 1
+    result = json.loads(completed.stdout)
+    assert result["passed"] is False and result["phase"] == "helper_after_stop"
+    assert [item["code"] for item in events if item["event"] == "exit"] == [0, 1]
+
+
+def test_wall_clock_jump_does_not_consume_monotonic_fixture_budget(tmp_path):
+    completed, _ = execute(tmp_path, "wall_clock_jump")
+    assert completed.returncode == 0, completed.stderr
+    result = json.loads(completed.stdout)
+    assert result["passed"] is True and 0 <= result["duration_ms"] < 10000
 
 
 def test_fixture_rejects_relative_host_and_data_before_launch(tmp_path):

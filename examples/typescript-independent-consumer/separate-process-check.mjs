@@ -4,6 +4,7 @@ import { connectNamedPipe } from "@mesh-chat/core-client/node";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
+import { performance } from "node:perf_hooks";
 import { TextDecoder } from "node:util";
 import { launchRuntime } from "./runtime.mjs";
 
@@ -13,7 +14,7 @@ const MAX_STDERR = 8192;
 const TOTAL_MS = 180000;
 
 function budget(deadline, limit = 30000) {
-  const ms = Math.min(limit, deadline - Date.now());
+  const ms = Math.min(limit, Math.floor(deadline - performance.now()));
   if (!Number.isSafeInteger(ms) || ms < 1) throw new Error("fixture_deadline");
   return ms;
 }
@@ -40,8 +41,10 @@ class Helper {
     this.identityValid = Number.isSafeInteger(this.child.pid)
       && this.child.pid > 0 && this.child.pid !== process.pid;
     this.sequence = 0;
+    this.attempts = 0;
     this.pending = null;
     this.stderrBytes = 0;
+    this.stderr = Buffer.alloc(0);
     this.outputFailure = false;
     this.exited = false;
     this.exit = new Promise(resolve => {
@@ -63,6 +66,7 @@ class Helper {
     this.child.stderr.on("data", chunk => {
       this.stderrBytes += chunk.length;
       if (this.stderrBytes > MAX_STDERR) this.outputFailure = true;
+      else this.stderr = Buffer.concat([this.stderr, chunk]);
     });
     let buffer = Buffer.alloc(0);
     this.child.stdout.on("data", chunk => {
@@ -101,8 +105,13 @@ class Helper {
     });
   }
 
+  canRequest() {
+    return !this.pending && !this.exited && !this.outputFailure
+      && this.child.exitCode === null && !this.child.stdin.destroyed;
+  }
+
   async request(operation, params, deadline) {
-    if (this.pending || this.exited || this.outputFailure) throw new Error("helper_unavailable");
+    if (!this.canRequest()) throw new Error("helper_unavailable");
     const id = `helper:${++this.sequence}`;
     const frame = Buffer.from(JSON.stringify({ id, operation, params }) + "\n", "utf8");
     if (frame.length > MAX_FRAME) throw new Error("helper_frame_budget");
@@ -110,7 +119,10 @@ class Helper {
     response.catch(() => {}); // A failed write may precede the awaited response.
     try {
       await bounded(new Promise((resolve, reject) => {
-        this.child.stdin.write(frame, error => error ? reject(new Error("helper_write")) : resolve());
+        this.child.stdin.write(frame, error => {
+          if (error) reject(new Error("helper_write"));
+          else { this.attempts++; resolve(); }
+        });
       }), budget(deadline));
       return await bounded(response, budget(deadline));
     } finally {
@@ -146,7 +158,7 @@ function sameState(value, profile, destination) {
 }
 
 async function check(executable, dataDirectory) {
-  const started = Date.now();
+  const started = performance.now();
   const deadline = started + TOTAL_MS;
   let phase = "arguments", runtime, owner, helper, stopped = false;
   let detached = 0, attached = 0, firstHelperPid;
@@ -213,30 +225,37 @@ async function check(executable, dataDirectory) {
     if (completion?.stopped !== true || completion.exit_code !== 0) throw new Error("owner_retirement");
     stopped = true;
     phase = "helper_after_stop";
+    if (!helper.canRequest()) throw new Error("helper_not_live_for_post_stop_probe");
+    const priorAttempts = helper.attempts;
     let rejected = false;
     try { await helper.request("runtime.capabilities", {}, deadline); }
-    catch { rejected = true; }
+    catch {
+      if (helper.attempts !== priorAttempts + 1) throw new Error("helper_request_not_attempted");
+      rejected = true;
+    }
     if (!rejected) throw new Error("stopped_host_served_request");
     await bounded(helper.exit, budget(deadline, 10000));
     if (helper.exitCode !== 1 || helper.exitSignal !== null || helper.outputFailure
-        || helper.stderrBytes > MAX_STDERR) throw new Error("helper_post_stop_exit");
+        || !helper.stderr.equals(Buffer.from("Independent public consumer failed.\n"))) {
+      throw new Error("helper_post_stop_exit");
+    }
     helper = null;
     return { v: 1, passed: true, scope: SCOPE, checks: {
       normal_owners: 1, distinct_helper_processes: attached, clean_helper_detaches: detached,
       owner_survived_detach: true, replacement_shared_fresh_state: true,
       positive_owner_stop: true, post_stop_helper_request_rejected: true,
       bounded_helper_exit: true,
-    }, duration_ms: Math.min(Math.max(0, Date.now() - started), 240000) };
+    }, duration_ms: Math.min(Math.max(0, Math.floor(performance.now() - started)), 240000) };
   } catch {
     return { v: 1, passed: false, scope: SCOPE, phase,
-      duration_ms: Math.min(Math.max(0, Date.now() - started), 240000) };
+      duration_ms: Math.min(Math.max(0, Math.floor(performance.now() - started)), 240000) };
   } finally {
     try { owner?.close(); } catch {}
     if (helper) {
       try { await helper.dispose(); } catch {}
     }
     if (runtime && !stopped) {
-      try { await runtime.stop(Math.min(30000, Math.max(0, deadline - Date.now()))); }
+      try { await runtime.stop(Math.min(30000, Math.max(0, Math.floor(deadline - performance.now())))); }
       catch { /* Failure cleanup cannot create a passing result. */ }
     }
   }
