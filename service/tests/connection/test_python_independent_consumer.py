@@ -80,6 +80,28 @@ def test_failure_output_preserves_api_phase_and_separate_retirement(monkeypatch,
 
 
 def test_failed_public_call_keeps_its_phase_after_clean_host_retirement(tmp_path, monkeypatch):
+    # Collection imports the private Core in the main pytest process. The real
+    # independent app must keep rejecting that environment, so exercise its
+    # API-failure/retirement path in a fresh interpreter even when contaminated.
+    sentinel = "mesh_chat.test_collection_sentinel"
+    monkeypatch.setitem(sys.modules, sentinel, types.ModuleType(sentinel))
+    script = """
+import runpy
+import sys
+from pathlib import Path
+import pytest
+namespace = runpy.run_path(sys.argv[1])
+with pytest.MonkeyPatch.context() as patch:
+    namespace['_failed_public_call_retirement'](Path(sys.argv[2]), patch)
+"""
+    completed = subprocess.run([sys.executable, "-I", "-B", "-c", script,
+                                str(Path(__file__).resolve()), str(tmp_path)],
+                               capture_output=True, text=True, timeout=20)
+    assert completed.returncode == 0, completed.stderr[-2000:]
+    assert sentinel in sys.modules
+
+
+def _failed_public_call_retirement(tmp_path, monkeypatch):
     application = application_module()
     site = tmp_path / "site"
     site.mkdir()
