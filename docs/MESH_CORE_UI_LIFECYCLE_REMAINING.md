@@ -1,5 +1,12 @@
 # Mesh Core UI lifecycle and media coexistence: remaining work
 
+Updated November 14, 2026 against integrated source
+`fa1addb78e05ad015b6cbfcf95d09a0def6f99a4` (tree
+`278e3e560e0550fb74ba3ba4e3631f824b8161d7`). The `82c3364` call-site
+map, proposed batch and early candidate below record their original inspection
+point; the completed checkpoints and current disposition at the end of this
+document supersede those proposals. This update changes documentation only.
+
 Prepared November 13, 2026 for lead review. This is an R3/R5 gap inventory, not
 qualification or an implementation assignment. Source inspection used exact
 `82c336423d6dae4d9d19c1923824cf7db0bed0b0` (tree
@@ -190,3 +197,85 @@ Core's atomic same-key invitation/outbox replay is separately covered by
 `test_core_workspace_consent.py`; these App tests exercise the renderer with
 substitutes. Exact-source packaged Windows/Android delivery, independent client
 attachment, native restart and media coexistence remain open.
+
+## Integrated R3/R5 retry disposition at `fa1addb`
+
+The mounted-renderer retry work now covers five distinct UI actions. The first
+three checkpoints above remain accurate for prompt dismissal, channel creation
+and verified-contact workspace invitation send. Later source commits
+`d3ca3fd`, `85cdf56`, `75f23b2`, `ad2f6b9` and `dfa48ec` add these two paths:
+
+| Action | Current source and focused evidence | Honest recovery boundary |
+| --- | --- | --- |
+| Workspace access recommendation **send** | `src/App.tsx` retains the signed recommendation and one `operationId` for its workspace/profile scope through an uncertain send and settings close/reopen. `src/App.test.tsx` tests same-key retry, changed signed text, opaque workspace-handle refresh, later refusal after an unknown outcome, and scope retirement (`workspace access recommendations` cases). | One mounted Messenger profile lifetime. A confirmed Send again is a new action; a changed signed recommendation is a new intent. An unknown send remains unconfirmed. |
+| Workspace administrator **request submit** | `src/App.tsx::submitWorkspaceAdminRequest` retains the intent/key, prevents concurrent submission, pins the first Core or legacy route and Core handles, and retries an uncertain result through the same route. A confirmed submit followed by failed refresh only retries the refresh. `src/App.test.tsx` `administrator request recovery` covers lost replies, route/handle changes, refusal, refresh failure and profile fencing. | One mounted Messenger profile lifetime. Only initial explicit Core unavailability selects legacy; an uncertain Core outcome cannot switch ID namespaces. A later refusal cannot erase an earlier unknown commit. |
+
+These are renderer component guarantees, supported by the integrated App/Core/
+profile local suite (295 tests) and `tsc -b --force` reported passing for this
+source. They do not make pending UI identities durable across a renderer process
+restart. The current UI has no protected Core readback/reconciliation contract
+for every uncertain action above after such a restart. A new App/Messenger
+lifetime therefore must not be described as replaying an earlier unknown action.
+
+## Remaining lifecycle and coexistence gates
+
+- Installed Windows and Android supported-UI execution must show the same public
+  facade and authorized host as the independent consumer, including a pending
+  durable send, actual receipt, profile switch/lock, window detach/reattach and
+  an independent attached client. Preserve the runtime epoch and exact owner
+  resource accounting; component substitutes do not establish this boundary.
+- A renderer restart during an unknown mutation needs a protected Core-owned
+  pending-intent/readback and reconciliation design before claiming automatic
+  replay or exactly-once UI recovery. The mounted-lifetime maps above are a
+  narrower guarantee. Actual native cold restart and required aggregate
+  qualification remain separate R1 gates for R2 shared-owner promotion.
+- The actual installed `CallDialog.tsx` WebView2/Android media path must run
+  beside native messaging, with capture, tracks, audio focus, authenticated
+  receipts and exact teardown through call failure, pairing closure, reconnect,
+  profile lock and window navigation. Local call/media tests and preflight do not
+  prove this coexistence. Keep browser media and its packaging while classifying
+  messaging-only policy paths.
+- `src/reconnect-runtime.ts`, `src/webrtc-session.ts`, `src/DirectRecovery.tsx`,
+  `src/WebRTCOnboarding.tsx` and manual participant `serviceCommand` paths still
+  have the distinct owners and callers in the table above. Remove a private
+  service route or renderer loop only after an equivalent authorized Core/host
+  route and installed behavior exist for that exact caller. R2 legacy retirement
+  remains behind accepted native qualification and failure disposition.
+
+The integrated-source full qualification, call and release-continuity workflows
+were still active at the lead handoff (`43590284216`, `43590281431` and
+`43590279206`, respectively). This document records no result for them and no
+packaged UI/media or renderer-restart acceptance.
+
+## Next concrete pending mutation boundary
+
+The next bounded R3/R5 candidate is **Core workspace invitation creation** in
+the workspace invitation dialog. At `src/App.tsx::WorkspaceInviteDialog`
+`create`, each click passes `newOperationId()` to
+`coreApiCreateWorkspaceInvitation` (`src/api.ts` already accepts an explicit
+key). A committed create whose reply is lost leaves the dialog retryable; a
+second click then uses a different key. In
+`service/src/mesh_chat/workspace_service.py::create_workspace_invitation_command`,
+same-key replay returns the stored result before preparing a new signed
+invitation, while a new key prepares another nonce and commits another active
+invitation record. The
+`test_owner_creates_a_signed_workspace_invitation_through_the_facade` case in
+`service/tests/connection/test_core_workspace_admin.py` proves
+same-key facade replay, but the dialog has no lost-reply identity regression.
+This is a source-derived duplicate-invitation risk, not an observed packaged
+duplicate.
+
+A narrow UI slice can first pin the operation ID to the exact current profile,
+workspace and normalized connection payload for nearby/remote/I2P creation,
+retain an uncertain result through dialog close/reopen in the same Messenger
+lifetime, and distinguish a confirmed result from an unknown reply.
+Changing the connection payload starts a new intent without discarding an
+earlier unknown one; late results must be fenced by the profile lifetime.
+Before applying that pattern to manual, participant, guided/email or WebRTC modes,
+review their prepared host access and DataChannel transfer ownership: replaying
+the Core result must neither create a second host nor send an invitation twice.
+The test boundary is a committed lost reply followed by exact-key retry,
+changed-payload conflict/new intent, dialog close/reopen, definitive refusal,
+profile retirement and mode-specific host/transfer checks. This candidate
+needs its own reviewed implementation and installed follow-up; it is not a
+renderer-restart recovery claim.
