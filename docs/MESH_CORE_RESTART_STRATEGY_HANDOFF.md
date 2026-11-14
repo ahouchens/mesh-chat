@@ -97,7 +97,7 @@ passed all 6,640 required local cases with zero failures/skips, exact-source SDK
 staging, configured type checks and independent source review. Its bounded console
 observer is diagnostic instrumentation, not a demonstrated restart repair.
 Full run [43529724766](https://github.com/ahouchens/mesh-chat/actions/runs/43529724766)
-is already in progress. Preserve and finish that useful run; subsequent restart
+is closed failed at emulator boot; its evidence is retained. Subsequent restart
 diagnostic iterations follow the focused strategy below. Earlier failed/interrupted
 local candidates remain retained evidence. The ledger holds detailed history.
 
@@ -210,18 +210,15 @@ validation explicitly deferred, not falsely checked off.
 
 ## Integration update — November 13, 2026
 
-The 82c3364 run has verified Android component and exact JVM83 evidence. Its
-native Android job failed before boot with `emulator_exited_during_boot`, before
-any restart or paired path execution. The observer reached EOF with no recognized
-signatures. This is a separate startup failure, not an explanation of b8e3e20's
-cold initialize EOF. Remaining jobs are still being preserved; full qualification
-is not accepted. Root and A are investigating startup while D's focused runner
-undergoes review for interruption-safe result retention and exact cleanup.
+Run 43529724766 at 82c3364 is closed failed. All ten prerequisite jobs passed;
+Android exited before boot, Windows exhausted its initial partner-key wait, and
+the aggregate correctly failed. The earlier cold initialize EOF remains unresolved.
+Exact results and review/test evidence are in the qualification ledger.
 
-Reviewed A/B/C documentation and C's competing-actor test are integrated locally
-through 694e390. Root reran the supervisor/phase selection: 323 passed, zero skips.
-SC02 is corrected to partial because actual two-peer signed-signaling interleavings
-remain untested. R0 baseline provenance is still unresolved. B now owns the narrow
-App.tsx/App.test.tsx invitation-dismissal retry flow; A owns the installed Windows
-candidate-pair fixture; C reviews D's R9 diagnostic. R2 retirement remains gated.
-These independent batches do not inherit qualification from the 82c3364 run.
+R1 next executes one declared old/current boot pair through the reviewed focused
+workflow on an isolated diagnostic branch. It cannot qualify APK startup, the
+qualification network namespace, messaging or receipts. R2 remains gated.
+Reviewed A/B/C preparation and C's mixed-actor test are integrated through 694e390
+(323 focused cases passed). B's invitation-dismissal implementation and A's Windows
+candidate-pair fixture are ready for integration review. Baseline provenance is
+still unresolved; physical/publication and full automated gaps remain explicit.

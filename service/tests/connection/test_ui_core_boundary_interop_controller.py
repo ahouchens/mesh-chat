@@ -3059,7 +3059,7 @@ def test_actual_precontroller_report_identifies_each_checked_command_only(tmp_pa
     assert_android_cleaned(run.script)
 
 
-@pytest.mark.parametrize("fault", ["foreign", "caught_then_same", "unscoped_same", "cleanup_substitution", "after_success"])
+@pytest.mark.parametrize("fault", ["foreign", "caught_then_same", "unscoped_same", "after_success"])
 @pytest.mark.parametrize("site", ["android_root", "android_root_identity"])
 def test_precontroller_report_omits_foreign_or_cleared_command_attribution(tmp_path, monkeypatch, capsys, fault, site):
     run = run_android_preflight_report(tmp_path, monkeypatch, capsys,
@@ -3077,6 +3077,24 @@ def test_precontroller_report_omits_foreign_or_cleared_command_attribution(tmp_p
     assert_empty_system_observation(run.record)
     assert "controller" not in run.events and "PRIVATE_" not in run.output
     assert not run.script.emulator.root.exists() and run.script.emulator.process is None
+
+
+@pytest.mark.parametrize("site", ["android_root", "android_root_identity"])
+def test_precontroller_preserves_checked_start_failure_when_cleanup_also_fails(tmp_path, monkeypatch, capsys, site):
+    run = run_android_preflight_report(tmp_path, monkeypatch, capsys, site=site,
+        fault="cleanup_substitution", failure_stderr=b"adb: unable to connect for root: PRIVATE_SUFFIX\n")
+    assert run.exit_code == 1 and run.record["passed"] is False
+    assert run.record["failure_type"] == "CalledProcessError"
+    assert run.record["preflight_failure_site"] == site and run.record["preflight_exit_status"] == 1
+    assert "error_code" not in run.record
+    if site == "android_root":
+        assert run.record["preflight_root_reason"] == "connect_failure"
+    else:
+        assert "preflight_root_reason" not in run.record
+    observation = run.script.emulator.failure_start_observation(run.script.failure)
+    assert observation["cleanup_exception_kind"] == "peer_failure"
+    assert run.events == ["cleanup_substitution"] and "PRIVATE_" not in run.output
+    assert_android_cleaned(run.script)
 
 
 def assert_empty_system_observation(record):

@@ -87,6 +87,30 @@ def test_reopen_uses_packaged_peer_lifecycle_and_retains_only_comparisons():
     assert "PRIVATE" not in json.dumps(result)
 
 
+def test_actual_emulator_start_rollback_observation_fences_repetition(monkeypatch, tmp_path):
+    from test_ui_core_boundary_interop_peers import scripted_android, assert_android_cleaned
+    import native_interop_android_system as system
+    script = scripted_android(monkeypatch, tmp_path)
+    primary = RuntimeError("PRIVATE_START")
+    close = script.emulator.close
+    monkeypatch.setattr(system.threading.Thread, "start", lambda _: (_ for _ in ()).throw(primary))
+    monkeypatch.setattr(script.emulator, "close", lambda: (_ for _ in ()).throw(OSError("PRIVATE_CLEANUP")))
+    monkeypatch.setattr(diagnostic, "APKS", script.apks)
+    try:
+        result = diagnostic.run_attempt(1, emulator_factory=lambda: script.emulator)
+        assert result["primary_failure"]["exception_kind"] == "RuntimeError"
+        observed = result["primary_failure"]["emulator_start_failure"]
+        assert observed["cleanup_exception_kind"] == "os_error"
+        assert observed["process"] == {"state": "running", "exit_status": None}
+        assert [failure["stage"] for failure in result["cleanup_failures"]] == [
+            "emulator_start_rollback", "emulator_cleanup"]
+        assert result["retirement_verified"] is False and result["passed"] is False
+        assert "PRIVATE" not in json.dumps(result)
+    finally:
+        close()
+    assert_android_cleaned(script)
+
+
 def test_reopen_failure_precedes_cleanup_failure_and_keeps_both():
     result, events = attempt(fail_reopen=True, fail_cleanup=True)
     assert result["passed"] is False and result["stage"] == "peer_reopen"

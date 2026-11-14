@@ -12,14 +12,31 @@ changed. This is local scheduler evidence, not signed signaling or packaged
 fairness. SC02 is corrected to partial and SC13 names its actual local scope.
 The M2 INV01–INV19 row now excludes INV20, which is tracked separately.
 
-Full run `43529724766` at `82c3364` remains in progress with a failed native Android
-job. Its component Android and exact JVM83 evidence passed. Android failed in
-`platform_outbound_preflight` with `emulator_exited_during_boot`; no paired case
-or cold restart was reached. All recognized console counters were zero, with
-reader EOF and no reader/classifier failure. Native report artifact `14087124474`
-has archive SHA256 `255e319066d54f6b4cfbf5755bb4be95b4902bc35f563fd1e17adf9d079703cb`.
-This does not establish the cause of the earlier cold initialize EOF. Preserve
-the remaining jobs before final closure; no native or aggregate acceptance.
+Full run `43529724766` at `82c3364` is closed **failed**: ten prerequisite jobs
+passed, two native peers and the aggregate failed, and two optional jobs skipped.
+Both full Direct suites, required policy 6,640, Android component and exact JVM83
+passed. Android failed in `platform_outbound_preflight` with
+`emulator_exited_during_boot`, before APK install or any paired case. Zero fixed
+console signatures were recorded, with reader EOF and no reader/classifier error;
+this does not prove empty output or establish an exit cause. Windows exhausted
+`initialize_key_wait` (`partner_wait/deadline_exhausted`) without an Android key.
+This differs from b8e3e20's later inventory transport failure. No cold cycles or
+native/aggregate acceptance. The completed-run metadata SHA256 is
+`7e2522c3bb32ee6b817990c60dd805541187c818fd7333cda35f79415bf10b82`.
+The retained closure is `.test-tmp/ci-evidence-82c3364-run43529724766-attempt1/closure/manifest.json`.
+
+The next R1 diagnostic is one declared baseline/current emulator boot pair on an
+isolated feature branch, avoiding another full matrix. It retains fixed startup
+categories and exact exit status, uses fresh AVDs and stops after unresolved
+cleanup. It is ordinary-runner boot evidence only, not qualification-namespace,
+APK, receipt or native acceptance. Root boot implementation `543d5e1` and combined
+route `d559b19` passed A review; D's reopen runner `a084d1f` passed C re-review.
+Root `10c0357` fixes cleanup masking the original emulator startup exception.
+Combined focused harness/selection verification: **2,069 passed**, 4,259 unrelated
+cases deselected, zero failures/skips, 40.07 seconds. Two older tests that expected
+cleanup to replace startup were changed to assert preserved primary attribution;
+their initial failures remain in `.test-tmp/focused-restart-integration.xml`.
+No production messaging policy or WebRTC implementation changed.
 
 The compact current work register is [MESH_CORE_REFACTOR_REMAINING.md](MESH_CORE_REFACTOR_REMAINING.md).
 
