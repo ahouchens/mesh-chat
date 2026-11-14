@@ -189,9 +189,11 @@ function observe(child, pipe, timeoutMs, refusal, pairingDiagnostics = false) {
   }
 }
 
-function spawnRuntime(executable, dataDirectory, { timeoutMs = 30000, onOwned = () => {}, pairingDiagnostics = false } = {}, refusal = false) {
+function spawnRuntime(executable, dataDirectory, { timeoutMs = 30000, onOwned = () => {},
+  pairingDiagnostics = false, privateHelperAdmission = false } = {}, refusal = false) {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30000) throw new Error("invalid_runtime_budget");
-  if (typeof pairingDiagnostics !== "boolean" || (refusal && pairingDiagnostics)) throw new Error("invalid_runtime_diagnostic_option");
+  if (typeof pairingDiagnostics !== "boolean" || typeof privateHelperAdmission !== "boolean"
+      || (refusal && (pairingDiagnostics || privateHelperAdmission))) throw new Error("invalid_runtime_diagnostic_option");
   if (process.platform !== "win32" || !isAbsolute(executable) || !isAbsolute(dataDirectory)) {
     throw new Error("explicit_windows_runtime_and_data_required");
   }
@@ -204,13 +206,13 @@ function spawnRuntime(executable, dataDirectory, { timeoutMs = 30000, onOwned = 
     MESH_CHAT_CORE_API_CLIENT_IMAGE: process.execPath,
     MESH_CHAT_APP_PARENT_PID: String(process.pid),
   });
-  // Proposed future host opt-in: MESH_CHAT_APP_PRIVATE_HELPER_ADMISSION=1.
-  // Keep it unset until Python wiring acknowledges the private admission mode.
+  if (privateHelperAdmission) environment.MESH_CHAT_APP_PRIVATE_HELPER_ADMISSION = "1";
   if (pairingDiagnostics) environment.MESH_CHAT_APP_PAIRING_DIAGNOSTICS = "1";
   const child = spawn(resolve(executable), ["--app-owned-native"], {
     env: environment, stdio: ["pipe", "pipe", "pipe"], windowsHide: true,
   });
-  const runtime = { pipe, ...observe(child, pipe, timeoutMs, refusal, pairingDiagnostics) };
+  const runtime = { pipe, ...(privateHelperAdmission ? { hostPid: child.pid } : {}),
+    ...observe(child, pipe, timeoutMs, refusal, pairingDiagnostics) };
   onOwned(runtime); // The launcher retains the exact child even if startup observation fails.
   return runtime;
 }

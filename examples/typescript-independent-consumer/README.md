@@ -97,6 +97,19 @@ precede cleanup claims. The distinct installed report requires positive owner
 retirement and EFS profile/vault checks. It does not establish isolation between
 applications that use the same allowed image path or complete SC22/R7 acceptance.
 
+`private-admission-check.mjs` is an explicit Windows installed fixture for the
+opt-in private helper admission mode. Run it with `--runtime <absolute host exe>
+--data-directory <absolute fresh directory>` from an independently installed
+application with the public SDK. It sets the host's private admission flag only
+for this launch. The fixture checks a usable owner, same-image unregistered
+refusal before a Core reply, a registered public helper, removal before a
+reversible mutation, one-use invitation replay, wrong and expired prefaces,
+owner EOF, and owner death from a separate supervisor. Invitations cross only
+held child stdin and are omitted from its fixed report. The default owner and
+helper launch paths remain image based. This fixture does not claim pairing,
+cross-launch vault continuity, or full R7 acceptance; its installed result must
+come from a frozen host and independently installed SDK.
+
 `paired-process-recovery-check.mjs` reuses explicit pairing and the two initial
 receipts, then stops the receiver before a separate same-image consumer enqueues
 one message. The parent deliberately discards the application's enqueue reply
