@@ -11,8 +11,8 @@ import sys
 import tempfile
 
 from android_qualification import APKS
-from native_interop_android_observation import android_lifecycle_snapshot, process_observation
-from native_interop_android_start import start_failure_snapshot
+from native_interop_android_observation import PROCESS_STATES, android_lifecycle_snapshot, process_observation
+from native_interop_android_start import KINDS as START_KINDS, start_failure_snapshot
 from native_interop_android_system import system_snapshot
 from native_interop_peers import AndroidEmulator, AndroidPeer, PeerFailure
 
@@ -20,7 +20,7 @@ from native_interop_peers import AndroidEmulator, AndroidPeer, PeerFailure
 ROOT = Path(__file__).resolve().parents[1]
 STAGES = frozenset({"source_binding", "artifact_binding", "emulator_start", "peer_start",
                     "initial_profile", "old_stop", "peer_reopen", "reopened_profile",
-                    "peer_cleanup", "emulator_cleanup", "complete", "attempts", "postrun_binding",
+                    "emulator_start_rollback", "peer_cleanup", "emulator_cleanup", "complete", "attempts", "postrun_binding",
                     "report_checkpoint"})
 EXCEPTION_KINDS = frozenset({"PeerFailure", "ValueError", "RuntimeError", "CalledProcessError",
                              "TimeoutExpired", "OSError", "KeyError", "TypeError"})
@@ -78,6 +78,24 @@ def write_report(path, report):
             os.unlink(temporary)
 
 
+def emulator_start_snapshot(value):
+    if type(value) is not dict or set(value) != {"process", "cleanup_exception_kind"}:
+        return None
+    process = value["process"]
+    if (type(process) is not dict or set(process) != {"state", "exit_status"}
+            or type(process["state"]) is not str or process["state"] not in PROCESS_STATES):
+        return None
+    status = process["exit_status"]
+    if ((process["state"] == "exited") != (type(status) is int)
+            or (type(status) is int and not -255 <= status <= 255)
+            or (process["state"] != "exited" and status is not None)):
+        return None
+    cleanup = value["cleanup_exception_kind"]
+    if cleanup is not None and (type(cleanup) is not str or cleanup not in START_KINDS):
+        return None
+    return {"process": dict(process), "cleanup_exception_kind": cleanup}
+
+
 def failure(error, stage, peer=None, emulator=None):
     kind = type(error).__name__
     result = {"stage": stage if stage in STAGES else "attempts",
@@ -98,6 +116,13 @@ def failure(error, stage, peer=None, emulator=None):
         except Exception:
             pass
     if emulator is not None:
+        try:
+            provider = getattr(emulator, "failure_start_observation", None)
+            selected = emulator_start_snapshot(provider(error)) if callable(provider) else None
+            if selected is not None:
+                result["emulator_start_failure"] = selected
+        except Exception:
+            pass
         try:
             selected = system_snapshot(emulator.observation.snapshot())
             if selected is not None:
@@ -159,6 +184,11 @@ def run_attempt(index, emulator_factory=AndroidEmulator, peer_factory=AndroidPee
     except Exception as error:
         result["primary_failure"] = failure(error, result["stage"], peer, emulator)
         mark(result["stage"])
+        startup = result["primary_failure"].get("emulator_start_failure", {})
+        if startup.get("cleanup_exception_kind") is not None:
+            result["cleanup_failures"].append({"stage": "emulator_start_rollback",
+                                               "exception_kind": startup["cleanup_exception_kind"]})
+            mark(result["stage"])
     finally:
         if peer is not None and peer.process is not None:
             try:

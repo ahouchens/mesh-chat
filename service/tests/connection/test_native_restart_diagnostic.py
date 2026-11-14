@@ -127,6 +127,41 @@ def test_emulator_retirement_failure_is_not_reusable():
     assert "PRIVATE" not in json.dumps(result)
 
 
+def test_startup_rollback_failure_retains_original_and_fences_next_attempt():
+    events, observations = [], []
+    original = diagnostic.PeerFailure("emulator_exited_during_boot")
+    class FailedBoot(FakeEmulator):
+        def start(self, _apks):
+            self.events.append("emulator_start")
+            raise original
+
+        def failure_start_observation(self, error):
+            assert error is original
+            return {"process": {"state": "exited", "exit_status": -9},
+                    "cleanup_exception_kind": "peer_failure"}
+    result = diagnostic.run_attempt(1, emulator_factory=lambda: FailedBoot(events),
+        peer_factory=lambda _key: pytest.fail("Peer started after emulator boot failure"),
+        observe=lambda value: observations.append(json.loads(json.dumps(value))))
+    assert result["primary_failure"]["error_code"] == "emulator_exited_during_boot"
+    assert result["primary_failure"]["emulator_start_failure"] == {
+        "process": {"state": "exited", "exit_status": -9}, "cleanup_exception_kind": "peer_failure"}
+    assert result["cleanup_failures"] == [{"stage": "emulator_start_rollback",
+                                           "exception_kind": "peer_failure"}]
+    assert result["retirement_verified"] is False and result["passed"] is False
+    assert events == ["emulator_start", "emulator_close"]
+    assert any(item.get("cleanup_failures") == result["cleanup_failures"] for item in observations)
+
+
+@pytest.mark.parametrize("value", [
+    {"process": {"state": "running", "exit_status": -9}, "cleanup_exception_kind": None},
+    {"process": {"state": "exited", "exit_status": -9}, "cleanup_exception_kind": "PRIVATE_ERROR"},
+    {"process": {"state": "exited", "exit_status": -9}, "cleanup_exception_kind": None,
+     "raw": "PRIVATE_ERROR"},
+])
+def test_emulator_start_observation_rejects_invalid_or_raw_fields(value):
+    assert diagnostic.emulator_start_snapshot(value) is None
+
+
 def test_atomic_report_replacement_keeps_prior_checkpoint_on_error(tmp_path, monkeypatch):
     path = tmp_path / "diagnostic.json"
     diagnostic.write_report(path, {"v": 1, "passed": False, "current_attempt": None})
