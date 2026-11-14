@@ -1,9 +1,10 @@
 // A deliberately narrow probe of the installed app's actual WebView2 engine.
 // It never invokes private Core commands or substitutes browser media objects.
-const [portText, timeoutText] = process.argv.slice(2);
+const [portText, timeoutText, expectedSource] = process.argv.slice(2);
 const port = Number(portText);
 const timeout = Number(timeoutText);
-if (!Number.isInteger(port) || port < 1024 || port > 65535 || !Number.isInteger(timeout) || timeout < 1000 || timeout > 60000) {
+if (!Number.isInteger(port) || port < 1024 || port > 65535 || !Number.isInteger(timeout) || timeout < 1000 || timeout > 60000 ||
+    !/^[a-f0-9]{40}$/.test(expectedSource ?? "")) {
   throw new Error("invalid_probe_arguments");
 }
 
@@ -85,8 +86,15 @@ try {
     const tauriBridge = typeof window.__TAURI_INTERNALS__?.invoke === 'function';
     const mediaApi = typeof navigator.mediaDevices?.getUserMedia === 'function';
     const peerApi = typeof RTCPeerConnection === 'function';
-    if (!appMounted || !tauriBridge || !mediaApi || !peerApi) {
-      resolve({appMounted, tauriBridge, mediaApi, peerApi, captured: false, stopped: false});
+    let buildCommitMatches = false;
+    if (tauriBridge) {
+      try {
+        const info = await window.__TAURI_INTERNALS__.invoke('app_build_info');
+        buildCommitMatches = info?.build_commit === ${JSON.stringify(expectedSource)};
+      } catch { /* A missing public build identity fails the probe. */ }
+    }
+    if (!appMounted || !tauriBridge || !mediaApi || !peerApi || !buildCommitMatches) {
+      resolve({appMounted, tauriBridge, mediaApi, peerApi, buildCommitMatches, captured: false, stopped: false});
       return;
     }
     let stream;
@@ -97,16 +105,16 @@ try {
       const peer = new RTCPeerConnection();
       peer.close();
       tracks.forEach(track => track.stop());
-      resolve({appMounted, tauriBridge, mediaApi, peerApi, captured,
+      resolve({appMounted, tauriBridge, mediaApi, peerApi, buildCommitMatches, captured,
         stopped: tracks.length > 0 && tracks.every(track => track.readyState === 'ended') && peer.signalingState === 'closed'});
     } catch {
       stream?.getTracks().forEach(track => track.stop());
-      resolve({appMounted, tauriBridge, mediaApi, peerApi, captured: false, stopped: false});
+      resolve({appMounted, tauriBridge, mediaApi, peerApi, buildCommitMatches, captured: false, stopped: false});
     }
   }))()`;
   const result = await command("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true });
   const value = result?.result?.value;
-  const fields = ["appMounted", "tauriBridge", "mediaApi", "peerApi", "captured", "stopped"];
+  const fields = ["appMounted", "tauriBridge", "mediaApi", "peerApi", "buildCommitMatches", "captured", "stopped"];
   if (result?.exceptionDetails || !value || fields.some((field) => typeof value[field] !== "boolean") ||
       Object.keys(value).length !== fields.length) throw new Error("invalid_media_probe");
   process.stdout.write(JSON.stringify(value) + "\n");

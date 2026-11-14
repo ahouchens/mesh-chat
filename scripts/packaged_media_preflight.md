@@ -2,20 +2,27 @@
 
 Run `packaged_media_preflight.py` on a fresh interactive Windows user after the
 exact release candidate is installed. Supply the installed `mesh-chat.exe`, the
-same candidate's published `manifest.json`, its independently retained SHA-256,
-the expected source commit, and the CI run ID/attempt. Use Node 24 or newer for
+same candidate's published `manifest.json`, the passed desktop build report from
+`scripts/release.py build`, both independently retained SHA-256 digests, the
+expected source commit/tree, and the CI run ID/attempt. Use Node 24 or newer for
 the WebView2 DevTools probe. The runner writes
 `dist/reports/packaged-media-preflight.json` even when a check fails.
+The run ID and attempt must match `GITHUB_RUN_ID` and `GITHUB_RUN_ATTEMPT` in
+the executing job.
 
-The runner checks the clean source commit/tree, installed app and sidecar bytes
-against the published manifest, and that neither Tauri app-data directory exists
+The runner checks the clean source commit/tree, the delivery report's clean
+source commit and desktop manifest/app/sidecar hashes, the installed app and
+sidecar bytes against that manifest, and that neither Tauri app-data directory exists
 for the current Windows user. It does not delete app data. It launches one normal
 app process, attaches to that process's WebView2 through a fresh loopback DevTools
-port, and exercises real `getUserMedia` audio capture and track/peer closure with
+port, checks the app's embedded source through the public `app_build_info` command,
+and exercises real `getUserMedia` audio capture and track/peer closure with
 WebView2's virtual device flags. The result contains only bounded boolean checks,
-hashes, source/run binding, and a failure phase. It retires the app and requires
-the DevTools port to close. The CI route must validate that the supplied manifest
-SHA belongs to the same exact-source release artifact set.
+hashes, source/run binding, and a failure phase. After the probe it rechecks source,
+both provenance files, installed binaries and driver bytes, then retires the app
+and requires the DevTools port to close. The CI route must supply the two expected
+digests from its exact-run artifact index; the runner does not infer them from a
+release manifest.
 
 This is a prerequisite, not INV17/SC17 coexistence evidence. The remaining test
 needs an independent authorized Core peer: `src-tauri/src/lib.rs` enables Tauri

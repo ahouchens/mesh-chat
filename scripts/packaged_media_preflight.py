@@ -12,9 +12,10 @@ import ctypes
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
@@ -27,8 +28,8 @@ from uuid import UUID
 ROOT = Path(__file__).resolve().parents[1]
 DRIVER = ROOT / "scripts/packaged_media_preflight.mjs"
 LEVEL = "windows_packaged_app_webview2_media_preflight_only"
-FIELDS = {"appMounted", "tauriBridge", "mediaApi", "peerApi", "captured", "stopped"}
-HEX64 = re.compile(r"[a-f0-9]{64}\Z")
+FIELDS = {"appMounted", "tauriBridge", "mediaApi", "peerApi", "buildCommitMatches", "captured", "stopped"}
+HEX64 = re.compile(r"[a-fA-F0-9]{64}\Z")
 HEX40 = re.compile(r"[a-f0-9]{40}\Z")
 
 
@@ -36,34 +37,65 @@ class PreflightFailure(RuntimeError):
     pass
 
 
+def regular_input(path: Path, limit: int) -> int:
+    absolute = path.absolute()
+    for item in (absolute, *absolute.parents):
+        info = item.lstat()
+        if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400):
+            raise PreflightFailure("reparse_input")
+    info = absolute.lstat()
+    if not stat.S_ISREG(info.st_mode) or not 0 < info.st_size <= limit:
+        raise PreflightFailure("input_size_or_type_invalid")
+    return info.st_size
+
+
+def checked_bytes(path: Path, limit: int = 4 * 1024 * 1024) -> bytes:
+    size = regular_input(path, limit)
+    value = path.read_bytes()
+    if len(value) != size:
+        raise PreflightFailure("input_changed_during_read")
+    return value
+
+
 def digest(path: Path) -> str:
+    expected_size = regular_input(path, 2 * 1024 * 1024 * 1024)
     value = hashlib.sha256()
+    count = 0
     with path.open("rb") as source:
         for block in iter(lambda: source.read(1024 * 1024), b""):
             value.update(block)
+            count += len(block)
+            if count > expected_size:
+                raise PreflightFailure("input_changed_during_read")
+    if count != expected_size:
+        raise PreflightFailure("input_changed_during_read")
     return value.hexdigest()
 
 
-def source_identity(expected: str) -> tuple[str, str]:
-    if not HEX40.fullmatch(expected):
+def source_identity(expected: str, expected_tree: str) -> tuple[str, str]:
+    if not HEX40.fullmatch(expected) or not HEX40.fullmatch(expected_tree):
         raise PreflightFailure("expected_source_invalid")
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     tree = subprocess.check_output(["git", "show", "-s", "--format=%T", "HEAD"], cwd=ROOT, text=True).strip()
-    if head != expected or not HEX40.fullmatch(tree):
+    if head != expected or tree != expected_tree:
         raise PreflightFailure("source_mismatch")
     if subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT):
         raise PreflightFailure("source_dirty")
     return head, tree
 
 
-def published_bytes(manifest_path: Path, expected_digest: str, app: Path) -> dict[str, str]:
-    if not HEX64.fullmatch(expected_digest) or digest(manifest_path) != expected_digest:
+def published_bytes(manifest_path: Path, expected_digest: str, app: Path) -> dict[str, str | int]:
+    if not HEX64.fullmatch(expected_digest):
         raise PreflightFailure("manifest_mismatch")
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest_bytes = checked_bytes(manifest_path)
+    if hashlib.sha256(manifest_bytes).hexdigest() != expected_digest.lower():
+        raise PreflightFailure("manifest_mismatch")
+    manifest = json.loads(manifest_bytes)
     if (not isinstance(manifest, dict) or type(manifest.get("schema_version")) is not int
             or manifest["schema_version"] != 1
             or manifest.get("product") != "Mesh Chat"
-            or manifest.get("platform") != "windows" or not isinstance(manifest.get("artifacts"), list)):
+            or manifest.get("platform") != "windows" or not isinstance(manifest.get("version"), str)
+            or not isinstance(manifest.get("artifacts"), list)):
         raise PreflightFailure("manifest_invalid")
     if app.name.lower() != "mesh-chat.exe" or app.resolve().is_relative_to(ROOT):
         raise PreflightFailure("app_not_installed_candidate")
@@ -80,13 +112,73 @@ def published_bytes(manifest_path: Path, expected_digest: str, app: Path) -> dic
         roles[role] = row
     if set(roles) != {"application", "sidecar"}:
         raise PreflightFailure("manifest_incomplete")
-    bound = {}
+    bound: dict[str, str | int] = {"release_version": manifest["version"]}
     for role, path in (("application", app), ("sidecar", app.with_name("mesh-chat-service.exe"))):
         row = roles[role]
-        if not path.is_file() or path.stat().st_size != row["size"] or digest(path) != row["sha256"]:
+        if regular_input(path, 2 * 1024 * 1024 * 1024) != row["size"] or digest(path) != row["sha256"].lower():
             raise PreflightFailure("installed_bytes_mismatch")
-        bound[role + "_sha256"] = row["sha256"]
+        bound[role + "_sha256"] = row["sha256"].lower()
+        bound[role + "_size"] = row["size"]
     return bound
+
+
+def delivery_provenance(path: Path, expected_digest: str, source: str, manifest_path: Path,
+                        manifest_digest: str, bound: dict[str, str | int]) -> str:
+    """Validate scripts/release.py build report's source and artifact crosslinks."""
+    if not HEX64.fullmatch(expected_digest):
+        raise PreflightFailure("delivery_report_mismatch")
+    raw = checked_bytes(path)
+    if hashlib.sha256(raw).hexdigest() != expected_digest.lower():
+        raise PreflightFailure("delivery_report_mismatch")
+    value = json.loads(raw)
+    if (not isinstance(value, dict) or type(value.get("schema_version")) is not int
+            or value["schema_version"] != 1 or value.get("product") != "Mesh Chat"
+            or value.get("version") != bound["release_version"]
+            or value.get("status") != "passed" or not isinstance(value.get("platforms"), list)
+            or "desktop" not in value["platforms"] or not isinstance(value.get("source"), dict)
+            or value["source"] != {"git_commit": source, "dirty": False}
+            or not isinstance(value.get("gates"), dict) or value["gates"].get("automated") != "passed"
+            or not isinstance(value.get("steps"), list)
+            or not any(isinstance(step, dict) and step.get("name") == "desktop-build"
+                       and step.get("status") == "passed" for step in value["steps"])
+            or not isinstance(value.get("artifacts"), list)):
+        raise PreflightFailure("delivery_source_invalid")
+    roles: dict[str, dict] = {}
+    for item in value["artifacts"]:
+        if not isinstance(item, dict) or item.get("role") not in {"desktop-manifest", "application", "sidecar"}:
+            continue
+        role = item["role"]
+        if (role in roles or not isinstance(item.get("path"), str)
+                or not isinstance(item.get("sha256"), str) or not HEX64.fullmatch(item["sha256"].lower())
+                or type(item.get("size")) is not int or item["size"] <= 0):
+            raise PreflightFailure("delivery_artifacts_invalid")
+        roles[role] = item
+    if set(roles) != {"desktop-manifest", "application", "sidecar"}:
+        raise PreflightFailure("delivery_artifacts_incomplete")
+    manifest_row = roles["desktop-manifest"]
+    manifest_name = PurePosixPath(manifest_row["path"])
+    if (manifest_name.name != "manifest.json" or manifest_name.is_absolute()
+            or ".." in manifest_name.parts or manifest_row["sha256"].lower() != manifest_digest
+            or manifest_row["size"] != regular_input(manifest_path, 4 * 1024 * 1024)):
+        raise PreflightFailure("delivery_manifest_unbound")
+    for role, name in (("application", "mesh-chat.exe"), ("sidecar", "mesh-chat-service.exe")):
+        row = roles[role]
+        relative = PurePosixPath(row["path"])
+        if (relative != manifest_name.parent / name or row["sha256"].lower() != bound[role + "_sha256"]
+                or row["size"] != bound[role + "_size"]):
+            raise PreflightFailure("delivery_artifacts_unbound")
+    return expected_digest.lower()
+
+
+def require_unchanged(source: str, tree: str, manifest_path: Path, manifest_sha: str,
+                      delivery_path: Path, delivery_sha: str, app: Path,
+                      bound: dict[str, str | int], driver_sha: str) -> None:
+    if (source_identity(source, tree) != (source, tree)
+            or published_bytes(manifest_path, manifest_sha, app) != bound
+            or delivery_provenance(delivery_path, delivery_sha, source, manifest_path,
+                                   manifest_sha, bound) != delivery_sha
+            or digest(DRIVER) != driver_sha):
+        raise PreflightFailure("inputs_changed_during_probe")
 
 
 def require_fresh_app_data(identifier: str, roaming: Path, local: Path) -> None:
@@ -94,7 +186,7 @@ def require_fresh_app_data(identifier: str, roaming: Path, local: Path) -> None:
         raise PreflightFailure("app_data_scope_invalid")
     if not roaming.is_dir() or not local.is_dir():
         raise PreflightFailure("app_data_roots_missing")
-    if (roaming / identifier).exists() or (local / identifier).exists():
+    if os.path.lexists(roaming / identifier) or os.path.lexists(local / identifier):
         raise PreflightFailure("app_data_not_fresh")
 
 
@@ -192,7 +284,10 @@ def main() -> int:
     parser.add_argument("--app", type=Path, required=True, help="installed mesh-chat.exe, outside the source checkout")
     parser.add_argument("--release-manifest", type=Path, required=True)
     parser.add_argument("--expected-manifest-sha256", required=True)
+    parser.add_argument("--delivery-report", type=Path, required=True, help="scripts/release.py desktop build report")
+    parser.add_argument("--expected-delivery-report-sha256", required=True)
     parser.add_argument("--expected-source", required=True)
+    parser.add_argument("--expected-tree", required=True)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--run-attempt", type=int, required=True)
     parser.add_argument("--node", type=Path, default=Path("node"))
@@ -205,12 +300,21 @@ def main() -> int:
     try:
         if sys.platform != "win32" or not re.fullmatch(r"[0-9]{1,20}", args.run_id) or args.run_attempt < 1:
             raise PreflightFailure("platform_or_run_invalid")
-        source, tree = source_identity(args.expected_source)
+        if (os.environ.get("GITHUB_RUN_ID") != args.run_id
+                or os.environ.get("GITHUB_RUN_ATTEMPT") != str(args.run_attempt)):
+            raise PreflightFailure("run_context_mismatch")
+        source, tree = source_identity(args.expected_source, args.expected_tree)
         report.update(source_commit=source, source_tree=tree)
         report["phase"] = "published_bytes"
-        report.update(published_bytes(args.release_manifest, args.expected_manifest_sha256, args.app))
-        report["release_manifest_sha256"] = args.expected_manifest_sha256
-        report["driver_sha256"] = digest(DRIVER)
+        bound = published_bytes(args.release_manifest, args.expected_manifest_sha256, args.app)
+        report.update(bound)
+        report["release_manifest_sha256"] = args.expected_manifest_sha256.lower()
+        report["phase"] = "delivery_provenance"
+        report["delivery_report_sha256"] = delivery_provenance(
+            args.delivery_report, args.expected_delivery_report_sha256, source,
+            args.release_manifest, report["release_manifest_sha256"], bound)
+        driver_sha = digest(DRIVER)
+        report["driver_sha256"] = driver_sha
         report["phase"] = "fresh_app_data"
         config = json.loads((ROOT / "src-tauri/tauri.conf.json").read_text(encoding="utf-8"))
         if not isinstance(config, dict) or not isinstance(config.get("app"), dict):
@@ -237,7 +341,7 @@ def main() -> int:
         report["phase"] = "webview2_capture"
         process = subprocess.Popen([str(args.app.resolve())], cwd=args.app.parent, env=environment,
                                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        probe = subprocess.run([str(args.node), str(DRIVER), str(port), "60000"], cwd=ROOT,
+        probe = subprocess.run([str(args.node), str(DRIVER), str(port), "60000", source], cwd=ROOT,
                                text=True, capture_output=True, timeout=65)
         lines = probe.stdout.splitlines()
         if len(lines) != 1:
@@ -250,6 +354,9 @@ def main() -> int:
             raise PreflightFailure("webview2_capture_failed")
         if process.poll() is not None:
             raise PreflightFailure("app_exited_before_probe_completed")
+        report["phase"] = "final_binding"
+        require_unchanged(source, tree, args.release_manifest, report["release_manifest_sha256"],
+                          args.delivery_report, report["delivery_report_sha256"], args.app, bound, driver_sha)
         report["phase"] = "retirement"
     except Exception as error:
         report["failure"] = str(error) if isinstance(error, PreflightFailure) else type(error).__name__
