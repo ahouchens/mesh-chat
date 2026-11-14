@@ -1,0 +1,16 @@
+name: Installed public Core pair diagnostic role
+description: Run one exact-source public consumer role with the Actions artifact runtime.
+inputs:
+  role:
+    description: windows or android
+    required: true
+  python:
+    description: Selected installed Python interpreter
+    required: false
+    default: python
+  disposable-emulator-serial:
+    description: Required emulator-5554 for the Android role only
+    required: false
+runs:
+  using: node24
+  main: action.mjs

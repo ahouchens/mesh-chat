@@ -8,6 +8,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import threading
 from types import SimpleNamespace
 import urllib.error
 import zipfile
@@ -140,11 +141,59 @@ def test_short_archive_404_retry_requires_same_artifact_identity(tmp_path, monke
         transport.close()
 
 
+def test_upload_uses_remaining_deadline_and_rejects_late_completion(tmp_path, monkeypatch):
+    sender = pair.Rendezvous(CONTEXT, "windows")
+    now = [0.0]
+    transport = artifacts.GithubArtifacts(CONTEXT, "windows", tmp_path,
+        environment=environment("windows"), clock=lambda: now[0])
+    calls = []
+    def run(*args, **options):
+        calls.append(options["timeout"])
+        now[0] = 1.1
+        return SimpleNamespace(returncode=0, stdout='{"passed":true,"id":17,"size":123}\n')
+    monkeypatch.setattr(artifacts.subprocess, "run", run)
+    try:
+        with pytest.raises(artifacts.PublicPairUnavailable):
+            transport.publish("key", sender.public_manifest(), 0.0)
+        assert calls == []
+        with pytest.raises(artifacts.PublicPairUnavailable):
+            transport.publish("key", sender.public_manifest(), 1.0)
+        assert calls == [1.0]
+    finally:
+        sender.close()
+        transport.close()
+
+
+def test_trickling_body_cannot_outlive_phase_deadline(tmp_path):
+    release = threading.Event()
+    class SlowResponse:
+        def __enter__(self): return self
+        def __exit__(self, *args): self.close()
+        def read(self, _limit):
+            release.wait(5)
+            return b"late"
+        def close(self): release.set()
+    class Opener:
+        def open(self, request, timeout): return SlowResponse()
+    transport = artifacts.GithubArtifacts(CONTEXT, "android", tmp_path,
+                                         environment=environment("android"), opener=Opener())
+    try:
+        import time
+        started = time.monotonic()
+        with pytest.raises(artifacts.PublicPairUnavailable):
+            transport._request("/repos/example/mesh/actions/runs/456/artifacts?per_page=100",
+                               deadline=started + 0.05)
+        assert time.monotonic() - started < 1 and release.wait(1)
+    finally:
+        transport.close()
+
+
 def test_public_exchange_exposes_only_flow_setup_interface(tmp_path):
     android = pair.Rendezvous(CONTEXT, "android")
     class Transport:
         def __init__(self): self.bundles = {}
-        def publish(self, phase, value):
+        def publish(self, phase, value, deadline):
+            assert deadline > 0
             self.bundles[phase] = value
             if phase == "key": android.bind_partner(value)
         def wait(self, role, phase, deadline):

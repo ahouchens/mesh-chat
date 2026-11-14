@@ -3,8 +3,10 @@
 import json
 import os
 from pathlib import Path
+import queue
 import subprocess
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -53,6 +55,38 @@ class GithubArtifacts:
         self.directory.mkdir(parents=True, exist_ok=True)
         self._published = set()
 
+    def _read_response(self, response, limit, deadline):
+        """Enforce the phase deadline across a trickling HTTP body."""
+        outcome = queue.Queue(maxsize=1)
+
+        def read_body():
+            try:
+                with response:
+                    data = response.read(limit + 1)
+                outcome.put_nowait((data, None))
+            except Exception as error:
+                outcome.put_nowait((None, error))
+
+        reader = threading.Thread(target=read_body, daemon=True)
+        reader.start()
+
+        def abort_read():
+            try: response.close()
+            except Exception: pass
+
+        remaining = deadline - self.clock()
+        if remaining <= 0:
+            threading.Thread(target=abort_read, daemon=True).start()
+            raise PublicPairUnavailable("Public pair partner wait expired")
+        try:
+            data, error = outcome.get(timeout=remaining)
+        except queue.Empty:
+            threading.Thread(target=abort_read, daemon=True).start()
+            raise PublicPairUnavailable("Public pair partner wait expired") from None
+        if error is not None:
+            raise PublicPairUnavailable("Public pair artifact read failed") from None
+        return data
+
     def _request(self, path, *, archive=False, deadline):
         if self.token is None or not path.startswith("/repos/" + self.context["repository"] + "/actions/"):
             raise PublicPairUnavailable("Public pair artifact transport is closed or invalid")
@@ -84,8 +118,7 @@ class GithubArtifacts:
                     raise PublicPairUnavailable("Public pair artifact blob is unavailable",
                                                 status=error.code) from None
             limit = MAX_ARCHIVE if archive else MAX_INVENTORY
-            with response:
-                data = response.read(limit + 1)
+            data = self._read_response(response, limit, deadline)
             if self.clock() >= deadline or not data or len(data) > limit:
                 raise PublicPairUnavailable("Public pair artifact response is unavailable")
             return data if archive else json.loads(data)
@@ -94,21 +127,28 @@ class GithubArtifacts:
         except Exception:
             raise PublicPairUnavailable("Public pair artifact transport is unavailable") from None
 
-    def publish(self, phase, value):
+    def publish(self, phase, value, deadline):
         name = artifact_name(self.context, self.role, phase)
         validate_upload(self.context, self.role, phase, value)
         if self.token is None or phase in self._published:
             raise ValueError("Public pair setup artifact was already published or transport closed")
+        if type(deadline) not in {int, float} or deadline - self.clock() <= 0:
+            raise PublicPairUnavailable("Public pair setup deadline expired")
         with tempfile.TemporaryDirectory(prefix="public-pair-upload-", dir=self.directory) as temporary:
             bundle = Path(temporary) / "bundle.json"
             bundle.write_bytes(canonical(value))
             if bundle.stat().st_size > MAX_BLOB:
                 raise ValueError("Public pair upload exceeds its budget")
+            remaining = deadline - self.clock()
+            if remaining <= 0:
+                raise PublicPairUnavailable("Public pair setup deadline expired")
             try:
                 process = subprocess.run([self.node, str(UPLOAD), name, str(bundle)],
-                                         capture_output=True, text=True, timeout=60)
+                                         capture_output=True, text=True, timeout=min(60, remaining))
             except Exception:
                 raise PublicPairUnavailable("Public pair setup upload is unavailable") from None
+            if self.clock() >= deadline:
+                raise PublicPairUnavailable("Public pair setup deadline expired")
             if process.returncode:
                 raise PublicPairUnavailable("Public pair setup upload failed")
             try:
@@ -189,7 +229,7 @@ class PublicPairExchange:
             raise ValueError("Public pair exchange is already connected")
         if time.monotonic() >= deadline:
             raise PublicPairUnavailable("Public pair setup deadline expired")
-        self.transport.publish("key", self.rendezvous.public_manifest())
+        self.transport.publish("key", self.rendezvous.public_manifest(), deadline)
         if time.monotonic() >= deadline:
             raise PublicPairUnavailable("Public pair setup deadline expired")
         peer = self.transport.wait(self.rendezvous.partner_role, "key", deadline)
@@ -202,7 +242,7 @@ class PublicPairExchange:
         if not self.connected or time.monotonic() >= deadline:
             raise PublicPairUnavailable("Public pair setup deadline expired")
         bundle = self.rendezvous.seal(phase, payload)
-        result = self.transport.publish(phase, bundle)
+        result = self.transport.publish(phase, bundle, deadline)
         if time.monotonic() >= deadline:
             raise PublicPairUnavailable("Public pair setup deadline expired")
         return result
