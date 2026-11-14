@@ -33,6 +33,8 @@ class PackagedNativeInteropBoundaryTest {
         val context = instrumentation.targetContext
         val nonce = InstrumentationRegistry.getArguments().getString("mesh_interop_nonce") ?: error("Missing controller admission")
         check(nonce.matches(Regex("[a-f0-9]{64}")))
+        // Python keeps one sequence across restarted testhosts; use its next ID
+        // so an EOF after a restart still names the exact controller request.
         val startOrdinal = InstrumentationRegistry.getArguments().getString("mesh_interop_start_ordinal")
             ?.toIntOrNull() ?: error("Missing controller ordinal")
         check(startOrdinal in 1..99_999_999)
@@ -65,12 +67,10 @@ class PackagedNativeInteropBoundaryTest {
                         val started = System.nanoTime()
                         var stage = "read_header"
                         try {
-                        reportIo(ordinal, stage, "none", started)
                         val size = input.readInt()
                         check(size in 2..4 * 1024 * 1024)
                         val bytes = ByteArray(size)
                         stage = "read_body"
-                        reportIo(ordinal, stage, "none", started)
                         input.readFully(bytes)
                         val frame = JSONObject(String(bytes, Charsets.UTF_8))
                         check(frame.keys().asSequence().toSet() == setOf("id", "action", "payload"))
@@ -81,7 +81,6 @@ class PackagedNativeInteropBoundaryTest {
                         val payload = frame.getJSONObject("payload")
                         val snapshotRequest = action == "core" && payload.opt("operation") == "application.snapshot"
                         stage = "dispatch"
-                        reportIo(ordinal, stage, "none", started)
                         if (snapshotRequest) reportIo(ordinal, "snapshot_dispatch_enter", "none", started)
                         val diagnosticRequest = action == "inspect" && payload.opt("command") == "qualification.network_diagnostic"
                         if (!diagnosticRequest) pendingNetworkBinding = null
@@ -202,13 +201,10 @@ class PackagedNativeInteropBoundaryTest {
                         val encoded = reply.toString().toByteArray(Charsets.UTF_8)
                         check(encoded.size in 2..4 * 1024 * 1024)
                         stage = "write_header"
-                        reportIo(ordinal, stage, "none", started)
                         output.writeInt(encoded.size)
                         stage = "write_body"
-                        reportIo(ordinal, stage, "none", started)
                         output.write(encoded)
                         stage = "flush"
-                        reportIo(ordinal, stage, "none", started)
                         output.flush()
                         if (snapshotRequest) reportIo(ordinal, "snapshot_flush_complete", "none", started)
                         if (!authenticated) error("Controller authentication failed")
@@ -236,10 +232,12 @@ class PackagedNativeInteropBoundaryTest {
     private fun reportIo(ordinal: Int, stage: String, category: String, started: Long) {
         // Only fixed labels and capped monotonic timing leave this test process.
         if (ordinal !in 1..99_999_999) return
-        val elapsed = ((System.nanoTime() - started) / 1_000_000L).coerceIn(0L, 999_999L)
+        val rawElapsed = ((System.nanoTime() - started) / 1_000_000L).coerceAtLeast(0L)
+        val elapsed = rawElapsed.coerceAtMost(120_000L)
+        val capped = if (rawElapsed > 120_000L) 1 else 0
         try {
             InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply {
-                putString("mesh_interop_io", "v1|$ordinal|$stage|$category|$elapsed")
+                putString("mesh_interop_io", "v1|$ordinal|$stage|$category|$elapsed|$capped")
             })
         } catch (_: Throwable) { /* Observation must not change the controller result. */ }
     }

@@ -11,8 +11,8 @@ CATEGORIES = frozenset({"none", "eof", "timeout", "io", "protocol", "other"})
 STATUS = re.compile(rb"INSTRUMENTATION_STATUS: mesh_interop_io=v1\|([1-9][0-9]{0,7})\|"
                     rb"(read_header|read_body|dispatch|write_header|write_body|flush|"
                     rb"snapshot_dispatch_enter|snapshot_flush_complete)\|"
-                    rb"(none|eof|timeout|io|protocol|other)\|([0-9]{1,6})\r?\n\Z")
-MAX_MS = 999999
+                    rb"(none|eof|timeout|io|protocol|other)\|([0-9]{1,6})\|([01])\r?\n\Z")
+MAX_MS = 120000
 
 
 def event(line):
@@ -22,17 +22,20 @@ def event(line):
     match = STATUS.fullmatch(line)
     if match is None:
         return None
-    ordinal, stage, category, elapsed = match.groups()
-    return {"ordinal": int(ordinal), "stage": stage.decode("ascii"),
-            "category": category.decode("ascii"), "elapsed_ms": int(elapsed)}
+    ordinal, stage, category, elapsed, capped = match.groups()
+    return snapshot({"ordinal": int(ordinal), "stage": stage.decode("ascii"),
+            "category": category.decode("ascii"), "elapsed_ms": int(elapsed),
+            "elapsed_capped": capped == b"1"})
 
 
 def snapshot(value):
-    if (type(value) is not dict or set(value) != {"ordinal", "stage", "category", "elapsed_ms"}
+    if (type(value) is not dict or set(value) != {"ordinal", "stage", "category", "elapsed_ms", "elapsed_capped"}
             or type(value["ordinal"]) is not int or not 1 <= value["ordinal"] <= 99999999
             or type(value["stage"]) is not str or value["stage"] not in STAGES
             or type(value["category"]) is not str or value["category"] not in CATEGORIES
-            or type(value["elapsed_ms"]) is not int or not 0 <= value["elapsed_ms"] <= MAX_MS):
+            or type(value["elapsed_ms"]) is not int or not 0 <= value["elapsed_ms"] <= MAX_MS
+            or type(value["elapsed_capped"]) is not bool
+            or (value["elapsed_capped"] and value["elapsed_ms"] != MAX_MS)):
         return None
     return dict(value)
 
@@ -94,18 +97,21 @@ def failure_snapshot(value, ordinal):
 
 
 def forward_presence(adb, forward):
-    """Sample one existing ADB mapping; never retain output or wait over three seconds."""
+    """Sample one mapping with a three second read and at most 0.2 second cleanup."""
     if (type(adb) is not str or not adb or type(forward) is not str
             or re.fullmatch(r"[0-9]{1,5}", forward) is None):
         return "unknown"
     process = None
     result = {}
     try:
-        process = subprocess.Popen([adb, "forward", "--list"], stdout=subprocess.PIPE,
+        process = subprocess.Popen([adb, "-s", "emulator-5554", "forward", "--list"], stdout=subprocess.PIPE,
                                    stderr=subprocess.DEVNULL)
         def read():
             try: result["data"] = process.stdout.read(2049)
             except Exception: result["error"] = True
+            finally:
+                try: process.stdout.close()
+                except Exception: pass
         worker = threading.Thread(target=read, daemon=True)
         worker.start()
         worker.join(3)
@@ -134,6 +140,4 @@ def forward_presence(adb, forward):
             try:
                 if process.poll() is None: process.kill()
                 process.wait(timeout=0.2)
-            except Exception: pass
-            try: process.stdout.close()
             except Exception: pass

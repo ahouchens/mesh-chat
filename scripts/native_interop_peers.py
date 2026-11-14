@@ -606,8 +606,8 @@ class AndroidPeer:
                 except Exception:
                     self._transport_failure = None
                 try:
-                    statuses = self._testhost_io.matching(self._sequence)
                     forward = forward_presence(self.adb, self.forward) if eof[0] == "header" else "unknown"
+                    statuses = self._testhost_io.matching(self._sequence)
                     io = failure_snapshot({"statuses": statuses, "forward": forward}, self._sequence)
                     if io is not None:
                         self._testhost_failure = (error, identifier, io)

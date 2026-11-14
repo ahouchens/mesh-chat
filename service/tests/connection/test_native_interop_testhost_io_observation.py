@@ -13,19 +13,28 @@ from native_interop_peers import AndroidPeer, PeerFailure
 from native_interop_controller import android_control_failure
 
 
-def line(ordinal, stage, category="none", ms=7):
-    return f"INSTRUMENTATION_STATUS: mesh_interop_io=v1|{ordinal}|{stage}|{category}|{ms}\n".encode()
+def line(ordinal, stage, category="none", ms=7, capped=0):
+    return f"INSTRUMENTATION_STATUS: mesh_interop_io=v1|{ordinal}|{stage}|{category}|{ms}|{capped}\n".encode()
 
 
 def test_kotlin_emits_only_the_exact_fixed_status_format_and_snapshot_markers():
     source = (ROOT / "plugins/tauri-plugin-mesh-runtime/android/src/androidTest/java/com/meshchat/runtime"
               / "PackagedNativeInteropBoundaryTest.kt").read_text(encoding="utf-8")
-    assert '"v1|$ordinal|$stage|$category|$elapsed"' in source
+    assert '"v1|$ordinal|$stage|$category|$elapsed|$capped"' in source
+    assert 'rawElapsed.coerceAtMost(120_000L)' in source
+    assert 'if (rawElapsed > 120_000L) 1 else 0' in source
+    assert source.count('reportIo(ordinal, stage, "none", started)') == 0
+    assert 'reportIo(ordinal, stage, category, started)' in source
+    for kind, category in (("EOFException", "eof"), ("SocketTimeoutException", "timeout"),
+                           ("IOException", "io")):
+        assert f'is {kind} -> "{category}"' in source
+        assert io.event(line(17, "read_header", category))["category"] == category
     assert '"mesh_interop_start_ordinal"' in source
     assert '"mesh_interop_start_ordinal", str(self._sequence + 1)' in (ROOT / "scripts/native_interop_peers.py").read_text()
     for stage in io.STAGES:
         assert f'"{stage}"' in source
-        assert io.event(line(17, stage)) == {"ordinal": 17, "stage": stage, "category": "none", "elapsed_ms": 7}
+        assert io.event(line(17, stage)) == {"ordinal": 17, "stage": stage, "category": "none",
+                                             "elapsed_ms": 7, "elapsed_capped": False}
 
 
 @pytest.mark.parametrize("invalid", [
@@ -33,6 +42,7 @@ def test_kotlin_emits_only_the_exact_fixed_status_format_and_snapshot_markers():
     line(1, "unknown"), line(1, "read_body", "private_exception"),
     b"INSTRUMENTATION_STATUS: mesh_interop_io=v1|1|read_header|none|7\nPRIVATE\n",
     line(1, "read_header") + b"x" * 200,
+    line(1, "read_header", ms=120001),
 ])
 def test_parser_rejects_unbounded_or_noncanonical_status(invalid):
     assert io.event(invalid) is None
@@ -56,13 +66,16 @@ def test_ordinal_window_retains_current_and_one_predecessor_and_late_status_is_f
 
 
 def test_failure_snapshot_rejects_oversize_and_bad_shape():
-    row = {"last": {"ordinal": 4, "stage": "read_header", "category": "eof", "elapsed_ms": 0},
+    row = {"last": {"ordinal": 4, "stage": "read_header", "category": "eof", "elapsed_ms": 0,
+                    "elapsed_capped": False},
            "snapshot_dispatch_enter": False, "snapshot_flush_complete": False}
     assert io.failure_snapshot({"statuses": [row], "forward": "unknown"}, 4)
     assert io.failure_snapshot({"statuses": [row] * 3, "forward": "unknown"}, 4) is None
     assert io.failure_snapshot({"statuses": [row], "forward": []}, 4) is None
     assert io.failure_snapshot({"statuses": [{**row, "raw": "PRIVATE"}], "forward": "unknown"}, 4) is None
-    assert io.snapshot({**row["last"], "elapsed_ms": 1000000}) is None
+    assert io.snapshot({**row["last"], "elapsed_ms": 120001}) is None
+    assert io.snapshot({**row["last"], "elapsed_capped": True}) is None
+    assert io.snapshot(io.event(line(4, "read_header", ms=120000, capped=1))) is not None
 
 
 def test_forward_sample_timeout_is_bounded_and_kills_only_its_process(monkeypatch):
@@ -78,7 +91,10 @@ def test_forward_sample_timeout_is_bounded_and_kills_only_its_process(monkeypatc
         def poll(self): return None
         def kill(self): events.append("kill")
         def wait(self, timeout): events.append("wait"); return 0
-    monkeypatch.setattr(io.subprocess, "Popen", lambda *a, **k: Process())
+    def launch(args, **_):
+        assert args == ["adb", "-s", "emulator-5554", "forward", "--list"]
+        return Process()
+    monkeypatch.setattr(io.subprocess, "Popen", launch)
     assert io.forward_presence("adb", "12345") == "timeout"
     assert events[:2] == ["kill", "wait"]
 
@@ -133,3 +149,21 @@ def test_broken_forward_observer_does_not_erase_transport_eof(monkeypatch):
     assert caught.value.code == "peer_closed"
     assert observed["transport"]["eof_stage"] == "header"
     assert "testhost_io" not in observed
+
+
+def test_status_arriving_during_forward_sample_is_retained(monkeypatch):
+    peer = AndroidPeer(b"k" * 32)
+    peer.process = SimpleNamespace(poll=lambda: None)
+    peer.forward = "12345"
+    peer.socket = SimpleNamespace(settimeout=lambda _: None, sendall=lambda _: None, recv=lambda _: b"")
+    def sample(*_):
+        peer._testhost_io.observe(line(1, "snapshot_dispatch_enter"))
+        peer._testhost_io.observe(line(1, "snapshot_flush_complete"))
+        return "present"
+    monkeypatch.setattr("native_interop_peers.forward_presence", sample)
+    with pytest.raises(PeerFailure) as caught:
+        peer.core("application.snapshot")
+    observed = peer.failure_testhost_observation(caught.value)
+    assert observed["forward"] == "present"
+    assert observed["statuses"][0]["snapshot_dispatch_enter"] is True
+    assert observed["statuses"][0]["snapshot_flush_complete"] is True
