@@ -16,8 +16,10 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 import native_interop_artifacts as backend
-from native_interop_rendezvous import (CASE_COMPLETION_PHASES, COLD_COMPLETE_PHASES, COLD_STARTED_PHASES,
-                                       Rendezvous, artifact_name, canonical, encoded)
+from native_interop_rendezvous import (APPROVAL_PHASES, CASE_COMPLETION_PHASES, COLD_COMPLETE_PHASES,
+                                       COLD_STARTED_PHASES, DIAGNOSTIC_COMPLETE_PHASES,
+                                       NEGATIVE_CONTROL_PHASES, OFFER_PHASES, PHASES, Rendezvous,
+                                       artifact_name, canonical, encoded)
 
 CONTEXT = {"repository": "example/mesh", "repository_id": 123, "run_id": 456,
            "run_attempt": 1, "source_commit": "a" * 40}
@@ -732,13 +734,15 @@ def test_decoder_value_error_cannot_inherit_completed_response_read_origin(tmp_p
 
 
 @pytest.mark.parametrize("role", ["windows", "android"])
-@pytest.mark.parametrize("phase,fault", [("reconnect_capabilities", fault) for fault in (
-    None, "unknown_phase", "plaintext", "extra_field", "wrong_job", "wrong_source", "nonce", "ciphertext")]
-    + [(phase, None) for phase in sorted(CASE_COMPLETION_PHASES)]
-    + [(phase, None) for phase in sorted(COLD_COMPLETE_PHASES | COLD_STARTED_PHASES)]
+@pytest.mark.parametrize("phase,fault", [(phase, None) for phase in sorted(PHASES | {"key"})]
+    + [("reconnect_capabilities", fault) for fault in (
+        "unknown_phase", "plaintext", "extra_field", "wrong_job", "wrong_source", "nonce", "ciphertext")]
+    + [("cold_complete_1", fault) for fault in (
+        "full_workload", "quick_workload", "non_manual", "not_actions", "wrong_source", "extra_field")]
     + [("negative_control_" + scenario, fault) for scenario in ("turn_tcp", "turn_tls", "impaired")
-       for fault in (None, "plaintext", "extra_field")])
-def test_actual_node_upload_accepts_only_sealed_setup_phases_without_sdk_or_network(tmp_path, role, phase, fault):
+       for fault in ("plaintext", "extra_field")])
+def test_actual_node_upload_accepts_only_sealed_setup_phases_without_sdk_or_network(
+        tmp_path, role, phase, fault):
     """Execute the real upload validator with a local inert ArtifactClient module."""
     node = os.environ.get("MESH_NODE") or shutil.which("node")
     assert node, "Node is required for the upload validator control"
@@ -762,16 +766,27 @@ export class DefaultArtifactClient {
     partner = Rendezvous(CONTEXT, "android" if role == "windows" else "windows")
     sender.bind_partner(partner.public_manifest())
     try:
-        if phase.startswith("negative_control_"):
+        if phase == "key":
+            sealed = sender.public_manifest()
+        elif phase in NEGATIVE_CONTROL_PHASES:
             from mesh_chat.signal_mailbox import create_pairing
             payload = {"capability": create_pairing("https://signal.example")}
         else:
-            payload = ({"completed": True} if phase in CASE_COMPLETION_PHASES | COLD_COMPLETE_PHASES
-                       else {"started": True} if phase in COLD_STARTED_PHASES
-                       else {"capabilities": "PRIVATE_SIGNED_CREDENTIALS"})
-        sealed = sender.seal(phase, payload)
+            payload = (
+                {"completed": True} if phase in CASE_COMPLETION_PHASES | COLD_COMPLETE_PHASES | DIAGNOSTIC_COMPLETE_PHASES
+                else {"started": True} if phase in COLD_STARTED_PHASES
+                else {"shareable": "synthetic-shareable"} if phase in OFFER_PHASES | {"answer"}
+                else {"approved": True} if phase in APPROVAL_PHASES
+                else {"scenarios": ["direct"], "iterations": 100, "cold_start_every": 10} if phase == "control"
+                else {"report_sha256": "a" * 64, "passed": True} if phase == "result"
+                else {"capabilities": "PRIVATE_SIGNED_CREDENTIALS"})
+        if phase != "key":
+            sealed = sender.seal(phase, payload)
         env = {**os.environ, **environment(role), "ACTIONS_RUNTIME_TOKEN": "PRIVATE_TEST_RUNTIME_TOKEN",
                "MESH_UPLOAD_OBSERVATION": str(tmp_path / "observed.json")}
+        if phase == "cold_complete_1":
+            env.update(INPUT_WORKLOAD="b8_first_cold", GITHUB_ACTIONS="true",
+                       GITHUB_EVENT_NAME="workflow_dispatch")
         if fault == "unknown_phase": sealed["phase"] = "reconnect_documents"
         elif fault == "plaintext": sealed = {"capabilities": "PRIVATE_SIGNED_CREDENTIALS"}
         elif fault == "extra_field": sealed["capabilities"] = "PRIVATE_SIGNED_CREDENTIALS"
@@ -779,6 +794,10 @@ export class DefaultArtifactClient {
         elif fault == "wrong_source": sealed["context"]["source_commit"] = "b" * 40
         elif fault == "nonce": sealed["nonce"] = "short"
         elif fault == "ciphertext": sealed["ciphertext"] = encoded(b"x" * (48 * 1024 + 1025))
+        elif fault == "full_workload": env["INPUT_WORKLOAD"] = "full"
+        elif fault == "quick_workload": env["INPUT_WORKLOAD"] = "quick"
+        elif fault == "non_manual": env["GITHUB_EVENT_NAME"] = "push"
+        elif fault == "not_actions": env["GITHUB_ACTIONS"] = "false"
         bundle = tmp_path / "bundle.json"
         bundle.write_bytes(canonical(sealed))
         result = subprocess.run([node, str(script), artifact_name(CONTEXT, role, phase), str(bundle)],

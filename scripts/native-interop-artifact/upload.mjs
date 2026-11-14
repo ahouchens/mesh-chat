@@ -22,10 +22,13 @@ try {
   const phases = ["key", "offer", "offer_turn_udp", "offer_turn_tcp", "offer_turn_tls", "offer_impaired", "answer", "approved", "impaired_ready", "control", "result", "reconnect_capabilities",
     ...["negative_control_", "negative_ready_", "negative_checked_"].flatMap(prefix => ["turn_tcp", "turn_tls", "impaired"].map(scenario => prefix + scenario)),
     ...Array.from({ length: 10 }, (_, index) => `cold_started_${index * 10}`),
-    "cold_complete_5", ...Array.from({ length: 10 }, (_, index) => `cold_complete_${(index + 1) * 10}`),
+    "cold_complete_1", "cold_complete_5", ...Array.from({ length: 10 }, (_, index) => `cold_complete_${(index + 1) * 10}`),
     "case_complete_direct_windows", "case_complete_direct_android", "case_complete_turn_udp_windows",
     "case_complete_turn_tcp_windows", "case_complete_turn_tls_windows", "case_complete_impaired_windows"];
-  if (!phases.includes(phase)) throw new Error();
+  if (!phases.includes(phase)
+      || (phase === "cold_complete_1" && (process.env.INPUT_WORKLOAD !== "b8_first_cold"
+        || process.env.GITHUB_ACTIONS !== "true"
+        || process.env.GITHUB_EVENT_NAME !== "workflow_dispatch"))) throw new Error();
   const expected = `mesh-native-v1-${context.run_id}-${context.run_attempt}-${context.source_commit.slice(0, 12)}-${role}-${phase}`;
   if (name !== expected || !process.env.ACTIONS_RUNTIME_TOKEN) throw new Error();
   const fields = phase === "key"
