@@ -400,11 +400,16 @@ def test_android_workflow_call_keeps_ordinary_job_and_restart_is_isolated():
     workflow = yaml.safe_load(path.read_text())
     assert selected_jobs(workflow, "workflow_call") == {"android"}
     assert workflow["jobs"]["restart_diagnostic"]["uses"] == "./.github/workflows/native-restart-diagnostic.yml"
-    assert workflow["jobs"]["restart_diagnostic"]["with"]["repetitions"] == "${{ inputs.restart_repetitions }}"
+    assert workflow["jobs"]["restart_diagnostic"]["with"]["repetitions"] == "${{ fromJSON(inputs.restart_repetitions) }}"
     assert workflow["jobs"]["restart_diagnostic"]["with"]["probe"] == "${{ inputs.restart_probe }}"
     inputs = workflow.get("on", workflow.get(True))["workflow_dispatch"]["inputs"]
     assert inputs["restart_diagnostic"]["default"] is False
     assert inputs["restart_repetitions"]["default"] == 1
+    called = yaml.safe_load((path.parent / "native-restart-diagnostic.yml").read_text())
+    called_inputs = called.get("on", called.get(True))["workflow_call"]["inputs"]
+    assert inputs["restart_repetitions"]["type"] == "number"
+    assert called_inputs["repetitions"]["type"] == "number"
+    assert type(json.loads(str(inputs["restart_repetitions"]["default"]))) is int
     assert inputs["restart_probe"]["default"] == "reopen"
     assert inputs["restart_probe"]["options"] == ["reopen", "boot_comparison"]
     suffix = workflow["concurrency"]["group"].split("${{")[-1].removesuffix("}}")

@@ -221,4 +221,4 @@ jobs:
     uses: ./.github/workflows/native-restart-diagnostic.yml
     with:
       probe: ${{ inputs.restart_probe }}
-      repetitions: ${{ inputs.restart_repetitions }}
+      repetitions: ${{ fromJSON(inputs.restart_repetitions) }}
