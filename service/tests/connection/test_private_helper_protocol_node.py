@@ -31,4 +31,4 @@ def test_private_owner_helper_subprocess_protocol():
                                cwd=ROOT, capture_output=True, text=True, timeout=20)
     assert completed.returncode == 0, completed.stdout + completed.stderr
     summary = dict(re.findall(r"^# (tests|pass|fail|skipped) (\d+)$", completed.stdout, re.MULTILINE))
-    assert summary == {"tests": "10", "pass": "10", "fail": "0", "skipped": "0"}
+    assert summary == {"tests": "13", "pass": "13", "fail": "0", "skipped": "0"}

@@ -9,7 +9,7 @@ import { performance } from "node:perf_hooks";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { Helper, PrivateConsumerInput } from "./public-process-helper.mjs";
-import { requireRevokedHelper } from "./private-admission-evidence.mjs";
+import { hostWitnessScript, requireDeniedBeforeReply, requireRevokedHelper } from "./private-admission-evidence.mjs";
 import { launchRuntime } from "./runtime.mjs";
 
 const SOURCE = fileURLToPath(import.meta.url);
@@ -41,13 +41,8 @@ function validPipe(pipe) {
 }
 
 async function denied(transport, mode) {
-  try {
-    await CoreClient.open(transport, {requestTimeoutMs: 5000});
-    throw new Error("unregistered_client_admitted");
-  } catch (error) {
-    if (!(error instanceof TransportClosedError) || transport.socket?.bytesRead !== 0) throw error;
-    return {v: 1, mode, connected: true, closed_before_core_reply: true};
-  } finally { transport.close(); }
+  return requireDeniedBeforeReply(transport, mode, null,
+    value => CoreClient.open(value, {requestTimeoutMs: 5000}), TransportClosedError);
 }
 
 async function probe(mode, pipe) {
@@ -69,14 +64,15 @@ async function probe(mode, pipe) {
       if (typeof profile?.destination !== "string" || !profile.destination) throw new Error("helper_profile");
     } finally { if (client) client.close(); else transport.close(); }
     const replay = await connectNamedPipe(pipe, 5000);
-    await replay.writeLine(`MESH-HELPER/1 ${invitation}\n`);
-    const rejected = await denied(replay, "replay");
+    const rejected = await requireDeniedBeforeReply(replay, "replay", `MESH-HELPER/1 ${invitation}\n`,
+      value => CoreClient.open(value, {requestTimeoutMs: 5000}), TransportClosedError);
     return {v: 1, mode, first_admitted: true, replay_denied: rejected.closed_before_core_reply};
   }
-  await transport.writeLine(mode === "wrong_preface"
+  const preface = mode === "wrong_preface"
     ? `MESH-HELPER/1 ${invitation.slice(0, 63)}g\n`
-    : `MESH-HELPER/1 ${invitation}\n`);
-  return denied(transport, mode);
+    : `MESH-HELPER/1 ${invitation}\n`;
+  return requireDeniedBeforeReply(transport, mode, preface,
+    value => CoreClient.open(value, {requestTimeoutMs: 5000}), TransportClosedError);
 }
 
 function spawnProbe(mode, pipe, children) {
@@ -161,9 +157,9 @@ async function ownerDeath(executable, dataDirectory, deadline, children) {
     const identity = JSON.parse(await lineFrom(owner, deadline));
     if (identity?.v !== 1 || !Number.isSafeInteger(identity.host_pid) || identity.host_pid < 1
         || identity.host_pid === owner.pid || !validPipe(identity.pipe)) throw new Error("death_owner_identity");
-    const script = `$p=[System.Diagnostics.Process]::GetProcessById(${identity.host_pid}); `
-      + `$null=$p.Handle; if ($p.HasExited) { 'DEAD' } else { 'READY' }; `
-      + `if ($p.WaitForExit(20000)) { 'EXIT' } else { 'LIVE' }`;
+    // The held handle prevents PID reuse while CIM verifies the exact image
+    // and parent process. Any query failure or mismatch precludes READY.
+    const script = hostWitnessScript(identity.host_pid, owner.pid, executable);
     const witness = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
       env: cleanEnvironment(), stdio: ["ignore", "pipe", "pipe"], windowsHide: true,
     });

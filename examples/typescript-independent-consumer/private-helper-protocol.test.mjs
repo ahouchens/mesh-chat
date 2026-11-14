@@ -4,7 +4,7 @@ import { once } from "node:events";
 import { test } from "node:test";
 import { Helper, HelperCoreError } from "./public-process-helper.mjs";
 import { observeRuntime } from "./runtime.mjs";
-import { requireRevokedHelper } from "./private-admission-evidence.mjs";
+import { hostWitnessScript, requireDeniedBeforeReply, requireRevokedHelper } from "./private-admission-evidence.mjs";
 
 const TOKEN = "a".repeat(64);
 const PIPE = "private-test-pipe";
@@ -258,4 +258,51 @@ test("transport errors, other Core errors, success and dirty exits cannot prove 
   const dirty = {async request() { throw new HelperCoreError("unauthenticated"); },
     async closeInput() { throw new Error("helper_exit"); }};
   await assert.rejects(requireRevokedHelper(dirty, "local", {}, 12345), /helper_exit/);
+});
+
+test("preface write or Core open closure with zero reply bytes proves connected denial", async () => {
+  class Closed extends Error {}
+  for (const stage of ["write", "open"]) {
+    let wrote = false, opened = false, closed = false;
+    const transport = {socket: {bytesRead: 0}, async writeLine(line) {
+      assert.equal(line, "preface\n"); wrote = true;
+      if (stage === "write") throw new Closed();
+    }, close() { closed = true; }};
+    const result = await requireDeniedBeforeReply(transport, stage, "preface\n", async () => {
+      opened = true; throw new Closed();
+    }, Closed);
+    assert.deepEqual(result, {v: 1, mode: stage, connected: true, closed_before_core_reply: true});
+    assert.equal(wrote, true);
+    assert.equal(opened, stage === "open");
+    assert.equal(closed, true);
+  }
+});
+
+test("other errors, received bytes and admitted Core client cannot prove denial", async () => {
+  class Closed extends Error {}
+  for (const scenario of ["other_write", "read_bytes", "admitted"]) {
+    let transportClosed = false, clientClosed = false;
+    const transport = {socket: {bytesRead: scenario === "read_bytes" ? 1 : 0},
+      async writeLine() { if (scenario === "other_write") throw new Error("write_failed"); },
+      close() { transportClosed = true; }};
+    const opened = async () => scenario === "read_bytes" ? Promise.reject(new Closed())
+      : {close() { clientClosed = true; }};
+    await assert.rejects(requireDeniedBeforeReply(transport, scenario, "preface\n", opened, Closed));
+    assert.equal(transportClosed, true);
+    assert.equal(clientClosed, scenario === "admitted");
+  }
+});
+
+test("owner-death witness binds pinned PID to parent and encoded executable", () => {
+  const expected = "C:\\Program Files\\Owner's host;Exit 0.exe";
+  const script = hostWitnessScript(345, 123, expected);
+  assert.match(script, /GetProcessById\(345\); \$null=\$p.Handle/);
+  assert.match(script, /Get-CimInstance -ClassName Win32_Process -Filter 'ProcessId = 345'/);
+  assert.match(script, /\$p.HasExited/);
+  assert.match(script, /\$info.ParentProcessId -ne 123/);
+  assert.match(script, /\$info.ExecutablePath/);
+  assert.equal(script.includes(expected), false);
+  const encoded = script.match(/FromBase64String\('([A-Za-z0-9+/=]+)'\)/)?.[1];
+  assert.equal(Buffer.from(encoded, "base64").toString("utf16le"), expected);
+  assert.throws(() => hostWitnessScript(123, 123, expected), /host_witness_arguments/);
 });
