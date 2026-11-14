@@ -3,8 +3,10 @@
 import copy
 import json
 from pathlib import Path
+import subprocess
 import sys
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -20,6 +22,11 @@ def fixture_bytes():
                        separators=(",", ":")) + "\n").encode()
 
 
+def failed_fixture_bytes(phase="owner_stop"):
+    return (json.dumps({"v": 1, "passed": False, "scope": producer.FIXTURE_SCOPE,
+                        "phase": phase, "duration_ms": 23}, separators=(",", ":")) + "\n").encode()
+
+
 def test_fixture_result_is_one_exact_content_free_line():
     assert producer.fixture_result(fixture_bytes())["checks"] == producer.FIXTURE_CHECKS
     for raw in (fixture_bytes() + b"extra\n", fixture_bytes().rstrip(b"\n"),
@@ -32,12 +39,26 @@ def test_fixture_result_is_one_exact_content_free_line():
             producer.fixture_result(raw)
 
 
+def test_optional_failure_phase_discards_malformed_or_private_output():
+    assert producer.fixture_failure(failed_fixture_bytes()) == "owner_stop"
+    for raw in (failed_fixture_bytes() + b"extra\n",
+                failed_fixture_bytes().replace(b'"phase":"owner_stop"', b'"phase":"PRIVATE_PATH"'),
+                failed_fixture_bytes().replace(b'"v":1', b'"v":1,"v":1'),
+                failed_fixture_bytes().replace(b'"duration_ms":23', b'"duration_ms":240001'),
+                failed_fixture_bytes().replace(b'"phase":"owner_stop"',
+                                               b'"phase":"owner_stop","raw":"PRIVATE_PATH"')):
+        assert producer.fixture_failure(raw) is None
+        with pytest.raises(ValueError):
+            producer.fixture_result(raw)
+
+
 def test_one_child_capture_requires_exit_and_bounded_drained_output(tmp_path, monkeypatch):
     script = tmp_path / "separate-process-check.mjs"
     script.write_text("import os,sys,time\nmode=os.environ['FIXTURE_CAPTURE_MODE']\n"
         "if mode=='sleep': time.sleep(10)\n"
         "elif mode=='overflow': sys.stdout.write('x'*5000)\n"
         "elif mode=='stderr': sys.stderr.write('PRIVATE_SECRET')\n"
+        "elif mode=='failed': sys.stdout.buffer.write(os.environ['FIXTURE_FAILURE_RESULT'].encode()); sys.exit(1)\n"
         "else: sys.stdout.buffer.write(os.environ['FIXTURE_RESULT'].encode())\n",
         encoding="utf-8")
     actual_popen = producer.subprocess.Popen
@@ -48,6 +69,7 @@ def test_one_child_capture_requires_exit_and_bounded_drained_output(tmp_path, mo
         return child
     monkeypatch.setattr(producer.subprocess, "Popen", launch)
     monkeypatch.setenv("FIXTURE_RESULT", fixture_bytes().decode())
+    monkeypatch.setenv("FIXTURE_FAILURE_RESULT", failed_fixture_bytes().decode())
     monkeypatch.setenv("FIXTURE_CAPTURE_MODE", "success")
     raw = producer.run_fixture(sys.executable, tmp_path, tmp_path / "host.exe", tmp_path / "data",
                                time.monotonic() + 5)
@@ -59,6 +81,39 @@ def test_one_child_capture_requires_exit_and_bounded_drained_output(tmp_path, mo
             producer.run_fixture(sys.executable, tmp_path, tmp_path / "host.exe", tmp_path / "data",
                                  time.monotonic() + (0.2 if mode == "sleep" else 5))
         assert children[-1].poll() is not None
+    monkeypatch.setenv("FIXTURE_CAPTURE_MODE", "failed")
+    with pytest.raises(producer.FixtureExecutionFailure) as caught:
+        producer.run_fixture(sys.executable, tmp_path, tmp_path / "host.exe", tmp_path / "data",
+                             time.monotonic() + 5)
+    assert caught.value.failure_phase == "owner_stop" and children[-1].poll() == 1
+
+
+def test_retirement_cleanup_uses_one_shared_child_deadline(monkeypatch, tmp_path):
+    class Stream:
+        def read(self, count):
+            time.sleep(2)
+            return b""
+        def close(self): pass
+    class Stalled:
+        def __init__(self):
+            self.stdout = Stream()
+            self.stderr = Stream()
+            self.killed = False
+            self.wait_budgets = []
+        def poll(self): return None
+        def kill(self): self.killed = True
+        def wait(self, timeout):
+            self.wait_budgets.append(timeout)
+            time.sleep(timeout)
+            raise subprocess.TimeoutExpired("fixture", timeout)
+    child = Stalled()
+    monkeypatch.setattr(producer.subprocess, "Popen", lambda *args, **kwargs: child)
+    started = time.monotonic()
+    with pytest.raises(TimeoutError):
+        producer.run_fixture("node", tmp_path, tmp_path / "host.exe", tmp_path / "data", started + 0.5)
+    elapsed = time.monotonic() - started
+    assert child.killed is True and len(child.wait_budgets) == 1
+    assert child.wait_budgets[0] < 0.2 and elapsed < 1.0
 
 
 def prepared_run(tmp_path, monkeypatch, *, execution=None):
@@ -130,6 +185,15 @@ def test_failed_fixture_and_changed_final_host_retain_owned_workspace(tmp_path, 
     assert "cleanup" not in events2
 
 
+def test_failed_child_phase_is_retained_only_as_fixed_label(tmp_path, monkeypatch):
+    report, workspace, events = prepared_run(tmp_path, monkeypatch, execution=lambda runtime:
+        (_ for _ in ()).throw(producer.FixtureExecutionFailure("owner_stop")))
+    result = producer.run("a" * 40, bootstrap_report=report, temporary_root=tmp_path)
+    assert result["passed"] is False and result["phase"] == "separate_process_execution"
+    assert result["fixture_failure"] == "owner_stop" and result["workspace_retained"] is True
+    assert workspace.is_dir() and "cleanup" not in events
+
+
 def test_wrong_bootstrap_preflight_refuses_install_and_launch(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(producer, "verified_inputs", lambda *_:
@@ -166,6 +230,21 @@ def test_cleanup_failure_cannot_promote_positive_execution(tmp_path, monkeypatch
     assert result["workspace_retained"] is True and workspace.is_dir()
     assert events[-2:] == ["binding", "cleanup_attempt"]
     assert "PRIVATE_PATH" not in json.dumps(result)
+
+
+def test_cleanup_overrun_cannot_promote_positive_execution(tmp_path, monkeypatch):
+    report, workspace, events = prepared_run(tmp_path, monkeypatch)
+    actual = time.monotonic
+    offset = [0]
+    monkeypatch.setattr(producer, "time", SimpleNamespace(monotonic=lambda: actual() + offset[0],
+                                                            sleep=time.sleep))
+    def late_cleanup(directory, parent):
+        events.append("cleanup")
+        offset[0] = producer.TOTAL_SECONDS + 1
+    monkeypatch.setattr(producer, "cleanup", late_cleanup)
+    result = producer.run("a" * 40, bootstrap_report=report, temporary_root=tmp_path)
+    assert result["passed"] is False and result["phase"] == "owned_workspace_cleanup"
+    assert "cleanup" in events and result["workspace_retained"] is True and workspace.is_dir()
 
 
 @pytest.mark.parametrize("field,value", [

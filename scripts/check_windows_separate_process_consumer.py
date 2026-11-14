@@ -32,6 +32,9 @@ FIXTURE_CHECKS = {"normal_owners": 1, "distinct_helper_processes": 2, "clean_hel
                   "owner_survived_detach": True, "replacement_shared_fresh_state": True,
                   "positive_owner_stop": True, "post_stop_helper_request_rejected": True,
                   "bounded_helper_exit": True}
+FIXTURE_FAILURE_PHASES = frozenset({"arguments", "owner_start", "fresh_profile",
+    "first_helper_attach", "first_helper_detach", "replacement_helper_attach", "owner_stop",
+    "helper_after_stop"})
 CHECKS = {**FIXTURE_CHECKS, "efs_profile_directory": True, "efs_vault_file": True}
 MAX_STDOUT = 4096
 MAX_STDERR = 1024
@@ -69,6 +72,31 @@ def fixture_result(raw):
     return value
 
 
+def fixture_failure(raw):
+    """Select only an exact fixed failure phase; discard all other child output."""
+    try:
+        if (type(raw) is not bytes or not 0 < len(raw) <= MAX_STDOUT
+                or raw.count(b"\n") != 1 or not raw.endswith(b"\n")):
+            return None
+        value = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_object,
+                           parse_constant=_reject_constant)
+        if (type(value) is dict and set(value) == {"v", "passed", "scope", "phase", "duration_ms"}
+                and type(value["v"]) is int and value["v"] == 1 and value["passed"] is False
+                and value["scope"] == FIXTURE_SCOPE and type(value["phase"]) is str
+                and value["phase"] in FIXTURE_FAILURE_PHASES
+                and type(value["duration_ms"]) is int and 0 <= value["duration_ms"] <= CHILD_SECONDS * 1000):
+            return value["phase"]
+    except (ValueError, UnicodeError, TypeError):
+        pass
+    return None
+
+
+class FixtureExecutionFailure(ValueError):
+    def __init__(self, failure_phase=None):
+        super().__init__("fixture_process")
+        self.failure_phase = failure_phase
+
+
 class _Capture:
     def __init__(self, limit, fault):
         self.limit = limit
@@ -97,8 +125,13 @@ class _Capture:
 
 def run_fixture(node, directory, runtime, data, overall_deadline):
     """Own exactly one child, its bounded readers and one monotonic retirement window."""
-    deadline = min(overall_deadline, time.monotonic() + CHILD_SECONDS)
-    if deadline <= time.monotonic():
+    started = time.monotonic()
+    deadline = min(overall_deadline, started + CHILD_SECONDS)
+    if deadline <= started:
+        raise TimeoutError("fixture_deadline")
+    retirement_reserve = min(10, max(0.05, (deadline - started) / 4))
+    work_deadline = deadline - retirement_reserve
+    if work_deadline <= started:
         raise TimeoutError("fixture_deadline")
     process = None
     readers = []
@@ -117,18 +150,21 @@ def run_fixture(node, directory, runtime, data, overall_deadline):
         while process.poll() is None:
             if fault.is_set():
                 raise ValueError("fixture_output_budget")
-            remaining = deadline - time.monotonic()
+            remaining = work_deadline - time.monotonic()
             if remaining <= 0:
                 raise TimeoutError("fixture_deadline")
             time.sleep(min(0.05, remaining))
         for reader in readers:
-            reader.join(timeout=max(0, deadline - time.monotonic()))
+            reader.join(timeout=max(0, work_deadline - time.monotonic()))
             if reader.is_alive():
                 raise TimeoutError("fixture_reader_deadline")
-        if time.monotonic() >= deadline:
+        if time.monotonic() >= work_deadline:
             raise TimeoutError("fixture_deadline")
-        if (fault.is_set() or output.overflow or error.overflow or output.failed or error.failed
-                or process.returncode != 0 or error.data):
+        if fault.is_set() or output.overflow or error.overflow or output.failed or error.failed:
+            raise ValueError("fixture_process")
+        if process.returncode != 0:
+            raise FixtureExecutionFailure(fixture_failure(bytes(output.data)) if not error.data else None)
+        if error.data:
             raise ValueError("fixture_process")
         return bytes(output.data)
     finally:
@@ -136,10 +172,10 @@ def run_fixture(node, directory, runtime, data, overall_deadline):
             if process.poll() is None:
                 try: process.kill()
                 except OSError: pass
-            try: process.wait(timeout=5)
+            try: process.wait(timeout=max(0, deadline - time.monotonic()))
             except subprocess.TimeoutExpired: pass
             for reader in readers:
-                reader.join(timeout=5)
+                reader.join(timeout=max(0, deadline - time.monotonic()))
 
 
 def verify_report(record, source, tree):
@@ -226,11 +262,17 @@ def run(expected_source, *, bootstrap_report=None, temporary_root=None):
         if deadline - time.monotonic() < 30:
             raise TimeoutError("producer_cleanup_reserve")
         cleanup(directory, parent)
+        candidate["duration_seconds"] = time.monotonic() - started
+        if candidate["duration_seconds"] >= TOTAL_SECONDS:
+            raise TimeoutError("producer_deadline")
+        verify_report(candidate, binding["source_commit"], binding["source_tree"])
         result = candidate
     except Exception as failure:
         result.update(phase=phase, failure_type=type(failure).__name__,
                       workspace_retained=directory is not None and directory.is_dir(),
                       duration_seconds=min(max(0, time.monotonic() - started), TOTAL_SECONDS + 60))
+        if isinstance(failure, FixtureExecutionFailure) and failure.failure_phase is not None:
+            result["fixture_failure"] = failure.failure_phase
     return result
 
 
