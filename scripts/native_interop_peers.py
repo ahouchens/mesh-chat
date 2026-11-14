@@ -728,10 +728,12 @@ class AndroidPeer:
         process = self.process
         if process is None:
             return
+        reader = self._reader
         finished = False
         prior_failure = None
         primary_failure = None
         reader_retired = False
+        reader_join_attempted = False
         stage = "force_stop" if crash else "finish"
         try:
             if crash:
@@ -746,8 +748,9 @@ class AndroidPeer:
             stage = "process_wait"
             code = process.wait(timeout=30)
             stage = "reader_join"
-            self._reader.join(5)
-            reader_retired = not self._reader.is_alive()
+            reader_join_attempted = True
+            reader.join(5)
+            reader_retired = not reader.is_alive()
             if not crash:
                 stage = "exit_check"
                 if code != 0 or not reader_retired:
@@ -773,10 +776,15 @@ class AndroidPeer:
                 if process.poll() is None:
                     process.kill()
                     process.wait(timeout=10)
+                if not reader_join_attempted:
+                    try:
+                        reader.join(5)
+                    except Exception:
+                        if primary_failure is None:
+                            raise
                 if not reader_retired:
                     try:
-                        self._reader.join(5)
-                        reader_retired = not self._reader.is_alive()
+                        reader_retired = not reader.is_alive()
                     except Exception:
                         if primary_failure is None:
                             raise

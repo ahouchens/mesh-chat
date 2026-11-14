@@ -54,6 +54,7 @@ def test_cleanup_adb_failure_replaces_earlier_error_without_false_attribution(mo
     peer = peers.AndroidPeer(b"k" * 32)
     peer.forward = "12345"
     peer.process = SimpleNamespace(poll=lambda: None)
+    peer._reader = SimpleNamespace(join=lambda timeout: None, is_alive=lambda: False)
     first = subprocess.CalledProcessError(9, ["PRIVATE_FORCE_STOP"])
     cleanup = subprocess.CalledProcessError(11, ["PRIVATE_FORWARD_REMOVE"])
     calls = []

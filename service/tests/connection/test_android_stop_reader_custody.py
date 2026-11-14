@@ -84,6 +84,21 @@ def test_intentional_crash_allows_255_after_reader_and_forward_retire():
                         ("forward", "--remove", "tcp:12345")]
 
 
+def test_stop_uses_the_reader_captured_with_its_process():
+    peer, process, reader, _ = owned_peer(code=255)
+    replacement = Reader(active=True)
+
+    def adb(*args):
+        if args[:3] == ("shell", "am", "force-stop"):
+            peer._reader = replacement
+
+    peer._adb = adb
+    peer.stop(crash=True)
+
+    assert reader.joins == [5] and replacement.joins == []
+    assert process.stdout.closed and peer.process is None
+
+
 @pytest.mark.parametrize("origin", ["old_stop", "start_rollback"])
 def test_stalled_reader_retains_owner_until_later_explicit_stop(origin):
     peer, process, reader, commands = owned_peer(code=255, reader_active=True)
@@ -91,7 +106,7 @@ def test_stalled_reader_retains_owner_until_later_explicit_stop(origin):
     with pytest.raises(PeerFailure, match="android_reader_retirement_unverified"):
         peer.stop(crash=True, _origin=origin)
 
-    assert reader.joins == [5, 5]
+    assert reader.joins == [5]
     assert peer.process is process and not process.stdout.closed
     assert peer.forward is None and peer.forced_exits == 1
     assert commands == [("shell", "am", "force-stop", peer.APP),
@@ -102,7 +117,7 @@ def test_stalled_reader_retains_owner_until_later_explicit_stop(origin):
     reader.active = False
     peer.stop(crash=True, _origin=origin)
     assert process.stdout.closed and peer.process is None
-    assert reader.joins == [5, 5, 5]
+    assert reader.joins == [5, 5]
 
 
 def test_prior_force_stop_error_survives_stalled_reader_and_keeps_custody():
@@ -136,6 +151,6 @@ def test_clean_stop_reader_failure_keeps_original_error_and_custody():
     with pytest.raises(PeerFailure, match="unclean_android_exit"):
         peer.stop()
 
-    assert reader.joins == [5, 5]
+    assert reader.joins == [5]
     assert peer.process is process and not process.stdout.closed
     assert peer.clean_exits == 0
