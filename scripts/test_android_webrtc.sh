@@ -68,7 +68,7 @@ result=0
 observe_transport() {
   local method="$1" test_class="$2" stage="$3" adb_exit="$4" tee_exit="$5"
   local state=unknown collector=not_active selected
-  selected="$(timeout 5s adb -s "$device_serial" get-state </dev/null 2>/dev/null | head -c 32)" || selected=''
+  selected="$(timeout --kill-after=1s 5s adb -s "$device_serial" get-state </dev/null 2>/dev/null | head -c 32)" || selected=''
   case "$selected" in device|offline) state="$selected" ;; esac
   if collector_running; then collector=active; fi
   if collector_stopped; then collector=stopped; fi

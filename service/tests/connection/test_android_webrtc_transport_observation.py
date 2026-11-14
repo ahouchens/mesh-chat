@@ -142,6 +142,6 @@ bash scripts/test_android_webrtc.sh'''
         "ownership": "owned_stop", "category": "signal_or_unknown"}
     assert "adb: device offline" not in (reports / "second.transport.tsv").read_text()
     script = SCRIPT.read_text()
-    assert 'timeout 5s adb -s "$device_serial" get-state' in script
+    assert 'timeout --kill-after=1s 5s adb -s "$device_serial" get-state' in script
     assert "| head -c 32" in script
     assert 'timeout 15s adb -s "$device_serial" shell am force-stop' in script
