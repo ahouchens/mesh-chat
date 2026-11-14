@@ -1,13 +1,15 @@
 """One installed Windows application-owned host and public TypeScript SDK session.
 
 The smoke command proves only fresh public profile creation and clean host exit.
-Controllers may use WindowsPublicConsumerSession.open/request/finish, then inspect
-its owned workspace and explicitly remove it with cleanup_workspace(). No private
-Core pipe, native command, pairing orchestrator, or peer acceptance lives here.
+Controllers may use WindowsPublicConsumerSession.open/request/finish, optionally
+reopen the same retained data after positive retirement, then inspect its owned
+workspace and explicitly remove it with cleanup_workspace(). No private Core pipe,
+native command, pairing orchestrator, or peer acceptance lives here.
 """
 
 import argparse
 import json
+import math
 import os
 from pathlib import Path
 import queue
@@ -178,12 +180,23 @@ class WindowsPublicConsumerSession:
             raise ValueError("installed_inputs_changed")
         require_unchanged(self.binary, self.binding)
         self.data = self.directory / "app-data"
+        self._start_process(time.monotonic() + SESSION_SECONDS)
+        return self
+
+    def _start_process(self, deadline):
         self.phase = "public_session_start"
-        self.deadline = time.monotonic() + SESSION_SECONDS
+        remaining(deadline)
+        self.deadline = deadline
+        self.responses = queue.Queue(maxsize=2)
+        self.output_failure = threading.Event()
+        self.stderr_bytes = 0
+        self.sequence = 0
+        self.faulted = False
         self.process = subprocess.Popen([self.node, "consumer.mjs", "--runtime", str(self.runtime),
             "--data-directory", str(self.data)], cwd=self.directory,
             env=bootstrap.application_environment(os.environ), stdin=subprocess.PIPE,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
+        self.retired = False
         self.stdout_reader = threading.Thread(target=self._read_stdout, daemon=True)
         self.stderr_reader = threading.Thread(target=self._read_stderr, daemon=True)
         try:
@@ -193,6 +206,35 @@ class WindowsPublicConsumerSession:
             self._kill()
             raise
         self.phase = "public_requests"
+
+    def reopen_same_data(self, overall_deadline):
+        """Launch a new ordinary owner only after exact positive retirement."""
+        if (not self.opened or not self.retired or self.workspace_cleaned or self.faulted
+                or self.process is None or self.process.poll() != 0
+                or self.stdout_reader.is_alive() or self.stderr_reader.is_alive()):
+            raise ValueError("reopen_requires_retirement")
+        if type(overall_deadline) not in {int, float}:
+            raise ValueError("reopen_deadline")
+        try:
+            if not math.isfinite(overall_deadline):
+                raise ValueError("reopen_deadline")
+        except OverflowError:
+            raise ValueError("reopen_deadline") from None
+        deadline = min(time.monotonic() + SESSION_SECONDS, overall_deadline)
+        remaining(deadline)
+        self.phase = "same_data_reopen_admission"
+        binary, binding, sdk, report_hash = verified_inputs(self.expected_source, self.bootstrap_report)
+        if (binary != self.binary or binding != self.binding or sdk != self.sdk
+                or report_hash != self.report_hash or digest(self.sdk) != self.sdk_hash):
+            raise ValueError("installed_inputs_changed")
+        require_unchanged(self.binary, self.binding)
+        if (digest(self.runtime) != self.binding["sidecar_sha256"]
+                or any(digest(self.directory / name) != value
+                       for name, value in self.installed["application_files"].items())):
+            raise ValueError("installed_inputs_changed")
+        bootstrap.protected_profile(self.data)
+        remaining(deadline)
+        self._start_process(deadline)
         return self
 
     def _kill(self):

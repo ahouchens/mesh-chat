@@ -275,6 +275,104 @@ def test_post_exit_app_change_prevents_retirement_claim(tmp_path, monkeypatch):
     assert peer.retired is False and peer.directory.is_dir()
 
 
+def retired_peer(tmp_path, monkeypatch):
+    peer = ready_peer(tmp_path)
+    peer.opened = peer.retired = True
+    peer.binary = peer.runtime
+    peer.node = "node"
+    peer.data = peer.directory / "app-data"
+    peer.data.mkdir()
+    peer.process = type("Retired", (), {"poll": lambda self: 0})()
+    peer.stdout_reader = peer.stderr_reader = type("Reader", (), {"is_alive": lambda self: False})()
+    peer.sequence = 7
+    peer.responses.put(b"old reply\n")
+    monkeypatch.setattr(session, "verified_inputs", lambda expected, report:
+                        (peer.binary, peer.binding, peer.sdk, peer.report_hash))
+    monkeypatch.setattr(session, "digest", lambda path: "same")
+    monkeypatch.setattr(session, "require_unchanged", lambda binary, binding: None)
+    monkeypatch.setattr(session.bootstrap, "protected_profile", lambda path: {"protected": True})
+    return peer
+
+
+def test_same_data_reopen_starts_fresh_owner_after_positive_retirement(tmp_path, monkeypatch):
+    peer = retired_peer(tmp_path, monkeypatch)
+    launches = []
+    class Process:
+        def __init__(self):
+            self.stdin = io.BytesIO()
+            self.stdout = io.BytesIO()
+            self.stderr = io.BytesIO()
+        def poll(self): return 0
+        def wait(self, timeout): return 0
+    def launch(command, **options):
+        launches.append((command, options))
+        return Process()
+    monkeypatch.setattr(session.subprocess, "Popen", launch)
+    outer = time.monotonic() + 20
+    assert peer.reopen_same_data(outer) is peer
+    assert len(launches) == 1
+    command, options = launches[0]
+    assert command == ["node", "consumer.mjs", "--runtime", str(peer.runtime),
+                       "--data-directory", str(peer.data)]
+    assert options["cwd"] == peer.directory and peer.deadline == outer
+    assert peer.sequence == 0 and peer.responses.get_nowait() is None
+    assert peer.retired is False and peer.workspace_cleaned is False
+    assert peer.finish() is True and peer.retired is True
+    assert peer.data.is_dir()
+
+
+@pytest.mark.parametrize("changed", ["source", "application", "protection"])
+def test_same_data_reopen_refuses_changed_inputs_before_launch(tmp_path, monkeypatch, changed):
+    peer = retired_peer(tmp_path, monkeypatch)
+    if changed == "source":
+        monkeypatch.setattr(session, "verified_inputs", lambda expected, report:
+                            (peer.binary, {**peer.binding, "source_tree": "changed"}, peer.sdk, peer.report_hash))
+    elif changed == "application":
+        app = peer.directory / "consumer.mjs"
+        app.write_bytes(b"changed")
+        peer.installed = {"application_files": {"consumer.mjs": "original"}}
+        monkeypatch.setattr(session, "digest", lambda path:
+                            "changed" if Path(path).name == "consumer.mjs" else "same")
+    else:
+        monkeypatch.setattr(session.bootstrap, "protected_profile", lambda path:
+                            (_ for _ in ()).throw(ValueError("unprotected_profile")))
+    launches = []
+    monkeypatch.setattr(session.subprocess, "Popen", lambda *args, **kwargs: launches.append(True))
+    with pytest.raises(ValueError):
+        peer.reopen_same_data(time.monotonic() + 20)
+    assert launches == [] and peer.retired is True and peer.directory.is_dir()
+    assert peer.workspace_cleaned is False
+
+
+def test_same_data_reopen_refuses_bad_lifetime_and_deadline(tmp_path, monkeypatch):
+    peer = retired_peer(tmp_path, monkeypatch)
+    launches = []
+    monkeypatch.setattr(session.subprocess, "Popen", lambda *args, **kwargs: launches.append(True))
+    peer.retired = False
+    with pytest.raises(ValueError, match="reopen_requires_retirement"):
+        peer.reopen_same_data(time.monotonic() + 20)
+    peer.retired = True
+    peer.workspace_cleaned = True
+    with pytest.raises(ValueError, match="reopen_requires_retirement"):
+        peer.reopen_same_data(time.monotonic() + 20)
+    peer.workspace_cleaned = False
+    with pytest.raises(ValueError, match="reopen_deadline"):
+        peer.reopen_same_data(float("nan"))
+    with pytest.raises(TimeoutError, match="public_session_deadline"):
+        peer.reopen_same_data(time.monotonic() - 1)
+    assert launches == [] and peer.directory.is_dir()
+
+
+def test_failed_same_data_relaunch_retains_workspace(tmp_path, monkeypatch):
+    peer = retired_peer(tmp_path, monkeypatch)
+    def fail_launch(*args, **kwargs):
+        raise OSError("launch_failed")
+    monkeypatch.setattr(session.subprocess, "Popen", fail_launch)
+    with pytest.raises(OSError, match="launch_failed"):
+        peer.reopen_same_data(time.monotonic() + 20)
+    assert peer.retired is True and peer.workspace_cleaned is False and peer.directory.is_dir()
+
+
 def test_smoke_profile_requires_stable_public_handle():
     calls = []
     class Peer:
