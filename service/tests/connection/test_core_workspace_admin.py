@@ -905,6 +905,7 @@ def test_admin_requests_replay_once_after_reply_loss_and_host_reopen(tmp_path):
         assert submit(other_caller, reopened_profile, *cases[0])["error"]["code"] == "forbidden"
         requests, deliveries = retained(reopened)
         assert len(requests) == len(deliveries) == 2
+        assert ({item["id"] for item in requests}, {item["id"] for item in deliveries}) == retained_ids
     finally:
         if reopened is not None:
             reopened.close()
