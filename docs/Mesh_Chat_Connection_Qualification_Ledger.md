@@ -1,5 +1,23 @@
 # Connection runtime qualification ledger
 
+## Media target discovery bounded and reviewed — November 14, 2026
+
+Worker commits `142c7fd` and `b621152`, integrated as `51b4afb` and `fbefa69`,
+add fixed endpoint/list/target observations and the owned app's running state
+after the probe. No URLs, titles, target lists or raw process output are retained.
+Response decoding is capped at 64 KiB and target iteration at 128 entries;
+malformed lists fail closed. Debugger connections require the reserved loopback
+port and a bounded page path, then connect through `127.0.0.1`. Oversize-body
+cancellation cannot hold the probe open. Existing seven actual WebView2 capture
+checks, CI synthetic-device flags, permissions and required retirement remain.
+
+Root passed 39 tests with Node 24 across all three media modules, including real
+HTTP discovery cases. One existing live-symlink case is unavailable on this
+Windows host. Independent review found no blocker. The exact staged driver
+emits only fixed small result/diagnostic objects; the existing Python child
+capture does not enforce a separate stream byte limit. Actual target discovery
+and capture require a new source-bound CI run.
+
 ## Bounded Android control-path observation reviewed — November 14, 2026
 
 Worker commits `57b32bd`, `3b584cd` and `ed28196`, integrated as `bcaf041`,
