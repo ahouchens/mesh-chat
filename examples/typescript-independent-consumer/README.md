@@ -72,6 +72,18 @@ The public pairing disclosure option governs gathering; it does not grant
 persistent per-contact direct-IP messaging consent. This check uses the supported
 relay-only route and never injects that separate consent through a private API.
 
+`separate-process-check.mjs` is a separate fresh-profile diagnostic fixture. One
+normal owner keeps the runtime and one public SDK session; it starts an installed
+`consumer.mjs --pipe` child, observes the same public profile, requires that
+child to detach and exit while the owner stays usable, then attaches a replacement
+child. With the replacement attached, the owner stops the host and requires
+positive host retirement, failed post-stop child access and bounded child exit.
+It retains only fixed check counts, timing and a failure stage. The fixture is
+not yet in the installed staging list or qualification workflow. It does not
+cover paired pending work, wrong-image callers, cross-application isolation or
+full SC22/SC26 acceptance: same-user Node processes with the exact allowed
+executable image currently receive the same owner grant.
+
 The qualification pairing check opts into a one-shot owner diagnostic with
 `MESH_CHAT_APP_PAIRING_DIAGNOSTICS=1`; ordinary launches leave it disabled.
 After a public failure, the owner sends EOF and observes the exact child's
