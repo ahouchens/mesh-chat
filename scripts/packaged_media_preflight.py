@@ -31,6 +31,8 @@ LEVEL = "windows_packaged_app_webview2_media_preflight_only"
 FIELDS = {"appMounted", "tauriBridge", "mediaApi", "peerApi", "buildCommitMatches", "captured", "stopped"}
 HEX64 = re.compile(r"[a-fA-F0-9]{64}\Z")
 HEX40 = re.compile(r"[a-f0-9]{40}\Z")
+VERSION = re.compile(r"(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\Z")
+MAX_REPORT_BYTES = 16 * 1024
 
 
 class PreflightFailure(RuntimeError):
@@ -97,6 +99,10 @@ def published_bytes(manifest_path: Path, expected_digest: str, app: Path) -> dic
             or manifest.get("platform") != "windows" or not isinstance(manifest.get("version"), str)
             or not isinstance(manifest.get("artifacts"), list)):
         raise PreflightFailure("manifest_invalid")
+    version = manifest["version"]
+    match = VERSION.fullmatch(version) if len(version) <= 12 else None
+    if match is None or int(match.group(1)) * 1_000_000 + int(match.group(2)) * 1_000 + int(match.group(3)) > 2_100_000_000:
+        raise PreflightFailure("manifest_version_invalid")
     if app.name.lower() != "mesh-chat.exe" or app.resolve().is_relative_to(ROOT):
         raise PreflightFailure("app_not_installed_candidate")
     roles = {}
@@ -271,10 +277,12 @@ def retire(process: subprocess.Popen[bytes] | None, port: int | None) -> bool:
 
 
 def write_report(path: Path, report: dict) -> None:
+    payload = (json.dumps(report, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    if len(payload) > MAX_REPORT_BYTES:
+        raise PreflightFailure("report_too_large")
     path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, suffix=".tmp", delete=False) as output:
-        json.dump(report, output, indent=2, sort_keys=True)
-        output.write("\n")
+    with tempfile.NamedTemporaryFile("wb", dir=path.parent, suffix=".tmp", delete=False) as output:
+        output.write(payload)
         pending = Path(output.name)
     pending.replace(path)
 

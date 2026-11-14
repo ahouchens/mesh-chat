@@ -18,7 +18,9 @@ app process, attaches to that process's WebView2 through a fresh loopback DevToo
 port, checks the app's embedded source through the public `app_build_info` command,
 and exercises real `getUserMedia` audio capture and track/peer closure with
 WebView2's virtual device flags. The result contains only bounded boolean checks,
-hashes, source/run binding, and a failure phase. After the probe it rechecks source,
+hashes, source/run binding, a stable release version and a failure phase. The
+serialized report is capped at 16 KiB before any temporary file is written.
+After the probe it rechecks source,
 both provenance files, installed binaries and driver bytes, then retires the app
 and requires the DevTools port to close. The CI route must supply the two expected
 digests from its exact-run artifact index; the runner does not infer them from a

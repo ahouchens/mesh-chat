@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import subprocess
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -80,6 +81,23 @@ class PublishedCandidateTests(unittest.TestCase):
                 preflight.published_bytes(manifest, expected, app)
             with self.assertRaisesRegex(preflight.PreflightFailure, "manifest_mismatch"):
                 preflight.published_bytes(manifest, "0" * 64, app)
+            for version in ("9" * 20_000, "1.2.3-rc", "2101.0.0"):
+                value = json.loads(manifest.read_text(encoding="utf-8"))
+                value["version"] = version
+                manifest.write_text(json.dumps(value), encoding="utf-8")
+                with self.assertRaisesRegex(preflight.PreflightFailure, "manifest_version_invalid"):
+                    preflight.published_bytes(manifest, preflight.digest(manifest), app)
+
+    def test_report_has_serialized_16k_bound_before_temporary_write(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "report.json"
+            with self.assertRaisesRegex(preflight.PreflightFailure, "report_too_large"):
+                preflight.write_report(target, {"release_version": "9" * 20_000})
+            self.assertFalse(target.exists())
+            self.assertFalse(list(root.glob("*.tmp")))
+            preflight.write_report(target, {"v": 1, "passed": False})
+            self.assertLessEqual(target.stat().st_size, preflight.MAX_REPORT_BYTES)
 
     def test_real_delivery_schema_binds_source_manifest_and_installed_files(self):
         source = "a" * 40
@@ -170,13 +188,31 @@ class PublishedCandidateTests(unittest.TestCase):
                     preflight.require_unchanged("a" * 40, "b" * 40, manifest, preflight.digest(manifest),
                                                 root / "report.json", "c" * 64, app, bound, preflight.digest(driver))
 
-    def test_reparse_manifest_and_oversize_input_are_rejected(self):
+    def test_reparse_attribute_and_oversize_input_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             original = root / "manifest.json"
             original.write_text("{}", encoding="utf-8")
             with self.assertRaisesRegex(preflight.PreflightFailure, "input_size_or_type_invalid"):
                 preflight.checked_bytes(original, 1)
+            original_lstat = Path.lstat
+
+            def reparse_attribute(path, *args, **kwargs):
+                info = original_lstat(path, *args, **kwargs)
+                if path == original.absolute():
+                    return SimpleNamespace(st_mode=info.st_mode, st_size=info.st_size,
+                                           st_file_attributes=0x400)
+                return info
+
+            with patch.object(Path, "lstat", reparse_attribute):
+                with self.assertRaisesRegex(preflight.PreflightFailure, "reparse_input"):
+                    preflight.checked_bytes(original)
+
+    def test_live_symlink_input_is_rejected_when_windows_allows_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            original = root / "manifest.json"
+            original.write_text("{}", encoding="utf-8")
             link = root / "linked.json"
             try:
                 link.symlink_to(original)
