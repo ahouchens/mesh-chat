@@ -7438,6 +7438,64 @@ describe("workspace access recommendations", () => {
     expect(screen.getByRole("button", { name: "Send again to workspace members" })).toBeTruthy();
   });
 
+  it("holds the access-point selection during send and releases it when the reply settles", async () => {
+    const reply = deferred<{ sent_devices: number }>();
+    const otherProfile = { ...accessProfile, id: "s".repeat(64), label: "Other relay" };
+    api.serviceCommand.mockImplementation((command: string) => {
+      if (command === "list_remote_profiles") return { profiles: [accessProfile, otherProfile] };
+      if (command === "list_workspace_access_recommendations") return { recommendations: [] };
+      if (command === "create_workspace_access_recommendation") return recommendation("MESHACCESS1:first");
+      if (command === "send_workspace_access_recommendation") return reply.promise;
+      return {};
+    });
+    renderAccess();
+    await prepareAccess();
+    fireEvent.click(screen.getByRole("button", { name: "Send to workspace members" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("send_workspace_access_recommendation", expect.anything()));
+    const select = screen.getByLabelText("Access point") as HTMLSelectElement;
+    expect(select.disabled).toBe(true);
+    await act(async () => { reply.resolve({ sent_devices: 1 }); });
+    await waitFor(() => expect(select.disabled).toBe(false));
+    fireEvent.change(select, { target: { value: otherProfile.id } });
+    expect(select.value).toBe(otherProfile.id);
+    expect(screen.queryByLabelText("Workspace access recommendation")).toBeNull();
+    expect((screen.getByRole("button", { name: "Create recommendation" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("prunes an absent workspace's saved recommendation from the Messenger lifetime", async () => {
+    let current: Snapshot = { ...snapshot(), workspaces: [workspace], workspace_channels: [workspaceChannel] };
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation((command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "list_workspace_messages") return { messages: [], next_cursor: null, high_water: 0 } satisfies WorkspaceMessagePage;
+      if (command === "list_remote_profiles") return { profiles: [accessProfile] };
+      if (command === "list_workspace_access_recommendations") return { recommendations: [] };
+      if (command === "create_workspace_access_recommendation") return recommendation("MESHACCESS1:first");
+      if (command === "send_workspace_access_recommendation") throw new Error("reply lost");
+      return {};
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Lakewatcher settings" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Access points/ }));
+    await prepareAccess();
+    fireEvent.click(screen.getByRole("button", { name: "Send to workspace members" }));
+    await screen.findByRole("button", { name: "Retry send to workspace members" });
+    current = { ...current, workspaces: [], workspace_channels: [] };
+    await act(async () => { window.dispatchEvent(new Event("focus")); });
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Workspace Lakewatcher" })).toBeNull());
+    current = { ...current, workspaces: [workspace], workspace_channels: [workspaceChannel] };
+    await act(async () => { window.dispatchEvent(new Event("focus")); });
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Lakewatcher settings" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Access points/ }));
+    await screen.findByRole("button", { name: "Create recommendation" });
+    expect(screen.queryByLabelText("Workspace access recommendation")).toBeNull();
+  });
+
   it("fences authority changes and presents a definitive Core refusal", async () => {
     const reply = deferred<{ sent_devices: number }>();
     const sends: string[] = [];

@@ -3458,15 +3458,21 @@ type WorkspaceAccessSendRecovery = {
   attempt: WorkspaceAccessSendAttempt | null;
   sendState: "idle" | "retry" | "confirmed";
 };
+const workspaceAccessOwner = (workspace: Workspace) => workspace.local_role === "owner"
+  && workspace.local_device_id === workspace.authority_device_id
+  && workspace.state === "active" && !workspace.authority_loss;
+const workspaceAccessSendScope = (workspace: Workspace) => JSON.stringify([
+  workspace.core_handle ?? workspace.id, workspace.id, workspace.local_device_id,
+  workspace.authority_device_id, workspace.epoch, workspace.manifest_hash, workspaceAccessOwner(workspace),
+]);
 
 export function WorkspaceAccessSettingsContent({ workspace, onSaved, sendRecovery }: { workspace: Workspace; onSaved: () => Promise<void>; sendRecovery?: Map<string, WorkspaceAccessSendRecovery> }) {
   const profileEffects = useProfileEffectScope();
   const admitProfileRequest = profileEffects.admit;
   const localRecovery = useRef(new Map<string, WorkspaceAccessSendRecovery>());
   const recovery = sendRecovery ?? localRecovery.current;
-  const owner = workspace.local_role === "owner" && workspace.local_device_id === workspace.authority_device_id && workspace.state === "active" && !workspace.authority_loss;
-  const scope = JSON.stringify([workspace.core_handle ?? workspace.id, workspace.id, workspace.local_device_id,
-    workspace.authority_device_id, workspace.epoch, workspace.manifest_hash, owner]);
+  const owner = workspaceAccessOwner(workspace);
+  const scope = workspaceAccessSendScope(workspace);
   const initialRecovery = recovery.get(workspace.id);
   const initial = initialRecovery?.scope === scope ? initialRecovery : null;
   const [profiles, setProfiles] = useState<RemoteProfile[]>([]);
@@ -3623,7 +3629,7 @@ export function WorkspaceAccessSettingsContent({ workspace, onSaved, sendRecover
   return <WorkspaceSettingsPanel><div className="form-stack">
     <p className="muted">An access point is a shared, consented transport. It can make workspace member devices reachable through one operator, but it does not grant membership or authority. The operator sees connection metadata, not message contents.</p>
     {received.length > 0 && <section className="workspace-name-request"><h3>Received for this workspace</h3><p className="muted">These recommendations were delivered by the current owner authority. A stale one must be resent after the next manifest.</p>{received.map((item) => <div className="workspace-invitation-row" key={item.id}><span><strong>{item.profile_label}</strong><small>{item.endpoint_count} endpoint{item.endpoint_count === 1 ? "" : "s"} · expires {formatExpiry(item.expires_at)}{item.stale ? " · stale" : ""}</small></span><span><Button variant="secondary" disabled={busy || item.stale} onClick={() => void reviewReceived(item.id)}>Review</Button></span></div>)}{receivedPreview && receivedId && <div className="workspace-access-preview"><p><strong>{receivedPreview.profile_label}</strong> · {receivedPreview.endpoint_count} endpoint{receivedPreview.endpoint_count === 1 ? "" : "s"} · expires {formatExpiry(receivedPreview.expires_at)}</p><p className="muted">{receivedPreview.profile.privacy_disclosure}</p><label className="checkbox-line"><input type="checkbox" checked={receivedConsent} onChange={(event) => setReceivedConsent(event.target.checked)} /> I consent to attach this access point to {workspace.name}. I understand the operator can observe connection metadata.</label><Button disabled={busy || !receivedConsent} onClick={() => void applyReceived()}>Attach access point</Button></div>}</section>}
-    {owner && <section className="workspace-name-request"><h3>Share an approved access point</h3>{profiles.length === 0 ? <p className="muted">No approved remote profiles are available. Approve one under Settings → Remote connections first.</p> : <><label>Access point<select value={profileId} onChange={(event) => { setProfileId(event.target.value); setCreated(null); sendAttempt.current = null; setSendState("idle"); recovery.delete(workspace.id); }}>{profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.label} · {profile.endpoint_count} endpoint{profile.endpoint_count === 1 ? "" : "s"}</option>)}</select></label><Button variant="secondary" disabled={busy || !profileId} onClick={() => void create()}>{busy ? "Preparing…" : "Create recommendation"}</Button></>}{activeCreated && <><label>Complete recommendation<textarea readOnly rows={4} value={activeCreated.text} aria-label="Workspace access recommendation" onFocus={(event) => event.currentTarget.select()} /></label><p className="muted">Expires {formatExpiry(activeCreated.expires_at)}. Send the entire value; anyone with it still needs to consent.</p><Button variant="ghost" onClick={() => void navigator.clipboard.writeText(activeCreated.text).then(() => setNotice("Recommendation copied.")).catch(() => setError("Could not copy."))}>Copy recommendation</Button><Button variant="secondary" disabled={busy} onClick={() => void send()}>{busy ? "Sending…" : sendState === "retry" ? "Retry send to workspace members" : sendState === "confirmed" ? "Send again to workspace members" : "Send to workspace members"}</Button></>}</section>}
+    {owner && <section className="workspace-name-request"><h3>Share an approved access point</h3>{profiles.length === 0 ? <p className="muted">No approved remote profiles are available. Approve one under Settings → Remote connections first.</p> : <><label>Access point<select value={profileId} disabled={busy} onChange={(event) => { setProfileId(event.target.value); setCreated(null); sendAttempt.current = null; setSendState("idle"); recovery.delete(workspace.id); }}>{profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.label} · {profile.endpoint_count} endpoint{profile.endpoint_count === 1 ? "" : "s"}</option>)}</select></label><Button variant="secondary" disabled={busy || !profileId} onClick={() => void create()}>{busy ? "Preparing…" : "Create recommendation"}</Button></>}{activeCreated && <><label>Complete recommendation<textarea readOnly rows={4} value={activeCreated.text} aria-label="Workspace access recommendation" onFocus={(event) => event.currentTarget.select()} /></label><p className="muted">Expires {formatExpiry(activeCreated.expires_at)}. Send the entire value; anyone with it still needs to consent.</p><Button variant="ghost" onClick={() => void navigator.clipboard.writeText(activeCreated.text).then(() => setNotice("Recommendation copied.")).catch(() => setError("Could not copy."))}>Copy recommendation</Button><Button variant="secondary" disabled={busy} onClick={() => void send()}>{busy ? "Sending…" : sendState === "retry" ? "Retry send to workspace members" : sendState === "confirmed" ? "Send again to workspace members" : "Send to workspace members"}</Button></>}</section>}
     <section className="workspace-name-request"><h3>Apply a recommendation</h3><p className="muted">Verify the current owner authority and preview the access-point disclosure before attaching it to this device.</p><label>Recommendation<textarea rows={4} value={recommendation} onChange={(event) => { setRecommendation(event.target.value); setPreview(null); setConsent(false); }} placeholder="MESHACCESS1:…" spellCheck={false} /></label><Button variant="secondary" disabled={busy || !recommendation.trim()} onClick={() => void check()}>{busy ? "Checking…" : "Preview"}</Button>{preview && <div className="workspace-access-preview"><p><strong>{preview.profile_label}</strong> · {preview.endpoint_count} endpoint{preview.endpoint_count === 1 ? "" : "s"} · expires {formatExpiry(preview.expires_at)}</p><p className="muted">{preview.profile.privacy_disclosure}</p><label className="checkbox-line"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /> I consent to attach this access point to {workspace.name}. I understand the operator can observe connection metadata.</label><Button disabled={busy || !consent} onClick={() => void apply()}>Attach access point</Button></div>}</section>
     {notice && <p className="direct-host-status" role="status">{notice}</p>}
     {error && <p className="form-error" role="alert">{error}</p>}
@@ -4356,6 +4362,12 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
   const groupMessages = snapshot.group_messages ?? [];
   const groupInvitations = snapshot.group_invitations ?? [];
   const workspaces = snapshot.workspaces ?? [];
+  useEffect(() => {
+    const liveScopes = new Map(workspaces.map((workspace) => [workspace.id, workspaceAccessSendScope(workspace)]));
+    for (const [id, saved] of workspaceAccessSendRecovery.current) {
+      if (liveScopes.get(id) !== saved.scope) workspaceAccessSendRecovery.current.delete(id);
+    }
+  }, [snapshot.workspaces]);
   const workspaceChannels = snapshot.workspace_channels ?? [];
   const workspaceDirects = snapshot.workspace_directs ?? [];
   const workspaceChannelTransfers = snapshot.workspace_channel_transfers ?? [];
