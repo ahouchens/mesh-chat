@@ -12,6 +12,7 @@ import time
 from uuid import uuid4
 
 import check_independent_core_consumers as bootstrap
+from check_independent_core_pairing import ERROR_CODES as PAIRING_ERROR_CODES, SUBPHASES as PAIRING_SUBPHASES
 from check_windows_separate_process_consumer import FixtureExecutionFailure, run_fixture
 from native_windows_evidence import require_unchanged
 from stage_core_sdk import tools
@@ -59,6 +60,8 @@ FIXTURE_FAILURE_CAUSES = frozenset({
     "pairing_retired", "retirement_incomplete", "client_detach_incomplete", "helper_core_error",
     "unavailable",
 })
+PAIRING_PREFIX_PHASES = frozenset({"fresh_profiles", "public_pairing", "explicit_approval",
+                                   "transferred_cancellation", "authenticated_receipts"})
 
 
 def _unique_object(pairs):
@@ -101,8 +104,8 @@ def fixture_failure(raw):
             return None
         value = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_object,
                            parse_constant=_reject_constant)
-        if (type(value) is not dict
-                or set(value) != {"v", "passed", "scope", "phase", "stage", "cause", "duration_ms"}
+        expected = {"v", "passed", "scope", "phase", "stage", "cause", "duration_ms"}
+        if (type(value) is not dict or set(value) not in (expected, expected | {"pairing_failure"})
                 or type(value["v"]) is not int or value["v"] != 1 or value["passed"] is not False
                 or value["scope"] != FIXTURE_SCOPE
                 or type(value["phase"]) is not str
@@ -113,9 +116,26 @@ def fixture_failure(raw):
                 or type(value["duration_ms"]) is not int
                 or not 0 <= value["duration_ms"] <= FIXTURE_SECONDS * 1000):
             return None
-        return {"stage": value["stage"], "cause": value["cause"]}
+        detail = {"stage": value["stage"], "cause": value["cause"]}
+        if "pairing_failure" in value:
+            summary = validated_pairing_summary(value["pairing_failure"])
+            if value["stage"] != "initial_pairing" or summary is None:
+                return None
+            detail["pairing_failure"] = summary
+        return detail
     except (ValueError, UnicodeError, TypeError):
         return None
+
+
+def validated_pairing_summary(value):
+    if (type(value) is not dict or set(value) != {"phase", "subphase", "error_code"}
+            or type(value["phase"]) is not str or value["phase"] not in PAIRING_PREFIX_PHASES
+            or type(value["subphase"]) is not str
+            or value["subphase"] not in PAIRING_SUBPHASES[value["phase"]]
+            or type(value["error_code"]) is not str or value["error_code"] not in PAIRING_ERROR_CODES):
+        return None
+    return {"phase": value["phase"], "subphase": value["subphase"],
+            "error_code": value["error_code"]}
 
 
 def verify_report(record, source, tree):
@@ -225,10 +245,15 @@ def run(expected_source, *, bootstrap_report=None, temporary_root=None):
                       workspace_retained=directory is not None and directory.is_dir(),
                       duration_seconds=min(max(0, time.monotonic() - started), TOTAL_SECONDS + 60))
         detail = failure.failure_detail if isinstance(failure, FixtureExecutionFailure) else None
-        if (type(detail) is dict and set(detail) == {"stage", "cause"}
+        if (type(detail) is dict and set(detail) in (
+                {"stage", "cause"}, {"stage", "cause", "pairing_failure"})
                 and type(detail["stage"]) is str and detail["stage"] in FIXTURE_FAILURE_STAGES
                 and type(detail["cause"]) is str and detail["cause"] in FIXTURE_FAILURE_CAUSES):
             result.update(fixture_stage=detail["stage"], fixture_cause=detail["cause"])
+            if "pairing_failure" in detail and detail["stage"] == "initial_pairing":
+                summary = validated_pairing_summary(detail["pairing_failure"])
+                if summary is not None:
+                    result["pairing_failure"] = summary
     return result
 
 

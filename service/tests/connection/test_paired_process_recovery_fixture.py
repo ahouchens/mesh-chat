@@ -30,6 +30,7 @@ const destinations = {offerer:'DEST_OFFER',answerer:'DEST_ANSWER'};
 const contacts = {offerer:{id:'CONTACT_OFFER',core_handle:'PEER_ANSWER',destination_hash:'DEST_ANSWER',trust:'approved'},
   answerer:{id:'CONTACT_ANSWER',core_handle:'PEER_OFFER',destination_hash:'DEST_OFFER',trust:'approved'}};
 let incarnation = {offerer:0,answerer:0};
+let prefixFailure;
 
 function snapshot(peer) {
   const work = state().message;
@@ -86,7 +87,9 @@ globalThis.__paired = {
   },
   async runPairing(_executable,_directory,{afterPaired,totalMs}) {
     if (totalMs!==360000) throw new Error('wrong bound');
-    if (process.env.PAIR_FAULT==='initial_pairing_timeout') throw new Error('public_pairing_deadline');
+    if (process.env.PAIR_FAULT==='initial_pairing_timeout') {
+      prefixFailure=new Error('public_pairing_deadline');throw prefixFailure;
+    }
     const sender=peer('offerer'),receiver=peer('answerer'),owned=[sender,receiver];
     incarnation.offerer=incarnation.answerer=1;
     const api={
@@ -117,10 +120,13 @@ globalThis.__paired = {
       clean_host_exits:owned.filter(value=>value.retired).length,
       owner_native_host_shutdown_acknowledgments:owned.filter(value=>value.retired).length,...result};
   },
+  pairingFailureSummary(error) {return error===prefixFailure
+    ? {phase:'public_pairing',subphase:'offer_code_wait',error_code:'unavailable'}:null},
 };
 registerHooks({resolve(specifier,context,nextResolve){
   if(context.parentURL?.endsWith('paired-process-recovery-check.mjs')&&specifier==='./pairing-check.mjs')
-    return {url:'data:text/javascript,export const runPairing=globalThis.__paired.runPairing;',shortCircuit:true};
+    return {url:'data:text/javascript,export const runPairing=globalThis.__paired.runPairing;'
+      +'export const pairingFailureSummary=globalThis.__paired.pairingFailureSummary;',shortCircuit:true};
   if(context.parentURL?.endsWith('paired-process-recovery-check.mjs')&&specifier==='./runtime.mjs')
     return {url:'data:text/javascript,export const launchRuntime=globalThis.__paired.launchRuntime;',shortCircuit:true};
   return nextResolve(specifier,context);
@@ -173,6 +179,28 @@ if(first&&process.env.PAIR_FAULT==='first_child_nonzero')process.exitCode=1;
 '''
 
 
+REAL_PREFIX_PRELOADER = r'''
+import {registerHooks} from 'node:module';
+const exportsFor = {
+  '@mesh-chat/core-client': "export class CoreClient{};export class CoreError extends Error{};",
+  '@mesh-chat/core-client/node': "export const connectNamedPipe=()=>{};",
+  './runtime.mjs': "export async function launchRuntime(_exe,_dir,options){"
+    +"options.onOwned({stop:async()=>{throw new Error('PRIVATE_CLEANUP')}});"
+    +"throw new Error('PRIVATE_INITIAL_FAILURE')}"
+    +"export const launchRefusedRuntime=()=>{};",
+  './relay-settings.mjs': "export const freshRelaySettings=()=>({});",
+  './connection-readiness.mjs': "export const connectionMessagingReady=()=>false;",
+  './owner-pairing-diagnostic.mjs': "export const collectOwnerPairingDiagnostics=()=>({});"
+    +"export const readOwnerPairingDiagnostic=()=>({});",
+};
+registerHooks({resolve(specifier,context,nextResolve){
+  if(context.parentURL?.endsWith('pairing-check.mjs')&&Object.hasOwn(exportsFor,specifier))
+    return {url:'data:text/javascript,'+encodeURIComponent(exportsFor[specifier]),shortCircuit:true};
+  return nextResolve(specifier,context);
+}});
+'''
+
+
 def node_runtime():
     selected = os.environ.get("MESH_CHAT_TEST_NODE") or os.environ.get("MESH_NODE") or shutil.which("node")
     if not selected or not Path(selected).is_file():
@@ -181,6 +209,26 @@ def node_runtime():
     if int(version.strip().lstrip("v").split(".")[0]) < 22:
         pytest.skip("Node >=22 runtime unavailable")
     return selected
+
+
+def test_real_pairing_failure_summary_keeps_original_prefix_cause_after_cleanup(tmp_path):
+    preloader = tmp_path / "real-prefix-preloader.mjs"
+    preloader.write_text(REAL_PREFIX_PRELOADER, encoding="utf-8")
+    script = ("import {runPairing,pairingFailureSummary} from "
+              + json.dumps((APPLICATION / "pairing-check.mjs").as_uri()) + ";"
+              "let caught;try{await runPairing('host.exe','data',{totalMs:360000,afterPaired:async()=>{}})}"
+              "catch(error){caught=error}"
+              "if(!caught)throw new Error('missing_failure');"
+              "process.stdout.write(JSON.stringify({selected:pairingFailureSummary(caught),"
+              "foreign:pairingFailureSummary(new Error('PRIVATE_INITIAL_FAILURE'))})+'\\n');")
+    completed = subprocess.run([node_runtime(), "--import", preloader.as_uri(),
+                                "--input-type=module", "-e", script], cwd=tmp_path,
+                               capture_output=True, text=True, timeout=12)
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "selected": {"phase": "fresh_profiles", "subphase": "offerer_create",
+                     "error_code": "unavailable"}, "foreign": None}
+    assert "PRIVATE" not in completed.stdout
 
 
 def execute(tmp_path, fault="normal"):
@@ -228,8 +276,9 @@ def test_distinct_children_discarded_reply_and_later_single_receipt(tmp_path):
 def test_mutated_public_observation_or_child_exit_cannot_pass(tmp_path, fault):
     completed, report, events, state = execute(tmp_path, fault)
     assert completed.returncode == 1
-    assert report["passed"] is False and set(report) == {
-        "v", "passed", "scope", "phase", "stage", "cause", "duration_ms"}
+    expected_fields = {"v", "passed", "scope", "phase", "stage", "cause", "duration_ms"}
+    if fault == "initial_pairing_timeout": expected_fields.add("pairing_failure")
+    assert report["passed"] is False and set(report) == expected_fields
     expected = {
         "initial_pairing_timeout": ("initial_pairing", "public_pairing_deadline"),
         "missing_pending": ("enqueue_and_pending", "unavailable"),
@@ -242,6 +291,9 @@ def test_mutated_public_observation_or_child_exit_cannot_pass(tmp_path, fault):
         "first_child_nonzero": ("first_helper_stop", "helper_exit"),
     }
     assert (report["stage"], report["cause"]) == expected[fault]
+    if fault == "initial_pairing_timeout":
+        assert report["pairing_failure"] == {"phase": "public_pairing",
+                                             "subphase": "offer_code_wait", "error_code": "unavailable"}
     assert "PRIVATE" not in completed.stdout + completed.stderr
     assert fault == "initial_pairing_timeout" or any(item["event"] == "owner_exit" for item in events)
     assert len([item for item in events if item["event"] == "owner_exit"]) == (

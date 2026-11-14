@@ -2,7 +2,7 @@
 import { randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
 import { performance } from "node:perf_hooks";
-import { runPairing } from "./pairing-check.mjs";
+import { pairingFailureSummary, runPairing } from "./pairing-check.mjs";
 import { Helper, HelperCoreError } from "./public-process-helper.mjs";
 import { launchRuntime } from "./runtime.mjs";
 
@@ -235,8 +235,10 @@ async function main(args) {
       positive_helper_exits: paired.positive_helper_exits,
     }, duration_ms: duration };
   } catch (error) {
+    const pairing = stage === "initial_pairing" ? pairingFailureSummary(error) : null;
     return { v: 1, passed: false, scope: SCOPE, phase,
       stage: phase === "arguments" ? "arguments" : stage, cause: fixedCause(error),
+      ...(pairing ? { pairing_failure: pairing } : {}),
       duration_ms: Math.min(TOTAL_MS, Math.max(0, Math.floor(performance.now() - started))) };
   }
 }

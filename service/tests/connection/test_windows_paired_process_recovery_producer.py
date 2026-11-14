@@ -23,10 +23,13 @@ def fixture_bytes():
                        separators=(",", ":")) + "\n").encode()
 
 
-def failure_bytes(stage="enqueue_and_pending", cause="pending_record_changed"):
-    return (json.dumps({"v": 1, "passed": False, "scope": producer.FIXTURE_SCOPE,
-                        "phase": "paired_process_recovery", "stage": stage, "cause": cause,
-                        "duration_ms": 71}, separators=(",", ":")) + "\n").encode()
+def failure_bytes(stage="enqueue_and_pending", cause="pending_record_changed", pairing=None):
+    value = {"v": 1, "passed": False, "scope": producer.FIXTURE_SCOPE,
+             "phase": "paired_process_recovery", "stage": stage, "cause": cause,
+             "duration_ms": 71}
+    if pairing is not None:
+        value["pairing_failure"] = pairing
+    return (json.dumps(value, separators=(",", ":")) + "\n").encode()
 
 
 def test_fixture_frame_requires_exact_bounded_delivered_recovery():
@@ -55,6 +58,19 @@ def test_failed_fixture_frame_selects_only_fixed_stage_and_cause():
                 failure_bytes().replace(b'"duration_ms":71', b'"duration_ms":71,"text":"PRIVATE"'),
                 b"PRIVATE_MESSAGE\n", b"x" * (producer.MAX_STDOUT + 1)):
         assert producer.fixture_failure(raw) is None
+
+
+def test_initial_pairing_summary_requires_exact_existing_phase_subphase_and_code():
+    summary = {"phase": "public_pairing", "subphase": "offer_code_wait",
+               "error_code": "unavailable"}
+    assert producer.fixture_failure(failure_bytes("initial_pairing", "public_pairing_deadline", summary)) == {
+        "stage": "initial_pairing", "cause": "public_pairing_deadline", "pairing_failure": summary}
+    for bad in ({**summary, "subphase": "pending_request_wait"},
+                {**summary, "phase": "shared_host_lifetime"},
+                {**summary, "error_code": "PRIVATE_CODE"},
+                {**summary, "text": "PRIVATE_TEXT"}):
+        assert producer.fixture_failure(failure_bytes("initial_pairing", "unavailable", bad)) is None
+    assert producer.fixture_failure(failure_bytes("delivery_receipt", "unavailable", summary)) is None
 
 
 @pytest.mark.parametrize("stderr", [b"", b"PRIVATE_STDERR"])
@@ -194,6 +210,20 @@ def test_valid_fixed_failure_detail_survives_producer_without_content(tmp_path, 
     assert result["fixture_cause"] == "pending_record_changed"
     assert result["workspace_retained"] is True and workspace.is_dir()
     assert "cleanup" not in events and "PRIVATE" not in json.dumps(result)
+
+
+def test_valid_initial_pairing_summary_survives_producer_without_payload(tmp_path, monkeypatch):
+    pairing = {"phase": "explicit_approval", "subphase": "pending_request_wait",
+               "error_code": "rate_limited"}
+    detail = producer.fixture_failure(failure_bytes("initial_pairing", "unavailable", pairing))
+    def failed(_runtime):
+        raise child_runner.FixtureExecutionFailure(None, detail)
+    report, workspace, events = prepared_run(tmp_path, monkeypatch, execution=failed)
+    result = producer.run("a" * 40, bootstrap_report=report, temporary_root=tmp_path)
+    assert result["passed"] is False and result["pairing_failure"] == pairing
+    assert result["fixture_stage"] == "initial_pairing" and result["fixture_cause"] == "unavailable"
+    assert result["workspace_retained"] is True and workspace.is_dir() and "cleanup" not in events
+    assert "PRIVATE" not in json.dumps(result)
 
 
 def test_unvalidated_failure_detail_cannot_enter_producer_report(tmp_path, monkeypatch):

@@ -7,7 +7,7 @@ import { setTimeout as pause } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { launchRuntime, launchRefusedRuntime } from "./runtime.mjs";
 import { freshRelaySettings } from "./relay-settings.mjs";
-import { ERROR_CODES, invitationWaitObserver, pairingDiagnostics, probePairingFailure } from "./pairing-diagnostics.mjs";
+import { ERROR_CODES, SUBPHASES, invitationWaitObserver, pairingDiagnostics, probePairingFailure } from "./pairing-diagnostics.mjs";
 import { connectionMessagingReady } from "./connection-readiness.mjs";
 import { collectOwnerPairingDiagnostics, readOwnerPairingDiagnostic } from "./owner-pairing-diagnostic.mjs";
 
@@ -17,6 +17,8 @@ let deadline;
 let failureDeadlineExhausted = false;
 let primaryFailure;
 let localDeadlineFailure;
+const PREFIX_PHASES = new Set(["fresh_profiles", "public_pairing", "explicit_approval",
+  "transferred_cancellation", "authenticated_receipts"]);
 function workDeadline(origin) {
   const error = new Error("public_pairing_deadline");
   localDeadlineFailure = { error, origin };
@@ -30,6 +32,15 @@ function freezeFailure(error, origin) {
   failureDeadlineExhausted = Date.now() >= deadline;
   diagnostics.freezeFailure(selected);
   primaryFailure = { error, phase, code };
+}
+export function pairingFailureSummary(error) {
+  // Only the original escaping error may select the already frozen first cause.
+  if (!primaryFailure || primaryFailure.error !== error || !PREFIX_PHASES.has(primaryFailure.phase)) return null;
+  try {
+    const subphase = diagnostics.failure(failureDeadlineExhausted).subphase;
+    if (!SUBPHASES.has(subphase) || !ERROR_CODES.has(primaryFailure.code)) return null;
+    return { phase: primaryFailure.phase, subphase, error_code: primaryFailure.code };
+  } catch { return null; }
 }
 function budget() {
   const value = Math.min(30000, deadline - Date.now());
