@@ -21,7 +21,8 @@ APPLICATION = ROOT / "examples/typescript-independent-consumer"
 FILES = ("package.json", "consumer.mjs", "runtime.mjs", "bootstrap-check.mjs", "pairing-check.mjs",
          "separate-process-check.mjs", "public-process-helper.mjs", "paired-process-recovery-check.mjs",
          "image-admission-check.mjs", "relay-settings.mjs", "pairing-diagnostics.mjs",
-         "owner-pairing-diagnostic.mjs", "connection-readiness.mjs", "README.md")
+         "owner-pairing-diagnostic.mjs", "connection-readiness.mjs",
+         "browser-media.mjs", "browser-media.html", "browser-media.test.mjs", "README.md")
 LEVEL = "independent_public_sdk_application_staging"
 
 

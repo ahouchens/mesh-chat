@@ -4,5 +4,6 @@
 # Installed public TypeScript application bytes must hash identically on
 # Windows producers and Linux aggregate checkers, regardless of autocrlf.
 /examples/typescript-independent-consumer/*.mjs text eol=lf
+/examples/typescript-independent-consumer/*.html text eol=lf
 /examples/typescript-independent-consumer/package.json text eol=lf
 /examples/typescript-independent-consumer/README.md text eol=lf

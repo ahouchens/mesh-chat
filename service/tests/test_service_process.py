@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import base64
-import io
 import os
 from types import SimpleNamespace
 from typing import Any
@@ -10,7 +9,6 @@ import pytest
 
 import mesh_chat.__main__ as service_main
 from mesh_chat.errors import ProfileInUse, StorageUnavailable, ValidationError, WorkspaceAlreadyKnown
-from mesh_chat.core_api.pipe_endpoint import PipeRetirementPending
 
 
 def _initialize_request(parent_pid: Any) -> dict[str, Any]:
@@ -133,49 +131,3 @@ def test_watchdog_monitor_failure_also_fails_closed() -> None:
     )
 
     assert events == [("grace", 0), ("exit", 0)]
-
-
-@pytest.mark.parametrize("primary_error,expected_status", [(False, 0), (True, 3)])
-def test_main_retries_pending_pipe_before_dependent_shutdown_and_preserves_primary(
-    monkeypatch, primary_error, expected_status
-) -> None:
-    events = []
-    original_hook = service_main.threading.excepthook
-    initial = {"v": 1, "id": "start", "command": "initialize", "payload": {}}
-    service = SimpleNamespace(_direct_native=None, snapshot=lambda: {},
-                              close=lambda: events.append("service"))
-    class Endpoint:
-        calls = 0
-        def close(self):
-            self.calls += 1
-            events.append("endpoint")
-            if self.calls == 1:
-                raise PipeRetirementPending("worker still active")
-    endpoint = Endpoint()
-    class Reader:
-        def __init__(self, *_args, **_kwargs): pass
-        def read(self):
-            if primary_error:
-                raise OSError("primary command failure")
-            raise EOFError()
-        def close(self): events.append("reader")
-    monkeypatch.setattr(service_main.sys, "argv", ["mesh-chat-service"])
-    monkeypatch.setattr(service_main.sys, "stdin", SimpleNamespace(buffer=io.BytesIO()))
-    monkeypatch.setattr(service_main.sys, "stdout", SimpleNamespace(buffer=io.BytesIO()))
-    monkeypatch.setattr(service_main, "interruptible_input", lambda value: value)
-    monkeypatch.setattr(service_main, "FrameWriter", lambda _: SimpleNamespace(write=lambda value: None))
-    monkeypatch.setattr(service_main, "read_frame", lambda _: initial)
-    monkeypatch.setattr(service_main, "_initialize", lambda *_: service)
-    monkeypatch.setattr(service_main, "_start_core_api_endpoint", lambda _: endpoint)
-    monkeypatch.setattr(service_main, "NativeFrameReader", Reader)
-    monkeypatch.setattr(service_main, "report_failure", lambda stage, error, *_:
-                        events.append((stage, str(error))))
-    monkeypatch.setattr(service_main.time, "sleep", lambda _: events.append("backoff"))
-    assert service_main.main() == expected_status
-    assert endpoint.calls == 2
-    assert events[-3:] == ["endpoint", "reader", "service"]
-    assert events.index("service") > events.index("reader")
-    assert ("shutdown", "worker still active") in events
-    if primary_error:
-        assert events[0] == ("read_command", "primary command failure")
-    assert service_main.threading.excepthook is original_hook

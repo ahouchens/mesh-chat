@@ -195,7 +195,8 @@ def test_staged_typescript_application_hashes_match_windows_and_linux_checkouts(
     files = next(ast.literal_eval(node.value) for node in source.body if isinstance(node, ast.Assign)
                  and any(isinstance(target, ast.Name) and target.id == "FILES" for target in node.targets))
     directory = ROOT / "examples/typescript-independent-consumer"
-    assert set(files) == {"package.json", "README.md", *(path.name for path in directory.glob("*.mjs"))}
+    assert set(files) == {"package.json", "README.md",
+                          *(path.name for suffix in ("*.mjs", "*.html") for path in directory.glob(suffix))}
     for name in files:
         relative = f"examples/typescript-independent-consumer/{name}"
         attributes = subprocess.check_output(
