@@ -2,6 +2,18 @@
 
 ## Closed type failures and installed startup diagnosis — November 14, 2026
 
+UI recovery through `dfa48ec` passes 295 App/Core/profile-lifetime tests and
+the real `tsc -b --force` project check. A's independent final review found no
+remaining source blocker. Admin requests retain their key, exact payload and
+chosen Core or legacy route after an unknown outcome; the routes use different
+stored operation-ID namespaces, so later fallback would duplicate a commit.
+Confirmed requests retry only reconciliation after refresh failure. A later
+permission denial does not erase uncertainty about an earlier attempt. Access
+send recovery also survives opaque-handle-only refreshes. Hosted replay tests
+through `d44dfa1` retain exact request and delivery IDs across caller/session
+reopen and denied replay. Renderer-restart durability and packaged UI acceptance
+remain separate open requirements.
+
 Full `43586982197` and call `43586979596` at `ec81f1f`, attempt 1, are closed
 failed. Full jobs ended with six successes, five failures and nine skips; call
 jobs ended with two failures and four skips. Linux policy passed 7,563 cases

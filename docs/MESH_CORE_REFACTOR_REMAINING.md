@@ -51,6 +51,11 @@ the specification's IDs or imply equal effort. Several packages overlap.
 
 ## Current checkpoint
 
+- Admin/access retry recovery through `dfa48ec` passes 295 App/Core/profile
+  checks and actual project typing, with A review. Pending admin attempts pin
+  their submission route as well as their key and payload; confirmed attempts
+  only retry refresh. Handle-only changes preserve uncertain access sends.
+  Full renderer-restart and packaged UI acceptance remain open.
 - `ec81f1f` full/call runs `43586982197` and `43586979596` are closed failed.
   Linux policy passed 7,563 cases without skips; native/call roles never ran.
   The corrected type declaration built the R8 candidate successfully at

@@ -7,8 +7,9 @@ both pinned files; its first GUI seed failed an ambiguous startup check.
 Root's `71aacee` separates identity and readiness and retains fixed booleans;
 22 Node and 14 Python tests pass, with C review. The C/D public partition lane
 through `83a1392` passes 87 combined local checks, including cleanup and hosted
-admin replay; actual CI execution is pending. B fixes retry-route pinning and
-opaque-handle refresh recovery under A review. Root owns the coherent tested
+admin replay; actual CI execution is pending. B's retry-route pinning and
+opaque-handle refresh recovery are integrated through `dfa48ec`, with A review,
+295 combined UI tests and actual project typing passing. Root owns the coherent tested
 push, fresh full/native/call, R8 retry and separate partition execution.
 
 Earlier November 14 integration: `ec81f1f` full/native and call CI are active;
