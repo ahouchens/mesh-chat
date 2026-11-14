@@ -4357,6 +4357,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
   const [contactInviteDismissBusy, setContactInviteDismissBusy] = useState<string | null>(null);
   const [contactInviteDismissError, setContactInviteDismissError] = useState<{ id: string; message: string } | null>(null);
   const contactInviteDismissInFlight = useRef<string | null>(null);
+  const channelCreationAttempts = useRef(new Map<string, { operationId: string; accepted: boolean }>());
   const incomingCall = (snapshot.calls ?? []).find((call) => call.direction === "inbound" && call.state === "ringing");
   const contactInvitePrompt = (snapshot.workspace_invitation_prompts ?? []).find((prompt) =>
     prompt.state === "pending" && !dismissedContactInviteIds.has(prompt.id),
@@ -5761,6 +5762,8 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
   ) => {
     if (!selectedWorkspace || workspaceActionBusy) return;
     setWorkspaceActionBusy(true); setWorkspaceActionError("");
+    let channelAttempt: { operationId: string; accepted: boolean } | null = null;
+    let channelFingerprint: string | null = null;
     try {
       if (command === "update_workspace_private_channel_members" && selectedWorkspace.core_handle
           && typeof payload.channel_id === "string") {
@@ -5843,10 +5846,19 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
           const member = selectedWorkspace.members.find((item) => item.id === id);
           return member?.core_handle ? [member.core_handle] : [];
         });
+        const fingerprint = JSON.stringify([selectedWorkspace.core_handle, name, topic, visibility, members]);
+        const attempt = channelCreationAttempts.current.get(fingerprint)
+          ?? { operationId: newOperationId(), accepted: false };
+        channelCreationAttempts.current.set(fingerprint, attempt);
+        channelAttempt = attempt;
+        channelFingerprint = fingerprint;
         try {
           await coreApiCreateWorkspaceChannel(
-            selectedWorkspace.core_handle, name, topic, visibility, members, newOperationId(), admitProfileRequest);
+            selectedWorkspace.core_handle, name, topic, visibility, members, attempt.operationId, admitProfileRequest);
+          if (!profileCurrent()) return;
+          attempt.accepted = true;
           const refreshed = await refresh(true);
+          if (!profileCurrent()) return;
           const created = (refreshed.workspace_channels ?? []).find((channel) => channel.name === name);
           if (created) setWorkspaceSelectedChannelId(created.id);
           setWorkspaceSelectedDirectId(null);
@@ -5856,8 +5868,12 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
           setWorkspaceCreateChannelOpen(false);
           setWorkspaceBrowseOpen(false);
           setMobileSidebarOpen(false);
+          if (channelCreationAttempts.current.get(fingerprint) === attempt) channelCreationAttempts.current.delete(fingerprint);
           return;
         } catch (reason) {
+          if (!profileCurrent()) return;
+          if (!attempt.accepted && ["forbidden", "invalid_request", "idempotency_conflict"].includes(profileErrorCode(reason))
+              && channelCreationAttempts.current.get(fingerprint) === attempt) channelCreationAttempts.current.delete(fingerprint);
           if (!String(reason).includes("core_api_unavailable")) throw reason;
           throw new Error("core_api_unavailable");
         }
@@ -5912,8 +5928,16 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
         }
       }
       throw new Error("core_api_unavailable");
-    } catch (reason) { setWorkspaceActionError(errorMessage(reason)); }
-    finally { setWorkspaceActionBusy(false); }
+    } catch (reason) {
+      if (!profileCurrent()) return;
+      const attempt = command === "create_workspace_channel" ? channelAttempt : null;
+      if (attempt && channelFingerprint !== null
+          && channelCreationAttempts.current.get(channelFingerprint) === attempt) {
+        setWorkspaceActionError(attempt.accepted
+          ? "The channel was created, but its conversation could not refresh. Retry to open it."
+          : "Channel creation was not confirmed. Retrying these details checks the same action.");
+      } else setWorkspaceActionError(errorMessage(reason));
+    } finally { if (profileCurrent()) setWorkspaceActionBusy(false); }
   };
   const runWorkspaceNotificationPreference = async (
     conversationId: string | null,

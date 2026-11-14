@@ -6558,6 +6558,91 @@ describe("desktop workspaces", () => {
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("create_workspace_channel", expect.objectContaining({ workspace_id: workspace.id, name: "Field notes", topic: "Daily observations", operation_id: expect.any(String) })));
   });
 
+  it("retries a channel creation after a lost Core reply with its original action identity", async () => {
+    const current: Snapshot = { ...snapshot(), workspaces: [workspace], workspace_channels: [workspaceChannel], workspace_join_requests: [], workspace_invitations: [], workspace_drafts: [] };
+    let attempts = 0;
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "list_workspace_messages") return { messages: [], next_cursor: null, high_water: 0 } satisfies WorkspaceMessagePage;
+      if (command === "create_workspace_channel") {
+        attempts++;
+        if (attempts === 1) throw new Error("reply_lost");
+        return { channel: "created-channel", name: "Field notes" };
+      }
+      return {};
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Browse channels/ }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Browse channels in Lakewatcher" })).getByRole("button", { name: "Create channel" }));
+    const dialog = await screen.findByRole("dialog", { name: "Create a channel" });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Channel name" }), { target: { value: "Field notes" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create public channel" }));
+    await waitFor(() => expect(within(dialog).getByRole("alert")).toBeTruthy());
+    expect(within(dialog).getByRole("alert").textContent).toMatch(/not confirmed/i);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Browse channels/ }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Browse channels in Lakewatcher" })).getByRole("button", { name: "Create channel" }));
+    const reopened = await screen.findByRole("dialog", { name: "Create a channel" });
+    fireEvent.change(within(reopened).getByRole("textbox", { name: "Channel name" }), { target: { value: "Field notes" } });
+    fireEvent.click(within(reopened).getByRole("button", { name: "Create public channel" }));
+    await waitFor(() => expect(api.serviceCommand.mock.calls.filter(([command]) => command === "create_workspace_channel")).toHaveLength(2));
+    const calls = api.serviceCommand.mock.calls.filter(([command]) => command === "create_workspace_channel");
+    expect(calls[1][1].operation_id).toBe(calls[0][1].operation_id);
+  });
+
+  it("uses a new channel action identity for changed intent and after a definitive refusal", async () => {
+    const current: Snapshot = { ...snapshot(), workspaces: [workspace], workspace_channels: [workspaceChannel], workspace_join_requests: [], workspace_invitations: [], workspace_drafts: [] };
+    let attempts = 0;
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "list_workspace_messages") return { messages: [], next_cursor: null, high_water: 0 } satisfies WorkspaceMessagePage;
+      if (command === "create_workspace_channel") {
+        attempts++;
+        if (attempts === 1) throw new Error("reply_lost");
+        if (attempts === 2) throw Object.assign(new Error("refused"), { code: "forbidden" });
+        return { channel: "created-channel", name: "Field notes" };
+      }
+      return {};
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Browse channels/ }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Browse channels in Lakewatcher" })).getByRole("button", { name: "Create channel" }));
+    const dialog = await screen.findByRole("dialog", { name: "Create a channel" });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Channel name" }), { target: { value: "Field notes" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create public channel" }));
+    await waitFor(() => expect(within(dialog).getByRole("alert")).toBeTruthy());
+    fireEvent.change(within(dialog).getByRole("textbox", { name: /Topic/ }), { target: { value: "Daily" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create public channel" }));
+    await waitFor(() => expect(api.serviceCommand.mock.calls.filter(([command]) => command === "create_workspace_channel")).toHaveLength(2));
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Create public channel" }).hasAttribute("disabled")).toBe(false));
+    fireEvent.change(within(dialog).getByRole("textbox", { name: /Topic/ }), { target: { value: "" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create public channel" }));
+    await waitFor(() => expect(api.serviceCommand.mock.calls.filter(([command]) => command === "create_workspace_channel")).toHaveLength(3));
+    fireEvent.click(await screen.findByRole("button", { name: /Browse channels/ }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Browse channels in Lakewatcher" })).getByRole("button", { name: "Create channel" }));
+    const reopened = await screen.findByRole("dialog", { name: "Create a channel" });
+    fireEvent.change(within(reopened).getByRole("textbox", { name: "Channel name" }), { target: { value: "Field notes" } });
+    fireEvent.change(within(reopened).getByRole("textbox", { name: /Topic/ }), { target: { value: "Daily" } });
+    fireEvent.click(within(reopened).getByRole("button", { name: "Create public channel" }));
+    await waitFor(() => expect(api.serviceCommand.mock.calls.filter(([command]) => command === "create_workspace_channel")).toHaveLength(4));
+    const calls = api.serviceCommand.mock.calls.filter(([command]) => command === "create_workspace_channel");
+    expect(calls[0][1].operation_id).not.toBe(calls[1][1].operation_id);
+    expect(calls[2][1].operation_id).toBe(calls[0][1].operation_id);
+    expect(calls[3][1].operation_id).not.toBe(calls[1][1].operation_id);
+  });
+
   it("creates and manages a signed private-channel roster", async () => {
     const member = {
       id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
