@@ -27,6 +27,7 @@ from native_interop_android_observation import (
     BYTE_CAP, READ_CAP, InstrumentationStatus, android_lifecycle_snapshot,
     android_transport_snapshot, process_observation, adb_stderr_category, stop_failure,
 )
+from native_interop_testhost_io_observation import TesthostIoStatus, failure_snapshot, forward_presence
 
 ROOT = Path(__file__).resolve().parents[1]
 MAX_FRAME = 4 * 1024 * 1024
@@ -401,6 +402,8 @@ class AndroidPeer:
         self._transport_failure = None
         self._lifecycle_failure = None
         self._instrumentation_status = _instrumentation_status()
+        self._testhost_io = TesthostIoStatus()
+        self._testhost_failure = None
         self.processes_started, self.clean_exits, self.forced_exits = 0, 0, 0
 
     def _adb(self, *args):
@@ -451,10 +454,13 @@ class AndroidPeer:
         self._qualification_binding = None
         self._transport_failure = None
         self._instrumentation_status = _instrumentation_status()
+        self._testhost_io = TesthostIoStatus()
+        self._testhost_failure = None
         self._observe_system_phase("peer_start")
         nonce = os.urandom(32).hex()
         self.process = subprocess.Popen([self.adb, "shell", "am", "instrument", "-w", "-r",
-            "-e", "class", self.TEST, "-e", "mesh_interop_nonce", nonce, self.RUNNER],
+            "-e", "class", self.TEST, "-e", "mesh_interop_nonce", nonce,
+            "-e", "mesh_interop_start_ordinal", str(self._sequence + 1), self.RUNNER],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         self.processes_started += 1
         ports = queue.Queue(maxsize=2)
@@ -466,6 +472,8 @@ class AndroidPeer:
                     if status is not None:
                         try: status.observe(line)
                         except Exception: pass  # Status observation cannot affect port admission.
+                    try: self._testhost_io.observe(line)
+                    except Exception: pass  # Optional testhost status cannot affect the reader.
                     if len(line) > 8192:
                         continue
                     match = re.fullmatch(rb"INSTRUMENTATION_STATUS: mesh_interop_port=([0-9]{1,5})\r?\n", line)
@@ -549,6 +557,7 @@ class AndroidPeer:
     def _request(self, action, payload=None, *, timeout=60):
         self._core_failure = None
         self._transport_failure = None
+        self._testhost_failure = None
         if self.socket is None:
             raise PeerFailure("peer_not_started")
         if type(timeout) not in {int, float} or not 0 < timeout <= 60:
@@ -596,6 +605,14 @@ class AndroidPeer:
                         self._transport_failure = (error, identifier, selected)
                 except Exception:
                     self._transport_failure = None
+                try:
+                    statuses = self._testhost_io.matching(self._sequence)
+                    forward = forward_presence(self.adb, self.forward) if eof[0] == "header" else "unknown"
+                    io = failure_snapshot({"statuses": statuses, "forward": forward}, self._sequence)
+                    if io is not None:
+                        self._testhost_failure = (error, identifier, io)
+                except Exception:
+                    pass  # Optional I/O evidence cannot erase transport evidence.
             raise
         except TimeoutError:
             raise PeerFailure("peer_deadline") from None
@@ -617,6 +634,17 @@ class AndroidPeer:
                     or observed[0] is not error or observed[1] != f"qualification:{self._sequence}"):
                 return None
             return android_transport_snapshot(observed[2])
+        except Exception:
+            return None
+
+    def failure_testhost_observation(self, error):
+        try:
+            observed = self._testhost_failure
+            if (type(error) is not PeerFailure or error.code != "peer_closed"
+                    or type(observed) is not tuple or len(observed) != 3
+                    or observed[0] is not error or observed[1] != f"qualification:{self._sequence}"):
+                return None
+            return failure_snapshot(observed[2], self._sequence)
         except Exception:
             return None
 

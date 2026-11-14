@@ -16,9 +16,12 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.DataInputStream
 import java.io.DataOutputStream
+import java.io.EOFException
 import java.io.File
+import java.io.IOException
 import java.net.InetAddress
 import java.net.ServerSocket
+import java.net.SocketTimeoutException
 import java.security.MessageDigest
 
 /** Explicit CI instrumentation only. No exported product service or JSON grant. */
@@ -30,6 +33,9 @@ class PackagedNativeInteropBoundaryTest {
         val context = instrumentation.targetContext
         val nonce = InstrumentationRegistry.getArguments().getString("mesh_interop_nonce") ?: error("Missing controller admission")
         check(nonce.matches(Regex("[a-f0-9]{64}")))
+        val startOrdinal = InstrumentationRegistry.getArguments().getString("mesh_interop_start_ordinal")
+            ?.toIntOrNull() ?: error("Missing controller ordinal")
+        check(startOrdinal in 1..99_999_999)
         BootstrapClient.configure(context)
         NativeWebRtcBridge.attach(context)
         if (!Python.isStarted()) Python.start(AndroidPlatform(context))
@@ -53,17 +59,30 @@ class PackagedNativeInteropBoundaryTest {
                     socket.soTimeout = 120_000
                     val input = DataInputStream(socket.getInputStream())
                     val output = DataOutputStream(socket.getOutputStream())
+                    var ordinal = startOrdinal - 1
                     while (!finished) {
+                        ordinal += 1
+                        val started = System.nanoTime()
+                        var stage = "read_header"
+                        try {
+                        reportIo(ordinal, stage, "none", started)
                         val size = input.readInt()
                         check(size in 2..4 * 1024 * 1024)
                         val bytes = ByteArray(size)
+                        stage = "read_body"
+                        reportIo(ordinal, stage, "none", started)
                         input.readFully(bytes)
                         val frame = JSONObject(String(bytes, Charsets.UTF_8))
                         check(frame.keys().asSequence().toSet() == setOf("id", "action", "payload"))
                         val id = frame.getString("id")
                         check(id.matches(Regex("qualification:[0-9]{1,8}")))
+                        check(id.removePrefix("qualification:").toIntOrNull() == ordinal)
                         val action = frame.getString("action")
                         val payload = frame.getJSONObject("payload")
+                        val snapshotRequest = action == "core" && payload.opt("operation") == "application.snapshot"
+                        stage = "dispatch"
+                        reportIo(ordinal, stage, "none", started)
+                        if (snapshotRequest) reportIo(ordinal, "snapshot_dispatch_enter", "none", started)
                         val diagnosticRequest = action == "inspect" && payload.opt("command") == "qualification.network_diagnostic"
                         if (!diagnosticRequest) pendingNetworkBinding = null
                         var reply: JSONObject
@@ -182,10 +201,28 @@ class PackagedNativeInteropBoundaryTest {
                         reply.put("id", id)
                         val encoded = reply.toString().toByteArray(Charsets.UTF_8)
                         check(encoded.size in 2..4 * 1024 * 1024)
+                        stage = "write_header"
+                        reportIo(ordinal, stage, "none", started)
                         output.writeInt(encoded.size)
+                        stage = "write_body"
+                        reportIo(ordinal, stage, "none", started)
                         output.write(encoded)
+                        stage = "flush"
+                        reportIo(ordinal, stage, "none", started)
                         output.flush()
+                        if (snapshotRequest) reportIo(ordinal, "snapshot_flush_complete", "none", started)
                         if (!authenticated) error("Controller authentication failed")
+                        } catch (failure: Throwable) {
+                            val category = when (failure) {
+                                is EOFException -> "eof"
+                                is SocketTimeoutException -> "timeout"
+                                is IOException -> "io"
+                                is IllegalArgumentException, is IllegalStateException -> "protocol"
+                                else -> "other"
+                            }
+                            reportIo(ordinal, stage, category, started)
+                            throw failure
+                        }
                     }
                 }
             } finally {
@@ -194,6 +231,17 @@ class PackagedNativeInteropBoundaryTest {
             }
         }
         check(finished)
+    }
+
+    private fun reportIo(ordinal: Int, stage: String, category: String, started: Long) {
+        // Only fixed labels and capped monotonic timing leave this test process.
+        if (ordinal !in 1..99_999_999) return
+        val elapsed = ((System.nanoTime() - started) / 1_000_000L).coerceIn(0L, 999_999L)
+        try {
+            InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply {
+                putString("mesh_interop_io", "v1|$ordinal|$stage|$category|$elapsed")
+            })
+        } catch (_: Throwable) { /* Observation must not change the controller result. */ }
     }
 
     private fun networkDiagnostic(context: Context, python: Python, binding: String): JSONObject {

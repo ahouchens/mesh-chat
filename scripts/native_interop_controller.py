@@ -198,9 +198,18 @@ def android_control_failure(peer, emulator, error):
         observed = android_transport_snapshot(provider(error)) if callable(provider) else None
         if observed is None:
             return {}
-        return {"android_control_failure": {"transport": observed,
+        detail = {"transport": observed,
             "emulator_process": process_observation(getattr(emulator, "process", None)),
-            "cleanup_failure_sites": []}}
+            "cleanup_failure_sites": []}
+        try:
+            from native_interop_testhost_io_observation import failure_snapshot
+            getter = getattr(peer, "failure_testhost_observation", None)
+            ordinal = getattr(peer, "_sequence", None)
+            io = failure_snapshot(getter(error), ordinal) if callable(getter) else None
+            if io is not None: detail["testhost_io"] = io
+        except Exception:
+            pass  # Optional testhost evidence cannot replace the original EOF.
+        return {"android_control_failure": detail}
     except Exception:
         return {}
 
