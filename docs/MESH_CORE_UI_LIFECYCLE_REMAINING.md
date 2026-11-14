@@ -73,3 +73,42 @@ transferred by this document. R1 repair and full native/aggregate acceptance
 remain the next prerequisite for R2 retirement. The next R3/R5 milestone is a
 reviewed call-site ownership table and a packaged coexistence scenario whose
 results are bound to one integrated source and artifact set.
+
+## Narrow call-site ownership review and independent pending action
+
+This follow-up inspected the same `82c3364` tree. Its four modules have different
+jobs; a common `WebRTC` or `recovery` name is not a deletion criterion.
+
+| Call site | Active selector and policy owner | Resource and retained use | Exact replacement or deletion gate |
+| --- | --- | --- | --- |
+| `src/reconnect-runtime.ts` with `src/reconnect-coordinator.ts` | `MeshChatService` constructs `_connection_runtime` only for `shared-native` (`service.py`); `reconnect_service.py` then emits `policy_owner: "service"` and a connection projection. The coordinator displays that projection and excludes that profile from renderer negotiation. Profiles without the marker still run the renderer retry/mailbox/offer/answer path. `App.tsx` mounts the coordinator and network/visibility listeners for both. | Service supervisor owns marked profile policy/carrier. The renderer still tracks legacy browser sessions and some native session health/close handles; `connection.start/stop` are Core-first with a private-command fallback. UI Disconnect, Retry and unmount paths need exact owner review because they still invoke close helpers. | R1 native cross-platform acceptance, R2 shared-owner promotion and a per-call-site proof that service-owned profiles never receive renderer retry or foreign-carrier close. Then retire only the unmarked-profile policy branch and fallback commands after installed UI parity/rollback coverage. Preserve presentation and explicit user intent. |
+| `src/webrtc-session.ts` | Registry is used by the unmarked reconnect path and the browser branch of `WebRTCOnboarding.tsx`; keys and `controlPurpose` distinguish reconnect from onboarding. `getWebRTCSessionWithControl` excludes reconnect control from onboarding actions. | It owns only its registered messaging DataChannel, bridge and `RTCPeerConnection`; exact-key/bridge-ID removal fences a replacement. It does not own `CallDialog.tsx` media tracks. Browser onboarding control, contact binding and shared signaling still use it after dialog handoff. | Delete messaging registry paths only after all browser onboarding and legacy reconnect callers are replaced and tested on installed UI. Preserve media `RTCPeerConnection`, onboarding delivery and shared signaling; prove closing one messaging session neither retires an adopted replacement nor stops a call. |
+| `src/DirectRecovery.tsx` | Mounted in active workspace Connections settings. Its two-second `direct_recovery_status` poll is a display query; pause/resume, recovery transfer and one-hop helper consent/relay are explicit user actions, not the reconnect coordinator's peer retry loop. | Service Direct/QUIC relationship and signed recovery update ownership remains separate. Core already handles import/export; private commands still serve status, helper and pause/resume actions. | No blanket R2 deletion. Replace a command only after an equivalent authorized Core/host route and Direct/QUIC packaged parity exist, including workspace scope, signed update freshness and existing membership. Keep status/consent/manual recovery semantics. |
+| `src/WebRTCOnboarding.tsx` | `usesServiceWebRTCTransport` chooses native on Android or the host service-transport hint; otherwise Windows browser onboarding remains. Both branches use private offer/answer verification; the native branch also binds through a private host command, while Core handles invitation/consent and call signaling. | The dialog owns a pending peer until exact handoff; `handedOffRef` prevents unmount cleanup of an adopted native or browser carrier. Browser `mesh-onboarding` control can deliver invitations/capabilities after closure. Media calls use separate `CallDialog` resources. | R1/R2 pairing/adoption proof plus installed fresh pairing, approval, dialog-close, delayed invitation and receipt cases for each selected branch. Remove only a branch with no remaining supported host or shared-signaling caller; never treat dialog dismissal as carrier cancellation. |
+
+**Independent R3/R5 pending-action candidate:** received workspace invitation
+prompt dismissal. In `App.tsx`, `dismissContactInvite` passes `undefined` for the
+idempotency key to `fetchWorkspaceConnection`; `api.ts` therefore creates a new
+key on every click. A lost successful reply leaves the prompt visible with a
+retryable error. Core already supports keyed `workspace.connection` action
+`prompt_dismiss`; `service_workspace_admin.py` delegates to the atomic
+`dismiss_workspace_invitation_prompt` operation, and
+`test_core_workspace_effects.py::test_prompt_dismissal_is_atomic_and_conflicts_on_changed_target`
+proves same-key replay and changed-prompt conflict. The snapshot includes only
+pending, unexpired prompts. This action does not create or retire a native
+carrier, so UI recovery can be prepared independently of R1/R2.
+
+Proposed *separate, lead-assigned* UI slice: B owns `src/App.tsx` and
+`src/App.test.tsx` only; `src/api.ts` already accepts the explicit key. Keep one
+opaque key per current profile and prompt through an uncertain response and UI
+remount, with bounded session-local storage cleared on confirmed completion or
+fresh snapshot absence. Retry the same prompt with the same key; a different
+prompt gets a different key. Do not optimistically claim dismissal on an
+unknown result. Profile lock/host-generation change fences late completion and
+does not replay under another profile. Behavior tests should inject commit plus
+lost reply, stale snapshot, remount, repeat click, changed prompt, definitive
+rejection and profile retirement; assert one Core action identity, truthful
+pending/error presentation and no native or call teardown. The existing
+`App.test.tsx` happy-dismiss/error tests and Core atomicity test are the starting
+evidence. This remains a proposed implementation, not a completed flow or
+packaged acceptance claim.
