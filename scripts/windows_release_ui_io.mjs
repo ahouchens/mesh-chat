@@ -1,5 +1,6 @@
 // Bounded transport helpers shared by the UI driver and focused behavior tests.
 const UI_FAILURE_CODES = new Set([
+  "ui_startup_deadline", "ui_mount_deadline", "ui_bridge_deadline",
   "ui_cdp_failed", "ui_cdp_frame_invalid", "ui_cdp_frame_unbounded",
   "ui_channel_missing", "ui_config_deadline", "ui_config_invalid",
   "ui_config_stream_failed", "ui_config_unbounded", "ui_control_unavailable",

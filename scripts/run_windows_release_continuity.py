@@ -35,6 +35,7 @@ WEBVIEW_CLIENT = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 LEVEL = "disposable_windows_installed_same_version_continuity_attempt"
 MAX_DRIVER_OUTPUT = 16 * 1024
 UI_FAILURE_CODES = frozenset({
+    "ui_startup_deadline", "ui_mount_deadline", "ui_bridge_deadline",
     "ui_cdp_failed", "ui_cdp_frame_invalid", "ui_cdp_frame_unbounded",
     "ui_channel_missing", "ui_config_deadline", "ui_config_invalid",
     "ui_config_stream_failed", "ui_config_unbounded", "ui_control_unavailable",
@@ -55,10 +56,18 @@ class ContinuityFailure(RuntimeError):
 
 
 class UiDriverFailure(ContinuityFailure):
-    def __init__(self, code: str, cleanup_code: str | None):
+    def __init__(self, code: str, cleanup_code: str | None, startup: dict | None = None):
         super().__init__("ui_driver_failed")
         self.code = code
         self.cleanup_code = cleanup_code
+        self.startup = startup
+
+
+def valid_startup_observation(value: object) -> bool:
+    fields = {"bridge_ready", "build_info_seen", "source_matches", "version_matches",
+              "root_mounted", "title_matches"}
+    return isinstance(value, dict) and set(value) == fields and all(
+        type(item) is bool for item in value.values())
 
 
 class CREDENTIALW(ctypes.Structure):
@@ -183,16 +192,21 @@ def run_ui(node: Path, port: int, config: dict) -> dict:
         fields = {"v", "passed", "evidence_level", "failure_kind"}
         if "cleanup_failure_kind" in value:
             fields.add("cleanup_failure_kind")
+        if "startup_observation" in value:
+            fields.add("startup_observation")
         if (probe.returncode != 1 or set(value) != fields
                 or type(value.get("v")) is not int or value["v"] != 1
                 or value.get("evidence_level") != "windows_release_ui_seed_readback_contract_only"
                 or not isinstance(value.get("failure_kind"), str)
                 or value["failure_kind"] not in UI_FAILURE_CODES
+                or ("startup_observation" in value
+                    and not valid_startup_observation(value["startup_observation"]))
                 or ("cleanup_failure_kind" in value
                     and (not isinstance(value["cleanup_failure_kind"], str)
                          or value["cleanup_failure_kind"] not in UI_FAILURE_CODES))):
             raise ContinuityFailure("ui_driver_report_invalid")
-        raise UiDriverFailure(value["failure_kind"], value.get("cleanup_failure_kind"))
+        raise UiDriverFailure(value["failure_kind"], value.get("cleanup_failure_kind"),
+                              value.get("startup_observation"))
     if (not isinstance(value, dict)
             or probe.returncode != 0
             or set(value) != {"v", "passed", "evidence_level", "source_commit", "installed_version",
@@ -255,6 +269,8 @@ def launch_and_observe(app_path: Path, node: Path, config: dict, observation: di
         primary_failure = error
         if isinstance(error, UiDriverFailure):
             observation["ui_failure_kind"] = error.code
+            if error.startup is not None:
+                observation["startup_observation"] = error.startup
             if error.cleanup_code is not None:
                 observation["ui_cleanup_failure_kind"] = error.cleanup_code
         cleanup = getattr(error, "release_cleanup", None)

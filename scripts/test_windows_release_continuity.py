@@ -205,8 +205,19 @@ class ContinuityTests(unittest.TestCase):
             with self.assertRaises(continuity.UiDriverFailure) as caught:
                 continuity.run_ui(Path("node"), 1000, config)
         self.assertEqual(caught.exception.code, "ui_contract_failed")
+        startup = dict.fromkeys(("bridge_ready", "build_info_seen", "source_matches",
+                                 "version_matches", "root_mounted", "title_matches"), True)
+        startup["root_mounted"] = False
+        with patch.object(continuity.subprocess, "run", return_value=subprocess.CompletedProcess(
+                [], 1, (json.dumps({**failure, "failure_kind": "ui_mount_deadline",
+                                  "startup_observation": startup}) + "\n").encode(), b"")):
+            with self.assertRaises(continuity.UiDriverFailure) as caught:
+                continuity.run_ui(Path("node"), 1000, config)
+        self.assertEqual(caught.exception.startup, startup)
         for malformed in ({**failure, "failure_kind": "secret path"},
                           {**failure, "failure_kind": []},
+                          {**failure, "startup_observation": {**startup, "raw_source": "secret"}},
+                          {**failure, "startup_observation": {**startup, "root_mounted": 0}},
                           {**failure, "raw_error": "secret"}):
             with patch.object(continuity.subprocess, "run", return_value=subprocess.CompletedProcess(
                     [], 1, (json.dumps(malformed) + "\n").encode(), b"")):

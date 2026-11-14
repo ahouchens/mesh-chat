@@ -4,6 +4,78 @@ import { test } from "node:test";
 import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { boundedCdpFrame, closeBoundedSocket, closeCheckedSocket, completeAfterCleanup, fixedUiFailure, readBoundedInput, UiCleanupFailure, withDeadline } from "../../scripts/windows_release_ui_io.mjs";
+import { emptyStartupObservation, observeStartup, waitForStartup } from "../../scripts/windows_release_ui_startup.mjs";
+
+const readyStartup = () => Object.fromEntries(Object.keys(emptyStartupObservation()).map((key) => [key, true]));
+
+test("startup waits for bridge and React mount after native identity is correct", async () => {
+  let time = 0;
+  const seen = [];
+  const observations = [emptyStartupObservation(), { ...readyStartup(), root_mounted: false }, readyStartup()];
+  await waitForStartup(async (remaining) => {
+    assert.equal(remaining, 500 - time);
+    return observations.shift();
+  }, 500, (value) => seen.push(value), { now: () => time, pause: async (ms) => { time += ms; } });
+  assert.equal(seen.length, 3);
+  assert.equal(time, 200);
+});
+
+test("wrong source or version fails immediately even before mount", async () => {
+  for (const field of ["source_matches", "version_matches"]) {
+    let calls = 0;
+    await assert.rejects(waitForStartup(async () => {
+      calls += 1;
+      return { ...readyStartup(), [field]: false, root_mounted: false };
+    }, 100, () => {}, { now: () => 0, pause: async () => assert.fail("identity mismatch must not wait") }),
+    /ui_source_mismatch/);
+    assert.equal(calls, 1);
+  }
+});
+
+test("startup distinguishes missing bridge from mount and title deadlines", async () => {
+  for (const [value, failure] of [[emptyStartupObservation(), /ui_bridge_deadline/],
+    [{ ...readyStartup(), root_mounted: false }, /ui_mount_deadline/],
+    [{ ...readyStartup(), title_matches: false }, /ui_mount_deadline/]]) {
+    let time = 0;
+    await assert.rejects(waitForStartup(async () => value, 150, () => {},
+      { now: () => time, pause: async (ms) => { time += ms; } }), failure);
+    assert.equal(time, 150);
+  }
+});
+
+test("startup propagates CDP failure and bounds an unresolved native observation", async () => {
+  await assert.rejects(waitForStartup(async () => { throw new Error("ui_cdp_failed"); },
+    Date.now() + 1000, () => {}), /ui_cdp_failed/);
+  await assert.rejects(waitForStartup(() => new Promise(() => {}), Date.now() + 20,
+    () => {}), /ui_startup_deadline/);
+});
+
+test("startup rejects raw or malformed observations instead of retaining them", async () => {
+  for (const value of [{ ...readyStartup(), source: "raw value" },
+    { ...readyStartup(), root_mounted: "true" }, null]) {
+    await assert.rejects(waitForStartup(async () => value, Date.now() + 1000, () => {
+      assert.fail("malformed observation must not be retained");
+    }), /ui_observation_failed/);
+  }
+});
+
+test("page startup observation exports only boolean identity and readiness facts", async () => {
+  const priorWindow = globalThis.window, priorDocument = globalThis.document;
+  try {
+    globalThis.document = { title: "Mesh Chat", querySelector: () => ({}) };
+    globalThis.window = { __TAURI_INTERNALS__: { invoke: async (command) => {
+      assert.equal(command, "app_build_info");
+      return { build_commit: "a".repeat(40), installed_version: "0.9.66", unrelated: "private" };
+    } } };
+    assert.deepEqual(await observeStartup("a".repeat(40), "0.9.66"), readyStartup());
+    delete globalThis.window.__TAURI_INTERNALS__;
+    assert.deepEqual(await observeStartup("a".repeat(40), "0.9.66"),
+      { ...emptyStartupObservation(), root_mounted: true, title_matches: true });
+  } finally {
+    if (priorWindow === undefined) delete globalThis.window; else globalThis.window = priorWindow;
+    if (priorDocument === undefined) delete globalThis.document; else globalThis.document = priorDocument;
+  }
+});
 
 test("only fixed UI codes pass through diagnostic attribution", () => {
   assert.equal(fixedUiFailure(new Error("ui_source_mismatch")), "ui_source_mismatch");

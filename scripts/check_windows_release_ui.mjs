@@ -1,6 +1,7 @@
 // Drive only visible released-app controls; read back through two read-only commands.
 import { checkedConfig, checkedReadback, EVIDENCE_LEVEL, projectReadback } from "./windows_release_ui_contract.mjs";
 import { boundedCdpFrame, closeCheckedSocket, completeAfterCleanup, fixedUiFailure, readBoundedInput, UiCleanupFailure, withDeadline } from "./windows_release_ui_io.mjs";
+import { emptyStartupObservation, observeStartup, UiStartupFailure, waitForStartup } from "./windows_release_ui_startup.mjs";
 
 const START_MS = 20_000;
 const STEP_MS = 20_000;
@@ -69,11 +70,21 @@ class Gui {
 
   async open(port, config) {
     const until = Date.now() + START_MS;
+    let observation = emptyStartupObservation();
+    try {
+      await this.connect(port, until);
+      await waitForStartup((remaining) => this.evaluate(
+        `(${observeStartup.toString()})(${JSON.stringify(config.expected_source)},${JSON.stringify(config.expected_version)})`,
+        true, remaining), until, (value) => { observation = value; });
+    } catch (error) { throw new UiStartupFailure(error, observation); }
+  }
+
+  async connect(port, until) {
     let address;
     while (Date.now() < until) {
       try {
         const response = await fetch(`http://127.0.0.1:${port}/json/list`,
-          { signal: AbortSignal.timeout(1_000) });
+          { signal: AbortSignal.timeout(Math.max(1, Math.min(1_000, until - Date.now()))) });
         const rows = await boundedTargets(response);
         if (!Array.isArray(rows) || rows.length > 128) throw new Error("ui_target_invalid");
         const matches = rows.filter((row) => {
@@ -87,8 +98,11 @@ class Gui {
         if (matches.length > 1) throw new Error("ui_target_ambiguous");
         address = matches[0] && boundedSocket(matches[0].webSocketDebuggerUrl, port);
         if (address) break;
-      } catch { /* The exact app WebView may still be starting. */ }
-      await pause(100);
+      } catch (error) {
+        if (["ui_target_invalid", "ui_target_ambiguous"].includes(error?.message)) throw error;
+        // The exact app WebView may still be starting.
+      }
+      await pause(Math.min(100, Math.max(0, until - Date.now())));
     }
     if (!address) throw new Error("ui_target_unavailable");
     this.socket = new WebSocket(address);
@@ -125,16 +139,10 @@ class Gui {
       this.socket.removeEventListener("open", onOpen);
       this.socket.removeEventListener("error", onError);
     }
-    await this.command("Runtime.enable");
-    const identity = await this.evaluate(`window.__TAURI_INTERNALS__?.invoke('app_build_info').then(value => ({
-      mounted: Boolean(document.querySelector('#root > *')) && document.title === 'Mesh Chat',
-      source: value?.build_commit, version: value?.installed_version
-    }))`, true);
-    if (identity?.mounted !== true || identity.source !== config.expected_source
-        || identity.version !== config.expected_version) throw new Error("ui_source_mismatch");
+    await this.command("Runtime.enable", {}, Math.max(1, until - Date.now()));
   }
 
-  async command(method, params = {}) {
+  async command(method, params = {}, deadlineMs = STEP_MS) {
     if (this.protocolFailed || this.socket?.readyState !== WebSocket.OPEN) {
       throw new Error("ui_socket_closed");
     }
@@ -142,12 +150,12 @@ class Gui {
     const promise = new Promise((resolve, reject) => this.pending.set(id, { resolve, reject }));
     try {
       this.socket.send(JSON.stringify({ id, method, params }));
-      return await withDeadline(promise, STEP_MS, "ui_step_deadline");
+      return await withDeadline(promise, deadlineMs, "ui_step_deadline");
     } finally { this.pending.delete(id); }
   }
 
-  async evaluate(expression, awaitPromise = false) {
-    const result = await this.command("Runtime.evaluate", { expression, awaitPromise, returnByValue: true });
+  async evaluate(expression, awaitPromise = false, deadlineMs = STEP_MS) {
+    const result = await this.command("Runtime.evaluate", { expression, awaitPromise, returnByValue: true }, deadlineMs);
     if (result?.exceptionDetails || !result?.result || result.result.type === "undefined") {
       throw new Error("ui_observation_failed");
     }
@@ -287,6 +295,7 @@ try {
   const failure = { v: 1, passed: false, evidence_level: EVIDENCE_LEVEL,
     failure_kind: fixedUiFailure(primary) };
   if (dual) failure.cleanup_failure_kind = fixedUiFailure(error.cleanup);
+  if (primary instanceof UiStartupFailure) failure.startup_observation = primary.observation;
   process.stdout.write(JSON.stringify(failure) + "\n");
   process.exitCode = 1;
 }
