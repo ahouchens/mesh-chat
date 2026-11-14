@@ -198,21 +198,24 @@ Core's atomic same-key invitation/outbox replay is separately covered by
 substitutes. Exact-source packaged Windows/Android delivery, independent client
 attachment, native restart and media coexistence remain open.
 
-## Integrated R3/R5 retry disposition at `fa1addb`
+## Integrated R3/R5 retry disposition after `b791d55`
 
 The mounted-renderer retry work now covers five distinct UI actions. The first
 three checkpoints above remain accurate for prompt dismissal, channel creation
 and verified-contact workspace invitation send. Later source commits
-`d3ca3fd`, `85cdf56`, `75f23b2`, `ad2f6b9` and `dfa48ec` add these two paths:
+`d3ca3fd`, `85cdf56`, `75f23b2`, `ad2f6b9`, `dfa48ec` and the Core-only
+admin correction `b791d55` add these two paths:
 
 | Action | Current source and focused evidence | Honest recovery boundary |
 | --- | --- | --- |
 | Workspace access recommendation **send** | `src/App.tsx` retains the signed recommendation and one `operationId` for its workspace/profile scope through an uncertain send and settings close/reopen. `src/App.test.tsx` tests same-key retry, changed signed text, opaque workspace-handle refresh, later refusal after an unknown outcome, and scope retirement (`workspace access recommendations` cases). | One mounted Messenger profile lifetime. A confirmed Send again is a new action; a changed signed recommendation is a new intent. An unknown send remains unconfirmed. |
-| Workspace administrator **request submit** | `src/App.tsx::submitWorkspaceAdminRequest` retains the intent/key, prevents concurrent submission, pins the first Core or legacy route and Core handles, and retries an uncertain result through the same route. A confirmed submit followed by failed refresh only retries the refresh. `src/App.test.tsx` `administrator request recovery` covers lost replies, route/handle changes, refusal, refresh failure and profile fencing. | One mounted Messenger profile lifetime. Only initial explicit Core unavailability selects legacy; an uncertain Core outcome cannot switch ID namespaces. A later refusal cannot erase an earlier unknown commit. |
+| Workspace administrator **request submit** | `src/App.tsx::submitWorkspaceAdminRequest` retains the intent/key and captured Core handles, prevents concurrent submission, and retries an uncertain result through Core. New requests without required handles show a readiness error. A confirmed submit followed by failed refresh only retries the refresh. `src/App.test.tsx` `administrator request recovery` covers missing handles, explicit unavailability, handle loss, refusal, refresh failure and profile fencing. | One mounted Messenger profile lifetime. The Rust shell does not admit the legacy submit command; CI at `fa1addb` exposed the invalid fallback, removed in `b791d55`. A later refusal cannot erase an earlier unknown commit. |
 
-These are renderer component guarantees, supported by the integrated App/Core/
-profile local suite (295 tests) and `tsc -b --force` reported passing for this
-source. They do not make pending UI identities durable across a renderer process
+These are renderer component guarantees. The earlier `fa1addb` App/Core/profile
+suite passed 295 tests and `tsc -b --force`, but missed the unsupported command
+that the broader shell allowlist gate caught. The Core-only correction requires
+that gate as well as the affected App tests and actual project type check.
+These guarantees do not make pending UI identities durable across a renderer process
 restart. The current UI has no protected Core readback/reconciliation contract
 for every uncertain action above after such a restart. A new App/Messenger
 lifetime therefore must not be described as replaying an earlier unknown action.
