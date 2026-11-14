@@ -1,5 +1,29 @@
 # Connection runtime qualification ledger
 
+## Current independent R0/R9 integration — November 13, 2026
+
+C's `037aa3516b54b02b6c477607bdc6fd5c17ede140` is integrated as `694e390`.
+The new mixed-actor trace checks six contact/device/scope actors with two slots,
+first admission within four releases and second admission within ten releases,
+duplicate completion fencing and exact per-key resource ownership. Root reran
+the new test, supervisor suite and unchanged phase matrix: **323 passed**, zero
+skips (`.test-tmp/r0-competing-actors.xml`, 2.18 seconds). No production policy
+changed. This is local scheduler evidence, not signed signaling or packaged
+fairness. SC02 is corrected to partial and SC13 names its actual local scope.
+The M2 INV01–INV19 row now excludes INV20, which is tracked separately.
+
+Full run `43529724766` at `82c3364` remains in progress with a failed native Android
+job. Its component Android and exact JVM83 evidence passed. Android failed in
+`platform_outbound_preflight` with `emulator_exited_during_boot`; no paired case
+or cold restart was reached. All recognized console counters were zero, with
+reader EOF and no reader/classifier failure. Native report artifact `14087124474`
+has archive SHA256 `255e319066d54f6b4cfbf5755bb4be95b4902bc35f563fd1e17adf9d079703cb`.
+This does not establish the cause of the earlier cold initialize EOF. Preserve
+the remaining jobs before final closure; no native or aggregate acceptance.
+
+The compact current work register is [MESH_CORE_REFACTOR_REMAINING.md](MESH_CORE_REFACTOR_REMAINING.md).
+
+
 Full run [43520421850](https://github.com/ahouchens/mesh-chat/actions/runs/43520421850)
 at `b8e3e20` is **failed**: ten jobs passed, both native peers and the aggregate
 failed, and two optional jobs were skipped. The complete Windows and Linux
@@ -4715,7 +4739,7 @@ condition is recorded with its actual status:
 | Definition-of-done condition | Status | Evidence or gap |
 | --- | --- | --- |
 | M2: INV01–INV19 pass in applicable suites | partial | Local/component suites
-  pass; INV12/16/17/20 remain partial for packaged lifecycle, parity and carrier
+  pass; INV12/16/17 remain partial for packaged lifecycle, parity and carrier
   reuse. |
 | M2: one policy owner for Android foreground/background and desktop
   transitional messaging | partial | Single-owner composition and tests; full

@@ -2912,7 +2912,7 @@ never described as physical-device qualification.
 | ID | Status | Evidence and remaining gap |
 | --- | --- | --- |
 | SC01 | `component` | Packaged Windows peers exchange messages and authenticated receipts in both roles; no physical cross-device run. |
-| SC02 | `local` | Simultaneous start, duplicate signaling and role collisions are covered by the reducer/supervisor corpus. |
+| SC02 | `partial` | The supervisor trace proves bounded competing-actor admission, deterministic opposite-role scheduling, one current operation per key and duplicate completion fencing. Two-peer simultaneous signed-signaling and role-collision interleavings remain unqualified. |
 | SC03 | `local` | Old answers, late native callbacks and expired timers cannot advance state; exact orphan cleanup is asserted. |
 | SC04 | `partial` | Partitions are simulated deterministically; native five- and thirty-second packet partitions recovered with receipts under 30 and 240 seconds. The required 30-second partition under the specified 150 ms RTT impairment is not measured on the exact headless transports. |
 | SC05 | `partial` | Loss and delayed control are simulated; native duplicate-packet and packet-partition component checks now carry durable message traffic, but no run applies the specified 150 ms RTT impairment profile. |
@@ -2923,7 +2923,7 @@ never described as physical-device qualification.
 | SC10 | `component` | Stop, lock, revocation and quarantine during native creation are fenced locally; Android instrumentation covers cancelled gathering. The 294-case reducer corpus covers interruption and late completion at all 14 phases, including replacement resource protection. Packaged phase-by-phase parity remains open. |
 | SC11 | `partial` | Execution-state changes are policy inputs with one owner; full Android background/foreground parity is open. |
 | SC12 | `partial` | Direct Fabric suites exercise real controlled paths and NAT filters, but selected-path and negative-control evidence is not bound to policy traffic. |
-| SC13 | `local` | Multiple contacts, scopes and devices are covered for fairness and isolation; no cross-device packaged run. |
+| SC13 | `local` | Six mixed contact/device/scope actors receive first and second turns within independently asserted finite bounds, with exact per-key resource ownership; no cross-device packaged run. |
 | SC14 | `local` | Delayed attachment and missing path are bounded with truthful readiness. |
 | SC15 | `component` | Lost receipts, duplicate packets and restart preserve one visible message per logical ID in packaged runs. |
 | SC16 | `partial` | Policy and JNI queues enforce budgets and quarantine; a packaged saturation run is absent. |
