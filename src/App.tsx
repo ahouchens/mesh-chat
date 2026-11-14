@@ -3451,22 +3451,62 @@ export function WorkspaceAuthoritySettingsContent({ workspace, transitions, busy
   return <WorkspaceSettingsPanel><div className="form-stack"><WorkspaceAuthorityPanel workspace={workspace} transitions={transitions} busy={busy} onOffer={onOffer} onAccept={onAccept} onFinalize={onFinalize} onReportLoss={onReportLoss} />{error && <p className="form-error" role="alert">{error}</p>}</div></WorkspaceSettingsPanel>;
 }
 
-export function WorkspaceAccessSettingsContent({ workspace, onSaved }: { workspace: Workspace; onSaved: () => Promise<void> }) {
-  const admitProfileRequest = useProfileRequestAdmission();
+type WorkspaceAccessSendAttempt = { intent: string; operationId: string; inFlight: boolean };
+type WorkspaceAccessSendRecovery = {
+  scope: string;
+  created: WorkspaceAccessRecommendation;
+  attempt: WorkspaceAccessSendAttempt | null;
+  sendState: "idle" | "retry" | "confirmed";
+};
+
+export function WorkspaceAccessSettingsContent({ workspace, onSaved, sendRecovery }: { workspace: Workspace; onSaved: () => Promise<void>; sendRecovery?: Map<string, WorkspaceAccessSendRecovery> }) {
+  const profileEffects = useProfileEffectScope();
+  const admitProfileRequest = profileEffects.admit;
+  const localRecovery = useRef(new Map<string, WorkspaceAccessSendRecovery>());
+  const recovery = sendRecovery ?? localRecovery.current;
+  const owner = workspace.local_role === "owner" && workspace.local_device_id === workspace.authority_device_id && workspace.state === "active" && !workspace.authority_loss;
+  const scope = JSON.stringify([workspace.core_handle ?? workspace.id, workspace.id, workspace.local_device_id,
+    workspace.authority_device_id, workspace.epoch, workspace.manifest_hash, owner]);
+  const initialRecovery = recovery.get(workspace.id);
+  const initial = initialRecovery?.scope === scope ? initialRecovery : null;
   const [profiles, setProfiles] = useState<RemoteProfile[]>([]);
   const [profileId, setProfileId] = useState("");
-  const [created, setCreated] = useState<WorkspaceAccessRecommendation | null>(null);
+  const [created, setCreated] = useState<{ scope: string; value: WorkspaceAccessRecommendation } | null>(
+    initial ? { scope, value: initial.created } : null);
+  const [sendState, setSendState] = useState<"idle" | "retry" | "confirmed">(
+    initial?.attempt ? "retry" : initial?.sendState ?? "idle");
+  const sendAttempt = useRef<WorkspaceAccessSendAttempt | null>(
+    initial?.attempt ? { ...initial.attempt, inFlight: false } : null);
   const [recommendation, setRecommendation] = useState("");
   const [preview, setPreview] = useState<WorkspaceAccessPreview | null>(null);
   const [consent, setConsent] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState(initial?.attempt ? "Send was not confirmed. Retry checks the same action." : "");
   const [notice, setNotice] = useState("");
   const [received, setReceived] = useState<WorkspaceAccessRecommendationSummary[]>([]);
   const [receivedPreview, setReceivedPreview] = useState<WorkspaceAccessPreview | null>(null);
   const [receivedId, setReceivedId] = useState<string | null>(null);
   const [receivedConsent, setReceivedConsent] = useState(false);
-  const owner = workspace.local_role === "owner" && workspace.local_device_id === workspace.authority_device_id && workspace.state === "active";
+  const currentScope = useRef(scope);
+  currentScope.current = scope;
+  const activeCreated = created?.scope === scope ? created.value : null;
+  const currentRecommendation = useRef(activeCreated?.text);
+  currentRecommendation.current = activeCreated?.text;
+  const mounted = useRef(false);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useEffect(() => {
+    const saved = recovery.get(workspace.id);
+    if (saved && saved.scope !== scope) recovery.delete(workspace.id);
+    const restored = saved?.scope === scope ? saved : null;
+    sendAttempt.current = restored?.attempt ? { ...restored.attempt, inFlight: false } : null;
+    setCreated(restored ? { scope, value: restored.created } : null);
+    setSendState(restored?.attempt ? "retry" : restored?.sendState ?? "idle");
+    setBusy(false); setError(restored?.attempt ? "Send was not confirmed. Retry checks the same action." : ""); setNotice("");
+  }, [scope]);
+  const saveSendRecovery = (document: WorkspaceAccessRecommendation, state: WorkspaceAccessSendRecovery["sendState"], attempt: WorkspaceAccessSendAttempt | null) => {
+    recovery.set(workspace.id, { scope, created: document, sendState: state,
+      attempt: attempt ? { ...attempt, inFlight: false } : null });
+  };
   const loadReceived = async () => {
     try {
       const value = await fetchWorkspaceAccessRecommendation(workspace, "list", {}, undefined, admitProfileRequest) as unknown as { recommendations: WorkspaceAccessRecommendationSummary[] };
@@ -3492,20 +3532,56 @@ export function WorkspaceAccessSettingsContent({ workspace, onSaved }: { workspa
     try {
       const result = await fetchWorkspaceAccessRecommendation(workspace, "create",
         { remote_profile_id: profileId, lifetime_days: 7 }, undefined, admitProfileRequest) as unknown as WorkspaceAccessRecommendation;
-      setCreated(result);
+      if (!mounted.current || !profileEffects.isCurrent() || currentScope.current !== scope) return;
+      if (currentRecommendation.current !== result.text) {
+        sendAttempt.current = null;
+        setSendState("idle");
+        saveSendRecovery(result, "idle", null);
+      } else {
+        saveSendRecovery(result, sendState, sendAttempt.current);
+      }
+      setCreated({ scope, value: result });
       setRecommendation(result.text);
       setNotice("Recommendation created. Share the complete text with members.");
-    } catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); }
+    } catch (reason) { if (mounted.current && profileEffects.isCurrent() && currentScope.current === scope) setError(errorMessage(reason)); }
+    finally { if (mounted.current && profileEffects.isCurrent() && currentScope.current === scope) setBusy(false); }
   };
   const send = async () => {
-    if (!created) return;
+    if (!activeCreated || !owner || !profileEffects.isCurrent()) return;
+    const recommendation = activeCreated.text;
+    const intent = JSON.stringify([scope, recommendation]);
+    let attempt = sendAttempt.current;
+    if (attempt?.inFlight) return;
+    if (!attempt || attempt.intent !== intent) {
+      attempt = { intent, operationId: newOperationId(), inFlight: false };
+      sendAttempt.current = attempt;
+    }
+    attempt.inFlight = true;
+    saveSendRecovery(activeCreated, "retry", attempt);
     setBusy(true); setError(""); setNotice("");
     try {
       const result = await fetchWorkspaceAccessRecommendation(workspace, "send",
-        { recommendation: created.text },
-        newOperationId(), admitProfileRequest) as unknown as { sent_devices: number };
+        { recommendation }, attempt.operationId, admitProfileRequest) as unknown as { sent_devices: number };
+      if (!mounted.current || !profileEffects.isCurrent() || currentScope.current !== scope
+          || currentRecommendation.current !== recommendation || sendAttempt.current !== attempt) return;
+      sendAttempt.current = null;
+      setSendState("confirmed");
+      saveSendRecovery(activeCreated, "confirmed", null);
       setNotice(`Queued the recommendation for ${result.sent_devices} active member device${result.sent_devices === 1 ? "" : "s"}. Delivery remains retryable.`);
-    } catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); }
+    } catch (reason) {
+      if (!mounted.current || !profileEffects.isCurrent() || currentScope.current !== scope
+          || currentRecommendation.current !== recommendation || sendAttempt.current !== attempt) return;
+      const refused = ["forbidden", "invalid_request", "idempotency_conflict"].includes(profileErrorCode(reason));
+      if (refused) sendAttempt.current = null;
+      setSendState(refused ? "idle" : "retry");
+      saveSendRecovery(activeCreated, refused ? "idle" : "retry", refused ? null : attempt);
+      setError(refused ? `The recommendation was not sent: ${errorMessage(reason)}`
+        : "Send was not confirmed. Retry checks the same action.");
+    } finally {
+      attempt.inFlight = false;
+      if (mounted.current && profileEffects.isCurrent() && currentScope.current === scope
+          && currentRecommendation.current === recommendation) setBusy(false);
+    }
   };
   const reviewReceived = async (id: string) => {
     setBusy(true); setError(""); setNotice(""); setReceivedPreview(null); setReceivedConsent(false);
@@ -3547,7 +3623,7 @@ export function WorkspaceAccessSettingsContent({ workspace, onSaved }: { workspa
   return <WorkspaceSettingsPanel><div className="form-stack">
     <p className="muted">An access point is a shared, consented transport. It can make workspace member devices reachable through one operator, but it does not grant membership or authority. The operator sees connection metadata, not message contents.</p>
     {received.length > 0 && <section className="workspace-name-request"><h3>Received for this workspace</h3><p className="muted">These recommendations were delivered by the current owner authority. A stale one must be resent after the next manifest.</p>{received.map((item) => <div className="workspace-invitation-row" key={item.id}><span><strong>{item.profile_label}</strong><small>{item.endpoint_count} endpoint{item.endpoint_count === 1 ? "" : "s"} · expires {formatExpiry(item.expires_at)}{item.stale ? " · stale" : ""}</small></span><span><Button variant="secondary" disabled={busy || item.stale} onClick={() => void reviewReceived(item.id)}>Review</Button></span></div>)}{receivedPreview && receivedId && <div className="workspace-access-preview"><p><strong>{receivedPreview.profile_label}</strong> · {receivedPreview.endpoint_count} endpoint{receivedPreview.endpoint_count === 1 ? "" : "s"} · expires {formatExpiry(receivedPreview.expires_at)}</p><p className="muted">{receivedPreview.profile.privacy_disclosure}</p><label className="checkbox-line"><input type="checkbox" checked={receivedConsent} onChange={(event) => setReceivedConsent(event.target.checked)} /> I consent to attach this access point to {workspace.name}. I understand the operator can observe connection metadata.</label><Button disabled={busy || !receivedConsent} onClick={() => void applyReceived()}>Attach access point</Button></div>}</section>}
-    {owner && <section className="workspace-name-request"><h3>Share an approved access point</h3>{profiles.length === 0 ? <p className="muted">No approved remote profiles are available. Approve one under Settings → Remote connections first.</p> : <><label>Access point<select value={profileId} onChange={(event) => { setProfileId(event.target.value); setCreated(null); }}>{profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.label} · {profile.endpoint_count} endpoint{profile.endpoint_count === 1 ? "" : "s"}</option>)}</select></label><Button variant="secondary" disabled={busy || !profileId} onClick={() => void create()}>{busy ? "Preparing…" : "Create recommendation"}</Button></>}{created && <><label>Complete recommendation<textarea readOnly rows={4} value={created.text} aria-label="Workspace access recommendation" onFocus={(event) => event.currentTarget.select()} /></label><p className="muted">Expires {formatExpiry(created.expires_at)}. Send the entire value; anyone with it still needs to consent.</p><Button variant="ghost" onClick={() => void navigator.clipboard.writeText(created.text).then(() => setNotice("Recommendation copied.")).catch(() => setError("Could not copy."))}>Copy recommendation</Button><Button variant="secondary" disabled={busy} onClick={() => void send()}>{busy ? "Sending…" : "Send to workspace members"}</Button></>}</section>}
+    {owner && <section className="workspace-name-request"><h3>Share an approved access point</h3>{profiles.length === 0 ? <p className="muted">No approved remote profiles are available. Approve one under Settings → Remote connections first.</p> : <><label>Access point<select value={profileId} onChange={(event) => { setProfileId(event.target.value); setCreated(null); sendAttempt.current = null; setSendState("idle"); recovery.delete(workspace.id); }}>{profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.label} · {profile.endpoint_count} endpoint{profile.endpoint_count === 1 ? "" : "s"}</option>)}</select></label><Button variant="secondary" disabled={busy || !profileId} onClick={() => void create()}>{busy ? "Preparing…" : "Create recommendation"}</Button></>}{activeCreated && <><label>Complete recommendation<textarea readOnly rows={4} value={activeCreated.text} aria-label="Workspace access recommendation" onFocus={(event) => event.currentTarget.select()} /></label><p className="muted">Expires {formatExpiry(activeCreated.expires_at)}. Send the entire value; anyone with it still needs to consent.</p><Button variant="ghost" onClick={() => void navigator.clipboard.writeText(activeCreated.text).then(() => setNotice("Recommendation copied.")).catch(() => setError("Could not copy."))}>Copy recommendation</Button><Button variant="secondary" disabled={busy} onClick={() => void send()}>{busy ? "Sending…" : sendState === "retry" ? "Retry send to workspace members" : sendState === "confirmed" ? "Send again to workspace members" : "Send to workspace members"}</Button></>}</section>}
     <section className="workspace-name-request"><h3>Apply a recommendation</h3><p className="muted">Verify the current owner authority and preview the access-point disclosure before attaching it to this device.</p><label>Recommendation<textarea rows={4} value={recommendation} onChange={(event) => { setRecommendation(event.target.value); setPreview(null); setConsent(false); }} placeholder="MESHACCESS1:…" spellCheck={false} /></label><Button variant="secondary" disabled={busy || !recommendation.trim()} onClick={() => void check()}>{busy ? "Checking…" : "Preview"}</Button>{preview && <div className="workspace-access-preview"><p><strong>{preview.profile_label}</strong> · {preview.endpoint_count} endpoint{preview.endpoint_count === 1 ? "" : "s"} · expires {formatExpiry(preview.expires_at)}</p><p className="muted">{preview.profile.privacy_disclosure}</p><label className="checkbox-line"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /> I consent to attach this access point to {workspace.name}. I understand the operator can observe connection metadata.</label><Button disabled={busy || !consent} onClick={() => void apply()}>Attach access point</Button></div>}</section>
     {notice && <p className="direct-host-status" role="status">{notice}</p>}
     {error && <p className="form-error" role="alert">{error}</p>}
@@ -4257,6 +4333,7 @@ type WorkspaceMessageInvalidations = Record<string, {
 
 function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageInvalidations, promptDismissalKeys, notificationTarget, onNotificationHandled, onLock, initialInvitation, onInvitationHandled, initialPairingCode = "", initialWebRTCJoin = false, onWebRTCJoinHandled, onPairingHandled }: { snapshot: Snapshot; theme: Theme; onThemeChange: (theme: Theme) => void; refresh: (afterCurrent?: boolean) => Promise<Snapshot>; workspaceMessageInvalidations: WorkspaceMessageInvalidations; promptDismissalKeys: Map<string, string>; notificationTarget: NotificationOpenTarget | null; onNotificationHandled: () => void; onLock: () => Promise<void>; initialInvitation: string; onInvitationHandled: () => void; initialPairingCode?: string; initialWebRTCJoin?: boolean; onWebRTCJoinHandled?: () => void; onPairingHandled?: () => void }) {
   const profileEffects = useProfileEffectScope();
+  const workspaceAccessSendRecovery = useRef(new Map<string, WorkspaceAccessSendRecovery>());
   const admitProfileRequest = useProfileRequestAdmission();
   const lifetime = useProfileLifetime();
   const [profileGeneration] = useState(() => lifetime?.capture());
@@ -6898,7 +6975,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
           devices: (<WorkspaceDevicesSettingsContent workspace={selectedWorkspace} transitions={workspaceDeviceTransitions.filter((item) => item.workspace_id === selectedWorkspace.id)} busy={workspaceActionBusy} error={workspaceActionError}  onCreate={createWorkspaceDeviceLink} onDecide={(transition, approve) => void runWorkspaceAdministration(transition.transition_kind === "link" ? (approve ? "approve_workspace_device_link" : "decline_workspace_device_link") : (approve ? "approve_workspace_device_removal" : "decline_workspace_device_removal"), transition.transition_kind === "link" ? { link_id: transition.id } : { removal_id: transition.id })} onRemove={(deviceId) => void runWorkspaceAdministration("request_workspace_device_removal", { target_device_id: deviceId })} onReadSync={(enabled) => void runWorkspaceAdministration("set_workspace_read_hint_sync", { enabled })} />),
           general: (<WorkspaceGeneralSettingsContent workspace={selectedWorkspace} conversation={selectedWorkspaceConversation} networkSettings={snapshot.settings} busy={workspaceActionBusy} error={workspaceActionError}  onOpenAccess={() => setWorkspaceSettingsSection("access")} reconnect={reconnectCoordinator} onUpdateMetadata={(name, description) => void runWorkspaceAdministration("update_workspace_metadata", { name, description })} onUpdatePolicies={(channelCreation, posting) => void runWorkspaceAdministration("update_workspace_policies", { channel_creation: channelCreation, posting })} onSetNotificationPreference={(conversationId, mode) => void runWorkspaceNotificationPreference(conversationId, mode)} onApprovePropagationNode={(node) => void approveWorkspacePropagationNode(node)} onCloseWorkspace={() => void runWorkspaceLifecycle("close_workspace")} onLeave={() => void runWorkspaceLifecycle("leave_workspace")} onRemove={(confirmation) => void runWorkspaceLifecycle("remove_workspace_data", confirmation)} />),
           connections: (<WorkspaceGeneralSettingsContent view="connections" workspace={selectedWorkspace} conversation={selectedWorkspaceConversation} networkSettings={snapshot.settings} busy={workspaceActionBusy} error={workspaceActionError}  onOpenAccess={() => setWorkspaceSettingsSection("access")} reconnect={reconnectCoordinator} onUpdateMetadata={(name, description) => void runWorkspaceAdministration("update_workspace_metadata", { name, description })} onUpdatePolicies={(channelCreation, posting) => void runWorkspaceAdministration("update_workspace_policies", { channel_creation: channelCreation, posting })} onSetNotificationPreference={(conversationId, mode) => void runWorkspaceNotificationPreference(conversationId, mode)} onApprovePropagationNode={(node) => void approveWorkspacePropagationNode(node)} onCloseWorkspace={() => void runWorkspaceLifecycle("close_workspace")} onLeave={() => void runWorkspaceLifecycle("leave_workspace")} onRemove={(confirmation) => void runWorkspaceLifecycle("remove_workspace_data", confirmation)} />),
-          access: (<WorkspaceAccessSettingsContent workspace={selectedWorkspace}  onSaved={async () => { await refresh(true); }} />),
+          access: (<WorkspaceAccessSettingsContent workspace={selectedWorkspace} sendRecovery={workspaceAccessSendRecovery.current} onSaved={async () => { await refresh(true); }} />),
           history: (<WorkspaceHistorySettingsContent workspace={selectedWorkspace} conversationId={selectedWorkspaceConversation?.id} conversationName={selectedWorkspaceDirect?.peer_display_name ?? selectedWorkspaceChannel?.display_name ?? selectedWorkspaceChannel?.name} busy={workspaceActionBusy} error={workspaceActionError}  onUpdate={(retentionDays) => void runWorkspaceAdministration("update_workspace_retention", { retention_days: retentionDays })} onPrune={pruneWorkspaceHistory} />),
           }} />
       </div>}

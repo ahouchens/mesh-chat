@@ -1,4 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import type { ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ComposerHostFixture } from "./test/composer-host";
 import { callRecovery } from "./call-operation";
@@ -269,7 +270,8 @@ vi.mock("./core-composer", () => ({
   }),
 }));
 
-import App from "./App";
+import App, { WorkspaceAccessSettingsContent } from "./App";
+import { ProfileLifetime, ProfileLifetimeContext } from "./profile-lifetime";
 import { ReconnectCoordinator } from "./reconnect-coordinator";
 import { getWebRTCSessionByKey, getWebRTCSessionCount, removeWebRTCSession, setWebRTCSession, type WebRTCSession } from "./webrtc-session";
 import type { ServiceEvent } from "./api";
@@ -7297,6 +7299,176 @@ describe("workspace reconnect consent", () => {
 });
 
 describe("workspace access recommendations", () => {
+  const accessProfile = { id: "r".repeat(64), label: "Workspace relay", expires_at: 4102444800, endpoint_count: 1 };
+  const recommendation = (text: string) => ({
+    workspace_id: workspace.id, workspace_name: workspace.name, profile_id: accessProfile.id,
+    profile_label: accessProfile.label, endpoint_count: 1, expires_at: accessProfile.expires_at,
+    recommendation: text, text,
+  });
+  const renderAccess = (lifetime = new ProfileLifetime(), currentWorkspace = workspace,
+    sendRecovery?: ComponentProps<typeof WorkspaceAccessSettingsContent>["sendRecovery"]) => render(
+    <ProfileLifetimeContext.Provider value={lifetime}>
+      <WorkspaceAccessSettingsContent workspace={currentWorkspace} sendRecovery={sendRecovery} onSaved={async () => undefined} />
+    </ProfileLifetimeContext.Provider>,
+  );
+  const prepareAccess = async () => {
+    const create = await screen.findByRole("button", { name: "Create recommendation" }) as HTMLButtonElement;
+    await waitFor(() => expect(create.disabled).toBe(false));
+    fireEvent.click(create);
+    await screen.findByLabelText("Workspace access recommendation");
+  };
+
+  it("retries a committed send with its original key, then gives a deliberate resend or changed document a new key", async () => {
+    const firstReply = deferred<{ sent_devices: number }>();
+    const committed = new Set<string>();
+    const sends: Array<{ operation_id: string; recommendation: string }> = [];
+    let createdText = "MESHACCESS1:first";
+    api.serviceCommand.mockImplementation((command: string, payload?: { operation_id?: string; recommendation?: string }) => {
+      if (command === "list_remote_profiles") return { profiles: [accessProfile] };
+      if (command === "list_workspace_access_recommendations") return { recommendations: [] };
+      if (command === "create_workspace_access_recommendation") return recommendation(createdText);
+      if (command === "send_workspace_access_recommendation") {
+        const sent = payload as { operation_id: string; recommendation: string };
+        sends.push(sent);
+        committed.add(sent.operation_id);
+        return sends.length === 1 ? firstReply.promise : { sent_devices: 1 };
+      }
+      return {};
+    });
+    renderAccess();
+    await prepareAccess();
+    const send = screen.getByRole("button", { name: "Send to workspace members" });
+    fireEvent.click(send);
+    fireEvent.click(send);
+    await waitFor(() => expect(sends).toHaveLength(1));
+    await act(async () => { firstReply.reject(new Error("reply lost after commit")); });
+    expect(screen.getByRole("alert").textContent).toMatch(/not confirmed.*same action/i);
+    fireEvent.click(screen.getByRole("button", { name: "Retry send to workspace members" }));
+    await screen.findByText(/Queued the recommendation for 1 active member device/);
+    expect(sends).toHaveLength(2);
+    expect(sends[1].operation_id).toBe(sends[0].operation_id);
+    expect(committed.size).toBe(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Send again to workspace members" }));
+    await waitFor(() => expect(sends).toHaveLength(3));
+    expect(sends[2].operation_id).not.toBe(sends[0].operation_id);
+
+    createdText = "MESHACCESS1:second";
+    fireEvent.click(screen.getByRole("button", { name: "Create recommendation" }));
+    await waitFor(() => expect((screen.getByLabelText("Workspace access recommendation") as HTMLTextAreaElement).value).toBe(createdText));
+    fireEvent.click(screen.getByRole("button", { name: "Send to workspace members" }));
+    await waitFor(() => expect(sends).toHaveLength(4));
+    expect(sends[3].recommendation).toBe(createdText);
+    expect(sends[3].operation_id).not.toBe(sends[2].operation_id);
+  });
+
+  it("discards a late send result after profile retirement", async () => {
+    const reply = deferred<{ sent_devices: number }>();
+    api.serviceCommand.mockImplementation((command: string) => {
+      if (command === "list_remote_profiles") return { profiles: [accessProfile] };
+      if (command === "list_workspace_access_recommendations") return { recommendations: [] };
+      if (command === "create_workspace_access_recommendation") return recommendation("MESHACCESS1:first");
+      if (command === "send_workspace_access_recommendation") return reply.promise;
+      return {};
+    });
+    const lifetime = new ProfileLifetime();
+    renderAccess(lifetime);
+    await prepareAccess();
+    fireEvent.click(screen.getByRole("button", { name: "Send to workspace members" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("send_workspace_access_recommendation", expect.anything()));
+    const retirement = lifetime.retire();
+    await act(async () => { reply.resolve({ sent_devices: 1 }); await retirement; });
+    expect(screen.queryByText(/Queued the recommendation for/)).toBeNull();
+  });
+
+  it("does not reuse an uncertain send key for a different signed recommendation", async () => {
+    const sends: Array<{ operation_id: string; recommendation: string }> = [];
+    let createdText = "MESHACCESS1:first";
+    api.serviceCommand.mockImplementation((command: string, payload?: { operation_id?: string; recommendation?: string }) => {
+      if (command === "list_remote_profiles") return { profiles: [accessProfile] };
+      if (command === "list_workspace_access_recommendations") return { recommendations: [] };
+      if (command === "create_workspace_access_recommendation") return recommendation(createdText);
+      if (command === "send_workspace_access_recommendation") {
+        sends.push(payload as { operation_id: string; recommendation: string });
+        return sends.length === 1 ? Promise.reject(new Error("reply lost")) : { sent_devices: 1 };
+      }
+      return {};
+    });
+    renderAccess();
+    await prepareAccess();
+    fireEvent.click(screen.getByRole("button", { name: "Send to workspace members" }));
+    await screen.findByRole("button", { name: "Retry send to workspace members" });
+    createdText = "MESHACCESS1:second";
+    fireEvent.click(screen.getByRole("button", { name: "Create recommendation" }));
+    await waitFor(() => expect((screen.getByLabelText("Workspace access recommendation") as HTMLTextAreaElement).value).toBe(createdText));
+    fireEvent.click(screen.getByRole("button", { name: "Send to workspace members" }));
+    await waitFor(() => expect(sends).toHaveLength(2));
+    expect(sends[1].operation_id).not.toBe(sends[0].operation_id);
+    expect(sends[1].recommendation).toBe(createdText);
+  });
+
+  it("keeps the uncertain key and signed document when settings close and reopen in one profile lifetime", async () => {
+    const firstReply = deferred<{ sent_devices: number }>();
+    const sends: string[] = [];
+    api.serviceCommand.mockImplementation((command: string, payload?: { operation_id?: string }) => {
+      if (command === "list_remote_profiles") return { profiles: [accessProfile] };
+      if (command === "list_workspace_access_recommendations") return { recommendations: [] };
+      if (command === "create_workspace_access_recommendation") return recommendation("MESHACCESS1:first");
+      if (command === "send_workspace_access_recommendation") {
+        sends.push(payload?.operation_id ?? "");
+        return sends.length === 1 ? firstReply.promise : { sent_devices: 1 };
+      }
+      return {};
+    });
+    const lifetime = new ProfileLifetime();
+    const sendRecovery = new Map();
+    const firstView = renderAccess(lifetime, workspace, sendRecovery);
+    await prepareAccess();
+    fireEvent.click(screen.getByRole("button", { name: "Send to workspace members" }));
+    await waitFor(() => expect(sends).toHaveLength(1));
+    firstView.unmount();
+
+    renderAccess(lifetime, workspace, sendRecovery);
+    expect((await screen.findByLabelText("Workspace access recommendation") as HTMLTextAreaElement).value).toBe("MESHACCESS1:first");
+    fireEvent.click(screen.getByRole("button", { name: "Retry send to workspace members" }));
+    await screen.findByText(/Queued the recommendation for 1 active member device/);
+    expect(sends).toHaveLength(2);
+    expect(sends[1]).toBe(sends[0]);
+    await act(async () => { firstReply.resolve({ sent_devices: 1 }); });
+    expect(screen.getByRole("button", { name: "Send again to workspace members" })).toBeTruthy();
+  });
+
+  it("fences authority changes and presents a definitive Core refusal", async () => {
+    const reply = deferred<{ sent_devices: number }>();
+    const sends: string[] = [];
+    api.serviceCommand.mockImplementation((command: string, payload?: { operation_id?: string }) => {
+      if (command === "list_remote_profiles") return { profiles: [accessProfile] };
+      if (command === "list_workspace_access_recommendations") return { recommendations: [] };
+      if (command === "create_workspace_access_recommendation") return recommendation("MESHACCESS1:first");
+      if (command === "send_workspace_access_recommendation") {
+        sends.push(payload?.operation_id ?? "");
+        return sends.length === 1 ? reply.promise : Promise.reject(Object.assign(new Error("forbidden"), { code: "forbidden" }));
+      }
+      return {};
+    });
+    const lifetime = new ProfileLifetime();
+    const view = renderAccess(lifetime);
+    await prepareAccess();
+    fireEvent.click(screen.getByRole("button", { name: "Send to workspace members" }));
+    const changed = { ...workspace, authority_device_id: "44444444-4444-4444-8444-444444444444" };
+    view.rerender(<ProfileLifetimeContext.Provider value={lifetime}><WorkspaceAccessSettingsContent workspace={changed} onSaved={async () => undefined} /></ProfileLifetimeContext.Provider>);
+    await act(async () => { reply.resolve({ sent_devices: 1 }); });
+    expect(screen.queryByText(/Queued the recommendation for/)).toBeNull();
+    view.rerender(<ProfileLifetimeContext.Provider value={lifetime}><WorkspaceAccessSettingsContent workspace={workspace} onSaved={async () => undefined} /></ProfileLifetimeContext.Provider>);
+    await prepareAccess();
+    fireEvent.click(screen.getByRole("button", { name: "Send to workspace members" }));
+    expect(await screen.findByRole("alert")).toHaveProperty("textContent", expect.stringContaining("not sent"));
+    expect(screen.queryByRole("button", { name: "Retry send to workspace members" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Send to workspace members" }));
+    await waitFor(() => expect(sends).toHaveLength(3));
+    expect(sends[2]).not.toBe(sends[1]);
+  });
+
   it("creates a signed access recommendation and applies one only after consent", async () => {
     const current: Snapshot = {
       ...snapshot(),
