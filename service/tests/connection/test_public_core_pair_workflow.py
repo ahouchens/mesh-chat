@@ -1,7 +1,12 @@
 """The fresh public pair runs only through its isolated manual route."""
 
 from pathlib import Path
+import os
 import re
+import shutil
+import subprocess
+
+import pytest
 
 import yaml
 
@@ -91,10 +96,11 @@ def test_role_downloads_run_action_with_exact_emulator_lifetime_and_retain_prove
     emulator = named_step(android, "Run public Android pair role while the emulator is alive")
     assert emulator["uses"] == "reactivecircus/android-emulator-runner@v2"
     assert emulator["with"]["emulator-port"] == 5554
-    assert emulator["with"]["script"] == "node scripts/public-core-pair-action/action.mjs"
+    assert emulator["with"]["script"] == (
+        "env 'INPUT_DISPOSABLE-EMULATOR-SERIAL=emulator-5554' "
+        "node scripts/public-core-pair-action/action.mjs")
     assert emulator["env"] == {
-        "GITHUB_TOKEN": "${{ github.token }}", "INPUT_ROLE": "android", "INPUT_PYTHON": "python",
-        "INPUT_DISPOSABLE-EMULATOR-SERIAL": "emulator-5554"}
+        "GITHUB_TOKEN": "${{ github.token }}", "INPUT_ROLE": "android", "INPUT_PYTHON": "python"}
     for role, report in (("windows", "windows-independent-bootstrap.json"),
                          ("android", "android-independent-distribution.json")):
         upload = named_step(jobs[f"{role}_public"], f"Retain public {role.title()} role and original producer report")
@@ -123,3 +129,32 @@ def test_checker_receives_four_exact_needs_and_original_producer_reports():
     summary = named_step(job, "Retain distinct public fresh-pair diagnostic")
     assert summary["if"] == "always()"
     assert "dist/reports/public-core-pair-summary.json" in summary["with"]["path"]
+
+
+def test_android_emulator_shell_restores_declared_hyphenated_input_after_shell_boundary():
+    emulator = named_step(workflow("public-core-pair-diagnostic.yml")["jobs"]["android_public"],
+                          "Run public Android pair role while the emulator is alive")
+    script = emulator["with"]["script"]
+    shell = shutil.which("sh")
+    if shell is None:
+        git_dash = Path("C:/Program Files/Git/usr/bin/dash.exe")
+        shell = str(git_dash) if git_dash.is_file() else None
+    if shell is None:
+        pytest.skip("POSIX shell unavailable on this host")
+    environment = dict(os.environ)
+    if os.name == "nt":
+        # Git-for-Windows dash needs its POSIX tools explicitly on PATH.
+        environment["PATH"] = "/usr/bin:" + environment["PATH"]
+    environment["GITHUB_TOKEN"] = "test-github-token"
+    environment["ACTIONS_RUNTIME_TOKEN"] = "test-runtime-token"
+    environment["INPUT_DISPOSABLE-EMULATOR-SERIAL"] = "emulator-5554"
+    inherited = subprocess.run([shell, "-c", "/usr/bin/env"], env=environment,
+                               capture_output=True, text=True, timeout=10, check=True)
+    assert "INPUT_DISPOSABLE-EMULATOR-SERIAL=emulator-5554" not in inherited.stdout
+    environment.pop("INPUT_DISPOSABLE-EMULATOR-SERIAL")
+    command = script.replace("node scripts/public-core-pair-action/action.mjs", "/usr/bin/env")
+    restored = subprocess.run([shell, "-c", command], env=environment,
+                              capture_output=True, text=True, timeout=10, check=True)
+    assert "INPUT_DISPOSABLE-EMULATOR-SERIAL=emulator-5554" in restored.stdout
+    assert "GITHUB_TOKEN=test-github-token" in restored.stdout
+    assert "ACTIONS_RUNTIME_TOKEN=test-runtime-token" in restored.stdout

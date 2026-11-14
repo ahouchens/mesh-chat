@@ -113,14 +113,13 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           INPUT_ROLE: android
           INPUT_PYTHON: python
-          INPUT_DISPOSABLE-EMULATOR-SERIAL: emulator-5554
         with:
           api-level: 35
           arch: x86_64
           target: google_apis
           emulator-port: 5554
           disable-animations: true
-          script: node scripts/public-core-pair-action/action.mjs
+          script: env 'INPUT_DISPOSABLE-EMULATOR-SERIAL=emulator-5554' node scripts/public-core-pair-action/action.mjs
       - name: Retain public Android role and original producer report
         if: always()
         uses: actions/upload-artifact@v4
