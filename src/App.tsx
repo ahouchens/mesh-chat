@@ -4238,7 +4238,7 @@ type WorkspaceMessageInvalidations = Record<string, {
   conversations: Record<string, number>;
 }>;
 
-function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageInvalidations, notificationTarget, onNotificationHandled, onLock, initialInvitation, onInvitationHandled, initialPairingCode = "", initialWebRTCJoin = false, onWebRTCJoinHandled, onPairingHandled }: { snapshot: Snapshot; theme: Theme; onThemeChange: (theme: Theme) => void; refresh: (afterCurrent?: boolean) => Promise<Snapshot>; workspaceMessageInvalidations: WorkspaceMessageInvalidations; notificationTarget: NotificationOpenTarget | null; onNotificationHandled: () => void; onLock: () => Promise<void>; initialInvitation: string; onInvitationHandled: () => void; initialPairingCode?: string; initialWebRTCJoin?: boolean; onWebRTCJoinHandled?: () => void; onPairingHandled?: () => void }) {
+function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageInvalidations, promptDismissalKeys, notificationTarget, onNotificationHandled, onLock, initialInvitation, onInvitationHandled, initialPairingCode = "", initialWebRTCJoin = false, onWebRTCJoinHandled, onPairingHandled }: { snapshot: Snapshot; theme: Theme; onThemeChange: (theme: Theme) => void; refresh: (afterCurrent?: boolean) => Promise<Snapshot>; workspaceMessageInvalidations: WorkspaceMessageInvalidations; promptDismissalKeys: Map<string, string>; notificationTarget: NotificationOpenTarget | null; onNotificationHandled: () => void; onLock: () => Promise<void>; initialInvitation: string; onInvitationHandled: () => void; initialPairingCode?: string; initialWebRTCJoin?: boolean; onWebRTCJoinHandled?: () => void; onPairingHandled?: () => void }) {
   const profileEffects = useProfileEffectScope();
   const admitProfileRequest = useProfileRequestAdmission();
   const lifetime = useProfileLifetime();
@@ -4356,10 +4356,18 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
   const [dismissedContactInviteIds, setDismissedContactInviteIds] = useState<Set<string>>(() => new Set());
   const [contactInviteDismissBusy, setContactInviteDismissBusy] = useState<string | null>(null);
   const [contactInviteDismissError, setContactInviteDismissError] = useState<{ id: string; message: string } | null>(null);
+  const contactInviteDismissInFlight = useRef<string | null>(null);
   const incomingCall = (snapshot.calls ?? []).find((call) => call.direction === "inbound" && call.state === "ringing");
   const contactInvitePrompt = (snapshot.workspace_invitation_prompts ?? []).find((prompt) =>
     prompt.state === "pending" && !dismissedContactInviteIds.has(prompt.id),
   );
+  useEffect(() => {
+    if (!snapshot.workspace_invitation_prompts) return;
+    const pending = new Set(snapshot.workspace_invitation_prompts.map((prompt) => prompt.id));
+    for (const promptId of promptDismissalKeys.keys()) {
+      if (!pending.has(promptId)) promptDismissalKeys.delete(promptId);
+    }
+  }, [snapshot.workspace_invitation_prompts, promptDismissalKeys]);
   useEffect(() => {
     if (!webrtcSessionActive) return;
     const control = getWebRTCSessionWithControl()?.control;
@@ -6475,17 +6483,29 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
   }, [hasMobileBackTarget]);
 
   const dismissContactInvite = async (promptId: string) => {
-    if (contactInviteDismissBusy) return;
+    if (contactInviteDismissInFlight.current || !profileCurrent()) return;
+    contactInviteDismissInFlight.current = promptId;
+    const key = promptDismissalKeys.get(promptId) ?? newOperationId();
+    promptDismissalKeys.set(promptId, key);
     setContactInviteDismissBusy(promptId);
     setContactInviteDismissError(null);
     try {
-      await fetchWorkspaceConnection(null, "prompt_dismiss", { prompt_id: promptId }, undefined, admitProfileRequest);
+      await fetchWorkspaceConnection(null, "prompt_dismiss", { prompt_id: promptId }, key, admitProfileRequest);
+      if (!profileCurrent()) return;
+      promptDismissalKeys.delete(promptId);
       setDismissedContactInviteIds((current) => new Set(current).add(promptId));
       void refresh(true).catch(() => undefined);
-    } catch {
-      setContactInviteDismissError({ id: promptId, message: "Could not dismiss this invitation. Please try again." });
+    } catch (reason) {
+      if (!profileCurrent()) return;
+      const code = profileErrorCode(reason);
+      const refused = ["forbidden", "invalid_request", "idempotency_conflict"].includes(code);
+      if (refused) promptDismissalKeys.delete(promptId);
+      setContactInviteDismissError({ id: promptId, message: refused
+        ? "This invitation could not be dismissed. Review it or refresh your profile."
+        : "Dismissal was not confirmed. Retry to check the same action." });
     } finally {
-      setContactInviteDismissBusy(null);
+      contactInviteDismissInFlight.current = null;
+      if (profileCurrent()) setContactInviteDismissBusy(null);
     }
   };
 
@@ -6584,9 +6604,11 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
             <span><strong>Workspace invitation</strong><small>{contactInvitePrompt.contact_display_name} invited you to {contactInvitePrompt.workspace_name}. Review it before joining.</small></span>
             <div className="incoming-call-banner__actions">
               <Button disabled={contactInviteDismissBusy === contactInvitePrompt.id} onClick={() => { setContactInvitePromptId(contactInvitePrompt.id); setJoinWorkspaceValue(contactInvitePrompt.invitation); setJoinWorkspaceOpen(true); setMobileSidebarOpen(true); }}>Review</Button>
-              <Button variant="secondary" disabled={contactInviteDismissBusy === contactInvitePrompt.id} onClick={() => void dismissContactInvite(contactInvitePrompt.id)}>{contactInviteDismissBusy === contactInvitePrompt.id ? "Dismissing…" : "Dismiss"}</Button>
+              <Button variant="secondary" disabled={contactInviteDismissBusy === contactInvitePrompt.id} onClick={() => void dismissContactInvite(contactInvitePrompt.id)}>{contactInviteDismissBusy === contactInvitePrompt.id ? "Dismissing…" : promptDismissalKeys.has(contactInvitePrompt.id) ? "Retry dismissal" : "Dismiss"}</Button>
             </div>
-            {contactInviteDismissError?.id === contactInvitePrompt.id && <p className="form-error" role="alert">{contactInviteDismissError.message}</p>}
+            {contactInviteDismissError?.id === contactInvitePrompt.id ? <p className="form-error" role="alert">{contactInviteDismissError.message}</p>
+              : contactInviteDismissBusy !== contactInvitePrompt.id && promptDismissalKeys.has(contactInvitePrompt.id)
+                ? <p role="status">Previous dismissal is not confirmed. Retry to check it.</p> : null}
           </div>
         )}
         {callContactId && callContact && (
@@ -6858,6 +6880,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
 
 export default function App() {
   const [lifetime] = useState(() => new ProfileLifetime());
+  const promptDismissals = useRef<{ generation: number; profile: string; keys: Map<string, string> } | null>(null);
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [initialInvitation, setInitialInvitation] = useState("");
@@ -7289,6 +7312,9 @@ export default function App() {
       </ProfileLifetimeContext.Provider>
     );
   }
-  const messenger = <Messenger key={`${generation}:${snapshot.profile.destination_hash}`} snapshot={snapshot} theme={theme} onThemeChange={setTheme} refresh={refreshCurrentProfile} workspaceMessageInvalidations={workspaceMessageInvalidations} notificationTarget={notificationTarget} onNotificationHandled={() => { if (lifetime.isCurrent(generation)) setNotificationTarget(null); }} initialInvitation={initialInvitation} initialPairingCode={initialPairingCode} initialWebRTCJoin={initialWebRTCJoin} onWebRTCJoinHandled={() => setInitialWebRTCJoin(false)} onPairingHandled={() => setInitialPairingCode("")} onInvitationHandled={() => setInitialInvitation("")} onLock={() => lifetime.isCurrent(generation) ? catalog && selectedProfile ? runProfileAction("lock", selectedProfile.profile) : lockProfile() : Promise.resolve()} />;
+  if (promptDismissals.current?.generation !== generation || promptDismissals.current.profile !== snapshot.profile.destination_hash) {
+    promptDismissals.current = { generation, profile: snapshot.profile.destination_hash, keys: new Map() };
+  }
+  const messenger = <Messenger key={`${generation}:${snapshot.profile.destination_hash}`} snapshot={snapshot} theme={theme} onThemeChange={setTheme} refresh={refreshCurrentProfile} workspaceMessageInvalidations={workspaceMessageInvalidations} promptDismissalKeys={promptDismissals.current.keys} notificationTarget={notificationTarget} onNotificationHandled={() => { if (lifetime.isCurrent(generation)) setNotificationTarget(null); }} initialInvitation={initialInvitation} initialPairingCode={initialPairingCode} initialWebRTCJoin={initialWebRTCJoin} onWebRTCJoinHandled={() => setInitialWebRTCJoin(false)} onPairingHandled={() => setInitialPairingCode("")} onInvitationHandled={() => setInitialInvitation("")} onLock={() => lifetime.isCurrent(generation) ? catalog && selectedProfile ? runProfileAction("lock", selectedProfile.profile) : lockProfile() : Promise.resolve()} />;
   return <ProfileLifetimeContext.Provider value={lifetime}>{catalog ? <div className="runtime-profile-shell">{profilesControl}{messenger}</div> : messenger}</ProfileLifetimeContext.Provider>;
 }

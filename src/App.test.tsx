@@ -214,6 +214,7 @@ const api = vi.hoisted(() => {
   coreApiSendGroupMessage: vi.fn(async (_handle: string, text: string): Promise<unknown> => serviceCommand("send_group_message", { group_id: group.id, text })),
   endCallAudio: vi.fn(async () => ({ active: false })),
   initializeService: vi.fn(),
+  initializeNativeService: vi.fn(async () => undefined),
   lockService: vi.fn(),
   notificationCapability: vi.fn(async () => ({ supported: false, platform: "desktop", permission_state: "unsupported" })),
   onInvitation: vi.fn(),
@@ -6037,6 +6038,33 @@ describe("desktop workspaces", () => {
     expect(await within(dialog).findByText(/queued over the existing verified contact route/i)).toBeTruthy();
   });
 
+  const promptSnapshot = (...ids: string[]): Snapshot => ({
+    ...snapshot([approved]),
+    workspace_invitation_prompts: ids.map((id) => ({
+      id, workspace_id: `workspace-${id}`, workspace_name: `Workspace ${id}`,
+      description: "", owner_fingerprint: "AAAA BBBB CCCC DDDD", member_count: 1,
+      retention_days: 90, expires_at: 2_000_000_000, invitation: `signed-${id}`,
+      contact_id: approved.id, contact_display_name: approved.display_name,
+      received_at: 1_800_000_000, state: "pending" as const,
+    })),
+  });
+
+  const configurePromptHost = (
+    current: () => Snapshot,
+    dismiss: (payload: Record<string, unknown>) => Promise<unknown>,
+  ) => {
+    api.runtimePlatform.mockResolvedValue("android");
+    api.initializeService.mockImplementation(async () => current());
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.onMobileBackButton.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string, payload?: Record<string, unknown>) => {
+      if (command === "snapshot") return current();
+      if (command === "dismiss_workspace_invitation_prompt") return dismiss(payload ?? {});
+      return {};
+    });
+  };
+
   it("reviews and joins a received contact invitation by saved prompt ID", async () => {
     const invitation = JSON.stringify({ type: "workspace_invite", v: 1, signature: "signed" });
     const current: Snapshot = {
@@ -6103,7 +6131,7 @@ describe("desktop workspaces", () => {
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Dismiss" }));
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith(
-      "dismiss_workspace_invitation_prompt", { prompt_id: "prompt-one" },
+      "dismiss_workspace_invitation_prompt", { prompt_id: "prompt-one", operation_id: expect.any(String) },
     ));
     await waitFor(() => expect(screen.queryByText(/invited you to Direct Test/)).toBeNull());
   });
@@ -6131,8 +6159,138 @@ describe("desktop workspaces", () => {
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Dismiss" }));
-    expect((await screen.findByRole("alert")).textContent).toContain("Could not dismiss this invitation. Please try again.");
-    expect((screen.getByRole("button", { name: "Dismiss" }) as HTMLButtonElement).disabled).toBe(false);
+    expect((await screen.findByRole("alert")).textContent).toContain("Dismissal was not confirmed. Retry to check the same action.");
+    expect((screen.getByRole("button", { name: "Retry dismissal" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("replays one dismissal key after a lost reply and a stale presentation rerender", async () => {
+    let current = promptSnapshot("prompt-one");
+    let attempts = 0;
+    configurePromptHost(() => current, async () => {
+      if (++attempts === 1) throw new Error("reply lost after commit");
+      return { dismissed: true };
+    });
+    const view = render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Dismiss" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("not confirmed");
+    current = { ...current, workspace_invitation_prompts: undefined };
+    window.dispatchEvent(new Event("focus"));
+    await waitFor(() => expect(screen.queryByText(/invited you to Workspace prompt-one/)).toBeNull());
+    current = promptSnapshot("prompt-one");
+    window.dispatchEvent(new Event("focus"));
+    await screen.findByRole("button", { name: "Retry dismissal" });
+    view.rerender(<App />);
+    expect(screen.getByRole("button", { name: "Retry dismissal" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Retry dismissal" }));
+    await waitFor(() => expect(screen.queryByText(/invited you to Workspace prompt-one/)).toBeNull());
+    const calls = api.serviceCommand.mock.calls.filter(([command]) => command === "dismiss_workspace_invitation_prompt");
+    expect(calls).toHaveLength(2);
+    expect(calls[0][1]).toEqual({ prompt_id: "prompt-one", operation_id: expect.any(String) });
+    expect(calls[1][1]).toEqual(calls[0][1]);
+    expect(api.serviceCommand.mock.calls.some(([command]) => command === "native_webrtc_close" || command === "end_call")).toBe(false);
+  });
+
+  it("uses a separate dismissal key for another prompt after an uncertain reply", async () => {
+    let current = promptSnapshot("prompt-one");
+    configurePromptHost(() => current, async (payload) => {
+      if (payload.prompt_id === "prompt-one") throw new Error("reply lost");
+      return { dismissed: true };
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Dismiss" }));
+    await screen.findByRole("button", { name: "Retry dismissal" });
+    current = promptSnapshot("prompt-two");
+    window.dispatchEvent(new Event("focus"));
+    await screen.findByText(/invited you to Workspace prompt-two/);
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    await waitFor(() => expect(api.serviceCommand.mock.calls.filter(([command]) => command === "dismiss_workspace_invitation_prompt")).toHaveLength(2));
+    const calls = api.serviceCommand.mock.calls.filter(([command]) => command === "dismiss_workspace_invitation_prompt");
+    expect(calls[0][1].operation_id).not.toBe(calls[1][1].operation_id);
+    expect(calls[1][1].prompt_id).toBe("prompt-two");
+  });
+
+  it("keeps a definitively refused prompt visible and does not reuse its rejected key", async () => {
+    const current = promptSnapshot("prompt-one");
+    configurePromptHost(() => current, async () => { throw new Error("forbidden"); });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Dismiss" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("could not be dismissed");
+    expect(screen.getByRole("button", { name: "Dismiss" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    await waitFor(() => expect(api.serviceCommand.mock.calls.filter(([command]) => command === "dismiss_workspace_invitation_prompt")).toHaveLength(2));
+    const calls = api.serviceCommand.mock.calls.filter(([command]) => command === "dismiss_workspace_invitation_prompt");
+    expect(calls[0][1].operation_id).not.toBe(calls[1][1].operation_id);
+    expect(screen.getByText(/invited you to Workspace prompt-one/)).toBeTruthy();
+  });
+
+  it("fences a late dismissal across profile retirement and does not replay it after unlock", async () => {
+    const current = promptSnapshot("prompt-one");
+    const pending = deferred<unknown>();
+    let attempts = 0;
+    configurePromptHost(() => current, async () => ++attempts === 1 ? pending.promise : { dismissed: true });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Dismiss" }));
+    await waitFor(() => expect(api.serviceCommand.mock.calls.filter(([command]) => command === "dismiss_workspace_invitation_prompt")).toHaveLength(1));
+    const first = api.serviceCommand.mock.calls.find(([command]) => command === "dismiss_workspace_invitation_prompt")![1].operation_id;
+    fireEvent.click(screen.getByRole("button", { name: "Lock Mesh Chat" }));
+    await act(async () => { pending.resolve({ dismissed: true }); });
+    await screen.findByRole("heading", { name: "Mesh Chat is locked" });
+    fireEvent.click(screen.getByRole("button", { name: "Unlock" }));
+    await screen.findByText(/invited you to Workspace prompt-one/);
+    expect(screen.getByRole("button", { name: "Dismiss" })).toBeTruthy();
+    expect(api.serviceCommand.mock.calls.filter(([command]) => command === "dismiss_workspace_invitation_prompt")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    await waitFor(() => expect(api.serviceCommand.mock.calls.filter(([command]) => command === "dismiss_workspace_invitation_prompt")).toHaveLength(2));
+    const second = api.serviceCommand.mock.calls.filter(([command]) => command === "dismiss_workspace_invitation_prompt")[1][1].operation_id;
+    expect(second).not.toBe(first);
+  });
+
+  it("does not automatically replay an uncertain dismissal after a new App lifetime mounts", async () => {
+    const current = promptSnapshot("prompt-one");
+    configurePromptHost(() => current, async () => { throw new Error("reply lost"); });
+    const first = render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Dismiss" }));
+    await screen.findByRole("button", { name: "Retry dismissal" });
+    first.unmount();
+    render(<App />);
+    expect(await screen.findByRole("button", { name: "Dismiss" })).toBeTruthy();
+    expect(api.serviceCommand.mock.calls.filter(([command]) => command === "dismiss_workspace_invitation_prompt")).toHaveLength(1);
+  });
+
+  it("discards a late dismissal result when the native profile host generation changes", async () => {
+    const current = promptSnapshot("prompt-one");
+    const pending = deferred<unknown>();
+    let emit: ((event: ServiceEvent) => void) | null = null;
+    configurePromptHost(() => current, async () => pending.promise);
+    api.coreApiCapabilities.mockResolvedValueOnce({
+      api_major: 1, api_minor: 1, stability: "experimental",
+      operations: ["profile.catalog", "profile.lock", "profile.select", "profile.unlock"],
+      profiles: [],
+      limits: { profile_slots: 1, profile_lifecycle_keys_per_host: 1,
+        profile_lifecycle_keys_per_caller_profile: 1, profile_unlock_credentials: 1 },
+    } as never);
+    api.coreApiRequest.mockImplementation(async (operation: string) => {
+      if (operation === "profile.catalog") return {
+        revision: 1, selected_profile: "a".repeat(64),
+        profiles: [{ profile: "a".repeat(64), display_name: "Current", selected: true, state: "unlocked" }],
+      };
+      throw new Error("core_api_unavailable");
+    });
+    api.onServiceEvent.mockImplementation(async (callback: (event: ServiceEvent) => void) => {
+      emit = callback;
+      return () => undefined;
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Dismiss" }));
+    await waitFor(() => expect(api.serviceCommand.mock.calls.filter(([command]) => command === "dismiss_workspace_invitation_prompt")).toHaveLength(1));
+    await act(async () => {
+      emit!({ type: "event", event: "profile_lifecycle", profile: "a".repeat(64), revision: 2,
+        state: "unlocked", host_generation: "b".repeat(32) });
+      pending.resolve({ dismissed: true });
+    });
+    expect(await screen.findByText(/The profile host changed/)).toBeTruthy();
+    expect(api.serviceCommand.mock.calls.filter(([command]) => command === "dismiss_workspace_invitation_prompt")).toHaveLength(1);
+    expect(screen.queryByText(/invited you to Workspace prompt-one/)).toBeNull();
   });
 
   it("opens an incoming invitation through its matching saved contact prompt", async () => {
