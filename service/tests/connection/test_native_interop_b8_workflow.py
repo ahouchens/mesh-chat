@@ -45,6 +45,13 @@ def test_manual_parent_uses_same_run_producers_and_distinct_pair_checker():
     steps = pair["steps"]
     checkout = next(step for step in steps if step.get("uses") == "actions/checkout@v7")
     assert checkout["with"]["fetch-depth"] == 0
+    setup_index = next(index for index, step in enumerate(steps)
+                       if step.get("uses") == "actions/setup-python@v7")
+    install_index = next(index for index, step in enumerate(steps)
+                         if step.get("run") == "python -m pip install --disable-pip-version-check -r service/requirements-dev.lock")
+    checker_index = next(index for index, step in enumerate(steps)
+                         if "check_native_interop_b8_diagnostic.py" in step.get("run", ""))
+    assert setup_index < install_index < checker_index
     downloads = [step for step in steps if step.get("uses") == "actions/download-artifact@v4"]
     assert len(downloads) == 2 and all(step["continue-on-error"] is True for step in downloads)
     for role, step in zip(("windows", "android"), downloads):
