@@ -31,10 +31,10 @@ ARTIFACT_NAMES = {
     "old_staging": "upgrade-artifacts.json",
 }
 MAX_BYTES = {**dict.fromkeys(ARTIFACT_NAMES, 2 * 1024 * 1024), "runtime": 512 * 1024 * 1024}
-LEVEL = "windows_installed_candidate_api_pair_current_normal_host"
+LEVEL = "windows_installed_typescript_candidate_pair_current_normal_host"
 CHECKS = {"major_refused_before_profile", "current_sdk_profile_created", "old_typescript_api_11",
-          "python_same_identity", "reopened_same_identity", "old_typescript_after_reopen",
-          "python_after_reopen", "efs_profile_directory", "efs_vault_file", "clean_host_exits"}
+          "reopened_same_identity", "old_typescript_after_reopen", "efs_profile_directory",
+          "efs_vault_file", "clean_host_exits"}
 
 
 def digest(path):
@@ -113,23 +113,6 @@ def validate_manifest(path, source, tree):
     return value, artifacts
 
 
-PYTHON_CLIENT = r'''import json,sys
-sys.path.insert(0,sys.argv[1])
-from mesh_chat_core_client import CoreClient
-from mesh_chat_core_client.windows import connect
-expected=sys.stdin.readline().strip()
-pipe=connect(sys.argv[2])
-client=CoreClient.open(pipe.readline,pipe.write,pipe.close)
-try:
- profile=client.capabilities["profiles"][0]
- view=client.request("profile.query",{"profile":profile})
- snap=client.application_snapshot()
- assert client.capabilities["api_major"]==1 and client.capabilities["api_minor"]==1
- assert view["destination"]==expected and snap["profile"]["destination"]==expected
- print(json.dumps({"passed":True}))
-finally: client.close()
-'''
-
 OLD_TYPESCRIPT = r'''import {CoreClient} from '@mesh-chat/core-client';
 import {connect} from 'node:net';
 import {createInterface} from 'node:readline';
@@ -160,24 +143,30 @@ import {connectNamedPipe} from '@mesh-chat/core-client/node';
 import {launchRuntime} from './runtime.mjs';
 import {randomUUID} from 'node:crypto';
 import {spawn} from 'node:child_process';
-import {readFileSync} from 'node:fs';
-const [runtimePath,dataDir,python,pythonSite,oldDir,node]=process.argv.slice(2);
-let runtime,client,phase='first_start';
+const [runtimePath,dataDir,oldDir]=process.argv.slice(2);
+let runtime,client,phase='first_start',cleanHostExits=0,passed=false;
 async function child(command,args,cwd,identity){
  const proc=spawn(command,args,{cwd,stdio:['pipe','pipe','ignore']});
  let output='';proc.stdout.on('data',part=>{output+=part; if(output.length>1024)proc.kill();});
  proc.stdin.end(identity+'\n');
  const timer=setTimeout(()=>proc.kill(),30000);
- const code=await new Promise((yes,no)=>{proc.once('exit',yes);proc.once('error',no);});
- clearTimeout(timer);
+ let code;
+ try{code=await new Promise((yes,no)=>{proc.once('close',yes);proc.once('error',no);});}
+ finally{clearTimeout(timer);}
  if(code!==0||output.length>1024||JSON.parse(output).passed!==true)throw new Error('client_failed');
 }
-async function clients(pipe,identity){
- await child(python,['-I','-S','-B','-c',readFileSync('python_client.py','utf8'),pythonSite,pipe],process.cwd(),identity);
- await child(node,['old_client.mjs',pipe],oldDir,identity);
+async function oldClient(pipe,identity){
+ await child(process.execPath,['old_client.mjs',pipe],oldDir,identity);
+}
+async function stop(){
+ if(!runtime)throw new Error('missing_owned_runtime');
+ const ending=runtime;
+ const result=await ending.stop();
+ if(result.stopped!==true||result.exit_code!==0)throw new Error('runtime_not_retired');
+ runtime=null;cleanHostExits++;
 }
 try{
- runtime=await launchRuntime(runtimePath,dataDir);
+ runtime=await launchRuntime(runtimePath,dataDir,{onOwned:owned=>{runtime=owned;}});
  phase='major_refusal';
  const invalid=await connectNamedPipe(runtime.pipe);
  await invalid.writeLine(JSON.stringify({api_version:2,request_id:'candidate:1',operation:'profile.create',
@@ -194,26 +183,93 @@ try{
  const view=await client.request('profile.query',{profile});
  if(!created||typeof view.destination!=='string'||!view.destination)throw new Error();
  const identity=view.destination;
- phase='installed_clients';await clients(runtime.pipe,identity);
- client.close();client=null;await runtime.stop();runtime=null;
- phase='reopen';runtime=await launchRuntime(runtimePath,dataDir);
+ phase='installed_old_client';await oldClient(runtime.pipe,identity);
+ client.close();client=null;await stop();
+ phase='reopen';runtime=await launchRuntime(runtimePath,dataDir,{onOwned:owned=>{runtime=owned;}});
  client=await CoreClient.open(await connectNamedPipe(runtime.pipe));
  const reopened=await client.request('profile.query',{profile:client.capabilities.profiles[0]});
  if(reopened.destination!==identity)throw new Error();
- await clients(runtime.pipe,identity);
- client.close();client=null;await runtime.stop();runtime=null;
- process.stdout.write(JSON.stringify({passed:true,checks:{major_refused_before_profile:true,
-   current_sdk_profile_created:true,old_typescript_api_11:true,python_same_identity:true,
-   reopened_same_identity:true,old_typescript_after_reopen:true,python_after_reopen:true,
-   clean_host_exits:2}})+'\n');
-}catch{process.stdout.write(JSON.stringify({passed:false,phase})+'\n');process.exitCode=1;}
-finally{try{client?.close();}catch{} try{await runtime?.stop();}catch{process.exitCode=1;}}
+ await oldClient(runtime.pipe,identity);
+ client.close();client=null;await stop();
+ passed=true;
+}catch{process.exitCode=1;}
+finally{
+ try{client?.close();}catch{}
+ if(runtime){try{await stop();}catch{process.exitCode=1;passed=false;}}
+ process.stdout.write(JSON.stringify(passed?{passed:true,checks:{major_refused_before_profile:true,
+   current_sdk_profile_created:true,old_typescript_api_11:true,
+   reopened_same_identity:true,old_typescript_after_reopen:true,
+   clean_host_exits:cleanHostExits}}:{passed:false,phase,clean_host_exits:cleanHostExits})+'\n');
+}
 '''
 
 
 def _install(command, *, cwd, env):
     subprocess.run(command, cwd=cwd, env=env, check=True, stdout=subprocess.DEVNULL,
                    stderr=subprocess.DEVNULL, timeout=120)
+
+
+class RetainedWorkspaceError(RuntimeError):
+    def __init__(self, cause, workspace, owner_retired):
+        super().__init__("Candidate execution failed; installed workspace retained")
+        self.cause_kind = type(cause).__name__
+        self.workspace = workspace
+        self.owner_retired = owner_retired
+
+
+def _run_driver(command, *, cwd, env):
+    """Retain the exact driver handle; a timeout never authorizes workspace deletion."""
+    process = subprocess.Popen(command, cwd=cwd, env=env, stdout=subprocess.PIPE,
+                               stderr=subprocess.DEVNULL)
+    try:
+        output, _ = process.communicate(timeout=180)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.communicate(timeout=15)
+        raise
+    if len(output) > 4096:
+        raise ValueError("Candidate execution output exceeded its bound")
+    return process.returncode, output
+
+
+def _confirmed_driver_result(code, output):
+    observed = json.loads(output)
+    if (code != 0 or type(observed) is not dict or set(observed) != {"passed", "checks"}
+            or observed["passed"] is not True or type(observed["checks"]) is not dict
+            or set(observed["checks"]) != CHECKS - {"efs_profile_directory", "efs_vault_file"}
+            or any(value is not True for key, value in observed["checks"].items() if key != "clean_host_exits")
+            or type(observed["checks"]["clean_host_exits"]) is not int
+            or observed["checks"]["clean_host_exits"] != 2):
+        raise ValueError("Installed candidate pair did not complete")
+    return observed
+
+
+def _remove_retired_workspace(work, parent, *, owner_retired):
+    if owner_retired is not True:
+        raise RuntimeError("Owned runtime retirement is unconfirmed")
+    if work.parent != parent or not work.name.startswith("mesh-windows-candidate-pair-"):
+        raise ValueError("Candidate cleanup ownership changed")
+    target = str(work)
+    if os.name == "nt":
+        target = "\\\\?\\UNC\\" + target[2:] if target.startswith("\\\\") else "\\\\?\\" + target
+    shutil.rmtree(target)
+
+
+def _write_report(path, value):
+    encoded = (json.dumps(value, indent=2, allow_nan=False) + "\n").encode("utf-8")
+    if len(encoded) > 16 * 1024:
+        raise ValueError("Candidate report exceeded its bound")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(encoded)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
 
 def execute(manifest_path, expected_source):
@@ -233,12 +289,13 @@ def execute(manifest_path, expected_source):
     parent = Path(os.environ.get("RUNNER_TEMP") or tempfile.gettempdir()).resolve()
     work = Path(tempfile.mkdtemp(prefix="mesh-windows-candidate-pair-", dir=parent)).resolve()
     if work.parent != parent or work.is_relative_to(ROOT):
-        raise ValueError("Candidate install must be outside checkout")
+        raise RetainedWorkspaceError(ValueError("Candidate install must be outside checkout"), work, False)
     env = {key: value for key, value in os.environ.items()
            if key.upper() not in {"PYTHONPATH", "PYTHONHOME", "NODE_PATH", "NODE_OPTIONS"}
            and not key.upper().startswith(("MESH_", "GITHUB_", "ACTIONS_", "INPUT_"))}
     env.update(PIP_CACHE_DIR=str(work / "pip-cache"), npm_config_cache=str(work / "npm-cache"),
                npm_config_update_notifier="false", PYTHONDONTWRITEBYTECODE="1")
+    owner_retired = False
     try:
         current, old, site = work / "current", work / "old", work / "python-site"
         current.mkdir(); old.mkdir(); site.mkdir()
@@ -258,24 +315,15 @@ def execute(manifest_path, expected_source):
         for name in ("runtime.mjs", "owner-pairing-diagnostic.mjs"):
             shutil.copyfile(ROOT / "examples/typescript-independent-consumer" / name, current / name)
         (current / "driver.mjs").write_text(DRIVER, encoding="utf-8")
-        (current / "python_client.py").write_text(PYTHON_CLIENT, encoding="utf-8")
         (old / "old_client.mjs").write_text(OLD_TYPESCRIPT, encoding="utf-8")
         runtime = work / binary.name
         shutil.copy2(binary, runtime)
         if digest(runtime) != binding["sidecar_sha256"]:
             raise ValueError("Installed normal host changed")
-        completed = subprocess.run([node, "driver.mjs", str(runtime), str(work / "app-data"),
-                                    sys.executable, str(site), str(old), node], cwd=current, env=env,
-                                   capture_output=True, timeout=180)
-        if len(completed.stdout) > 4096 or len(completed.stderr) > 4096:
-            raise ValueError("Candidate execution output exceeded its bound")
-        observed = json.loads(completed.stdout)
-        if (completed.returncode != 0 or type(observed) is not dict or set(observed) != {"passed", "checks"}
-                or observed["passed"] is not True or type(observed["checks"]) is not dict
-                or set(observed["checks"]) != CHECKS - {"efs_profile_directory", "efs_vault_file"}
-                or any(value is not True for key, value in observed["checks"].items() if key != "clean_host_exits")
-                or observed["checks"]["clean_host_exits"] != 2):
-            raise ValueError("Installed candidate pair did not complete")
+        code, output = _run_driver([node, "driver.mjs", str(runtime), str(work / "app-data"),
+                                    str(old)], cwd=current, env=env)
+        observed = _confirmed_driver_result(code, output)
+        owner_retired = True
         profile = work / "app-data/mesh-core-runtime/profile-v1"
         for file in (profile, profile / "mesh-chat.vault"):
             if not file.is_file() and not file.is_dir():
@@ -286,20 +334,18 @@ def execute(manifest_path, expected_source):
         for name, path in artifacts.items():
             if digest(path) != manifest["artifacts"][name]["sha256"]:
                 raise ValueError("Candidate artifact changed during execution")
-        return {"v": 1, "passed": True, "source_commit": source, "source_tree": tree,
-                "evidence_level": LEVEL, "scope": "Installed current normal Windows host, Python0.3/TypeScript0.3 and old TypeScript0.2 public clients; no old native binary or native upgrade, peer receipt, outbox or draft claim",
+        result = {"v": 1, "passed": True, "source_commit": source, "source_tree": tree,
+                "evidence_level": LEVEL, "scope": "Installed current normal Windows host with TypeScript0.3 and old TypeScript0.2 public clients; Python0.3 installation only; no old native binary or native upgrade, peer receipt, outbox or draft claim",
                 "manifest_sha256": digest(Path(manifest_path)), "runtime_sha256": binding["sidecar_sha256"],
                 "checks": {**observed["checks"], "efs_profile_directory": True, "efs_vault_file": True},
                 "native_upgrade_qualified": False,
+                "python_api_qualified": False,
                 "continuity": {"identity": "current_host_restart", "outbox": "not_exercised",
                                "draft": "not_exercised", "receipt": "not_exercised"}}
-    finally:
-        if work.parent != parent or not work.name.startswith("mesh-windows-candidate-pair-"):
-            raise ValueError("Candidate cleanup ownership changed")
-        target = str(work)
-        if os.name == "nt":
-            target = "\\\\?\\UNC\\" + target[2:] if target.startswith("\\\\") else "\\\\?\\" + target
-        shutil.rmtree(target)
+        _remove_retired_workspace(work, parent, owner_retired=owner_retired)
+        return result
+    except Exception as error:
+        raise RetainedWorkspaceError(error, work, owner_retired) from error
 
 
 def main():
@@ -313,8 +359,12 @@ def main():
         result = execute(args.manifest, args.expected_source)
     except Exception as error:
         result.update(failure_type=type(error).__name__)
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+        if isinstance(error, RetainedWorkspaceError):
+            result.update(failure_type=error.cause_kind,
+                          owner_retirement_confirmed=error.owner_retired,
+                          workspace_remaining=error.workspace.exists(),
+                          retained_workspace=str(error.workspace) if error.workspace.exists() else None)
+    _write_report(args.output, result)
     print(json.dumps({"passed": result["passed"], "evidence_level": LEVEL}))
     return 0 if result["passed"] else 1
 

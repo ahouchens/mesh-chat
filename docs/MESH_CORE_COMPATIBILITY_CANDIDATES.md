@@ -110,16 +110,21 @@ the runtime, then checks the exact sidecar build fingerprint through
 
 When the exact current sidecar is supplied, the fixture copies it and installs
 both current SDKs and the old TypeScript package outside the checkout. One
-normal app-owned host rejects a raw public API major-2 `profile.create` before
-any profile mutation; the current TypeScript SDK then creates the profile.
-Installed Python 0.3 and TypeScript 0.2 clients read the same authorized
-identity through the public pipe. A normal owner stop/reopen preserves that
-identity and both clients read it again; Windows EFS protection and two clean
-host exits are required. Its retained report is fixed-field and states
+normal Node-owned host rejects a raw public API major-2 `profile.create`
+before any profile mutation; the current TypeScript SDK then creates the
+profile. An installed old TypeScript 0.2 client, launched with the exact Node
+image allowed by that host, reads the same identity before and after a normal
+owner stop/reopen. Windows EFS protection and two confirmed clean host exits
+are required. The Python 0.3 wheel is installed and version-checked but its
+API behavior is **not** qualified by this Node-owned pipe: a Python process
+has a different executable image. A separate Python-owned normal-host lifetime
+is needed for its installed-platform result; the pipe allowlist is not widened.
+The fixed-field report states `python_api_qualified: false` and
 `native_upgrade_qualified: false`; outbox, draft and receipt continuity are
-`not_exercised` in this current-host run. The separate pinned component fixture
-above supplies local format-1-to-2 message/receipt/draft evidence, without
-turning this fixture into a native upgrade claim.
+`not_exercised`. A driver timeout or uncertain host retirement retains the
+installed workspace and fails the report. The separate pinned component
+fixture above supplies local format-1-to-2 message/receipt/draft evidence,
+without turning this fixture into a native upgrade claim.
 
 Run it only with a prepared manifest and Node 22+:
 
@@ -135,8 +140,10 @@ so the installed-host case has not run here. The next smallest R8 execution
 batch is to retain the current source-bound sidecar **and** its build manifest,
 assemble the explicit artifact directory from the same-source SDK staging and
 pinned baseline rebuild, run this fixture on Windows AMD64, and verify its
-report. A later in-place native upgrade needs a retained prior Windows binary,
-its exact source/build manifest and the matching vault/key provenance; a
+report. If it fails, inspect the reported retained workspace and exact child
+retirement before removing that workspace. A later in-place native upgrade
+needs a retained prior Windows binary, its exact source/build manifest and
+the matching vault/key provenance; a
 reconstructed old component wheel cannot stand in for that binary. Keep
 wrong-key/corrupt-data controls separate from version refusal. No result from
 this batch declares a release support window.
