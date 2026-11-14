@@ -103,7 +103,7 @@ export function useProfileRequestAdmission(): CoreRequestAdmission {
   return useCallback((request) => lifetime ? lifetime.mutate(generation!, request) : request(), [lifetime, generation]);
 }
 
-export function useProfileEffectScope(): CoreEffectScope {
+export function useProfileEffectScope(): Required<CoreEffectScope> {
   const lifetime = useProfileLifetime();
   const [generation] = useState(() => lifetime?.capture());
   return useMemo(() => Object.freeze({
