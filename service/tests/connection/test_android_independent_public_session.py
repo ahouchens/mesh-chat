@@ -158,6 +158,25 @@ def test_public_protocol_rejects_private_operation_before_frame():
     assert protocol.step == 0
 
 
+def test_127_requests_reserve_step_128_for_successful_finish(monkeypatch):
+    sent = []
+    protocol = object.__new__(session.PublicProtocol)
+    protocol.sock, protocol.deadline = object(), time.monotonic() + 5
+    protocol.step, protocol.created = 126, True
+    protocol.finished = protocol.failed = False
+    def reply(sock, request, deadline):
+        sent.append(request)
+        return {"completed": True, "requests": 127} if request["action"] == "finish" else {}
+    monkeypatch.setattr(session, "exchange", reply)
+    assert protocol.request("runtime.capabilities") == {}
+    assert protocol.step == 127
+    with pytest.raises(ValueError, match="public_request"):
+        protocol.request("runtime.capabilities")
+    assert len(sent) == 1
+    assert protocol.finish() == 127 and protocol.finished is True
+    assert [item["step"] for item in sent] == [127, 128]
+
+
 def test_exact_serial_is_used_for_read_only_admission(monkeypatch):
     calls = []
     monkeypatch.setattr(session.subprocess, "check_output", lambda args, **kwargs:
@@ -277,6 +296,15 @@ def test_context_exit_without_finish_retires_owned_test(monkeypatch):
                      ("emulator-5554", ("shell", "am", "force-stop", session.APP + ".test"))]
     with pytest.raises(ValueError, match="public_session_closed"):
         peer.request("runtime.capabilities")
+
+
+def test_context_exit_surfaces_cleanup_failure_without_replacing_primary_error(monkeypatch):
+    peer = session.AndroidPublicSession("a" * 40, "emulator-5554")
+    monkeypatch.setattr(peer, "close", lambda: False)
+    with pytest.raises(RuntimeError, match="public_session_cleanup_failed"):
+        peer.__exit__(None, None, None)
+    original = ValueError("primary_request_failure")
+    assert peer.__exit__(ValueError, original, None) is None
 
 
 def test_overall_deadline_rejects_next_phase_without_sending_it():

@@ -193,7 +193,7 @@ class PublicProtocol:
     def request(self, operation, params=None, key=None):
         if (self.finished or self.failed or type(operation) is not str or operation not in PUBLIC_OPERATIONS
                 or type(params) not in {dict, type(None)}
-                or self.step >= 128 or (key is not None and
+                or self.step >= 127 or (key is not None and
                 (type(key) is not str or re.fullmatch(r"[A-Za-z0-9._:-]{16,128}", key) is None))):
             raise ValueError("public_request")
         self.step += 1
@@ -276,7 +276,8 @@ class AndroidPublicSession:
         return self.open()
 
     def __exit__(self, _kind, _error, _traceback):
-        self.close()
+        if not self.close() and _kind is None:
+            raise RuntimeError("public_session_cleanup_failed")
 
     def open(self):
         if self.opened or self.cleanup is not None:

@@ -45,7 +45,8 @@ The test-only port accepts length-prefixed UTF-8 JSON objects. After
 send monotonically numbered `request` objects with `id`, `step`, `operation`,
 `params` and an `idempotency_key` when the public operation requires one.
 `finish` carries the next step and ends the session. Frames are limited to
-65,536 bytes and 128 public requests. The operation allowlist includes public
+65,536 bytes and 127 public requests, reserving the next step for `finish`.
+The operation allowlist includes public
 pairing begin/query/cancel, contact invitation and approval decisions,
 connection snapshot/start, and message enqueue/query/received for a later
 Windows peer controller. Those peer and message phases still need same-run
@@ -57,5 +58,7 @@ for a later same-run controller. Use it as a context manager, issue only
 and call `finish()` before the context ends. `finish()` returns only after the
 instrumentation exits successfully and the runtime shutdown is observed;
 leaving the context early retires the owned test process and reports no success.
+If cleanup fails during a normal context exit, the adapter raises a fixed
+cleanup error; a pending request failure remains the primary exception.
 The adapter keeps the same source, emulator, frame and total time limits as the
 standalone smoke command.
