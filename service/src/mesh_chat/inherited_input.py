@@ -8,6 +8,7 @@ import io
 import os
 import select
 import stat
+import time
 from threading import Event
 
 
@@ -42,16 +43,19 @@ class InheritedInput:
         self._available = (_windows_available(descriptor) if os.name == "nt" else
                            lambda: 65536 if select.select([descriptor], [], [], 0)[0] else 0)
 
-    def read(self, length):
+    def read(self, length, *, deadline=None):
         if length <= 0:
             return b""
         while not self._cancelled.is_set():
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError("Inherited input deadline expired")
             available = self._available()
             if available < 0:
                 return b""
             if available:
                 return os.read(self._descriptor, min(length, available, 65536))
-            self._cancelled.wait(.01)
+            delay = .01 if deadline is None else min(.01, max(0, deadline - time.monotonic()))
+            self._cancelled.wait(delay)
         raise EOFError("Inherited input stopped")
 
     def cancel(self):

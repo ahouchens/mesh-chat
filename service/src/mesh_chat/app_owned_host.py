@@ -1,17 +1,22 @@
 """Normal, empty, independently installed Windows application runtime host."""
+from contextlib import nullcontext
 from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
-from threading import Event, RLock
+from threading import Event, RLock, Thread
 import time
 
 from .app_owned_admission import AppOwnedAdmission, ProcessPort
-from .app_owned_control import HELPER_PREFACE_LENGTH, decode_helper_preface
+from .app_owned_control import (
+    HELPER_PREFACE_LENGTH, MAX_CONTROL_LINE, decode_helper_preface,
+    decode_owner_control, helper_registered_ack, helper_removed_ack,
+)
 from .core_api.host import OWNER_PERMISSIONS
 from .core_api.pipe_endpoint import PipeClientAdmission, PipeConfig, PipeEndpoint
 from .core_api.pipe_policy import allowed_images, pipe_name
 from .errors import MeshChatError, NativeUnavailable, ValidationError
+from .inherited_input import InheritedInput
 from .service import MeshChatService
 from .reticulum_config import NetworkSettings
 from .vault import ProfileLock, VaultStore
@@ -24,12 +29,14 @@ class AppOwnedConfig:
     pipe: str
     client_image: str
     parent_pid: int
+    private_admission: bool = False
 
     def __post_init__(self):
         directory = self.data_directory
         if (not isinstance(directory, Path) or not directory.is_absolute()
                 or not 1 <= len(str(directory)) <= 1024 or "\0" in str(directory)
-                or type(self.parent_pid) is not int or not 1 <= self.parent_pid <= 0xFFFFFFFF):
+                or type(self.parent_pid) is not int or not 1 <= self.parent_pid <= 0xFFFFFFFF
+                or type(self.private_admission) is not bool):
             raise ValidationError("App-owned runtime configuration is invalid")
         pipe_name(self.pipe)
         allowed_images((self.client_image,))
@@ -37,9 +44,12 @@ class AppOwnedConfig:
     @classmethod
     def from_environment(cls, environment):
         try:
+            private = environment.get("MESH_CHAT_APP_PRIVATE_HELPER_ADMISSION", "0")
+            if type(private) is not str or private not in ("0", "1"):
+                raise ValueError()
             return cls(Path(environment["MESH_CHAT_APP_DATA_DIRECTORY"]),
                 environment["MESH_CHAT_CORE_API_PIPE"], environment["MESH_CHAT_CORE_API_CLIENT_IMAGE"],
-                int(environment["MESH_CHAT_APP_PARENT_PID"]))
+                int(environment["MESH_CHAT_APP_PARENT_PID"]), private == "1")
         except (KeyError, TypeError, ValueError):
             raise ValidationError("App-owned runtime configuration is invalid") from None
 
@@ -118,12 +128,45 @@ class AppOwnedPipeAdmission:
             return not self._pending and port_retired
 
 
+class _PrivateOwnerWatcher:
+    """Stop and join the pinned owner watch before closing the roster pin."""
+
+    def __init__(self, owner, reader):
+        self._owner = owner
+        self._reader = reader
+        self._stop = Event()
+        self._thread = Thread(target=self._watch, name="mesh-chat-private-owner-watch", daemon=True)
+        self._thread.start()
+
+    def _watch(self):
+        while not self._stop.wait(.05):
+            try:
+                alive = self._owner.is_alive() is True
+            except Exception:
+                alive = False
+            if not alive:
+                cancel = getattr(self._reader, "cancel", None)
+                if callable(cancel):
+                    cancel()
+                return
+
+    def retire(self) -> bool:
+        self._stop.set()
+        self._thread.join(timeout=1)
+        return not self._thread.is_alive()
+
+
 class AppOwnedRuntime:
     """Retain exact store/native owners until both retirement acknowledgments."""
     def __init__(self, config, *, key_loader=load_key, store_factory=VaultStore,
-                 service_factory=MeshChatService, host_factory=None, endpoint_factory=PipeEndpoint):
+                 service_factory=MeshChatService, host_factory=None, endpoint_factory=PipeEndpoint,
+                 process_port_factory=None, private_input=None, watcher_factory=_PrivateOwnerWatcher):
         self.service = self.store = self.host = self.endpoint = self.lease = None
+        self.owner_port = self.admission = self.pipe_admission = self.watcher = None
+        self._startup_owner = None
         try:
+            if config.private_admission and not callable(getattr(private_input, "cancel", None)):
+                raise ValidationError("Private owner input must be cancellable")
             root = config.data_directory.resolve() / "mesh-core-runtime"
             if root.is_symlink() or root.is_junction():
                 raise NativeUnavailable("App-owned directory binding changed")
@@ -148,16 +191,55 @@ class AppOwnedRuntime:
                 allowed_images=(config.client_image,), max_clients=2, idle_timeout=300,
                 scope="owner", private_profile_bootstrap=True,
                 private_native=False, private_composer_legacy=False)
-            self.endpoint = endpoint_factory(config.pipe, config_pipe)
+            if config.private_admission:
+                if process_port_factory is None:
+                    from .app_owned_windows_process import WindowsProcessPort
+                    process_port_factory = WindowsProcessPort
+                self.owner_port = process_port_factory()
+                self._startup_owner = self.owner_port.open(config.parent_pid)
+                self.admission = AppOwnedAdmission(self._startup_owner,
+                                                    config.client_image, self.owner_port)
+                owner = self._startup_owner
+                self._startup_owner = None  # The roster now owns this exact pin.
+                self.pipe_admission = AppOwnedPipeAdmission(self.admission, self.owner_port)
+                self.endpoint = endpoint_factory(config.pipe, config_pipe,
+                                                 admit_client=self.pipe_admission)
+            else:
+                self.endpoint = endpoint_factory(config.pipe, config_pipe)
             self.endpoint.start(self.service)
+            if config.private_admission:
+                self.watcher = watcher_factory(owner, private_input)
         except Exception as error:
             self.service = getattr(error, "retiring_service", self.service)
             raise AppOwnedStartupIncomplete(self) from error
 
     def close(self):
+        if self.admission is not None:
+            lock = getattr(self.service, "_dispatch_lock", None)
+            with lock if lock is not None else nullcontext():
+                self.admission.fence()
         if self.endpoint is not None:
             self.endpoint.close()
             self.endpoint = None
+        if self.watcher is not None:
+            if self.watcher.retire() is not True:
+                return False
+            self.watcher = None
+        if self.admission is not None:
+            if self.admission.retire() is not True:
+                return False
+            self.admission = None
+        if self._startup_owner is not None:
+            self._startup_owner.close()
+            self._startup_owner = None
+        if self.pipe_admission is not None:
+            if self.pipe_admission.retire() is not True:
+                return False
+            self.pipe_admission = None
+        if self.owner_port is not None:
+            if self.owner_port.retire() is not True:
+                return False
+            self.owner_port = None
         if self.service is not None:
             self.service.close()
             if not self.service._store_closed:
@@ -202,6 +284,48 @@ def _pairing_diagnostics_status(runtime):
                 "observation": {"status": "unavailable", "total_intents": 0, "intents": []}}
 
 
+def _owner_control_line(reader):
+    """Read one private line with a fixed byte ceiling and post-first-byte deadline."""
+    line = bytearray()
+    deadline = None
+    while True:
+        if deadline is not None and time.monotonic() >= deadline:
+            raise ValidationError("Private owner control deadline expired")
+        part = (reader.read(1, deadline=deadline) if isinstance(reader, InheritedInput)
+                else reader.read(1))
+        if deadline is not None and time.monotonic() >= deadline:
+            raise ValidationError("Private owner control deadline expired")
+        if part == b"":
+            if line:
+                raise ValidationError("Private owner control ended mid-line")
+            return None
+        if type(part) is not bytes or len(part) != 1:
+            raise ValidationError("Private owner control input is invalid")
+        if deadline is None:
+            deadline = time.monotonic() + 5
+        line.extend(part)
+        if len(line) > MAX_CONTROL_LINE:
+            raise ValidationError("Private owner control exceeds its ceiling")
+        if part == b"\n":
+            return decode_owner_control(bytes(line))
+
+
+def _serve_owner_controls(reader, runtime, publish):
+    while True:
+        command = _owner_control_line(reader)
+        if command is None:
+            return
+        with runtime.service._dispatch_lock:
+            if command.action == "register":
+                invitation = runtime.admission.register_helper(command.pid)
+                response = helper_registered_ack(command.sequence, invitation.token)
+            else:
+                if runtime.admission.remove_helper(command.pid) is not True:
+                    raise NativeUnavailable("Private helper removal is pending")
+                response = helper_removed_ack(command.sequence)
+        publish(response)
+
+
 def run(reader, writer, *, watch_parent, environment=None, runtime_factory=AppOwnedRuntime):
     """Inherited stdin controls lifetime by EOF only; SDK traffic uses the pipe."""
     runtime, status = None, 0
@@ -215,10 +339,14 @@ def run(reader, writer, *, watch_parent, environment=None, runtime_factory=AppOw
         selected_environment = os.environ if environment is None else environment
         pairing_diagnostics = _pairing_diagnostics_enabled(selected_environment)
         config = AppOwnedConfig.from_environment(selected_environment)
-        watch_parent(config.parent_pid)
-        runtime = runtime_factory(config)
+        if not config.private_admission:
+            watch_parent(config.parent_pid)
+        runtime = (runtime_factory(config, private_input=reader) if config.private_admission
+                   else runtime_factory(config))
         publish({"v": 1, "type": "runtime_started", "pipe": config.pipe})
-        if reader.read(1):
+        if config.private_admission:
+            _serve_owner_controls(reader, runtime, publish)
+        elif reader.read(1):
             raise ValidationError("App-owned lifetime stream accepts only EOF")
         if pairing_diagnostics:
             try:

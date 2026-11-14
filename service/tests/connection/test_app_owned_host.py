@@ -112,6 +112,8 @@ def test_incomplete_pipe_retirement_keeps_endpoint_and_withholds_stopped(tmp_pat
                 raise PipeRetirementPending("worker active")
     endpoint = Endpoint()
     runtime = object.__new__(host.AppOwnedRuntime)
+    runtime.owner_port = runtime.admission = runtime.pipe_admission = runtime.watcher = None
+    runtime._startup_owner = None
     runtime.endpoint = endpoint
     runtime.service = SimpleNamespace(close=lambda: events.append("service"), _store_closed=True)
     runtime.store = None

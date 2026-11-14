@@ -70,6 +70,17 @@ def test_initial_and_queued_frames_share_one_unbuffered_input_without_losing_rea
         assert not reader._thread.is_alive()
 
 
+def test_inherited_input_can_bound_one_private_control_read():
+    from mesh_chat.inherited_input import interruptible_input
+    incoming, outgoing = os.pipe()
+    with os.fdopen(incoming, "rb") as source, os.fdopen(outgoing, "wb", buffering=0):
+        stream = interruptible_input(source)
+        started = monotonic()
+        with pytest.raises(TimeoutError):
+            stream.read(1, deadline=started + .03)
+        assert monotonic() - started < 1
+
+
 def test_pipe_eof_drains_complete_frames_and_reports_a_truncated_frame():
     incoming, outgoing = os.pipe()
     with os.fdopen(incoming, "rb", buffering=0) as source, os.fdopen(outgoing, "wb", buffering=0) as writer:
