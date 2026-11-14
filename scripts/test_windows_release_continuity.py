@@ -214,10 +214,19 @@ class ContinuityTests(unittest.TestCase):
             with self.assertRaises(continuity.UiDriverFailure) as caught:
                 continuity.run_ui(Path("node"), 1000, config)
         self.assertEqual(caught.exception.startup, startup)
+        with patch.object(continuity.subprocess, "run", return_value=subprocess.CompletedProcess(
+                [], 1, (json.dumps({**failure, "failure_kind": "ui_observation_failed",
+                                  "ui_step": "fresh_profile"}) + "\n").encode(), b"")):
+            with self.assertRaises(continuity.UiDriverFailure) as caught:
+                continuity.run_ui(Path("node"), 1000, config)
+        self.assertEqual(caught.exception.step, "fresh_profile")
         for malformed in ({**failure, "failure_kind": "secret path"},
                           {**failure, "failure_kind": []},
                           {**failure, "startup_observation": {**startup, "raw_source": "secret"}},
                           {**failure, "startup_observation": {**startup, "root_mounted": 0}},
+                          {**failure, "ui_step": "secret path"},
+                          {**failure, "ui_step": []},
+                          {**failure, "ui_step": "fresh_profile", "startup_observation": startup},
                           {**failure, "raw_error": "secret"}):
             with patch.object(continuity.subprocess, "run", return_value=subprocess.CompletedProcess(
                     [], 1, (json.dumps(malformed) + "\n").encode(), b"")):
@@ -238,12 +247,13 @@ class ContinuityTests(unittest.TestCase):
              patch.object(continuity.media, "ScopedBrowserPolicy", FakePolicy), \
              patch.object(continuity.OwnedApp, "launch", return_value=FakeOwned()), \
              patch.object(continuity, "run_ui", side_effect=continuity.UiDriverFailure(
-                 "ui_source_mismatch", "ui_socket_retirement_failed")):
+                 "ui_observation_failed", "ui_socket_retirement_failed", step="fresh_profile")):
             with self.assertRaisesRegex(continuity.ContinuityFailure, "ui_driver_failed"):
                 continuity.launch_and_observe(Path("app.exe"), Path("node"), config, observation)
         self.assertEqual(observation["app_retired"], True)
         self.assertEqual(observation["browser_policy_retired"], False)
-        self.assertEqual(observation["ui_failure_kind"], "ui_source_mismatch")
+        self.assertEqual(observation["ui_failure_kind"], "ui_observation_failed")
+        self.assertEqual(observation["ui_step"], "fresh_profile")
         self.assertEqual(observation["ui_cleanup_failure_kind"], "ui_socket_retirement_failed")
         self.assertNotIn("ui_report", observation)
 

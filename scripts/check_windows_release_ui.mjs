@@ -2,6 +2,7 @@
 import { checkedConfig, checkedReadback, EVIDENCE_LEVEL, projectReadback } from "./windows_release_ui_contract.mjs";
 import { boundedCdpFrame, closeCheckedSocket, completeAfterCleanup, fixedUiFailure, readBoundedInput, UiCleanupFailure, withDeadline } from "./windows_release_ui_io.mjs";
 import { emptyStartupObservation, observeStartup, UiStartupFailure, waitForStartup } from "./windows_release_ui_startup.mjs";
+import { seedReleasedUi, UiSeedFailure } from "./windows_release_ui_seed.mjs";
 
 const START_MS = 20_000;
 const STEP_MS = 20_000;
@@ -238,27 +239,7 @@ class Gui {
   }
 
   async seed(markers) {
-    const fresh = await this.evaluate(`window.__TAURI_INTERNALS__?.invoke('service_command',
-      {command:'snapshot',payload:{}}).then(value => value?.profile == null
-        && Array.isArray(value.workspaces) && value.workspaces.length === 0
-        && Array.isArray(value.workspace_drafts) && value.workspace_drafts.length === 0)`, true);
-    if (fresh !== true) throw new Error("ui_profile_not_fresh");
-    await this.click("button", "Start a chat", "page");
-    await this.fill("Display name", "R8 CI Owner", "page");
-    await this.click("button", "Create my invite", "page");
-    // Some onboarding flows show a final invitation page before the messenger.
-    if (await this.waitEither("Create workspace", "Open Mesh Chat") === "Open Mesh Chat") {
-      await this.click("button", "Open Mesh Chat", "page");
-    }
-    await this.click("button", "Create workspace", "page");
-    await this.fill("Name", markers.workspace_name, "dialog");
-    await this.click("button", "Create workspace", "dialog");
-    await this.waitRect("field", "Message general", "page");
-    await this.fill("Message general", markers.message_text, "page");
-    await this.click("button", "Send workspace message", "page");
-    await this.waitMessage(markers.message_text);
-    await this.fill("Message general", markers.draft_text, "page");
-    return this.settledReadback(markers);
+    return seedReleasedUi(this, markers);
   }
 
   async close() { return closeCheckedSocket(this.socket, () => this.protocolFailed === true); }
@@ -296,6 +277,7 @@ try {
     failure_kind: fixedUiFailure(primary) };
   if (dual) failure.cleanup_failure_kind = fixedUiFailure(error.cleanup);
   if (primary instanceof UiStartupFailure) failure.startup_observation = primary.observation;
+  if (primary instanceof UiSeedFailure) failure.ui_step = primary.step;
   process.stdout.write(JSON.stringify(failure) + "\n");
   process.exitCode = 1;
 }

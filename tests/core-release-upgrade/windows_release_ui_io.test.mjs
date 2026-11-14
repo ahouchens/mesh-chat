@@ -5,6 +5,64 @@ import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { boundedCdpFrame, closeBoundedSocket, closeCheckedSocket, completeAfterCleanup, fixedUiFailure, readBoundedInput, UiCleanupFailure, withDeadline } from "../../scripts/windows_release_ui_io.mjs";
 import { emptyStartupObservation, observeStartup, waitForStartup } from "../../scripts/windows_release_ui_startup.mjs";
+import { seedReleasedUi, UiSeedFailure } from "../../scripts/windows_release_ui_seed.mjs";
+
+const seedMarkers = { workspace_name: "R8 test", message_text: "R8 message", draft_text: "R8 draft" };
+
+function seedGui(overrides = {}) {
+  return {
+    waitRect: async () => ({ x: 1, y: 1 }), evaluate: async () => true,
+    click: async () => {}, fill: async () => {}, waitEither: async () => "Create workspace",
+    waitMessage: async () => {}, settledReadback: async () => ({ retained: true }), ...overrides,
+  };
+}
+
+test("released seed waits for interactive onboarding before querying the service", async () => {
+  let release, queried = false, initial = true;
+  const ready = new Promise((resolve) => { release = resolve; });
+  const seeding = seedReleasedUi(seedGui({
+    waitRect: async () => { if (initial) { initial = false; await ready; } },
+    evaluate: async () => { queried = true; return true; },
+  }), seedMarkers);
+  await Promise.resolve();
+  assert.equal(queried, false);
+  release();
+  assert.deepEqual(await seeding, { retained: true });
+  assert.equal(queried, true);
+});
+
+test("unready or nonfresh released profiles cannot receive a seed mutation", async () => {
+  const neverMutate = async () => assert.fail("seed must not click or enter text");
+  for (const [overrides, step, code] of [
+    [{ waitRect: async () => { throw new Error("ui_control_unavailable"); },
+       evaluate: async () => assert.fail("service must not be queried before onboarding") },
+     "onboarding_ready", "ui_control_unavailable"],
+    [{ evaluate: async () => false }, "fresh_profile", "ui_profile_not_fresh"],
+  ]) {
+    await assert.rejects(seedReleasedUi(seedGui({ click: neverMutate, fill: neverMutate, ...overrides }), seedMarkers),
+      (error) => error instanceof UiSeedFailure && error.step === step && error.message === code);
+  }
+});
+
+test("seed failures retain a fixed operation step without raw native errors", async () => {
+  await assert.rejects(seedReleasedUi(seedGui({ evaluate: async () => {
+    throw new Error("ui_observation_failed");
+  } }), seedMarkers), (error) => error instanceof UiSeedFailure
+    && error.step === "fresh_profile" && error.message === "ui_observation_failed");
+  await assert.rejects(seedReleasedUi(seedGui({ settledReadback: async () => {
+    throw new Error("private path or response body");
+  } }), seedMarkers), (error) => error instanceof UiSeedFailure
+    && error.step === "seed_readback" && error.message === "ui_contract_failed");
+});
+
+test("seed keeps its failing step when socket retirement also fails", async () => {
+  await assert.rejects(completeAfterCleanup(() => seedReleasedUi(seedGui({
+    fill: async () => { throw new Error("ui_observation_failed"); },
+  }), seedMarkers), async () => { throw new Error("ui_socket_retirement_failed"); }),
+  (error) => error instanceof UiCleanupFailure && error.actionFailed
+    && error.primary instanceof UiSeedFailure && error.primary.step === "profile_name"
+    && error.cleanup.message === "ui_socket_retirement_failed");
+});
 
 const readyStartup = () => Object.fromEntries(Object.keys(emptyStartupObservation()).map((key) => [key, true]));
 
