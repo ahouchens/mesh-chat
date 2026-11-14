@@ -163,19 +163,20 @@ def directional_gateway(*, fail_add=False, foreign=False):
     gateway.check_links = lambda: None
     state = {"host": "noqueue", "guest": "noqueue", "dropped": 0, "calls": []}
     noqueue = "qdisc noqueue 0: root refcnt 2\n"
+    seeded = "qdisc netem a101: root refcnt 5 limit 1000 loss 100% seed 17921061681230122703\n"
     def command(*args):
         state["calls"].append(args)
         if args[:4] == ("tc", "qdisc", "show", "dev"):
             link = "host" if args[4] == gateway.host else "guest"
             return noqueue if state[link] == "noqueue" else (
                 "qdisc fq_codel 900: root refcnt 2\n" if state[link] == "foreign" else
-                "qdisc netem a101: root refcnt 2 limit 1000 loss 100%\n")
+                seeded)
         if args[:5] == ("tc", "-s", "qdisc", "show", "dev"):
             assert args[5] == gateway.host
             if state["host"] == "foreign":
                 return "qdisc fq_codel 900: root refcnt 2\n"
-            return ("qdisc netem a101: root refcnt 2 limit 1000 loss 100%\n"
-                    f" Sent 0 bytes 0 pkt (dropped {state['dropped']}, overlimits 0 requeues 0)\n")
+            return (seeded + f" Sent 0 bytes 0 pkt (dropped {state['dropped']}, overlimits 0 requeues 0) \n"
+                    " backlog 0b 0p requeues 0\n")
         if args[:3] == ("tc", "qdisc", "add"):
             state["host"] = "loss"
             if fail_add:
@@ -209,16 +210,29 @@ def test_directional_loss_uses_only_owned_host_qdisc_and_recovers_counted_echo()
     assert len([args for args in state["calls"] if args[:3] == ("tc", "qdisc", "del")]) == 1
 
 
-@pytest.mark.parametrize("fault", ["wrong_handle", "delay", "second_qdisc", "missing_counters"])
+@pytest.mark.parametrize("fault", ["wrong_handle", "delay", "second_qdisc", "missing_counters",
+                                  "seed_overflow", "seed_negative", "seed_extra_option"])
 def test_directional_counter_parser_requires_one_exact_owned_loss_qdisc(fault):
-    row = ("qdisc netem a101: root refcnt 2 limit 1000 loss 100%\n"
+    row = ("qdisc netem a101: root refcnt 5 limit 1000 loss 100% seed 17921061681230122703\n"
            " Sent 0 bytes 0 pkt (dropped 2, overlimits 0 requeues 0)\n")
     if fault == "wrong_handle": row = row.replace("a101:", "a103:")
     elif fault == "delay": row = row.replace("limit 1000 loss", "limit 1000 delay 75ms loss")
     elif fault == "second_qdisc": row += "qdisc fq_codel 900: parent a101:1\n"
-    else: row = row.replace(" Sent 0 bytes 0 pkt", " stats unavailable")
+    elif fault == "missing_counters": row = row.replace(" Sent 0 bytes 0 pkt", " stats unavailable")
+    elif fault == "seed_overflow": row = row.replace("17921061681230122703", "18446744073709551616")
+    elif fault == "seed_negative": row = row.replace("17921061681230122703", "-1")
+    else: row = row.replace("17921061681230122703", "17921061681230122703 delay 1ms")
     with pytest.raises(probe.Unavailable, match="owned_directional_loss_unavailable"):
         probe.parse_directional_loss(row, "a101:")
+
+
+@pytest.mark.parametrize("dropped", [15, 559])
+def test_directional_counter_parser_accepts_real_seeded_probe_and_cleanup_rows(dropped):
+    row = ("qdisc netem a101: root refcnt 5 limit 1000 loss 100% seed 17921061681230122703\n"
+           f" Sent 0 bytes 0 pkt (dropped {dropped}, overlimits 0 requeues 0) \n"
+           " backlog 0b 0p requeues 0\n")
+    assert probe.parse_directional_loss(row, "a101:") == {"bytes": 0, "packets": 0,
+                                                           "dropped": dropped}
 
 
 @pytest.mark.parametrize("fault", ["none", "bypass", "uncounted", "recovery"])

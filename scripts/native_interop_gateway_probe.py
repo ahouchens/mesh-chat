@@ -154,14 +154,17 @@ def parse_netem(text, handle):
 
 
 def parse_directional_loss(text, handle):
-    """Read counters only from the sole owned, delay-free 100% loss qdisc."""
+    """Read the sole owned loss qdisc, including tc's optional uint64 seed."""
     pattern = (r"^qdisc netem " + re.escape(handle)
-               + r" root(?: refcnt [0-9]+)? limit [0-9]+ loss 100(?:\.0+)?%\n"
+               + r" root(?: refcnt [0-9]+)? limit [0-9]+ loss 100(?:\.0+)?%"
+               + r"(?: seed (0|[1-9][0-9]{0,19}))?\n"
                + r"\s*Sent ([0-9]+) bytes ([0-9]+) pkt \(dropped ([0-9]+),")
     match = re.search(pattern, text)
     require(match is not None and len(re.findall(r"(?m)^qdisc ", text)) == 1,
             "owned_directional_loss_unavailable")
-    return dict(zip(("bytes", "packets", "dropped"), map(int, match.groups())))
+    seed, sent_bytes, packets, dropped = match.groups()
+    require(seed is None or int(seed) <= 2**64 - 1, "owned_directional_loss_unavailable")
+    return dict(zip(("bytes", "packets", "dropped"), map(int, (sent_bytes, packets, dropped))))
 
 
 class Commands:
