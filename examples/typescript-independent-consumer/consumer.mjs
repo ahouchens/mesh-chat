@@ -12,6 +12,7 @@ const operations = new Set([
   "runtime.capabilities", "profile.create", "profile.query", "application.snapshot",
   "peer.pairing_begin", "peer.pairing_query", "peer.pairing_cancel", "peer.approve", "contact.invitation",
   "settings.query", "settings.update", "call.settings_query", "call.settings_update",
+  "call.ice_servers", "call.media_query", "call.control",
   "connection.snapshot", "connection.start", "connection.stop",
   "message.enqueue", "message.query", "message.list", "message.received", "events.poll", "events.ack",
 ]);
