@@ -17,7 +17,7 @@ import pytest
 if os.name != "nt":
     pytest.skip("Windows named pipes are required", allow_module_level=True)
 
-from mesh_chat.core_api.pipe_endpoint import PipeConfig, PipeEndpoint
+from mesh_chat.core_api.pipe_endpoint import PipeClientAdmission, PipeConfig, PipeEndpoint
 from mesh_chat.service import MeshChatService
 from mesh_chat.vault import VaultStore
 
@@ -216,6 +216,52 @@ def test_an_unlisted_client_image_is_rejected_without_a_session(service):
         assert server.rejected == 1 and server.accepted == 0
     finally:
         server.close()
+
+
+def test_opt_in_host_admission_refuses_a_listed_image_before_core_binding(service):
+    name = pipe_name()
+    observed = []
+    server = PipeEndpoint(name, config(), admit_client=lambda pid, stream:
+                          observed.append((pid, stream)) or None)
+    server.start(service)
+    try:
+        client = connect(name)
+        try:
+            client.write(request("runtime.capabilities"))
+        except OSError:
+            pass
+        assert client.readline() == b""
+        client.close()
+        assert len(observed) == 1 and observed[0][0] == os.getpid()
+        assert server.accepted == 0 and server.rejected == 1
+    finally:
+        server.close()
+
+
+def test_opt_in_admission_reuses_preface_stream_and_rechecks_grant(service):
+    name = pipe_name()
+    preface = b"MESH-HELPER/1 " + b"a" * 64 + b"\n"
+    gate = {"open": True, "released": 0, "preface": None}
+    def admit(pid, stream):
+        assert pid == os.getpid()
+        gate["preface"] = stream.readline(79, deadline=time.monotonic() + 2)
+        return PipeClientAdmission(lambda: gate["open"],
+                                   lambda: gate.__setitem__("released", gate["released"] + 1))
+    server = PipeEndpoint(name, config(), admit_client=admit)
+    server.start(service)
+    try:
+        client = connect(name)
+        client.write(preface + request("runtime.capabilities"))
+        first = json.loads(client.readline())
+        assert first["ok"] is True and gate["preface"] == preface
+        gate["open"] = False
+        client.write(request("profile.query", profile=first["result"]["profiles"][0]))
+        denied = json.loads(client.readline())
+        assert denied["ok"] is False and denied["error"]["code"] == "unauthenticated"
+        client.close()
+    finally:
+        server.close()
+    assert gate["released"] == 1 and server._admissions == set()
 
 
 def test_clients_are_served_one_at_a_time(service):

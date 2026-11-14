@@ -3,10 +3,13 @@ from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
-from threading import Event
+from threading import Event, RLock
+import time
 
+from .app_owned_admission import AppOwnedAdmission, ProcessPort
+from .app_owned_control import HELPER_PREFACE_LENGTH, decode_helper_preface
 from .core_api.host import OWNER_PERMISSIONS
-from .core_api.pipe_endpoint import PipeConfig, PipeEndpoint
+from .core_api.pipe_endpoint import PipeClientAdmission, PipeConfig, PipeEndpoint
 from .core_api.pipe_policy import allowed_images, pipe_name
 from .errors import MeshChatError, NativeUnavailable, ValidationError
 from .service import MeshChatService
@@ -45,6 +48,74 @@ class AppOwnedStartupIncomplete(NativeUnavailable):
     def __init__(self, runtime):
         super().__init__("App-owned runtime startup is incomplete")
         self.runtime = runtime
+
+
+class AppOwnedPipeAdmission:
+    """Opt-in, host-private callback for one connected Windows pipe client.
+
+    The caller must fence the roster under service dispatch before stopping the
+    endpoint. Retire this callback only after endpoint workers have exited; it
+    owns temporary process-query handles, not the roster's owner/helper pins.
+    """
+
+    def __init__(self, roster: AppOwnedAdmission, processes: ProcessPort,
+                 *, preface_seconds: float = 5.0):
+        if (type(preface_seconds) not in (int, float)
+                or not 0.1 <= preface_seconds <= 10.0):
+            raise ValueError("Private helper preface deadline is invalid")
+        self._roster = roster
+        self._processes = processes
+        self._preface_seconds = float(preface_seconds)
+        self._pending = []
+        self._closed = False
+        self._lock = RLock()
+
+    def __call__(self, pid, stream) -> PipeClientAdmission | None:
+        """Return a lease only for an OS-identical owner or invited helper."""
+        with self._lock:
+            if self._closed:
+                return None
+            handle = lease = None
+            try:
+                handle = self._processes.open(pid)
+                identity = handle.identity
+                role = self._roster.candidate_role(identity)
+                if role == "owner":
+                    lease = self._roster.admit(identity)
+                elif role == "helper":
+                    line = stream.readline(HELPER_PREFACE_LENGTH,
+                                           deadline=time.monotonic() + self._preface_seconds)
+                    token = decode_helper_preface(line)
+                    lease = self._roster.admit(identity, token)
+            except Exception:
+                pass  # A failed process query or proof cannot create a grant.
+            finally:
+                if handle is not None:
+                    try:
+                        handle.close()
+                    except Exception:
+                        self._pending.append(handle)
+                        self._closed = True
+            if lease is None or self._closed:
+                if lease is not None:
+                    self._roster.release(lease)
+                return None
+            return PipeClientAdmission(lambda: not self._closed and self._roster.authorize(lease),
+                                       lambda: self._roster.release(lease))
+
+    def retire(self) -> bool:
+        """Retry temporary handles and failed port opens after workers stop."""
+        with self._lock:
+            self._closed = True
+            pending = self._pending
+            self._pending = []
+            for handle in pending:
+                try:
+                    handle.close()
+                except Exception:
+                    self._pending.append(handle)
+            port_retired = self._processes.retire() is True
+            return not self._pending and port_retired
 
 
 class AppOwnedRuntime:

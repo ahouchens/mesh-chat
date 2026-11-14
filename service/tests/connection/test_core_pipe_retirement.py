@@ -50,6 +50,8 @@ def endpoint(kernel, handles=(71,), workers=()):
     value._stop = Event()
     value._lock = Lock()
     value._handles = set(handles)
+    value._query_handles = set()
+    value._admissions = set()
     value._threads = list(workers)
     value.failure = None
     return value
@@ -97,6 +99,39 @@ def test_failed_close_retains_exact_handle_and_retries_without_double_close():
     assert kernel.calls.count(("close", 71)) == 2
     server.close()
     assert kernel.calls.count(("close", 71)) == 2
+
+
+def test_process_query_handle_and_admission_release_require_positive_retry():
+    kernel = Kernel()
+    kernel.close_failures = 1
+    server = endpoint(kernel, handles=())
+    server._query_handles.add(83)
+    attempts = []
+    def release():
+        attempts.append(True)
+        if len(attempts) == 1:
+            raise OSError("pending")
+    admission = pipe.PipeClientAdmission(lambda: True, release)
+    server._admissions.add(admission)
+    with pytest.raises(pipe.PipeRetirementPending):
+        server.close()
+    assert server._query_handles == {83} and server._admissions == {admission}
+    server.close()
+    assert server._query_handles == server._admissions == set()
+    assert len(attempts) == 2 and kernel.calls.count(("close", 83)) == 2
+
+
+def test_preface_reader_enforces_absolute_deadline_and_exact_line_ceiling(monkeypatch):
+    stream = pipe._Duplex(Kernel(), 71, Event(), 300)
+    stream._read = lambda _size, *, deadline: b"x" * 79 + b"\n"
+    with pytest.raises(ValueError, match="ceiling"):
+        stream.readline(79, deadline=10**12)
+    stream = pipe._Duplex(Kernel(), 71, Event(), 300)
+    stream._read = lambda _size, *, deadline: b"x"
+    ticks = iter((0.0, 0.1, 2.0))
+    monkeypatch.setattr(pipe, "time", SimpleNamespace(monotonic=lambda: next(ticks)))
+    with pytest.raises(TimeoutError):
+        stream.readline(79, deadline=1.0)
 
 
 def test_worker_preserves_primary_serve_failure_when_handle_close_fails(monkeypatch):

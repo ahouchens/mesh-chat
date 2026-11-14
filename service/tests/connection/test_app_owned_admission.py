@@ -197,10 +197,46 @@ def test_owner_exit_revokes_all_leases_and_retry_retains_failed_closes():
     owner.alive = False
     assert not admission.authorize(owner_lease)
     assert not admission.authorize(helper_lease)
+    assert not owner.closed and not helper.closed
+    assert owner.closes == helper.closes == 0
+    assert not admission.retire()
+    assert not admission.retire()
     assert not admission.retire()
     assert admission.retire() and owner.closed and helper.closed
     with pytest.raises(AdmissionDenied):
         admission.register_helper(42)
+
+
+def test_candidate_refuses_unknown_before_preface_and_does_not_consume_proof():
+    admission, owner, helper, _, _ = roster()
+    assert admission.candidate_role(owner.identity) == "owner"
+    assert admission.candidate_role(helper.identity) is None
+    invitation = admission.register_helper(42)
+    assert admission.candidate_role(helper.identity) == "helper"
+    assert admission.candidate_role(replace(helper.identity, creation_time=201)) is None
+    assert admission.candidate_role(replace(helper.identity, image=OTHER)) is None
+    lease = admission.admit(helper.identity, invitation.token)
+    assert admission.candidate_role(helper.identity) is None
+    assert admission.authorize(lease)
+    assert admission.retire()
+
+
+def test_fence_revokes_without_closing_pins_until_explicit_retire():
+    admission, owner, helper, _, _ = roster()
+    owner_lease = admission.admit(owner.identity)
+    invitation = admission.register_helper(42)
+    helper_lease = admission.admit(helper.identity, invitation.token)
+    admission.fence()
+    admission.fence()
+    assert not admission.authorize(owner_lease)
+    assert not admission.authorize(helper_lease)
+    assert admission.candidate_role(owner.identity) is None
+    assert owner.closes == helper.closes == 0
+    with pytest.raises(AdmissionDenied):
+        admission.admit(owner.identity)
+    with pytest.raises(AdmissionDenied):
+        admission.register_helper(42)
+    assert admission.retire() and owner.closed and helper.closed
 
 
 def test_concurrent_invitation_use_admits_at_most_one_session():

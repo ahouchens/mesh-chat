@@ -18,6 +18,7 @@ from dataclasses import dataclass
 import os
 import threading
 import time
+from typing import Callable
 
 from . import host
 from .pipe_policy import allowed_images as validate_images, image_allowed, pipe_name
@@ -51,6 +52,18 @@ RETIRE_JOIN_SECONDS = 5.0
 
 class PipeRetirementPending(RuntimeError):
     """A pipe worker or exact handle still belongs to the endpoint."""
+
+
+@dataclass(frozen=True, eq=False)
+class PipeClientAdmission:
+    """Trusted per-connection authority; release must be idempotent."""
+
+    authorize: Callable[[], bool]
+    release: Callable[[], None]
+
+    def __post_init__(self):
+        if not callable(self.authorize) or not callable(self.release):
+            raise ValueError("Core API client admission hooks are invalid")
 
 
 class SECURITY_ATTRIBUTES(ctypes.Structure):
@@ -150,21 +163,28 @@ class _Duplex:
         finally:
             self._kernel.CloseHandle(event)
 
-    def readline(self, limit):
+    def readline(self, limit, *, deadline=None):
         while True:
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError("Core API pipe read deadline expired")
             index = self._buffer.find(b"\n")
             if index >= 0:
+                if index + 1 > limit:
+                    raise ValueError("Core API frame exceeds its ceiling")
                 line = bytes(self._buffer[:index + 1])
                 del self._buffer[:index + 1]
                 return line
             if len(self._buffer) > limit:
                 raise ValueError("Core API frame exceeds its ceiling")
-            chunk = self._read(min(max(limit + 1 - len(self._buffer), 1), BUFFER_BYTES))
+            chunk = self._read(min(max(limit + 1 - len(self._buffer), 1), BUFFER_BYTES),
+                               deadline=deadline)
             if chunk == b"":
                 return b""
             self._buffer.extend(chunk)
 
-    def _read(self, size):
+    def _read(self, size, *, deadline=None):
+        if deadline is not None and time.monotonic() >= deadline:
+            raise TimeoutError("Core API pipe read deadline expired")
         event = self._event()
         overlapped = OVERLAPPED()
         overlapped.hEvent = event
@@ -181,11 +201,14 @@ class _Duplex:
             outcome = self._kernel.WaitForSingleObject(event, 50)
             while outcome == WAIT_TIMEOUT:
                 if (self._stop.is_set()
-                        or time.monotonic() - self._last_activity >= self._idle_timeout):
+                        or time.monotonic() - self._last_activity >= self._idle_timeout
+                        or (deadline is not None and time.monotonic() >= deadline)):
                     try:
                         _cancel_and_complete(self._kernel, self._handle, overlapped, read)
                     finally:
                         self._kernel.CloseHandle(event)
+                    if deadline is not None and time.monotonic() >= deadline:
+                        raise TimeoutError("Core API pipe read deadline expired")
                     return b""
                 outcome = self._kernel.WaitForSingleObject(event, 50)
             if outcome != WAIT_OBJECT_0:
@@ -197,6 +220,8 @@ class _Duplex:
         if not self._finish(overlapped, read, event):
             return b""
         self._last_activity = time.monotonic()
+        if deadline is not None and self._last_activity >= deadline:
+            raise TimeoutError("Core API pipe read deadline expired")
         return data.raw[:read.value]
 
     def write(self, payload):
@@ -270,14 +295,17 @@ class PipeConfig:
 class PipeEndpoint:
     """One host-owned endpoint; callers cannot choose its name or allowlist."""
 
-    def __init__(self, name, config):
+    def __init__(self, name, config, *, admit_client=None):
         if os.name != "nt":
             raise RuntimeError("The core API pipe endpoint requires Windows")
         if not isinstance(config, PipeConfig):
             raise ValueError("Core API endpoint configuration is required")
+        if admit_client is not None and not callable(admit_client):
+            raise ValueError("Core API client admission must be a host callback")
         self.kernel, self.advapi = _bind()
         self._name = pipe_name(name)
         self._images = config.allowed_images
+        self._admit_client = admit_client
         self._grant = host.host_grant(config.caller, config.permissions,
                                       scope=config.scope,
                                       private_profile_bootstrap=config.private_profile_bootstrap)
@@ -289,6 +317,8 @@ class PipeEndpoint:
         self._ready = threading.Event()
         self._lock = threading.Lock()
         self._handles = set()
+        self._query_handles = set()
+        self._admissions = set()
         self._error = None
         self._threads = []
         self._max_clients = config.max_clients
@@ -339,8 +369,12 @@ class PipeEndpoint:
         with self._lock:
             for handle in tuple(self._handles):
                 self._close_handle_locked(handle)
-            if self._handles:
-                raise PipeRetirementPending("Core API pipe handles are not retired")
+            for handle in tuple(self._query_handles):
+                self._close_query_handle_locked(handle)
+            for admission in tuple(self._admissions):
+                self._release_admission_locked(admission)
+            if self._handles or self._query_handles or self._admissions:
+                raise PipeRetirementPending("Core API pipe custody is not retired")
 
     def _close_handle_locked(self, handle):
         """Only a positive CloseHandle releases endpoint custody."""
@@ -362,6 +396,33 @@ class PipeEndpoint:
         with self._lock:
             return self._close_handle_locked(handle)
 
+    def _close_query_handle_locked(self, handle):
+        try:
+            closed = self.kernel.CloseHandle(handle)
+        except Exception:
+            closed = False
+        if closed:
+            self._query_handles.discard(handle)
+        elif self.failure is None:
+            self.failure = "Core API client process handle close failed"
+        return bool(closed)
+
+    def _release_admission_locked(self, admission):
+        try:
+            admission.release()
+        except Exception:
+            if self.failure is None:
+                self.failure = "Core API client admission release failed"
+            return False
+        self._admissions.discard(admission)
+        return True
+
+    def _client_pid(self, handle):
+        pid = wintypes.ULONG()
+        if not self.kernel.GetNamedPipeClientProcessId(handle, ctypes.byref(pid)) or pid.value == 0:
+            return None
+        return pid.value
+
     def _serve_client(self, service, handle):
         while not self._stop.is_set():
             if handle is None:
@@ -370,13 +431,32 @@ class PipeEndpoint:
                 except OSError as error:
                     self.failure = f"{type(error).__name__}: {error}"[:120]
                     return
+            admission = None
             try:
                 if self._connect(handle):
-                    image = self._client_image(handle)
-                    if not image_allowed(image, self._images):
+                    stream = _Duplex(self.kernel, handle, self._stop, self._idle_timeout)
+                    pid = self._client_pid(handle)
+                    image = self._client_image(handle, pid) if pid is not None else None
+                    allowed = not self._stop.is_set() and image_allowed(image, self._images)
+                    if allowed and self._admit_client is not None:
+                        try:
+                            admission = self._admit_client(pid, stream)
+                        except Exception:
+                            if self.failure is None:
+                                self.failure = "Core API client admission failed"
+                            admission = None
+                        allowed = isinstance(admission, PipeClientAdmission)
+                        if not allowed and admission is not None:
+                            if self.failure is None:
+                                self.failure = "Core API client admission returned invalid custody"
+                            admission = None
+                    if not allowed:
                         with self._lock:
                             self.rejected += 1
                     else:
+                        if admission is not None:
+                            with self._lock:
+                                self._admissions.add(admission)
                         with self._lock:
                             self.accepted += 1
                         session = host.bind_host_stream(service, caller=self._grant.caller,
@@ -385,14 +465,17 @@ class PipeEndpoint:
                                                         scope=self._scope,
                                                         private_native=self._private_native,
                                                         private_profile_bootstrap=self._private_profile_bootstrap,
-                                                        private_composer_legacy=self._private_composer_legacy)
-                        session.serve(_Duplex(self.kernel, handle, self._stop, self._idle_timeout),
-                                      _Duplex(self.kernel, handle, self._stop, self._idle_timeout))
+                                                        private_composer_legacy=self._private_composer_legacy,
+                                                        authorize=admission.authorize if admission else None)
+                        session.serve(stream, stream)
             except (OSError, ValueError) as error:
                 if self._stop.is_set():
                     return
                 self.failure = f"{type(error).__name__}: {error}"[:120]
             finally:
+                if admission is not None:
+                    with self._lock:
+                        self._release_admission_locked(admission)
                 retired = self._retire_worker_handle(handle)
                 handle = None
             if not retired:
@@ -482,13 +565,15 @@ class PipeEndpoint:
         finally:
             self.kernel.CloseHandle(event)
 
-    def _client_image(self, handle):
-        pid = wintypes.ULONG()
-        if not self.kernel.GetNamedPipeClientProcessId(handle, ctypes.byref(pid)):
+    def _client_image(self, handle, pid=None):
+        pid = self._client_pid(handle) if pid is None else pid
+        if pid is None:
             return None
-        process = self.kernel.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid.value)
+        process = self.kernel.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
         if not process:
             return None
+        with self._lock:
+            self._query_handles.add(process)
         try:
             buffer = ctypes.create_unicode_buffer(32768)
             length = wintypes.DWORD(len(buffer))
@@ -496,4 +581,6 @@ class PipeEndpoint:
                 return None
             return buffer.value[:length.value]
         finally:
-            self.kernel.CloseHandle(process)
+            with self._lock:
+                if not self._close_query_handle_locked(process):
+                    self._stop.set()  # A failed query-handle close blocks new admissions.

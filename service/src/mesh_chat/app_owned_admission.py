@@ -58,6 +58,8 @@ class ProcessPort(Protocol):
 
     def open(self, pid: int) -> ProcessHandle: ...
 
+    def retire(self) -> bool: ...
+
 
 @dataclass(frozen=True)
 class Invitation:
@@ -149,7 +151,7 @@ class AppOwnedAdmission:
                 continue
             self._retained.remove(entry)
 
-    def _revoke(self, entry: _Entry) -> None:
+    def _fence_entry(self, entry: _Entry) -> None:
         if entry.revoked:
             return
         entry.revoked = True
@@ -161,20 +163,26 @@ class AppOwnedAdmission:
         if entry.role == "helper":
             self._helpers.pop(entry.pid, None)
         self._retained.append(entry)
+
+    def _revoke(self, entry: _Entry) -> None:
+        self._fence_entry(entry)
         self._drain()
 
-    def _retire(self) -> None:
+    def _fence(self) -> None:
         self._retired = True
         for entry in tuple(self._helpers.values()):
-            self._revoke(entry)
-        self._revoke(self._owner)
+            self._fence_entry(entry)
+        self._fence_entry(self._owner)
+
+    def _retire(self) -> None:
+        self._fence()
         self._drain()
 
     def _require_owner(self) -> None:
         if self._retired:
             raise AdmissionDenied()
         if not self._live(self._owner.handle):
-            self._retire()
+            self._fence()
             raise AdmissionDenied()
 
     def _prune_helpers(self) -> None:
@@ -252,6 +260,24 @@ class AppOwnedAdmission:
             self._leases[ticket] = entry
             return AdmissionLease(entry.identity, entry.role, ticket)
 
+    def candidate_role(self, observed: ProcessIdentity) -> str | None:
+        """Identify an expected process without reading or consuming a proof."""
+        if not isinstance(observed, ProcessIdentity):
+            return None
+        with self._lock:
+            try:
+                self._require_owner()
+            except AdmissionDenied:
+                return None
+            self._prune_helpers()
+            if self._same(observed, self._owner.identity):
+                return "owner"
+            entry = self._helpers.get(observed.pid)
+            if (entry is not None and entry.invitation is not None
+                    and self._same(observed, entry.identity) and self._live(entry.handle)):
+                return "helper"
+            return None
+
     def authorize(self, lease: AdmissionLease) -> bool:
         """Recheck a previously admitted session before each Core operation."""
         if not isinstance(lease, AdmissionLease):
@@ -267,7 +293,7 @@ class AppOwnedAdmission:
                 return False
             if not self._live(entry.handle):
                 if entry.role == "owner":
-                    self._retire()
+                    self._fence()
                 else:
                     self._revoke(entry)
                 return False
@@ -299,3 +325,8 @@ class AppOwnedAdmission:
         with self._lock:
             self._retire()
             return not self._retained
+
+    def fence(self) -> None:
+        """Revoke every grant while workers/watchers still hold process pins."""
+        with self._lock:
+            self._fence()
