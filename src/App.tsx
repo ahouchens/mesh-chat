@@ -3465,6 +3465,11 @@ const workspaceAccessSendScope = (workspace: Workspace) => JSON.stringify([
   workspace.core_handle ?? workspace.id, workspace.id, workspace.local_device_id,
   workspace.authority_device_id, workspace.epoch, workspace.manifest_hash, workspaceAccessOwner(workspace),
 ]);
+const workspaceAdminRequestScope = (workspace: Workspace) => JSON.stringify([
+  workspace.core_handle ?? workspace.id, workspace.id, workspace.local_member_id,
+  workspace.local_device_id, workspace.local_role, workspace.authority_device_id,
+  workspace.epoch, workspace.manifest_hash, workspace.state,
+]);
 
 export function WorkspaceAccessSettingsContent({ workspace, onSaved, sendRecovery }: { workspace: Workspace; onSaved: () => Promise<void>; sendRecovery?: Map<string, WorkspaceAccessSendRecovery> }) {
   const profileEffects = useProfileEffectScope();
@@ -4340,6 +4345,8 @@ type WorkspaceMessageInvalidations = Record<string, {
 function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageInvalidations, promptDismissalKeys, notificationTarget, onNotificationHandled, onLock, initialInvitation, onInvitationHandled, initialPairingCode = "", initialWebRTCJoin = false, onWebRTCJoinHandled, onPairingHandled }: { snapshot: Snapshot; theme: Theme; onThemeChange: (theme: Theme) => void; refresh: (afterCurrent?: boolean) => Promise<Snapshot>; workspaceMessageInvalidations: WorkspaceMessageInvalidations; promptDismissalKeys: Map<string, string>; notificationTarget: NotificationOpenTarget | null; onNotificationHandled: () => void; onLock: () => Promise<void>; initialInvitation: string; onInvitationHandled: () => void; initialPairingCode?: string; initialWebRTCJoin?: boolean; onWebRTCJoinHandled?: () => void; onPairingHandled?: () => void }) {
   const profileEffects = useProfileEffectScope();
   const workspaceAccessSendRecovery = useRef(new Map<string, WorkspaceAccessSendRecovery>());
+  const adminRequestAttempts = useRef(new Map<string, { scope: string; operationId: string; inFlight: boolean }>());
+  const adminRequestInFlightScope = useRef<string | null>(null);
   const admitProfileRequest = useProfileRequestAdmission();
   const lifetime = useProfileLifetime();
   const [profileGeneration] = useState(() => lifetime?.capture());
@@ -4366,6 +4373,12 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     const liveScopes = new Map(workspaces.map((workspace) => [workspace.id, workspaceAccessSendScope(workspace)]));
     for (const [id, saved] of workspaceAccessSendRecovery.current) {
       if (liveScopes.get(id) !== saved.scope) workspaceAccessSendRecovery.current.delete(id);
+    }
+  }, [snapshot.workspaces]);
+  useEffect(() => {
+    const liveScopes = new Set(workspaces.map(workspaceAdminRequestScope));
+    for (const [intent, attempt] of adminRequestAttempts.current) {
+      if (!liveScopes.has(attempt.scope)) adminRequestAttempts.current.delete(intent);
     }
   }, [snapshot.workspaces]);
   const workspaceChannels = snapshot.workspace_channels ?? [];
@@ -4695,6 +4708,14 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
   const selectedContact = selection?.kind === "contact" ? snapshot.contacts.find((contact) => contact.id === selection.id) ?? null : null;
   const selectedGroup = selection?.kind === "group" ? groups.find((group) => group.id === selection.id) ?? null : null;
   const selectedWorkspace = activeSpaceId === "personal" ? null : workspaces.find((workspace) => workspace.id === activeSpaceId) ?? null;
+  const adminRequestScope = selectedWorkspace ? workspaceAdminRequestScope(selectedWorkspace) : null;
+  const currentAdminRequestScope = useRef(adminRequestScope);
+  currentAdminRequestScope.current = adminRequestScope;
+  useEffect(() => {
+    if (adminRequestInFlightScope.current && adminRequestInFlightScope.current !== adminRequestScope) {
+      setWorkspaceActionBusy(false); setWorkspaceActionError("");
+    }
+  }, [adminRequestScope]);
   const selectedApprovedContact = !selectedWorkspace && selectedContact &&
     (selectedContact.trust === "approved" || selectedContact.trust === "verified") ? selectedContact : null;
   const selectedManualBridgeId = useMemo(() => {
@@ -5532,6 +5553,54 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     }
     finally { setWorkspaceActionBusy(false); }
   };
+  const submitWorkspaceAdminRequest = async (
+    requestKind: "invitation" | "member_removal" | "role_change",
+    targetMemberId: string | null,
+    requestedRole: "admin" | "member" | null,
+  ) => {
+    const workspace = selectedWorkspace;
+    if (!workspace?.core_handle || !profileCurrent() || workspaceActionBusy) return;
+    const scope = workspaceAdminRequestScope(workspace);
+    if (adminRequestInFlightScope.current === scope) return;
+    const member = targetMemberId ? workspace.members.find((item) => item.id === targetMemberId) : null;
+    if (targetMemberId && !member?.core_handle) {
+      setWorkspaceActionError("The selected member is no longer available. Refresh the workspace.");
+      return;
+    }
+    const targetHandle = member?.core_handle ?? null;
+    const intent = JSON.stringify([scope, requestKind, targetHandle, requestedRole, ""]);
+    const attempt = adminRequestAttempts.current.get(intent)
+      ?? { scope, operationId: newOperationId(), inFlight: false };
+    if (attempt.inFlight) return;
+    adminRequestAttempts.current.set(intent, attempt);
+    adminRequestInFlightScope.current = scope;
+    attempt.inFlight = true;
+    setWorkspaceActionBusy(true); setWorkspaceActionError("");
+    const stillCurrent = () => profileCurrent() && currentAdminRequestScope.current === scope;
+    try {
+      await coreApiWorkspaceAdminSubmit(
+        workspace.core_handle, requestKind, targetHandle, requestedRole, "",
+        attempt.operationId, admitProfileRequest);
+      if (adminRequestAttempts.current.get(intent) === attempt) adminRequestAttempts.current.delete(intent);
+      if (!stillCurrent()) return;
+      try {
+        await refresh(true);
+      } catch {
+        if (stillCurrent()) setWorkspaceActionError(
+          "The request was submitted, but the updated workspace list could not be loaded. Refresh before submitting again; another submit creates a new request.");
+      }
+    } catch (reason) {
+      if (!stillCurrent()) return;
+      const refused = ["forbidden", "invalid_request", "idempotency_conflict"].includes(profileErrorCode(reason));
+      if (refused && adminRequestAttempts.current.get(intent) === attempt) adminRequestAttempts.current.delete(intent);
+      setWorkspaceActionError(refused ? `The request was not submitted: ${errorMessage(reason)}`
+        : "The request was not confirmed. Retry the same request to check this action.");
+    } finally {
+      attempt.inFlight = false;
+      if (adminRequestInFlightScope.current === scope) adminRequestInFlightScope.current = null;
+      if (stillCurrent()) setWorkspaceActionBusy(false);
+    }
+  };
   const runWorkspaceAdministration = async (
     command:
       | "update_workspace_metadata"
@@ -5539,7 +5608,6 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       | "update_workspace_retention"
       | "remove_workspace_member"
       | "change_workspace_role"
-      | "submit_workspace_admin_request"
       | "approve_workspace_admin_request"
       | "decline_workspace_admin_request"
       | "cancel_workspace_admin_request"
@@ -5594,26 +5662,6 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
             if (!String(reason).includes("core_api_unavailable")) throw reason;
             throw new Error("core_api_unavailable");
           }
-        }
-      }
-      if (command === "submit_workspace_admin_request" && selectedWorkspace.core_handle
-          && (payload.request_kind === "invitation" || payload.request_kind === "member_removal"
-              || payload.request_kind === "role_change")) {
-        const member = typeof payload.target_member_id === "string"
-          ? selectedWorkspace.members.find((item) => item.id === payload.target_member_id)
-          : null;
-        try {
-          await coreApiWorkspaceAdminSubmit(
-            selectedWorkspace.core_handle, payload.request_kind,
-            member?.core_handle ?? null,
-            payload.requested_role === "admin" || payload.requested_role === "member"
-              ? payload.requested_role : null,
-            typeof payload.note === "string" ? payload.note : "",
-            newOperationId(), admitProfileRequest);
-          await refresh(true);
-          return;
-        } catch (reason) {
-          if (!String(reason).includes("core_api_unavailable")) throw reason;
         }
       }
       if (command === "decide_workspace_display_name" && selectedWorkspace.core_handle
@@ -6977,7 +7025,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
         onRemove={(memberId) => void runWorkspaceAdministration("remove_workspace_member", { member_id: memberId })}
         onChangeRole={(memberId, role) => void runWorkspaceAdministration("change_workspace_role", { member_id: memberId, role })}
         onInvitationPolicy={(invitationRequests) => void runWorkspaceAdministration("update_workspace_policies", { channel_creation: selectedWorkspace.policies.channel_creation, posting: selectedWorkspace.policies.posting, invitation_requests: invitationRequests })}
-        onSubmitAdminRequest={(requestKind, targetMemberId, requestedRole) => void runWorkspaceAdministration("submit_workspace_admin_request", { request_kind: requestKind, target_member_id: targetMemberId, requested_role: requestedRole, note: "" })}
+        onSubmitAdminRequest={(requestKind, targetMemberId, requestedRole) => void submitWorkspaceAdminRequest(requestKind, targetMemberId ?? null, requestedRole ?? null)}
         onDecideAdminRequest={(requestId, approve) => void runWorkspaceAdministration(approve ? "approve_workspace_admin_request" : "decline_workspace_admin_request", { request_id: requestId })}
         onCancelAdminRequest={(requestId) => void runWorkspaceAdministration("cancel_workspace_admin_request", { request_id: requestId })}
         onDismissAdminRequest={(requestId) => void runWorkspaceAdministration("dismiss_workspace_admin_request", { request_id: requestId })}

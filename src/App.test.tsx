@@ -5163,6 +5163,135 @@ describe("desktop workspaces", () => {
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("submit_workspace_admin_request", expect.objectContaining({ workspace_id: workspace.id, request_kind: "member_removal", target_member_id: member.id, operation_id: expect.any(String) })));
   });
 
+  describe("administrator request recovery", () => {
+    const administrator = {
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      core_handle: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      display_name: "Bailey", role: "admin" as const, status: "active" as const,
+      short_id: "aaaaaa",
+      device: { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", destination_hash: "99".repeat(16), fingerprint: "BBBB CCCC DDDD EEEE" },
+    };
+    const member = {
+      id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      core_handle: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      display_name: "Casey", role: "member" as const, status: "active" as const,
+      short_id: "cccccc",
+      device: { id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", destination_hash: "aa".repeat(16), fingerprint: "CCCC DDDD EEEE FFFF" },
+    };
+    const adminWorkspace: Workspace = {
+      ...workspace, local_role: "admin", local_member_id: administrator.id,
+      local_device_id: administrator.device.id,
+      policies: { channel_creation: "owner_and_admins", posting: "owner_and_admins", invitation_requests: "owner_and_admins" },
+      members: [...workspace.members, administrator, member],
+    };
+    const mount = (submit: (payload: Record<string, unknown>) => unknown) => {
+      let current: Snapshot = { ...snapshot(), workspaces: [adminWorkspace], workspace_channels: [workspaceChannel],
+        workspace_admin_requests: [], workspace_join_requests: [], workspace_invitations: [], workspace_drafts: [] };
+      let failRefresh = false;
+      api.runtimePlatform.mockResolvedValue("desktop");
+      api.initializeService.mockResolvedValue(current);
+      api.onInvitation.mockResolvedValue(() => undefined);
+      api.onServiceEvent.mockResolvedValue(() => undefined);
+      api.serviceCommand.mockImplementation(async (command: string, payload?: Record<string, unknown>) => {
+        if (command === "snapshot") {
+          if (failRefresh) { failRefresh = false; throw new Error("snapshot unavailable"); }
+          return current;
+        }
+        if (command === "list_workspace_messages") return { messages: [], next_cursor: null, high_water: 0 } satisfies WorkspaceMessagePage;
+        if (command === "submit_workspace_admin_request") return submit(payload ?? {});
+        return {};
+      });
+      render(<App />);
+      return {
+        failNextRefresh: () => { failRefresh = true; },
+        changeWorkspace: (next: Workspace) => { current = { ...current, workspaces: [next] }; },
+      };
+    };
+    const openPeople = async () => {
+      fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
+      fireEvent.click(screen.getByRole("button", { name: "People in Lakewatcher" }));
+      return screen.findByRole("region", { name: "Workspace settings for Lakewatcher" });
+    };
+
+    it("retries a committed request with one key after reply loss and settings reopen", async () => {
+      const firstReply = deferred<unknown>();
+      const calls: Array<Record<string, unknown>> = [];
+      const committed = new Set<string>();
+      mount((payload) => {
+        calls.push(payload); committed.add(String(payload.operation_id));
+        return calls.length === 1 ? firstReply.promise : { state: "submitted" };
+      });
+      const settings = await openPeople();
+      const request = within(settings).getByRole("button", { name: "Request invitation" });
+      fireEvent.click(request); fireEvent.click(request);
+      await waitFor(() => expect(calls).toHaveLength(1));
+      await act(async () => { firstReply.reject(new Error("reply lost after commit")); });
+      expect(within(settings).getByRole("alert").textContent).toMatch(/not confirmed.*same request/i);
+      fireEvent.click(within(settings).getByRole("button", { name: "Back from workspace settings" }));
+      fireEvent.click(screen.getByRole("button", { name: "People in Lakewatcher" }));
+      const reopened = await screen.findByRole("region", { name: "Workspace settings for Lakewatcher" });
+      fireEvent.click(within(reopened).getByRole("button", { name: "Request promotion" }));
+      await waitFor(() => expect(calls).toHaveLength(2));
+      expect(calls[1].operation_id).not.toBe(calls[0].operation_id);
+      fireEvent.click(within(reopened).getByRole("button", { name: "Request invitation" }));
+      await waitFor(() => expect(calls).toHaveLength(3));
+      expect(calls[2].operation_id).toBe(calls[0].operation_id);
+      expect(committed.size).toBe(2);
+      fireEvent.click(within(reopened).getByRole("button", { name: "Request invitation" }));
+      await waitFor(() => expect(calls).toHaveLength(4));
+      expect(calls[3].operation_id).not.toBe(calls[0].operation_id);
+    });
+
+    it("reports Core success truthfully when the subsequent refresh fails", async () => {
+      const calls: Array<Record<string, unknown>> = [];
+      const control = mount((payload) => { calls.push(payload); return { state: "submitted" }; });
+      const settings = await openPeople();
+      control.failNextRefresh();
+      fireEvent.click(within(settings).getByRole("button", { name: "Request invitation" }));
+      expect((await within(settings).findByRole("alert")).textContent).toMatch(/was submitted.*could not be loaded/i);
+      fireEvent.click(within(settings).getByRole("button", { name: "Request invitation" }));
+      await waitFor(() => expect(calls).toHaveLength(2));
+      expect(calls[1].operation_id).not.toBe(calls[0].operation_id);
+    });
+
+    it("does not apply a late result after the workspace authority changes", async () => {
+      const firstReply = deferred<unknown>();
+      const calls: Array<Record<string, unknown>> = [];
+      const control = mount((payload) => { calls.push(payload); return firstReply.promise; });
+      const settings = await openPeople();
+      fireEvent.click(within(settings).getByRole("button", { name: "Request invitation" }));
+      await waitFor(() => expect(calls).toHaveLength(1));
+      control.changeWorkspace({ ...adminWorkspace, authority_device_id: member.device.id, epoch: 2, manifest_hash: "aa".repeat(32) });
+      await act(async () => { window.dispatchEvent(new Event("focus")); });
+      await waitFor(() => expect((within(settings).getByRole("button", { name: "Request invitation" }) as HTMLButtonElement).disabled).toBe(false));
+      await act(async () => { firstReply.reject(new Error("old reply lost")); });
+      expect(within(settings).queryByText(/not confirmed|old reply lost/i)).toBeNull();
+      fireEvent.click(within(settings).getByRole("button", { name: "Request invitation" }));
+      await waitFor(() => expect(calls).toHaveLength(2));
+      expect(calls[1].operation_id).not.toBe(calls[0].operation_id);
+    });
+
+    it("retires the pending identity when the profile locks", async () => {
+      const firstReply = deferred<unknown>();
+      const calls: Array<Record<string, unknown>> = [];
+      mount((payload) => {
+        calls.push(payload);
+        return calls.length === 1 ? firstReply.promise : { state: "submitted" };
+      });
+      const settings = await openPeople();
+      fireEvent.click(within(settings).getByRole("button", { name: "Request invitation" }));
+      await waitFor(() => expect(calls).toHaveLength(1));
+      fireEvent.click(screen.getByLabelText("Lock Mesh Chat"));
+      await act(async () => { firstReply.resolve({ state: "submitted" }); });
+      await screen.findByRole("heading", { name: "Mesh Chat is locked" });
+      fireEvent.click(screen.getByRole("button", { name: "Unlock" }));
+      const reopened = await openPeople();
+      fireEvent.click(within(reopened).getByRole("button", { name: "Request invitation" }));
+      await waitFor(() => expect(calls).toHaveLength(2));
+      expect(calls[1].operation_id).not.toBe(calls[0].operation_id);
+    });
+  });
+
   it("presents current authority separately from a pending owner review", async () => {
     const member = {
       id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
