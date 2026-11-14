@@ -50,3 +50,12 @@ pairing begin/query/cancel, contact invitation and approval decisions,
 connection snapshot/start, and message enqueue/query/received for a later
 Windows peer controller. Those peer and message phases still need same-run
 installed Android and Windows evidence; this first runner makes no such claim.
+
+The Python runner also exposes `AndroidPublicSession(expected_source, serial)`
+for a later same-run controller. Use it as a context manager, issue only
+`request(operation, params, key)` calls from the existing public allowlist,
+and call `finish()` before the context ends. `finish()` returns only after the
+instrumentation exits successfully and the runtime shutdown is observed;
+leaving the context early retires the owned test process and reports no success.
+The adapter keeps the same source, emulator, frame and total time limits as the
+standalone smoke command.
