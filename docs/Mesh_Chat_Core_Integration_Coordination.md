@@ -4,9 +4,11 @@ Current November 14 handoff: use [the compact work register](MESH_CORE_REFACTOR_
 and [focused restart strategy](MESH_CORE_RESTART_STRATEGY_HANDOFF.md). Independent
 R0/R3/R5/R8/R9 batches proceed under their explicit file ownership. R2 retirement
 and shared-owner promotion remain gated. Installed Windows separate-process
-lifetime passed at `ebcfa38`. Public roles passed at `dd9e4cd`, but aggregate
-source-byte checks failed on checkout line endings; the LF repair is integrated
-as `0826869`. Native first-cold snapshot EOF and WebView2 target discovery remain
+lifetime passed at `ebcfa38`. Public fresh roles and strict aggregate passed at
+`0685cfb` in run `43564598454`. Owner-restart flow and routing are integrated
+through `a48f632`, with 390 affected tests passing and independent review.
+Native run `43564601560` failed in Windows pairing before either native role;
+the first-cold snapshot EOF remains unresolved. WebView2 target discovery remains
 under investigation. Latest exact reports and limits are in the qualification
 ledger; the following b8e3e20 checkpoint is historical.
 

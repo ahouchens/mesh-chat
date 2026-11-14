@@ -1,5 +1,69 @@
 # Connection runtime qualification ledger
 
+## Installed public fresh pair and aggregate passed — November 14, 2026
+
+Run [43564598454](https://github.com/ahouchens/mesh-chat/actions/runs/43564598454),
+attempt 1, completed successfully at `0685cfbc81cce4c4f519f8e111e751f3aba8619f`,
+tree `978fe5fe8cb40b18c252b5ce93320ca464cebfa1`. Both installed public roles
+proved explicit approval, one delivered message and receipt each direction,
+matching peer identities, positive finish and owned cleanup. Windows used 35
+requests in 162.698 seconds; Android used 37 in 97.058 seconds. The aggregate
+and exact producer-input checks passed. All staged Windows application LF
+blobs and Android source hashes match the dispatched commit.
+
+Root independently checked API metadata, archive sizes/digests, byte-identical
+role copies in the summary, the bootstrap's staged SDK archive, and strict
+same-source producer and pair validators. Retained artifacts:
+
+| Artifact | ID | ZIP SHA-256 |
+| --- | --- | --- |
+| Windows role | 14102611598 | `79b8eda9d9f05b9e6bba46120fd08ed2707b67f8f1e47f3f1eeda4458b6cef85` |
+| Android role | 14102676603 | `d0f83a9babe8895f9533fc6cd49397c1d4161e9c618fc911216bd37e6024b63a` |
+| Aggregate | 14102317458 | `76e0348df3bf3ea822768fb9a600a5df88d6ed255480a7fee75518a018e5bf9a` |
+| Windows producer | 14102990648 | `df5a232fe6e142934ad93d8eb526a00d531d2535f3efc91882175e433924fcf7` |
+
+This closes the fresh-pair component and its LF repair, not full SC21. Restart,
+partition and current-authority recovery remain open. Public owner-restart flow
+`658994b` and wiring `a48f632` are locally integrated with 390 affected tests
+passing and independent reviews. The new diagnostic preserves the same data
+across two positive Windows owner exits while one Android session stays alive;
+its separate reports and empty sealed control phases cannot promote full native
+or public-consumer acceptance. Platform execution is still required.
+
+## Native diagnostic blocked by Windows producer — November 14, 2026
+
+Run [43564601560](https://github.com/ahouchens/mesh-chat/actions/runs/43564601560),
+attempt 1 at the same `0685cfb` source/tree, failed in the Windows public SDK
+pairing prerequisite. Both intents reached `awaiting_approval`, then retired
+from `checking` on `tick` with `phase_timeout`. The fixture reported
+`transferred_cancellation / transfer_wait`, `unavailable`, after 93.308 seconds;
+its outer deadline was not exhausted. Both final public views contained an
+approved contact and one ready connection among two entries. These observations
+do not yet establish why the original pairing intent failed to transfer.
+Both app-owned hosts were positively retired.
+
+Neither native peer ran. The strict paired checker returned `report_invalid`
+with both role reports null; this run supplies no new Android header-EOF
+observation or first-cold result. Root verified the producer artifact
+`14102356399` (ZIP SHA-256
+`d7fd831a20c5be62258fc634d8687092d8cae111a3b9cbb5eec55d292420d104`)
+and summary `14102575957` (ZIP SHA-256
+`ff7053f3ca0068da6b8a6c5cd2166b54c1c65e8689d9cc7b86a35e718d89073f`)
+against API metadata, run/source identity, and retained report bytes.
+
+## Trusted answerer failure observation locally validated — November 14, 2026
+
+Worker `3aef540`, integrated as `56f2481`, extends the existing trusted-owner
+fixed diagnostic to answer-side `gather_answer` failures. It does not expose
+private owner facts through the public Core API or change transport policy.
+Independent review found no blocker. The full connection suite produced 6,847
+passes, five environment failures and two existing platform skips. The two
+Bash permission cases passed their exact rerun outside the sandbox; the three
+assembly failures came from placing temporary fixtures inside the checkout,
+and all six assembly tests passed using the required outside-checkout directory.
+The affected Windows-host six tests and strict model/reducer two-file type
+check also passed. This observer was absent from the `0685cfb` CI runs above.
+
 ## Media target discovery bounded and reviewed — November 14, 2026
 
 Worker commits `142c7fd` and `b621152`, integrated as `51b4afb` and `fbefa69`,
