@@ -235,6 +235,16 @@ def test_directional_counter_parser_accepts_real_seeded_probe_and_cleanup_rows(d
                                                            "dropped": dropped}
 
 
+@pytest.mark.parametrize("seed", [None, "0", "18446744073709551615"])
+def test_directional_counter_parser_accepts_absent_and_uint64_seed_boundaries(seed):
+    suffix = "" if seed is None else " seed " + seed
+    row = (f"qdisc netem a101: root refcnt 5 limit 1000 loss 100%{suffix}\n"
+           " Sent 0 bytes 0 pkt (dropped 2, overlimits 0 requeues 0) \n"
+           " backlog 0b 0p requeues 0\n")
+    assert probe.parse_directional_loss(row, "a101:") == {"bytes": 0, "packets": 0,
+                                                           "dropped": 2}
+
+
 @pytest.mark.parametrize("fault", ["none", "bypass", "uncounted", "recovery"])
 def test_directional_control_requires_absent_echo_counted_drop_and_recovery(fault):
     events = []
