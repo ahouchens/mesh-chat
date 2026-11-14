@@ -311,7 +311,8 @@ def main():
     result_before = args.output.stat() if args.output.exists() else None
     try:
         require(sys.platform == "linux" and os.environ.get("GITHUB_ACTIONS") == "true", "linux_ci_required")
-        require(args.workload != DIAGNOSTIC or os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch",
+        require(args.workload != DIAGNOSTIC or (os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
+                and os.environ.get("GITHUB_JOB") == "native_android_peer"),
                 "manual_diagnostic_required")
         def terminate(_signal, _frame): raise Unavailable("native_gateway_termination")
         signal.signal(signal.SIGTERM, terminate)

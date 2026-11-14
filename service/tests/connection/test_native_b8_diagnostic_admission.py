@@ -31,21 +31,23 @@ def test_diagnostic_has_exact_full_prefix_and_one_cold_cycle():
         assert workloads.selected_workload(event, ["scripts/native_interop_controller.py"]) in {"quick", "full"}
 
 
-@pytest.mark.parametrize("event,actions,selected,allowed", [
-    ("workflow_dispatch", "true", "full", True),
-    ("workflow_dispatch", "true", "quick", False),
-    ("workflow_dispatch", "false", "full", False),
-    ("pull_request", "true", "full", False),
-    ("push", "true", "full", False),
-    ("workflow_call", "true", "full", False),
+@pytest.mark.parametrize("event,actions,selected,job,allowed", [
+    ("workflow_dispatch", "true", "full", "native_windows_peer", True),
+    ("workflow_dispatch", "true", "full", "native_android_peer", False),
+    ("workflow_dispatch", "true", "quick", "native_windows_peer", False),
+    ("workflow_dispatch", "false", "full", "native_windows_peer", False),
+    ("pull_request", "true", "full", "native_windows_peer", False),
+    ("push", "true", "full", "native_windows_peer", False),
+    ("workflow_call", "true", "full", "native_windows_peer", False),
 ])
 def test_controller_admits_diagnostic_only_for_manual_ci_before_binding(
-        tmp_path, monkeypatch, event, actions, selected, allowed):
+        tmp_path, monkeypatch, event, actions, selected, job, allowed):
     import connection_ci
     source, tree = "a" * 40, "b" * 40
     output = tmp_path / "diagnostic.json"
     monkeypatch.setenv("GITHUB_EVENT_NAME", event)
     monkeypatch.setenv("GITHUB_ACTIONS", actions)
+    monkeypatch.setenv("GITHUB_JOB", job)
     monkeypatch.setattr(sys, "argv", ["controller", "--role", "windows", "--expected-source", source,
                                     "--workload", DIAGNOSTIC, "--output", str(output)])
     monkeypatch.setattr(controller, "source_identity", lambda _: (source, tree))
@@ -137,8 +139,10 @@ def test_node_action_admission_and_report_namespace(workload, event, allowed, pr
         assert Path(arguments[-1]).name == prefix + "-android.json"
 
 
-@pytest.mark.parametrize("event,allowed", [("workflow_dispatch", True), ("pull_request", False), ("push", False)])
-def test_gateway_rejects_automatic_diagnostic_before_creating_network_objects(tmp_path, monkeypatch, event, allowed):
+@pytest.mark.parametrize("event,job,allowed", [("workflow_dispatch", "native_android_peer", True),
+    ("workflow_dispatch", "native_windows_peer", False), ("pull_request", "native_android_peer", False),
+    ("push", "native_android_peer", False)])
+def test_gateway_rejects_automatic_diagnostic_before_creating_network_objects(tmp_path, monkeypatch, event, job, allowed):
     import native_interop_gateway_runtime as gateway
     output = tmp_path / "report.json"
     monkeypatch.setattr(gateway.sys, "platform", "linux")
@@ -146,6 +150,7 @@ def test_gateway_rejects_automatic_diagnostic_before_creating_network_objects(tm
                                              "--workload", DIAGNOSTIC, "--output", str(output)])
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
     monkeypatch.setenv("GITHUB_EVENT_NAME", event)
+    monkeypatch.setenv("GITHUB_JOB", job)
     monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
     monkeypatch.setattr(gateway.signal, "signal", lambda *_: None)
     calls = []

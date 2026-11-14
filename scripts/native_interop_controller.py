@@ -37,7 +37,7 @@ from native_interop_recovery_context import (
 from native_interop_ice_packets import validated_snapshot as validated_ice_packets, unavailable as ice_packets_unavailable
 from native_interop_preflight import (DEFAULT_SIGNAL_MAILBOX_URL, android_environment,
     android_network_diagnostic, outbound_services)
-from native_interop_rendezvous import Rendezvous, checked_payload
+from native_interop_rendezvous import PRODUCER_JOBS, Rendezvous, checked_payload
 from native_interop_workload import DIAGNOSTIC, workload as required_workload
 from test_packaged_lifecycle import source_identity
 
@@ -1609,7 +1609,8 @@ def main(*, gateway=None):
         selected = current_plan()["native_workload"]
         if args.workload == DIAGNOSTIC:
             if (os.environ.get("GITHUB_ACTIONS") != "true"
-                    or os.environ.get("GITHUB_EVENT_NAME") != "workflow_dispatch" or selected != "full"):
+                    or os.environ.get("GITHUB_EVENT_NAME") != "workflow_dispatch"
+                    or os.environ.get("GITHUB_JOB") != PRODUCER_JOBS[args.role] or selected != "full"):
                 raise ValueError("Paired restart diagnostic requires an explicit manual CI run")
         elif selected != args.workload:
             raise ValueError("Native workload differs from source-bound event selection")
