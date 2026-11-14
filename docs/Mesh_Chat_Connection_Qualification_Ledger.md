@@ -1,5 +1,31 @@
 # Connection runtime qualification ledger
 
+## Shared pytest imports blocked the independent Python test — November 13, 2026
+
+Windows public/media run
+[43549705457](https://github.com/ahouchens/mesh-chat/actions/runs/43549705457),
+attempt 1 at `c5f44845e88ec50c49085871ddc7d68466f4fadd`, failed broad verification:
+**1 failed, 8,058 passed, 52 skipped**. The failing retirement test called the
+independent Python application inside the shared pytest process, where other
+tests had loaded private `mesh_chat.*` modules. The application's installed-SDK
+guard correctly raised `private_or_uninstalled_sdk` before the mocked host
+scenario. Windows candidate/Python and media jobs were skipped; neither has a
+platform outcome from this run.
+
+Root reproduced that exact failure with a private-module sentinel, then fixed
+only the test in `6dc8be9`. The failure/retirement body now runs in an isolated
+`python -I -B` subprocess with a bounded timeout. The parent deliberately retains
+a private-module sentinel. The production guard is unchanged. **102 related
+consumer/workflow tests passed**, zero skips, 6.57 s; the red and green reports
+are `.test-tmp/python-isolation-red.xml` and `python-isolation-integration.xml`.
+
+Verification artifact `14096696109`, ZIP SHA256
+`339b0b7c7d96cad88e546c238fc40cc4468dcc0a23f5de03fe4041564f8d0b55`, is retained
+and API/digest-verified under `.test-tmp/windows-public-media-c5f4484*`.
+Paired replacement `43551222774` at `9365b18` contained the identical failing
+test and was canceled early to avoid redundant producer builds. It supplies no
+native result. Android public-session run `43549708208` remains separate.
+
 ## First-cold completion upload admission failure — November 13, 2026
 
 Paired diagnostic [43546317181](https://github.com/ahouchens/mesh-chat/actions/runs/43546317181)
