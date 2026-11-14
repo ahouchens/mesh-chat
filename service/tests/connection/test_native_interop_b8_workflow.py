@@ -15,10 +15,11 @@ def read(name):
     return yaml.safe_load((WORKFLOWS / name).read_text(encoding="utf-8"))
 
 
-def selected(expression, event, diagnostic):
+def selected(expression, event, diagnostic, **inputs):
     value = expression.removeprefix("${{").removesuffix("}}").strip()
     value = value.replace("github.event_name", repr(event))
     value = value.replace("inputs.b8_first_cold_diagnostic", repr(diagnostic))
+    value = re.sub(r"\binputs\.([a-z0-9_]+)\b", lambda match: repr(inputs.get(match[1], False)), value)
     value = value.replace("always()", "True").replace("&&", " and ").replace("||", " or ")
     value = re.sub(r"!(?!=)", " not ", value)
     return eval(value, {"__builtins__": {}}, {})
@@ -126,13 +127,18 @@ def test_paired_producers_have_distinct_concurrency_without_changing_defaults():
         call_input = workflow.get("on", workflow.get(True))["workflow_call"]["inputs"]
         assert call_input["b8_diagnostic_producer"]["default"] is False
         group = workflow["concurrency"]["group"]
-        suffix = "${{ inputs.b8_diagnostic_producer && '-b8-first-cold' || '' }}"
+        suffix = "${{" + re.findall(r"\$\{\{([^{}]+)\}\}", group)[-1] + "}}"
         assert group.endswith(suffix)
         if default_group is not None:
             assert group.removesuffix(suffix) == default_group
         else:
             assert group.removesuffix(suffix).startswith("android-webrtc-${{ github.ref }}")
-        assert workflow["concurrency"]["cancel-in-progress"] == "${{ !inputs.b8_diagnostic_producer }}"
+        cancel = workflow["concurrency"]["cancel-in-progress"]
+        for event in ("workflow_dispatch", "workflow_call", "push"):
+            assert selected(suffix, event, False) == ""
+            assert selected(suffix, event, False, b8_diagnostic_producer=True) == "-b8-first-cold"
+            assert selected(cancel, event, False) is True
+            assert selected(cancel, event, False, b8_diagnostic_producer=True) is False
 
 
 def test_role_jobs_keep_original_artifact_bindings_and_select_separate_diagnostic_reports():

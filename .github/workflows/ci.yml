@@ -15,15 +15,25 @@ on:
         type: boolean
         required: false
         default: false
+      packaged_media_preflight:
+        description: Build and install the Windows app for a diagnostic WebView2 audio capture preflight
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}${{ inputs.b8_diagnostic_producer && '-b8-first-cold' || '' }}
-  cancel-in-progress: ${{ !inputs.b8_diagnostic_producer }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}${{ inputs.b8_diagnostic_producer && '-b8-first-cold' || github.event_name == 'workflow_dispatch' && inputs.packaged_media_preflight && '-media-preflight' || '' }}
+  cancel-in-progress: ${{ !(inputs.b8_diagnostic_producer || (github.event_name == 'workflow_dispatch' && inputs.packaged_media_preflight)) }}
 
 jobs:
+  media_preflight:
+    needs: verify
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.packaged_media_preflight == true && needs.verify.result == 'success' }}
+    uses: ./.github/workflows/packaged-media-preflight.yml
+
   verify:
     name: Verify and test
     runs-on: ubuntu-latest
