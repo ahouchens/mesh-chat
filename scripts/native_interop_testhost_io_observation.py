@@ -102,7 +102,7 @@ def failure_snapshot(value, ordinal):
             "app_process": value["app_process"]}
 
 
-def _bounded_adb(argv, deadline, limit):
+def _bounded_adb(argv, deadline, limit, cleanup_slice):
     """Return one capped output and exit code under the caller's shared deadline."""
     if time.monotonic() >= deadline:
         return None, None, "timeout"
@@ -134,7 +134,7 @@ def _bounded_adb(argv, deadline, limit):
         if process is not None:
             try:
                 if process.poll() is None: process.kill()
-                process.wait(timeout=.15)
+                process.wait(timeout=cleanup_slice)
             except Exception: pass
 
 
@@ -148,7 +148,14 @@ def _device_label(data, code, failure):
 def _forward_label(data, code, failure, forward):
     if failure is not None or code != 0 or type(forward) is not str or re.fullmatch(r"[0-9]{1,5}", forward) is None:
         return failure or "unknown"
-    lines = data.splitlines()
+    # The ADB server formats each listener with '\n'; adb_query_command adds
+    # one more '\n' after the complete result, including an empty result.
+    if not data.endswith(b"\n"):
+        return "unknown"
+    payload = data[:-1]
+    if payload and not payload.endswith(b"\n"):
+        return "unknown"
+    lines = payload.splitlines()
     if any(re.fullmatch(rb"[A-Za-z0-9_.:-]{1,64} tcp:[0-9]{1,5} tcp:[0-9]{1,5}", line) is None
            for line in lines):
         return "unknown"
@@ -161,24 +168,36 @@ def _forward_label(data, code, failure, forward):
 def _process_label(data, code, failure, device):
     if failure is not None:
         return failure
-    if device != "device":
+    if device != "device" or code != 0:
         return "unknown"
-    if code == 1 and data == b"":
+    # A bare adb exit 1 with empty stdout can mean either no PID or transport
+    # loss. Only a marker emitted after remote pidof proves its exit status.
+    match = re.fullmatch(rb"(?:([0-9]{1,10}(?: [0-9]{1,10})*)\r?\n)?"
+                         rb"MESH_PIDOF_EXIT:([0-9]{1,3})\r?\n", data)
+    if match is None:
+        return "unknown"
+    pids, remote_code = match.groups()
+    if remote_code == b"1" and pids is None:
         return "absent"
-    if code != 0 or not re.fullmatch(rb"[0-9]{1,10}(?: [0-9]{1,10})*\r?\n?", data):
+    if remote_code != b"0" or pids is None:
         return "unknown"
-    return "one" if len(data.split()) == 1 else "multiple"
+    return "one" if len(pids.split()) == 1 else "multiple"
 
 
-def control_path_presence(adb, forward, app, *, budget=3.4):
+def control_path_presence(adb, forward, app, *, budget=4.0):
     """Sample pinned ADB device, owned forward, and fixed app under one deadline."""
     unknown = {"device": "unknown", "forward": "unknown", "app_process": "unknown"}
     if (type(adb) is not str or not adb or type(app) is not str
             or re.fullmatch(r"[a-z][a-z0-9_.]{1,127}", app) is None):
         return unknown
-    deadline = time.monotonic() + min(3.4, max(0, budget))
+    budget = min(4.0, max(0, budget))
+    cleanup_slice = min(.15, budget / 6)
+    deadline = time.monotonic() + budget - 3 * cleanup_slice
     prefix = [adb, "-s", "emulator-5554"]
-    device = _device_label(*_bounded_adb(prefix + ["get-state"], deadline, 64))
-    forward_state = _forward_label(*_bounded_adb(prefix + ["forward", "--list"], deadline, 2048), forward)
-    process = _process_label(*_bounded_adb(prefix + ["shell", "pidof", app], deadline, 128), device)
+    device = _device_label(*_bounded_adb(prefix + ["get-state"], deadline, 64, cleanup_slice))
+    forward_state = _forward_label(*_bounded_adb(prefix + ["forward", "--list"], deadline, 2048,
+                                                 cleanup_slice), forward)
+    command = f"pidof {app}; echo MESH_PIDOF_EXIT:$?"
+    process = _process_label(*_bounded_adb(prefix + ["shell", command], deadline, 128,
+                                           cleanup_slice), device)
     return {"device": device, "forward": forward_state, "app_process": process}

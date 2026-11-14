@@ -93,7 +93,8 @@ def subprocess_adb(monkeypatch, replies):
     expected = [
         ["adb", "-s", "emulator-5554", "get-state"],
         ["adb", "-s", "emulator-5554", "forward", "--list"],
-        ["adb", "-s", "emulator-5554", "shell", "pidof", AndroidPeer.APP],
+        ["adb", "-s", "emulator-5554", "shell",
+         f"pidof {AndroidPeer.APP}; echo MESH_PIDOF_EXIT:$?"],
     ]
     calls = []
     children = []
@@ -110,14 +111,20 @@ def subprocess_adb(monkeypatch, replies):
 
 
 @pytest.mark.parametrize("replies,expected", [
-    ([(b"device\n", 0, 0), (b"emulator-5554 tcp:12345 tcp:7890\n", 0, 0), (b"123\n", 0, 0)],
+    ([(b"device\n", 0, 0), (b"emulator-5554 tcp:12345 tcp:7890\n\n", 0, 0),
+      (b"123\nMESH_PIDOF_EXIT:0\n", 0, 0)],
      presence()),
-    ([(b"device\n", 0, 0), (b"emulator-5554 tcp:99999 tcp:7890\n", 0, 0), (b"123\n", 0, 0)],
+    ([(b"device\n", 0, 0), (b"emulator-5554 tcp:99999 tcp:7890\n\n", 0, 0),
+      (b"123\nMESH_PIDOF_EXIT:0\n", 0, 0)],
      presence(forward="absent")),
-    ([(b"device\n", 0, 0), (b"emulator-5554 tcp:12345 tcp:7890\n", 0, 0), (b"", 1, 0)],
+    ([(b"device\n", 0, 0), (b"emulator-5554 tcp:12345 tcp:7890\n\n", 0, 0),
+      (b"MESH_PIDOF_EXIT:1\n", 0, 0)],
      presence(app_process="absent")),
-    ([(b"device\n", 0, 0), (b"emulator-5554 tcp:12345 tcp:7890\n", 0, 0), (b"123 456\n", 0, 0)],
+    ([(b"device\n", 0, 0), (b"emulator-5554 tcp:12345 tcp:7890\n\n", 0, 0),
+      (b"123 456\nMESH_PIDOF_EXIT:0\n", 0, 0)],
      presence(app_process="multiple")),
+    ([(b"device\n", 0, 0), (b"\n", 0, 0), (b"123\nMESH_PIDOF_EXIT:0\n", 0, 0)],
+     presence(forward="absent")),
     ([(b"offline\n", 0, 0), (b"", 1, 0), (b"", 1, 0)],
      presence("offline", "unknown", "unknown")),
     ([(b"", 1, 0), (b"", 1, 0), (b"", 1, 0)],
@@ -126,7 +133,9 @@ def subprocess_adb(monkeypatch, replies):
      presence("unknown", "unknown", "unknown")),
     ([(b"device\n", 0, 0), (b"x" * 2049, 0, 0), (b"PRIVATE\n", 0, 0)],
      presence(forward="unknown", app_process="unknown")),
-    ([(b"device\n", 0, 0), (b"emulator-5554 tcp:12345 tcp:7890\n", 0, 0), (b"x" * 129, 0, 0)],
+    ([(b"device\n", 0, 0), (b"emulator-5554 tcp:12345 tcp:7890\n\n", 0, 0), (b"x" * 129, 0, 0)],
+     presence(app_process="unknown")),
+    ([(b"device\n", 0, 0), (b"emulator-5554 tcp:12345 tcp:7890\n\n", 0, 0), (b"", 1, 0)],
      presence(app_process="unknown")),
 ])
 def test_real_subprocess_categorizes_three_causal_outcomes(monkeypatch, replies, expected):
@@ -139,11 +148,47 @@ def test_real_subprocess_categorizes_three_causal_outcomes(monkeypatch, replies,
 def test_real_subprocess_timeout_shares_budget_and_retires_child(monkeypatch):
     calls, children = subprocess_adb(monkeypatch, [(b"device\n", 0, 1)])
     started = time.monotonic()
-    observed = io.control_path_presence("adb", "12345", AndroidPeer.APP, budget=.25)
+    observed = io.control_path_presence("adb", "12345", AndroidPeer.APP, budget=.75)
     assert time.monotonic() - started < 1
     assert observed == presence("timeout", "timeout", "timeout")
     assert len(calls) == 1
     assert children[0].poll() is not None
+
+
+def test_real_delayed_children_share_one_deadline(monkeypatch):
+    replies = [
+        (b"device\n", 0, .2),
+        (b"emulator-5554 tcp:12345 tcp:7890\n\n", 0, .2),
+        (b"123\nMESH_PIDOF_EXIT:0\n", 0, 2),
+    ]
+    calls, children = subprocess_adb(monkeypatch, replies)
+    started = time.monotonic()
+    observed = io.control_path_presence("adb", "12345", AndroidPeer.APP, budget=1.5)
+    assert time.monotonic() - started < 1.8
+    assert observed == presence(app_process="timeout")
+    assert len(calls) == 3
+    assert all(child.poll() is not None for child in children)
+
+
+@pytest.mark.parametrize("output", [
+    b"emulator-5554 tcp:12345 tcp:7890\n",
+    b"emulator-5554 tcp:12345 tcp:7890\n\n\n",
+    b"emulator-5554 tcp:12345 tcp:7890\n\nPRIVATE\n",
+])
+def test_forward_parser_rejects_noncanonical_padding(output):
+    assert io._forward_label(output, 0, None, "12345") == "unknown"
+
+
+@pytest.mark.parametrize("output,expected", [
+    (b"MESH_PIDOF_EXIT:1\n", "absent"),
+    (b"", "unknown"),
+    (b"MESH_PIDOF_EXIT:127\n", "unknown"),
+    (b"123\nMESH_PIDOF_EXIT:1\n", "unknown"),
+    (b"PRIVATE\nMESH_PIDOF_EXIT:1\n", "unknown"),
+])
+def test_app_absence_requires_exact_remote_completion(output, expected):
+    assert io._process_label(output, 0, None, "device") == expected
+    assert io._process_label(output, 1, None, "device") == "unknown"
 
 
 def test_header_eof_keeps_primary_failure_and_captures_presence(monkeypatch):
