@@ -3,8 +3,10 @@
 import json
 import os
 from pathlib import Path
+import queue
 import shutil
 import subprocess
+import threading
 
 import pytest
 
@@ -15,6 +17,11 @@ SCRIPT = ROOT / "examples/typescript-independent-consumer/separate-process-check
 PRELOADER = r'''
 import { registerHooks } from "node:module";
 import { existsSync, writeFileSync } from "node:fs";
+
+// Only synthetic execution gets Windows admission; production script stays Windows-only.
+if (process.env.FIXTURE_MOCK_WINDOWS === "1") {
+  Object.defineProperty(process, "platform", {value: "win32"});
+}
 
 let created = false;
 const profile = "PRIVATE_PROFILE";
@@ -89,6 +96,49 @@ for await (const line of createInterface({input: process.stdin})) {
 }
 '''
 
+REAL_CONSUMER_PRELOADER = r'''
+import { registerHooks } from "node:module";
+import { sep, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+
+const source = pathToFileURL(resolve(process.env.FIXTURE_SDK_SOURCE) + sep).href;
+const nodeModule = `
+  import {NodeStreamTransport} from "${new URL("node.ts", source).href}";
+  import {Duplex} from "node:stream";
+  import {existsSync} from "node:fs";
+  const capabilities = {api_major:1,api_minor:0,stability:"experimental",
+    operations:["runtime.capabilities"],profiles:["PRIVATE_PROFILE"],limits:{frame_bytes:262144}};
+  export async function connectNamedPipe() {
+    const socket = new Duplex({
+      read() {},
+      write(chunk, _encoding, done) {
+        if (existsSync(process.env.FIXTURE_MARKER)) { this.destroy(); done(); return; }
+        const request = JSON.parse(chunk.toString("utf8"));
+        this.push(JSON.stringify({api_version:1,request_id:request.request_id,ok:true,
+          result:capabilities}) + "\\n");
+        done();
+      },
+    });
+    return new NodeStreamTransport(socket);
+  }
+`;
+registerHooks({resolve(specifier, context, nextResolve) {
+  if (specifier === "@mesh-chat/core-client") return {
+    url: new URL("index.ts", source).href, shortCircuit: true,
+  };
+  if (specifier === "@mesh-chat/core-client/node") return {
+    url: "data:text/javascript," + encodeURIComponent(nodeModule), shortCircuit: true,
+  };
+  if (specifier === "./runtime.mjs" && context.parentURL?.endsWith("consumer.mjs")) return {
+    url: "data:text/javascript,export async function launchRuntime(){throw new Error()}", shortCircuit: true,
+  };
+  if (context.parentURL?.startsWith(source) && specifier.startsWith("./") && specifier.endsWith(".js")) {
+    return {url: new URL(specifier.slice(0, -3) + ".ts", context.parentURL).href, shortCircuit: true};
+  }
+  return nextResolve(specifier, context);
+}});
+'''
+
 
 def node():
     selected = os.environ.get("MESH_CHAT_TEST_NODE") or shutil.which("node")
@@ -100,16 +150,17 @@ def node():
     return selected
 
 
-def execute(tmp_path, mode="normal"):
+def execute(tmp_path, mode="normal", *, mock_windows=True, relative_paths=False):
     shutil.copyfile(SCRIPT, tmp_path / SCRIPT.name)
     (tmp_path / "preloader.mjs").write_text(PRELOADER, encoding="utf-8")
     (tmp_path / "consumer.mjs").write_text(CHILD, encoding="utf-8")
     marker = tmp_path / "stopped"
     log = tmp_path / "children.jsonl"
-    env = {**os.environ, "FIXTURE_MARKER": str(marker), "FIXTURE_LOG": str(log), "FIXTURE_MODE": mode}
+    env = {**os.environ, "FIXTURE_MARKER": str(marker), "FIXTURE_LOG": str(log),
+           "FIXTURE_MODE": mode, "FIXTURE_MOCK_WINDOWS": "1" if mock_windows else "0"}
     completed = subprocess.run([node(), "--import", (tmp_path / "preloader.mjs").as_uri(),
-        str(tmp_path / SCRIPT.name), "--runtime", str(tmp_path / "host.exe"),
-        "--data-directory", str(tmp_path / "data")], cwd=tmp_path,
+        str(tmp_path / SCRIPT.name), "--runtime", "host.exe" if relative_paths else str(tmp_path / "host.exe"),
+        "--data-directory", "data" if relative_paths else str(tmp_path / "data")], cwd=tmp_path,
         env=env, capture_output=True, text=True, timeout=25)
     return completed, [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
 
@@ -156,6 +207,57 @@ def test_malformed_helper_output_fails_closed_without_retaining_payload(tmp_path
     assert "PRIVATE_" not in completed.stdout + completed.stderr
     assert (tmp_path / "stopped").is_file()
     assert [item["code"] for item in events if item["event"] == "exit"] == [0]
+
+
+def test_fixture_rejects_relative_host_and_data_before_launch(tmp_path):
+    completed, events = execute(tmp_path, relative_paths=True)
+    assert completed.returncode == 1
+    assert json.loads(completed.stdout)["phase"] == "arguments"
+    assert events == [] and not (tmp_path / "stopped").exists()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="native platform refusal is specific to non-Windows")
+def test_unmodified_platform_guard_refuses_linux_before_launch(tmp_path):
+    completed, events = execute(tmp_path, mock_windows=False)
+    assert completed.returncode == 1
+    assert json.loads(completed.stdout)["phase"] == "arguments"
+    assert events == [] and not (tmp_path / "stopped").exists()
+
+
+def test_unchanged_consumer_and_sdk_exit_after_post_stop_transport_close(tmp_path):
+    """Exercise real consumer.mjs and TypeScript SDK source over a synthetic Duplex."""
+    selected = node()
+    version = subprocess.run([selected, "--version"], capture_output=True, text=True, timeout=5)
+    if int(version.stdout.strip().lstrip("v").split(".")[0]) < 24:
+        pytest.skip("Node TypeScript transform unavailable")
+    preloader = tmp_path / "sdk-preloader.mjs"
+    preloader.write_text(REAL_CONSUMER_PRELOADER, encoding="utf-8")
+    marker = tmp_path / "host-stopped"
+    env = {**os.environ, "FIXTURE_MARKER": str(marker),
+           "FIXTURE_SDK_SOURCE": str(ROOT / "sdk/typescript/src"), "NODE_NO_WARNINGS": "1"}
+    child = subprocess.Popen([selected, "--experimental-transform-types", "--import", preloader.as_uri(),
+        str(SCRIPT.parent / "consumer.mjs"), "--pipe", "PRIVATE_PIPE"],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, encoding="utf-8", env=env)
+    try:
+        first = {"id": "one", "operation": "runtime.capabilities", "params": {}}
+        child.stdin.write(json.dumps(first) + "\n")
+        child.stdin.flush()
+        replies = queue.Queue(maxsize=1)
+        threading.Thread(target=lambda: replies.put(child.stdout.readline()), daemon=True).start()
+        line = replies.get(timeout=10)
+        assert json.loads(line)["id"] == "one"
+        marker.write_text("stopped", encoding="utf-8")
+        second = {"id": "two", "operation": "runtime.capabilities", "params": {}}
+        child.stdin.write(json.dumps(second) + "\n")
+        child.stdin.flush()
+        assert child.wait(timeout=10) == 1
+        assert child.stdout.read() == ""
+        assert child.stderr.read() == "Independent public consumer failed.\n"
+    finally:
+        if child.poll() is None:
+            child.kill()
+        child.wait(timeout=5)
 
 
 def test_fixture_uses_only_attach_only_public_helper_and_fixed_report():
