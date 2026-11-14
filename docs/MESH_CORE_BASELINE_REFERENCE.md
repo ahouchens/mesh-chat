@@ -43,3 +43,24 @@ Two labels need correction in the owning records after review: the definition-of
 ### Approved focused trace
 
 The integration lead approved a narrower test-only implementation in new `service/tests/connection/test_supervisor_competing_actors.py`. It registers six mixed contact/device/scope keys at one supervisor tick with two worker slots and opposite initial role choices. The trace duplicates an old completion, releases slots repeatedly, and independently bounds each actor's first and second admission by four and ten releases respectively. It checks one current operation per key and exact resource identity without synthesizing signed signaling. This strengthens local SC13/INV01/INV14 and the scheduler portion of SC02. Two-peer simultaneous **signed-signaling** behavior remains open. The misleading module docstring in `test_phase_cancellation.py` was corrected to INV02/03/04/09; the 294-case body is unchanged. Acceptance and ledger status edits remain integration-lead owned.
+
+### Production reducer event classification
+
+The six `Event` families in `service/src/mesh_chat/connection/model.py` are `Tick`, `ContextChanged`, `Result`, `Failed`, `Adopted` and `Observed`. The table maps meaningful state/event combinations to executing evidence. “Existing” means the earlier `test_reducer.py` or 294-case `test_phase_cancellation.py` corpus; “new” means `test_reducer_event_classification.py`. The table is an evidence map, not a claim that all six families are valid transitions in every state.
+
+| State | Tick | ContextChanged | Result | Failed | Adopted | Observed |
+| --- | --- | --- | --- | --- | --- | --- |
+| Stopped | New: cannot restart after old observation | Existing Stop/Start and denial | Existing late result after cancellation | Existing late failure after cancellation | Existing late adoption after cancellation | New: old ready observation cannot resurrect |
+| Negotiating | Existing deadline and polling | New: lower authority revision cannot revoke current work; existing interruption matrix | Existing phase progression and stale-result fencing | New: rate-limit cooldown survives Stop/Start; existing interruption matrix | Existing exact DISCOVER adoption and invalid/stale fences | Not applicable until a carrier exists; repair with current carrier is covered below |
+| Ready carrier | Existing scheduled health inspection | Existing revocation and mailbox-loss tests | New: stale result cannot retire current resource | New: stale rate-limit failure cannot alter readiness/cooldown | New: stale adoption cannot replace current resource | New: loss triggers exact ATTACH; a later READY observation cannot bypass repair |
+| Replacing after carrier loss | New: due retry creates a distinct resource | Existing cancellation/revision matrix covers current operations; no replacement-specific context trace added | Existing old-result/replacement fence in phase matrix | Existing old-failure/replacement fence in phase matrix | Existing old-adoption/replacement fence in phase matrix | New: old carrier observation cannot make the replacement ready |
+
+| Outside the reducer Event model | Classification | Applicable evidence |
+| --- | --- | --- |
+| Adapter epoch change | Remaining adapter/supervisor boundary; no `ContextChanged` field or other reducer event | Exact adapter resource provenance and reconciliation tests |
+| Storage failure | Remaining domain/persistence boundary; no reducer event | `test_intent_transactions.py` for INV19/SC19 |
+| Duplicate signed signaling | Remaining protocol boundary; no signed document event in the reducer | Adapter/protocol interleaving evidence for SC02 |
+
+This batch strengthens INV02/03/04/07/09 and SC03/10's *policy* edges without changing acceptance labels. `Failed(RATE_LIMITED)` is a modeled event; the new trace asserts its cooldown even after Stop and Start. Packaged lifecycle, media coexistence and real-clock §9.6 budgets remain open at their respective integration/D boundaries.
+
+Focused verification on this branch: 356 passed across the new event-classification file, reducer, phase cancellation, Hypothesis properties and trace replay (23.32 s); configured strict mypy passed for the two policy source files. This is local policy evidence, not Android/Windows or full native qualification.
