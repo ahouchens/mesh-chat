@@ -62,6 +62,8 @@ class WindowsJob:
         self.api = api
         self.handle = api.CreateJobObjectW(None, None)
         self.assigned = False
+        self.released = False
+        self.forced_close = False
         if not self.handle: raise OSError("call_job_create_failed")
         limits = ExtendedLimits()
         limits.BasicLimitInformation.LimitFlags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
@@ -102,10 +104,12 @@ class WindowsJob:
         return self.active() == 0
 
     def close(self):
-        if self.handle is None: return False, False
+        if self.handle is None: return self.released, self.forced_close
         forced = not self.wait_zero()
+        self.forced_close |= forced
         zero = self.terminate() if forced else True
-        if not zero: return False, forced
-        if not self.api.CloseHandle(self.handle): return False, forced
+        if not zero: return False, self.forced_close
+        if not self.api.CloseHandle(self.handle): return False, self.forced_close
         self.handle = None
-        return True, forced
+        self.released = True
+        return True, self.forced_close

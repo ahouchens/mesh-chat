@@ -1,13 +1,16 @@
 """Actual Windows children: stalled stdin, job descendants, partial startup."""
 
+import io
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
 from packaged_call_gui_session import GuiControl
 from packaged_call_io import BoundedWriter
@@ -64,6 +67,7 @@ class PackagedCallLifecycleTest(unittest.TestCase):
             self.assertIsNotNone(job.handle)
             self.assertEqual(job.close(), (True, False))
             self.assertIsNone(job.handle)
+            self.assertEqual(job.close(), (True, False))
             self.assertEqual(proxy.attempts, 2)
         finally:
             job.api = real_api
@@ -90,6 +94,39 @@ class PackagedCallLifecycleTest(unittest.TestCase):
             self.assertEqual(browser.job.calls, 2)
             self.assertTrue(browser.cleanup["job_zero_and_released"])
             self.assertTrue(browser.cleanup["edge_profile_removed"])
+
+    def test_profile_delete_failure_retries_after_job_release(self):
+        with tempfile.TemporaryDirectory(prefix="mesh-call-test-") as temporary:
+            edge = Path(temporary) / "msedge.exe"
+            edge.write_bytes(b"test-placeholder")
+            browser = BrowserProcess(Path(sys.executable), edge, Path(temporary))
+            browser.directory = Path(tempfile.mkdtemp(prefix="mesh-call-edge-", dir=temporary))
+            browser.job = WindowsJob()
+            browser.retired = True
+            class Exited:
+                stdin = io.BytesIO()
+                def poll(self): return 0
+                def wait(self, timeout=None): return 0
+            browser.process = Exited()
+            remove = shutil.rmtree
+            attempts = 0
+            def delete(path):
+                nonlocal attempts
+                attempts += 1
+                if attempts == 1: raise OSError("profile_delete_failed")
+                remove(path)
+            with patch("packaged_call_peer.shutil.rmtree", side_effect=delete):
+                self.assertFalse(browser.close())
+                self.assertFalse(browser.closed)
+                self.assertTrue(browser.job.released)
+                self.assertTrue(browser.directory.exists())
+                self.assertFalse(browser.close())
+            self.assertTrue(browser.closed)
+            self.assertTrue(browser.cleanup_failed)
+            self.assertTrue(browser.cleanup["job_zero_and_released"])
+            self.assertTrue(browser.cleanup["edge_profile_removed"])
+            self.assertFalse(browser.directory.exists())
+            self.assertEqual(attempts, 2)
 
     def test_stalled_reader_cannot_extend_write_deadline(self):
         child = subprocess.Popen([sys.executable, "-c", "import time;time.sleep(60)"],

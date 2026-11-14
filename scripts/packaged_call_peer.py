@@ -77,6 +77,7 @@ class BrowserProcess:
         self.cleanup = {}
         self.closed = False
         self.close_result = False
+        self.cleanup_failed = False
         self.profile_removed = False
 
     def _read(self):
@@ -206,5 +207,7 @@ class BrowserProcess:
                         "node_retired": self.process is None or self.process.poll() is not None,
                         "job_zero_and_released": job_zero, "edge_profile_removed": self.profile_removed}
         self.closed = all(self.cleanup.values())
-        self.close_result = self.retired and code == 0 and not forced and all(self.cleanup.values())
+        attempt_passed = self.retired and code == 0 and not forced and self.closed
+        if not attempt_passed: self.cleanup_failed = True
+        self.close_result = attempt_passed and not self.cleanup_failed
         return self.close_result
