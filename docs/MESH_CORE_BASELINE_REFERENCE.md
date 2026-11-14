@@ -26,6 +26,16 @@ metadata, not hashes measured from the user's installed files. Release/source
 identity is now a concrete comparison candidate. Exact on-device bytes, the
 Windows installer variant, build-manifest provenance and the physically tested
 flow list remain unconfirmed. This does not block continued automated work.
+The 303-byte published `SHA256SUMS.txt` was downloaded, hash-verified and retained
+as `.test-tmp/baseline-v0.9.66-SHA256SUMS.txt`; all three package entries agree
+with the asset metadata. Source-bound tag-push
+[release run 40924389053](https://github.com/ahouchens/mesh-chat/actions/runs/40924389053)
+passed verification, Windows build, Android arm64 build and publication. Its
+publish job completed at `2026-10-29T18:04:34Z`, matching release creation.
+The tag's workflow stages exactly one Windows EXE/MSI and signed Android APK
+from those same-run build artifacts before publishing checksums. These records
+bind the release process to the tagged source; inner package/build manifests
+and installed-device bytes have not been independently inspected.
 The remote `main` tip observed during this lookup is
 `13fda6f20c4eafdaf30611c547b76973814029b1`, a later preview-card change from
 October 30. The user's version/branch identification alone does not distinguish
