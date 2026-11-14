@@ -1,5 +1,82 @@
 # Connection runtime qualification ledger
 
+## Installed separate-process lifetime verified — November 14, 2026
+
+Run [43561536224](https://github.com/ahouchens/mesh-chat/actions/runs/43561536224),
+attempt 1, completed successfully at `ebcfa385f755fe77e6d7bfe43592b02be8089f66`,
+tree `457b8b0164d4743ab1738a830892f353a1917855`. Its distinct installed Windows
+report proves one normal owner, two separate helper processes, clean first
+detach while the owner remains usable, replacement attachment sharing fresh
+state, positive owner stop, a written post-stop helper request rejected, bounded
+helper exit, EFS profile/vault and successful owned-workspace cleanup. Fixture
+time was 3,344 ms; complete producer time including cleanup was 5.266 seconds.
+
+Root independently validated artifact `14101233618`, ZIP SHA256
+`5a5652b1ae3181f9d4fae21e35e2963d6f7741b3b6de6de270e61e36c4adf588`, and
+`windows-independent-separate-process.json`, SHA256
+`1d79eac560450a7e43503ab94590883396cfea07133143c9ffd185b29f304bd0`.
+The unchanged strict verifier accepts the exact source/tree/schema/checks. SDK
+and bootstrap hashes match their uploaded bytes; source/build/runtime bindings
+match bootstrap. All eleven application hashes match Windows CRLF checkout
+bytes at this pre-LF-repair source. Retained record:
+`.test-tmp/installed-process-ebcfa38-validated.json`.
+
+This closes the narrow fresh-profile separate-process lifetime component. It
+does not establish wrong-image or cross-application isolation, pending-work
+recovery, replay, Android parity or full SC22/SC26 acceptance.
+
+## Public roles passed; aggregate source bytes repaired — November 14, 2026
+
+Run [43559770732](https://github.com/ahouchens/mesh-chat/actions/runs/43559770732),
+attempt 1 at `dd9e4cdb16df3c22e49ab1d176b59cb719ea1b19`, tree
+`7188921a7f2c822354c9fd50e22badab9c7891ff`, completed with failure. Both installed
+public roles passed explicit approval, one delivered outbound and one inbound
+message each, matching peer/message hashes, and positive session cleanup. The
+aggregate failed at `producer_inputs`: all ten staged Windows application hashes
+match CRLF checkout bytes and differ from the Linux checker's LF bytes.
+
+Root independently verified GitHub archive digests and source/run metadata for
+Windows artifact `14100397802`, Android `14100766190`, and summary `14100194837`.
+All four retained report copies match the role archives byte for byte. The
+exact-source pair validator passes the retained role inputs; this does not replace
+the failed producer-input or aggregate check. Evidence is retained in
+`.test-tmp/public-dd9e4cd-validated.json`. No restart, partition or full SC21 pass.
+
+Worker commit `7b21703`, integrated as `0826869`, pins every staged TypeScript
+application file to LF in Git attributes. The test compares actual Git checkout
+conversion under Windows and Linux settings, including the new separate-process
+fixture. Root passed 177 focused tests and independent review found no blocker.
+No hash check was relaxed; a new source-bound run must verify the repair.
+
+## Native snapshot EOF and media discovery failures retained — November 14, 2026
+
+Native run [43559773977](https://github.com/ahouchens/mesh-chat/actions/runs/43559773977)
+at the same `dd9e4cd` source passed its producers and six-path prefix, then failed
+the first cold cycle. Android authenticated and initialized the restarted peer;
+snapshot ordinal 1445 entered dispatch, but the client received zero header bytes.
+No flush-complete status was retained. The recorded 41 ms ends at dispatch entry;
+it is not dispatch duration. ADB-client and emulator host processes were running,
+which does not establish guest app health. The forward observation was unknown.
+Windows subsequently exhausted its partner-start barrier. The pair checker failed
+with `pair_invalid`; no cold cycle or native acceptance is claimed.
+
+Root validated Android artifact `14100094734`, Windows `14101300712`, and summary
+`14101370471`; retained records are `.test-tmp/native-dd9e4cd-android-validated.json`
+and `.test-tmp/native-dd9e4cd-pair-validated.json`. A bounded device/owned-forward/
+guest-process observer is under review to distinguish these failure branches.
+
+Media run [43560834395](https://github.com/ahouchens/mesh-chat/actions/runs/43560834395),
+attempt 1 at `061ae8870e4c4a2d1e708cbed22c8e5336c24c69`, failed. Exact installed
+application and sidecar bytes match the release manifest. The fixed probe marker
+is `target_discovery / app_webview_unavailable`; no qualifying page was found
+within the discovery budget. This does not distinguish endpoint availability,
+target mismatch or app launch failure. App retirement passed; capture checks are
+absent. Root independently verified artifact `14100464090`, archive SHA256
+`4cee437d3f2868aa31819168dd6cd094002c19fbcb2c41a2c00dea42f2ef75c2`, retained in
+`.test-tmp/media-061ae88-validated.json`. Its separate Windows host job also failed
+public pairing; that cause is being investigated independently. Media acceptance
+and CallDialog coexistence remain open.
+
 ## Installed separate-process runner integrated — November 14, 2026
 
 Commits `f750d1d` and `8442151` stage the reviewed public fixture and add a
