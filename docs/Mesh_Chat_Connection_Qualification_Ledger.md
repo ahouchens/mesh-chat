@@ -1,5 +1,30 @@
 # Connection runtime qualification ledger
 
+## Reviewed media observation and separate-process fixture — November 14, 2026
+
+Source `061ae8870e4c4a2d1e708cbed22c8e5336c24c69` adds an allowlisted media
+probe failure stage/code without changing capture permissions or success gates.
+The exact DevTools socket is closed even when its connection wait fails;
+Python retains a bounded marker from timed-out stderr while preserving timeout
+as the primary failure. No raw stderr, page content or URLs enter the report.
+Root verified 45 focused checks with Node 24, including real target discovery
+failure. One existing live-symlink test is unavailable on this Windows host,
+including outside the sandbox. New media diagnostic
+[43560834395](https://github.com/ahouchens/mesh-chat/actions/runs/43560834395),
+attempt 1, is bound by `.test-tmp/media-probe-061ae88-freeze.json`. Capture
+remains unqualified pending its actual result.
+
+The same source includes separate-process fixture commits `3402fe0`, `798b1c3`
+and `d2a3c66`. One normal owner creates a fresh profile; attach-only helpers
+exercise detach, reattach and owner stop. Independent review caught an early
+helper exit being counted as a rejected post-stop request. The correction
+requires a live helper, completed request write and fixed consumer failure/exit,
+and uses a monotonic budget. Eight local tests pass; the native non-Windows
+admission case is intentionally inapplicable on Windows. One test exercises the
+unchanged consumer and actual SDK over a synthetic closed transport. This is
+fixture evidence only: installed execution, caller isolation, pending work and
+SC22/SC26 acceptance remain open. The next bounded installed runner is separate.
+
 ## Windows installed-byte repair verified; capture still failed — November 14, 2026
 
 Run [43557685270](https://github.com/ahouchens/mesh-chat/actions/runs/43557685270),

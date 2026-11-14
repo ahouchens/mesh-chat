@@ -1,6 +1,6 @@
 # Mesh Core refactor: remaining work and completion map
 
-Prepared November 13, 2026; refreshed November 14 through diagnostic source `dd9e4cd` and
+Prepared November 13, 2026; refreshed November 14 through diagnostic source `061ae88` and
 the source-bound results below. The last full native qualification remains failed;
 focused diagnostics do not replace it. This is a compact planning register, not
 new qualification evidence.
@@ -101,13 +101,13 @@ its owned checkout and reports source evidence and gaps before integration.
 | Owner | Roadmap batch | Exclusive file scope / concrete deliverable | Next milestone |
 | --- | --- | --- | --- |
 | Lead | R0/R6/R9 | Working 0.9.66 baseline identified; public pair controller, strict checker and isolated workflow integrated and reviewed. | Integrate reviewed fixes and bind platform results to the roadmap; full acceptance remains open. |
-| C | R1/R6/R7 | Observer review and Windows same-data reopen adapter complete; separate-process fixture `40180d9` under review. | Correct mocked-test portability and verify post-stop helper behavior; preserve five parked native interop files. |
-| B | R3/R5/R8 | Windows packaging repair integrated; run `43557685270` reports both installed files match. | Investigate capture `probe_output_invalid`, then prepare CallDialog plus messaging after capture passes. |
+| C | R1/R6/R7 | Separate-process fixture integrated through `d2a3c66`; eight local tests pass and independent review is clear. | Implement bounded installed execution using existing source/SDK/bootstrap checks; preserve five parked native interop files. |
+| B | R3/R5/R8 | Windows packaging repair verified; bounded capture-failure observation integrated through `061ae88`. | Monitor media diagnostic `43560834395`, then prepare CallDialog plus messaging after capture passes. |
 | A | R6/R8 | First public run failed at Android wrapper admission; shell-boundary repair integrated as `dd9e4cd`. | Monitor replacement `43559770732`, then address its result before restart and partition extensions. |
 | D | R1/R9 | Native observer instrumentation compiled, but run `43557683098` failed downloading the emulator image before execution. | Monitor fresh exact-source reproduction `43559773977`; retain the first causal failure or paired result. |
 
 R2 helper retirement remains gated. R6 preparation is assigned; R7's separate-process
-fixture is under review and has no installed-host evidence yet. Same-image Node
+fixture is reviewed and has no installed-host evidence yet. Same-image Node
 process attachment alone cannot prove cross-application isolation: the current host
 assigns the same owner grant to each admitted client. Focused runs never close the full native or public-consumer
 gates. Baseline, UI and compatibility preparation documents are integrated. The
