@@ -7,10 +7,17 @@ and shared-owner promotion remain gated. Installed Windows separate-process
 lifetime passed at `ebcfa38`. Public fresh roles and strict aggregate passed at
 `0685cfb` in run `43564598454`. Owner-restart flow and routing are integrated
 through `a48f632`, with 390 affected tests passing and independent review.
-Native run `43564601560` failed in Windows pairing before either native role;
-the first-cold snapshot EOF remains unresolved. WebView2 target discovery remains
-under investigation. Latest exact reports and limits are in the qualification
-ledger; the following b8e3e20 checkpoint is historical.
+Owner-restart run `43567293402` failed its Android prerequisite at an ADB
+disconnect; neither public restart role ran. Full run `43568841923` at `d9ab09f`
+has passed the Windows/Android prerequisites, including installed image admission,
+and entered the actual native pair. Separate media run `43568844257` passed all
+seven installed WebView2 capture checks and app/policy cleanup at that source.
+Paired recovery and checking observation through `6ec440a` passed 6,994 local
+connection tests with two existing platform skips, plus affected service tests
+and strict typing. Gateway `447e865` and Android harness through `e044ebb` passed
+their focused checks. Full native, owner-restart and CallDialog coexistence
+acceptance remain open. Latest exact evidence is in the ledger; the following
+b8e3e20 checkpoint is historical.
 
 
 Full run [43520421850](https://github.com/ahouchens/mesh-chat/actions/runs/43520421850)

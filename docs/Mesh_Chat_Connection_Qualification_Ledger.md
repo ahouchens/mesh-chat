@@ -1,5 +1,68 @@
 # Connection runtime qualification ledger
 
+## Installed image admission and WebView2 capture passed — November 14, 2026
+
+At source `d9ab09f5bf991afa69366bdc22e2389b94877453`, tree
+`c643d0e528ef004d19f78a4f581a8bbe0e34988e`, full run
+[43568841923](https://github.com/ahouchens/mesh-chat/actions/runs/43568841923)
+passed its Windows and Android prerequisites and entered the actual native pair.
+Its installed image-admission fixture passed in 3,915 ms, with the complete
+producer taking 5.192 seconds. All eight fixture checks, EFS profile/vault checks,
+exact exits, unchanged inputs and workspace cleanup passed. Root independently
+checked the source application blobs, retained SDK, actual frozen sidecar,
+manifest cross-links and strict success-report shape. The Windows report artifact
+is `14103594148`, ZIP SHA-256
+`0e252feb3ff210520af336e644ec1001c1db583b78029fb7908f837b5cc98ea5`;
+the retained tested binary artifact is `14103723928`, ZIP SHA-256
+`3ee7b980bcd8bec0bf898c261ab4309e7a4e0b093c2cc6db26d9aab95c17f521`.
+This closes the distinct executable-path case only, not same-image cross-app
+isolation, paired recovery, or all of SC22/R7.
+
+The policy artifact independently reconstructs 7,310 passes with no failures or
+skips; strict model/reducer typing passed. Android reports 25 WebRTC, 10 signaling,
+13 Core API, six consumer and two independent-consumer passes. The small Android
+report was source/run/hash checked; its APKs and individual case logs were not
+independently rehashed in this review. Full native acceptance is still pending.
+
+Separate installed media run
+[43568844257](https://github.com/ahouchens/mesh-chat/actions/runs/43568844257),
+attempt 1, passed at the same source. The app was actually elevated and used
+`hklm_app_policy`. All seven real WebView2 checks passed: mounted app, Tauri bridge,
+media API, peer API, matching build commit, live audio capture, and stopped
+tracks/peer. The app and exact owned policy value retired successfully. Root
+independently checked artifact `14104665032`, 3,864 bytes, ZIP SHA-256
+`2cad5f9414ba67b16edb6f845b8432efa376252604ba5a4723f925862d8a3e4e`,
+all four JSON member hashes, source/run/attempt, build/install/manifest cross-links
+and Windows driver bytes. Installed binary matches remain installer attestations;
+this small archive contains no application binary. This confirms the elevated
+launch correction and capture preflight, not CallDialog or messaging coexistence.
+
+## Reviewed recovery and diagnostic successor — November 14, 2026
+
+The combined paired-process recovery and exact last-checking-poll observation at
+`6ec440a` passed 6,994 local connection tests with two existing platform skips,
+177 affected native service tests and strict model/reducer typing. The checking
+trace keeps approved-contact reconnect blocked until the original pairing's exact
+resource retires; it does not establish a handoff defect or retroactively identify
+the old timeout's cause. Optional fixed labels remain bound to the original
+intent, epoch, source and physical resource and do not change pairing decisions.
+
+Directional gateway capability `447e865` then passed 46 focused checks. It adds
+one counted host-egress 100% loss probe, restored echo and exact qdisc cleanup,
+including partial-add and foreign-qdisc failures. It remains `qualification=false`;
+real Linux/KVM execution and selected packaged-traffic partition acceptance are
+separate requirements.
+
+Android harness commits `01c48f5`, `56fcc1c`, `e044ebb` passed 267 affected checks.
+Each case receives its marker before force-stop; a failed force-stop preserves
+that failure while allowing later distinct cases to run. Instrumentation is never
+retried. Fixed sidecars identify the case/stage/exit category and bounded ADB state
+on one explicitly pinned emulator. Collector custody includes stopped children
+and bounded TERM/KILL cleanup. A real Bash regression reproduces no instrumentation
+status, the next force-stop failing offline, and later inventory still executing.
+The old log cannot distinguish which ADB command emitted its offline line or
+whether the collector exited independently; these changes preserve that uncertainty.
+
 ## Paired consumer-process recovery prepared — November 14, 2026
 
 Fixture `916a82d`, regression tests `082dc15`, and installed producer `f7986e3`
