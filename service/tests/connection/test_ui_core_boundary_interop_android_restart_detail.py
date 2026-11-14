@@ -54,7 +54,8 @@ def test_cleanup_error_retains_prior_stop_stage_without_replacing_escaped_error(
         raise first
     peer.process = SimpleNamespace(poll=lambda: 255,
         wait=lambda timeout: fail() if stage == 'process_wait' else 255)
-    peer._reader = SimpleNamespace(join=lambda timeout: fail() if stage == 'reader_join' else None)
+    peer._reader = SimpleNamespace(join=lambda timeout: fail() if stage == 'reader_join' else None,
+        is_alive=lambda: False)
     def execute(argv, **kwargs):
         if argv[1] == 'forward':
             raise final
@@ -83,7 +84,7 @@ def test_prior_failure_is_not_reused_by_next_independent_stop(monkeypatch):
         if fail_wait[0]: raise prior
         return 255
     peer.process = SimpleNamespace(poll=lambda: 255, wait=wait)
-    peer._reader = SimpleNamespace(join=lambda _: None)
+    peer._reader = SimpleNamespace(join=lambda _: None, is_alive=lambda: False)
     def execute(argv, **kwargs):
         if argv[1] == 'forward': raise cleanup
         return b''
@@ -120,7 +121,7 @@ def test_throwing_stop_observer_keeps_exact_cleanup_exception(monkeypatch):
     peer = peers.AndroidPeer(b'k' * 32)
     peer.forward = '12345'
     peer.process = SimpleNamespace(poll=lambda: 255, wait=lambda timeout: 255)
-    peer._reader = SimpleNamespace(join=lambda _: None)
+    peer._reader = SimpleNamespace(join=lambda _: None, is_alive=lambda: False)
     error = subprocess.CalledProcessError(1, ['PRIVATE'])
     def execute(argv, **kwargs):
         if argv[1] == 'forward': raise error

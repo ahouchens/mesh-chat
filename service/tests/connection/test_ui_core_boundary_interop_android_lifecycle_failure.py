@@ -79,6 +79,7 @@ def test_force_stop_failure_survives_successful_forward_cleanup(monkeypatch):
     peer.process = SimpleNamespace(poll=lambda: None, kill=lambda: events.append("kill"),
         wait=lambda timeout: events.append(("wait", timeout)),
         stdout=SimpleNamespace(close=lambda: events.append("stdout_close")))
+    peer._reader = SimpleNamespace(join=lambda timeout: None, is_alive=lambda: False)
     failure = subprocess.CalledProcessError(13, ["PRIVATE_FORCE_STOP"])
     calls = []
 

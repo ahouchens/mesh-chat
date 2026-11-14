@@ -730,6 +730,8 @@ class AndroidPeer:
             return
         finished = False
         prior_failure = None
+        primary_failure = None
+        reader_retired = False
         stage = "force_stop" if crash else "finish"
         try:
             if crash:
@@ -745,12 +747,14 @@ class AndroidPeer:
             code = process.wait(timeout=30)
             stage = "reader_join"
             self._reader.join(5)
+            reader_retired = not self._reader.is_alive()
             if not crash:
                 stage = "exit_check"
-                if code != 0 or self._reader.is_alive():
+                if code != 0 or not reader_retired:
                     raise PeerFailure("unclean_android_exit")
                 self.clean_exits += 1
         except Exception as error:
+            primary_failure = error
             try: prior_failure = stop_failure(stage, error)
             except Exception: pass  # Observation cannot replace the original stop failure.
             try: self._observe_stop_failure(error, _origin, _masked_start_kind)
@@ -769,8 +773,20 @@ class AndroidPeer:
                 if process.poll() is None:
                     process.kill()
                     process.wait(timeout=10)
-                process.stdout.close()
-                self.process = None
+                if not reader_retired:
+                    try:
+                        self._reader.join(5)
+                        reader_retired = not self._reader.is_alive()
+                    except Exception:
+                        if primary_failure is None:
+                            raise
+                if reader_retired:
+                    process.stdout.close()
+                    self.process = None
+                elif primary_failure is None:
+                    # A live reader still owns the buffered stream. Keep the
+                    # exact process and stream for a later explicit stop.
+                    raise PeerFailure("android_reader_retirement_unverified")
             except Exception as error:
                 try: self._observe_stop_failure(error, _origin, _masked_start_kind, prior_failure)
                 except Exception: pass
