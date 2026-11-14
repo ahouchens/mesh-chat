@@ -59,6 +59,83 @@ def test_permission_set_bounds_every_operation(service_host):
         host.host_grant("mesh-chat-desktop", ("read",), profiles=("workspace",))
 
 
+def test_private_host_authorization_rechecks_before_a_real_mutation(service_host):
+    service = service_host()
+    admitted = [True]
+    checks = []
+
+    def authorize():
+        checks.append(admitted[0])
+        return admitted[0]
+
+    session = host.bind_host_stream(service, caller="mesh-chat-desktop",
+                                    permissions=("observe", "read", "send"),
+                                    authorize=authorize)
+
+    def exchange(value):
+        return json.loads(session.exchange(frame(value)))
+
+    capabilities = exchange(request("runtime.capabilities"))
+    assert capabilities["ok"]
+    profile = capabilities["result"]["profiles"][0]
+    view = exchange(request("profile.query", profile=profile))
+    assert view["ok"]
+    recipient = view["result"]["peers"][0]
+
+    def enqueue(text, key):
+        value = request("message.enqueue", profile=profile, recipient=recipient,
+                        kind="text", text=text)
+        value["idempotency_key"] = key
+        return exchange(value)
+
+    assert enqueue("Admitted", "host-hook-allowed-0001")["ok"]
+    assert [item["text"] for item in service.store.list("message")] == ["Admitted"]
+    admitted[0] = False
+    denied = enqueue("Revoked", "host-hook-revoked-0001")
+    assert denied["error"]["code"] == "unauthenticated"
+    assert [item["text"] for item in service.store.list("message")] == ["Admitted"]
+    assert checks == [True, True, True, False]
+
+
+def test_private_host_authorization_failure_closes_session_before_effect(service_host):
+    service = service_host()
+    checks = [0]
+
+    def authorize():
+        checks[0] += 1
+        if checks[0] > 2:
+            raise OSError("private authority query failed")
+        return True
+
+    session = host.bind_host_stream(service, caller="mesh-chat-desktop",
+                                    permissions=("observe", "read", "send"),
+                                    authorize=authorize)
+
+    def exchange(value):
+        return json.loads(session.exchange(frame(value)))
+
+    profile = exchange(request("runtime.capabilities"))["result"]["profiles"][0]
+    recipient = exchange(request("profile.query", profile=profile))["result"]["peers"][0]
+    value = request("message.enqueue", profile=profile, recipient=recipient,
+                    kind="text", text="Must not send")
+    value["idempotency_key"] = "host-hook-failed-0001"
+    assert exchange(value)["error"]["code"] == "unauthenticated"
+    assert service.store.list("message") == []
+    assert exchange(request("runtime.capabilities"))["error"]["code"] == "unauthenticated"
+    assert checks == [3]
+
+
+def test_private_host_authorization_accepts_only_a_callable_and_literal_true(service_host):
+    service = service_host()
+    with pytest.raises(ValueError):
+        host.bind_host_stream(service, caller="mesh-chat-desktop", permissions=("observe",),
+                              authorize=True)
+    session = host.bind_host_stream(service, caller="mesh-chat-desktop",
+                                    permissions=("observe",), authorize=lambda: 1)
+    denied = json.loads(session.exchange(frame(request("runtime.capabilities"))))
+    assert denied["error"]["code"] == "unauthenticated"
+
+
 @pytest.mark.parametrize("caller", ["short", "bad caller", "x" * 81, "", None])
 def test_invalid_host_caller_identity_is_rejected(service_host, caller):
     with pytest.raises(ValueError):
