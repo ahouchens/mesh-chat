@@ -108,5 +108,62 @@ def test_owned_file_worker_prepares_and_rechecks_exact_image(synthetic_probe):
                                  cwd=work, capture_output=True, text=True, timeout=30)
         assert changed.returncode == 1
         assert json.loads(changed.stdout) == {"v": 1, "mode": "file-work", "passed": False}
+        cleaned = subprocess.run([NODE, SOURCE.name, "--file-work", "cleanup", image, str(copy)],
+                                 cwd=work, capture_output=True, text=True, timeout=10)
+        assert cleaned.returncode == 0, cleaned.stderr
+        assert json.loads(cleaned.stdout) == {"v": 1, "mode": "cleanup", "removed": True}
+        assert not copy.exists()
+    finally:
+        copy.unlink(missing_ok=True)
+
+
+@pytest.mark.parametrize("mode,expected_exists", [("prepare", False), ("cleanup", True)])
+def test_stalled_file_child_is_retired_before_parent_returns(synthetic_probe, mode, expected_exists):
+    work, image = synthetic_probe
+    copy = work / f"node-image-{uuid4()}.exe"
+    if mode == "cleanup":
+        copy.write_bytes(b"existing copy")
+    (work / "stall-worker.mjs").write_text("""
+import { writeFile, unlink } from 'node:fs/promises';
+const mode = process.argv[3], copy = process.argv[5];
+await new Promise(resolve => setTimeout(resolve, 750));
+if (mode === 'prepare') await writeFile(copy, 'late copy');
+else await unlink(copy);
+process.stdout.write(JSON.stringify({v:1,mode,removed:true}) + '\\n');
+""", encoding="utf-8")
+    (work / "stall-harness.mjs").write_text("""
+import { existsSync } from 'node:fs';
+import { performance } from 'node:perf_hooks';
+import { fileURLToPath } from 'node:url';
+import { runChild, removeCopiedImage } from './image-admission-check.mjs';
+const [mode, image, copy] = process.argv.slice(2);
+const children = new Map(), start = performance.now();
+const args = ['--file-work', mode, image, copy];
+const worker = fileURLToPath(new URL('./stall-worker.mjs', import.meta.url));
+let failed = false;
+if (mode === 'prepare') {
+  try { await runChild(image, args, start + 150, start + 1500, children, 150,
+    worker); }
+  catch { failed = true; }
+} else {
+  failed = !(await removeCopiedImage(copy, start + 150, start + 1500, children,
+    worker));
+}
+const returned_ms = performance.now() - start;
+const closed_at_return = children.size === 0;
+await new Promise(resolve => setTimeout(resolve, 900));
+process.stdout.write(JSON.stringify({failed, returned_ms, closed_at_return,
+  exists_after: existsSync(copy), children_after: children.size}) + '\\n');
+""", encoding="utf-8")
+    try:
+        completed = subprocess.run([NODE, "stall-harness.mjs", mode, image, str(copy)],
+                                   cwd=work, capture_output=True, text=True, timeout=5)
+        assert completed.returncode == 0, completed.stderr
+        result = json.loads(completed.stdout)
+        assert result["failed"] is True
+        assert result["returned_ms"] < 1200
+        assert result["closed_at_return"] is True
+        assert result["children_after"] == 0
+        assert result["exists_after"] is expected_exists
     finally:
         copy.unlink(missing_ok=True)

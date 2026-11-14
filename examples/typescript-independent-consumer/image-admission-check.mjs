@@ -113,8 +113,9 @@ async function probe(mode, pipe, expected) {
   } finally { try { client?.close(); } finally { transport.close(); } }
 }
 
-async function runChild(image, args, deadline, retirementDeadline, children, cap = 10000) {
-  const child = spawn(image, [SOURCE, ...args], { cwd: dirname(SOURCE), env: cleanEnvironment(),
+async function runChild(image, args, deadline, retirementDeadline, children, cap = 10000, source = SOURCE) {
+  remaining(deadline, cap);
+  const child = spawn(image, [source, ...args], { cwd: dirname(source), env: cleanEnvironment(),
     stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
   let stdout = Buffer.alloc(0), stderrBytes = 0, overflow = false, spawnError = false;
   child.stdout.on("data", chunk => {
@@ -152,7 +153,7 @@ async function runChild(image, args, deadline, retirementDeadline, children, cap
 }
 
 function fileWorkArguments(mode, image, copy) {
-  return ["prepare", "verify"].includes(mode) && isAbsolute(image) && isAbsolute(copy)
+  return ["prepare", "verify", "cleanup"].includes(mode) && isAbsolute(image) && isAbsolute(copy)
     && dirname(resolve(copy)).toLowerCase() === dirname(resolve(SOURCE)).toLowerCase()
     && /^node-image-[0-9a-f-]{36}\.exe$/i.test(basename(copy))
     && exactImage(image);
@@ -160,6 +161,10 @@ function fileWorkArguments(mode, image, copy) {
 
 async function fileWork(mode, image, copy) {
   if (!fileWorkArguments(mode, image, copy)) throw new Error("file_work_arguments");
+  if (mode === "cleanup") {
+    await unlink(copy);
+    return { v: 1, mode, removed: true };
+  }
   if (mode === "prepare") await copyFile(image, copy);
   if ((await realpath(copy)).toLowerCase() === (await realpath(image)).toLowerCase()
       || !(await lstat(copy)).isFile()) throw new Error("image_not_distinct");
@@ -177,6 +182,17 @@ function checkedFileWork(result, mode) {
     throw new Error("file_work_result");
   }
   return result;
+}
+
+async function removeCopiedImage(copy, operationDeadline, retirementDeadline, children, source = SOURCE) {
+  if (children.size !== 0) return false;
+  try {
+    const result = await runChild(process.execPath,
+      ["--file-work", "cleanup", process.execPath, copy],
+      operationDeadline, retirementDeadline, children, 5000, source);
+    return Object.keys(result).sort().join() === "mode,removed,v"
+      && result.mode === "cleanup" && result.removed === true;
+  } catch { return false; }
 }
 
 async function check(executable, dataDirectory) {
@@ -261,7 +277,8 @@ async function check(executable, dataDirectory) {
     }
     // A timed-out file worker may still be copying or hashing. Keep its path
     // intact unless the child close event has confirmed every child retired.
-    if (copy && children.size === 0) { try { await unlink(copy); } catch { passed = false; } }
+    if (copy && !(await removeCopiedImage(copy, finalDeadline - 3000, finalDeadline, children))) passed = false;
+    if (children.size) passed = false;
   }
   if (performance.now() > finalDeadline) passed = false;
   return { v: 1, passed, scope: SCOPE, ...(passed ? { checks: {
@@ -287,6 +304,9 @@ async function main(args) {
   return { v: 1, passed: false, scope: SCOPE, phase: "arguments", duration_ms: 0 };
 }
 
-const result = await main(process.argv.slice(2));
-process.stdout.on("error", () => process.exit(1));
-process.stdout.write(JSON.stringify(result) + "\n", () => process.exit(result.passed === false ? 1 : 0));
+export { runChild, removeCopiedImage };
+if (process.argv[1] && resolve(process.argv[1]) === resolve(SOURCE)) {
+  const result = await main(process.argv.slice(2));
+  process.stdout.on("error", () => process.exit(1));
+  process.stdout.write(JSON.stringify(result) + "\n", () => process.exit(result.passed === false ? 1 : 0));
+}
