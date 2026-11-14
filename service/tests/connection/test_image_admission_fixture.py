@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+from uuid import uuid4
 
 import pytest
 
@@ -26,12 +27,12 @@ def synthetic_probe(tmp_path):
     work.mkdir()
     shutil.copyfile(SOURCE, work / SOURCE.name)
     package = work / "node_modules/@mesh-chat/core-client"
-    package.mkdir(parents=True)
+    (package / "dist").mkdir(parents=True)
     (package / "package.json").write_text(json.dumps({
         "name": "@mesh-chat/core-client", "version": "0.3.0-experimental", "type": "module",
-        "exports": {".": "./index.mjs", "./node": "./node.mjs"},
+        "exports": {".": "./dist/index.mjs", "./node": "./dist/node.mjs"},
     }), encoding="utf-8")
-    (package / "index.mjs").write_text("""
+    (package / "dist/index.mjs").write_text("""
 export class TransportClosedError extends Error {}
 export class CoreClient {
   static async open(transport) {
@@ -44,7 +45,7 @@ export class CoreClient {
   }
 }
 """, encoding="utf-8")
-    (package / "node.mjs").write_text("""
+    (package / "dist/node.mjs").write_text("""
 export async function connectNamedPipe() {
   if (process.env.IMAGE_CASE === 'unreachable') throw new Error('unreachable');
   return {socket:{bytesRead:process.env.IMAGE_CASE === 'bytes' ? 1 : 0},close(){}};
@@ -85,3 +86,27 @@ def test_probe_rejects_wrong_executable_identity(synthetic_probe):
                                cwd=work, capture_output=True, text=True, timeout=10)
     assert completed.returncode == 1
     assert json.loads(completed.stdout) == {"v": 1, "mode": "deny", "passed": False}
+
+
+def test_owned_file_worker_prepares_and_rechecks_exact_image(synthetic_probe):
+    work, image = synthetic_probe
+    copy = work / f"node-image-{uuid4()}.exe"
+    try:
+        prepared = subprocess.run([NODE, SOURCE.name, "--file-work", "prepare", image, str(copy)],
+                                  cwd=work, capture_output=True, text=True, timeout=30)
+        assert prepared.returncode == 0, prepared.stderr
+        first = json.loads(prepared.stdout)
+        assert first["mode"] == "prepare"
+        assert first["original_hash"] == first["copy_hash"]
+        assert copy.is_file()
+        verified = subprocess.run([NODE, SOURCE.name, "--file-work", "verify", image, str(copy)],
+                                  cwd=work, capture_output=True, text=True, timeout=30)
+        assert verified.returncode == 0, verified.stderr
+        assert json.loads(verified.stdout) == {**first, "mode": "verify"}
+        copy.write_bytes(b"wrong image")
+        changed = subprocess.run([NODE, SOURCE.name, "--file-work", "verify", image, str(copy)],
+                                 cwd=work, capture_output=True, text=True, timeout=30)
+        assert changed.returncode == 1
+        assert json.loads(changed.stdout) == {"v": 1, "mode": "file-work", "passed": False}
+    finally:
+        copy.unlink(missing_ok=True)

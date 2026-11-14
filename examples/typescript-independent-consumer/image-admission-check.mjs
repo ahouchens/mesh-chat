@@ -5,7 +5,7 @@ import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { copyFile, lstat, readFile, readdir, realpath, unlink } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 
@@ -113,7 +113,7 @@ async function probe(mode, pipe, expected) {
   } finally { try { client?.close(); } finally { transport.close(); } }
 }
 
-async function runChild(image, args, deadline, retirementDeadline, children) {
+async function runChild(image, args, deadline, retirementDeadline, children, cap = 10000) {
   const child = spawn(image, [SOURCE, ...args], { cwd: dirname(SOURCE), env: cleanEnvironment(),
     stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
   let stdout = Buffer.alloc(0), stderrBytes = 0, overflow = false, spawnError = false;
@@ -127,18 +127,20 @@ async function runChild(image, args, deadline, retirementDeadline, children) {
     child.once("error", () => { spawnError = true; });
   });
   children.set(child, closed);
+  let closedConfirmed = false;
   if (!Number.isSafeInteger(child.pid) || child.pid < 1 || child.pid === process.pid) {
     if (child.exitCode === null) child.kill();
-    try { await bounded(closed, retirementDeadline, 3000); } catch {}
+    try { await bounded(closed, retirementDeadline, 3000); closedConfirmed = true; } catch {}
+    if (closedConfirmed) children.delete(child);
     throw new Error("child_identity");
   }
   let outcome;
-  try { outcome = await bounded(closed, deadline, 10000); }
+  try { outcome = await bounded(closed, deadline, cap); closedConfirmed = true; }
   catch {
     if (child.exitCode === null) child.kill();
-    try { await bounded(closed, retirementDeadline, 3000); } catch {}
+    try { await bounded(closed, retirementDeadline, 3000); closedConfirmed = true; } catch {}
     throw new Error("child_deadline");
-  } finally { if (child.exitCode !== null || child.signalCode !== null) children.delete(child); }
+  } finally { if (closedConfirmed) children.delete(child); }
   if (spawnError || overflow || stderrBytes !== 0 || outcome.code !== 0 || outcome.signal !== null
       || stdout.length > OUTPUT_LIMIT || !stdout.toString("utf8").endsWith("\n")
       || stdout.toString("utf8").trim().includes("\n")) throw new Error("child_result");
@@ -147,6 +149,34 @@ async function runChild(image, args, deadline, retirementDeadline, children) {
     throw new Error("child_result");
   }
   return value;
+}
+
+function fileWorkArguments(mode, image, copy) {
+  return ["prepare", "verify"].includes(mode) && isAbsolute(image) && isAbsolute(copy)
+    && dirname(resolve(copy)).toLowerCase() === dirname(resolve(SOURCE)).toLowerCase()
+    && /^node-image-[0-9a-f-]{36}\.exe$/i.test(basename(copy))
+    && exactImage(image);
+}
+
+async function fileWork(mode, image, copy) {
+  if (!fileWorkArguments(mode, image, copy)) throw new Error("file_work_arguments");
+  if (mode === "prepare") await copyFile(image, copy);
+  if ((await realpath(copy)).toLowerCase() === (await realpath(image)).toLowerCase()
+      || !(await lstat(copy)).isFile()) throw new Error("image_not_distinct");
+  const originalHash = await digest(image);
+  const copyHash = await digest(copy);
+  const sdkHash = await sdkDigest();
+  if (copyHash !== originalHash) throw new Error("image_bytes_changed");
+  return { v: 1, mode, original_hash: originalHash, copy_hash: copyHash, sdk_hash: sdkHash };
+}
+
+function checkedFileWork(result, mode) {
+  if (Object.keys(result).sort().join() !== "copy_hash,mode,original_hash,sdk_hash,v"
+      || result.mode !== mode || ![result.original_hash, result.copy_hash, result.sdk_hash]
+        .every(value => typeof value === "string" && /^[0-9a-f]{64}$/.test(value))) {
+    throw new Error("file_work_result");
+  }
+  return result;
 }
 
 async function check(executable, dataDirectory) {
@@ -158,8 +188,6 @@ async function check(executable, dataDirectory) {
     if (process.platform !== "win32" || !isAbsolute(executable) || !isAbsolute(dataDirectory)) {
       throw new Error("arguments");
     }
-    originalHash = await digest(process.execPath);
-    sdkHash = await sdkDigest();
     phase = "owner_start";
     const { launchRuntime } = await import("./runtime.mjs");
     runtime = await launchRuntime(executable, dataDirectory,
@@ -182,11 +210,11 @@ async function check(executable, dataDirectory) {
         || positive.profile_read !== true) throw new Error("positive_control");
     phase = "copy_preflight";
     copy = join(dirname(SOURCE), `node-image-${randomUUID()}.exe`);
-    await bounded(copyFile(process.execPath, copy), workDeadline);
-    if (!isAbsolute(copy) || (await realpath(copy)).toLowerCase() === (await realpath(process.execPath)).toLowerCase()
-        || !(await lstat(copy)).isFile()) throw new Error("image_not_distinct");
-    copyHash = await digest(copy);
-    if (copyHash !== originalHash) throw new Error("image_bytes_changed");
+    const prepared = checkedFileWork(await runChild(process.execPath,
+      ["--file-work", "prepare", process.execPath, copy], workDeadline, finalDeadline, children, 30000), "prepare");
+    originalHash = prepared.original_hash;
+    copyHash = prepared.copy_hash;
+    sdkHash = prepared.sdk_hash;
     const preflight = await runChild(copy, ["--probe", "preflight", runtime.pipe, copy],
       workDeadline, finalDeadline, children);
     if (Object.keys(preflight).sort().join() !== "mode,ready,v" || preflight.mode !== "preflight"
@@ -207,8 +235,10 @@ async function check(executable, dataDirectory) {
     if (fresh.mode !== "allow" || fresh.connected !== true || fresh.negotiated !== true
         || fresh.profile_read !== true) throw new Error("fresh_allowed_failed");
     phase = "artifact_binding";
-    if (await digest(process.execPath) !== originalHash || await digest(copy) !== copyHash
-        || await sdkDigest() !== sdkHash) throw new Error("inputs_changed");
+    const verified = checkedFileWork(await runChild(process.execPath,
+      ["--file-work", "verify", process.execPath, copy], workDeadline, finalDeadline, children, 30000), "verify");
+    if (verified.original_hash !== originalHash || verified.copy_hash !== copyHash
+        || verified.sdk_hash !== sdkHash) throw new Error("inputs_changed");
     passed = true;
   } catch { passed = false; }
   finally {
@@ -229,7 +259,9 @@ async function check(executable, dataDirectory) {
       } catch { retired = false; }
       if (!retired) passed = false;
     }
-    if (copy) { try { await unlink(copy); } catch { passed = false; } }
+    // A timed-out file worker may still be copying or hashing. Keep its path
+    // intact unless the child close event has confirmed every child retired.
+    if (copy && children.size === 0) { try { await unlink(copy); } catch { passed = false; } }
   }
   if (performance.now() > finalDeadline) passed = false;
   return { v: 1, passed, scope: SCOPE, ...(passed ? { checks: {
@@ -240,6 +272,10 @@ async function check(executable, dataDirectory) {
 }
 
 async function main(args) {
+  if (args.length === 4 && args[0] === "--file-work") {
+    try { return await fileWork(args[1], args[2], args[3]); }
+    catch { return { v: 1, mode: "file-work", passed: false }; }
+  }
   if (args.length === 4 && args[0] === "--probe") {
     try { return await probe(args[1], args[2], args[3]); }
     catch { return { v: 1, mode: ["allow", "deny", "preflight"].includes(args[1]) ? args[1] : "unknown",
