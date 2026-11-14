@@ -201,7 +201,7 @@ def test_cold_product_error_keeps_original_identity_without_retry_or_crash(monke
     assert "inventory" not in state.events and not state.controller.cycles
 
 
-@pytest.mark.parametrize("mode,iterations,restarts", [("quick", 5, 1), ("full", 100, 10)])
+@pytest.mark.parametrize("mode,iterations,restarts", [("quick", 5, 1), ("full", 100, 10), ("b8_first_cold", 1, 1)])
 @pytest.mark.parametrize("role", ["windows", "android"])
 def test_cold_setup_keeps_actual_loop_schedule_receipt_checks_and_native_deltas(monkeypatch, sample, mode, iterations, restarts, role):
     """Actual cold loop/projections; observations/receipts/processes are DTO doubles."""

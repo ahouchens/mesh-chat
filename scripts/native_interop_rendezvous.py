@@ -32,8 +32,10 @@ CASE_COMPLETION_PHASES = frozenset({"case_complete_direct_windows", "case_comple
     "case_complete_impaired_windows"})
 COLD_STARTED_PHASES = frozenset(f"cold_started_{index}" for index in range(0, 100, 10))
 COLD_COMPLETE_PHASES = frozenset(f"cold_complete_{index}" for index in (*range(10, 101, 10), 5))
+DIAGNOSTIC_COMPLETE_PHASES = frozenset({"cold_complete_1"})
 PHASES = (OFFER_PHASES | APPROVAL_PHASES | CASE_COMPLETION_PHASES | NEGATIVE_CONTROL_PHASES
-          | COLD_STARTED_PHASES | COLD_COMPLETE_PHASES | {"answer", "control", "result", "reconnect_capabilities"})
+          | COLD_STARTED_PHASES | COLD_COMPLETE_PHASES | DIAGNOSTIC_COMPLETE_PHASES
+          | {"answer", "control", "result", "reconnect_capabilities"})
 KEY_TTL = 7200
 MESSAGE_TTL = 600
 MAX_BLOB = 96 * 1024
@@ -72,7 +74,7 @@ def checked_payload(phase, value):
     if phase in OFFER_PHASES | {"answer"}:
         valid = (set(value) == {"shareable"} and isinstance(value["shareable"], str)
                  and 0 < len(value["shareable"].encode("utf-8")) <= MAX_SHAREABLE)
-    elif phase in CASE_COMPLETION_PHASES | COLD_COMPLETE_PHASES:
+    elif phase in CASE_COMPLETION_PHASES | COLD_COMPLETE_PHASES | DIAGNOSTIC_COMPLETE_PHASES:
         valid = type(value) is dict and set(value) == {"completed"} and value["completed"] is True
     elif phase in COLD_STARTED_PHASES:
         valid = type(value) is dict and set(value) == {"started"} and value["started"] is True

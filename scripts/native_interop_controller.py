@@ -38,7 +38,7 @@ from native_interop_ice_packets import validated_snapshot as validated_ice_packe
 from native_interop_preflight import (DEFAULT_SIGNAL_MAILBOX_URL, android_environment,
     android_network_diagnostic, outbound_services)
 from native_interop_rendezvous import Rendezvous, checked_payload
-from native_interop_workload import workload as required_workload
+from native_interop_workload import DIAGNOSTIC, workload as required_workload
 from test_packaged_lifecycle import source_identity
 
 OFFERS = {"direct": "offer", **{name: "offer_" + name for name in SCENARIOS[1:5]}}
@@ -1594,7 +1594,7 @@ def main(*, gateway=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--role", required=True, choices=("windows", "android"))
     parser.add_argument("--expected-source", required=True)
-    parser.add_argument("--workload", required=True, choices=("quick", "full"))
+    parser.add_argument("--workload", required=True, choices=("quick", "full", DIAGNOSTIC))
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     plan = required_workload(args.workload)
@@ -1606,7 +1606,12 @@ def main(*, gateway=None):
     try:
         source, tree = source_identity(args.expected_source)
         from connection_ci import current_plan
-        if current_plan()["native_workload"] != args.workload:
+        selected = current_plan()["native_workload"]
+        if args.workload == DIAGNOSTIC:
+            if (os.environ.get("GITHUB_ACTIONS") != "true"
+                    or os.environ.get("GITHUB_EVENT_NAME") != "workflow_dispatch" or selected != "full"):
+                raise ValueError("Paired restart diagnostic requires an explicit manual CI run")
+        elif selected != args.workload:
             raise ValueError("Native workload differs from source-bound event selection")
         context = context_from_environment()
         if context["source_commit"] != source: raise ValueError("Workflow source differs from checkout")

@@ -20,6 +20,7 @@ from native_interop_gateway_probe import (Child, Commands, Gateway, Unavailable,
     counter_delta, namespace_inode, process_identity, require, same_process, stop_process)
 from native_interop_ice_capture import IceCapture
 from native_interop_ice_packets import correlation, unavailable, validated_snapshot
+from native_interop_workload import DIAGNOSTIC
 
 MAX_MESSAGE = 16384
 
@@ -301,7 +302,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--role", choices=("android",), required=True)
     parser.add_argument("--expected-source", required=True)
-    parser.add_argument("--workload", choices=("quick", "full"), required=True)
+    parser.add_argument("--workload", choices=("quick", "full", DIAGNOSTIC), required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(arguments)
     gateway = child = temporary = None
@@ -310,6 +311,8 @@ def main():
     result_before = args.output.stat() if args.output.exists() else None
     try:
         require(sys.platform == "linux" and os.environ.get("GITHUB_ACTIONS") == "true", "linux_ci_required")
+        require(args.workload != DIAGNOSTIC or os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch",
+                "manual_diagnostic_required")
         def terminate(_signal, _frame): raise Unavailable("native_gateway_termination")
         signal.signal(signal.SIGTERM, terminate)
         temporary = Path(tempfile.mkdtemp(prefix="mesh-native-gateway-", dir=os.environ["RUNNER_TEMP"]))
