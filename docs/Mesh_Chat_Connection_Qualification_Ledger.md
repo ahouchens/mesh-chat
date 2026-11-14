@@ -1,5 +1,27 @@
 # Connection runtime qualification ledger
 
+## Reviewed native EOF observer and Windows reopen adapter — November 13, 2026
+
+Native observer commits `7c6fe3f` and `0c692d0` add test-harness observations at
+the Android instrumentation reply boundary. Only snapshot dispatch/flush markers
+and a fixed exception stage/category are emitted, with a validated request
+ordinal and capped timing. On header EOF a bounded ADB-forward sample precedes
+the final matching status snapshot. The observer retains no frame payload,
+exception text or raw ADB output, and cannot replace the original failure.
+Independent review corrected excessive routine status calls, a potentially
+blocking stream close, and the late-status race. Integrated verification passed
+**1,382 tests**; report `.test-tmp/native-testhost-observer-integration.xml`.
+Android instrumentation compilation and actual reproduction remain CI work.
+No product transport or WebRTC code changes are included.
+
+Commit `e643692` adds `WindowsPublicConsumerSession.reopen_same_data` for a later
+public restart case. It requires positive prior retirement, rechecks exact inputs
+and EFS protection, then starts the ordinary installed consumer on the same data
+under the outer deadline. Uncertain second retirement cannot authorize workspace
+cleanup. **59 adapter/controller/flow tests** passed; report
+`.test-tmp/windows-public-reopen-integration.xml`. The existing fresh-pair report
+is unchanged. No new paired restart or SC21 acceptance is claimed.
+
 ## Installed desktop app mismatch isolated — November 13, 2026
 
 Run [43554916988](https://github.com/ahouchens/mesh-chat/actions/runs/43554916988),
@@ -15,6 +37,18 @@ instead of the staged
 `9a4df800eccd60c59e3afb94f90abde6fac72f0892aaf4661db2ae88dd9551b6`.
 NSIS exited zero and the owned installer process retired. These facts identify
 the mismatching file; they do not yet identify the packaging/staging cause.
+
+The subsequent source audit found the build mechanism: pinned Tauri CLI 2.12.1
+[bundle.rs](https://github.com/tauri-apps/tauri/blob/tauri-cli-v2.12.1/crates/tauri-bundler/src/bundle.rs)
+patches the executable's fixed-width bundle marker before MSI/NSIS packaging,
+then restores the original executable. The CI build log records those patch
+steps. Our publisher runs afterward and hashes the restored file, while NSIS
+embeds the patched file. This explains the observed equal-size digest divergence;
+the old artifact did not retain either executable for an independent byte diff.
+The supported `--no-binary-patching` option is being applied on Windows so staged
+and installed bytes can agree without relaxing the hash gate. Installed execution
+must verify that repair. The application does not currently use Tauri's updater;
+bundle-type updater identification must be reconsidered if that feature is added.
 
 Root independently validated artifact `14098782290`, 3,035-byte ZIP SHA256
 `bbc1273d7c44df9b0336cffb4609662991d7c6e9e56dad0e473e1760915809c8`, its
