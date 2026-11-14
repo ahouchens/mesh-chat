@@ -364,7 +364,7 @@ def test_workflow_is_manual_and_keeps_diagnostic_artifact_separate():
 def expression_value(expression, event, **flags):
     expression = expression.removeprefix("${{").removesuffix("}}").strip()
     expression = expression.replace("github.event_name", repr(event))
-    expression = re.sub(r"\binputs\.([a-z_]+)\b", lambda match: repr(flags.get(match[1], False)), expression)
+    expression = re.sub(r"\binputs\.([a-z0-9_]+)\b", lambda match: repr(flags.get(match[1], False)), expression)
     expression = expression.replace("&&", " and ").replace("||", " or ")
     expression = re.sub(r"!(?!=)", " not ", expression)
     return eval(expression, {"__builtins__": {}}, {})
@@ -399,6 +399,7 @@ def test_android_workflow_call_keeps_ordinary_job_and_restart_is_isolated():
     path = Path(__file__).resolve().parents[3] / ".github/workflows/android-webrtc.yml"
     workflow = yaml.safe_load(path.read_text())
     assert selected_jobs(workflow, "workflow_call") == {"android"}
+    assert selected_jobs(workflow, "workflow_call", b8_diagnostic_producer=True) == {"android"}
     assert workflow["jobs"]["restart_diagnostic"]["uses"] == "./.github/workflows/native-restart-diagnostic.yml"
     assert workflow["jobs"]["restart_diagnostic"]["with"]["repetitions"] == "${{ fromJSON(inputs.restart_repetitions) }}"
     assert workflow["jobs"]["restart_diagnostic"]["with"]["probe"] == "${{ inputs.restart_probe }}"
@@ -412,7 +413,9 @@ def test_android_workflow_call_keeps_ordinary_job_and_restart_is_isolated():
     assert type(json.loads(str(inputs["restart_repetitions"]["default"]))) is int
     assert inputs["restart_probe"]["default"] == "reopen"
     assert inputs["restart_probe"]["options"] == ["reopen", "boot_comparison"]
-    suffix = workflow["concurrency"]["group"].split("${{")[-1].removesuffix("}}")
+    suffixes = re.findall(r"\$\{\{([^{}]+)\}\}", workflow["concurrency"]["group"])
+    assert len(suffixes) == 3
+    suffix, b8_suffix = suffixes[1:]
     assert expression_value(suffix, "workflow_dispatch") == ""
     assert expression_value(suffix, "workflow_dispatch", restart_diagnostic=True) == "-restart"
     assert expression_value(suffix, "workflow_dispatch", gateway_probe=True) == "-gateway"
@@ -424,6 +427,11 @@ def test_android_workflow_call_keeps_ordinary_job_and_restart_is_isolated():
         {"restart_diagnostic": True, "gateway_probe": True, "network_inventory": True},
     ):
         assert expression_value(suffix, "workflow_dispatch", **flags) == "-conflict"
+    assert expression_value(b8_suffix, "workflow_call") == ""
+    assert expression_value(b8_suffix, "workflow_call", b8_diagnostic_producer=True) == "-b8-first-cold"
+    cancel = workflow["concurrency"]["cancel-in-progress"]
+    assert expression_value(cancel, "workflow_call") is True
+    assert expression_value(cancel, "workflow_call", b8_diagnostic_producer=True) is False
 
 
 def test_diagnostic_uses_existing_android_package_recipe():
