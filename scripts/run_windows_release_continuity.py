@@ -9,7 +9,6 @@ from __future__ import annotations
 import argparse
 import ctypes
 from ctypes import wintypes
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -95,9 +94,38 @@ def exact_file(path: Path, size: int, sha256: str) -> bool:
         return False
 
 
-def baseline_files_match(directory: Path) -> bool:
-    return all(exact_file(directory / ("mesh-chat.exe" if role == "application" else "mesh-chat-service.exe"),
-                          *expected) for role, expected in BASELINE_FILES.items())
+def observed_baseline_files(directory: Path) -> dict:
+    """Only the two known binary sizes and digests enter the report."""
+    observed = {}
+    for role, name in (("application", "mesh-chat.exe"), ("sidecar", "mesh-chat-service.exe")):
+        expected_size, expected_sha = BASELINE_FILES[role]
+        try:
+            path = directory / name
+            size = media.regular_input(path, 2 * 1024 * 1024 * 1024)
+            sha256 = media.digest(path)
+            observed[role] = {"size_bytes": size, "sha256": sha256,
+                              "matches_expected": size == expected_size and sha256 == expected_sha}
+        except (OSError, media.PreflightFailure):
+            observed[role] = {"availability": "unavailable", "matches_expected": False}
+    return observed
+
+
+def file_rows_match(rows: dict) -> bool:
+    return set(rows) == {"application", "sidecar"} and all(
+        rows[role].get("matches_expected") is True for role in ("application", "sidecar"))
+
+
+def candidate_binding(candidate: dict) -> dict:
+    """Pin the publisher and delivery hashes without exposing artifact paths."""
+    return {"source_commit": candidate["source_commit"], "source_tree": candidate["source_tree"],
+            "delivery_report_sha256": candidate["delivery_report_sha256"],
+            "release_manifest_sha256": candidate["release_manifest_sha256"],
+            "installer": {"size_bytes": candidate["installer_size"],
+                          "sha256": candidate["installer_sha256"]},
+            "application": {"size_bytes": candidate["application_size"],
+                            "sha256": candidate["application_sha256"]},
+            "sidecar": {"size_bytes": candidate["sidecar_size"],
+                        "sha256": candidate["sidecar_sha256"]}}
 
 
 def protected_profile(roaming: Path) -> bool:
@@ -109,6 +137,12 @@ def protected_profile(roaming: Path) -> bool:
         except OSError:
             return False
     return True
+
+
+def valid_hashes(value: object) -> bool:
+    fields = {"profile", "workspace", "channel", "message_id", "message_text", "draft_text"}
+    return isinstance(value, dict) and set(value) == fields and all(
+        isinstance(item, str) and re.fullmatch(r"[a-f0-9]{64}", item) for item in value.values())
 
 
 def run_ui(node: Path, port: int, config: dict) -> dict:
@@ -129,6 +163,7 @@ def run_ui(node: Path, port: int, config: dict) -> dict:
             or value.get("phase") != config["phase"]
             or value.get("source_commit") != config["expected_source"]
             or value.get("installed_version") != VERSION
+            or not valid_hashes(value.get("hashes"))
             or any(value.get(field) is not False for field in
                    ("native_upgrade_qualified", "peer_receipt_qualified",
                     "schema_refusal_qualified", "physical_device_identity_qualified"))):
@@ -137,11 +172,8 @@ def run_ui(node: Path, port: int, config: dict) -> dict:
 
 
 def check_hashes(seed: dict, observed: dict, reopened: dict) -> bool:
-    fields = {"profile", "workspace", "channel", "message_id", "message_text", "draft_text"}
     hashes = [item.get("hashes") for item in (seed, observed, reopened)]
-    return all(isinstance(item, dict) and set(item) == fields
-               and all(isinstance(value, str) and re.fullmatch(r"[a-f0-9]{64}", value)
-                       for value in item.values()) for item in hashes) and hashes[0] == hashes[1] == hashes[2]
+    return all(valid_hashes(item) for item in hashes) and hashes[0] == hashes[1] == hashes[2]
 
 
 def ui_config(phase: str, source: str, marker: str) -> dict:
@@ -150,35 +182,53 @@ def ui_config(phase: str, source: str, marker: str) -> dict:
             "draft_text": f"R8 draft {marker}"}
 
 
-def install_owned(executable: Path, directory: Path) -> tuple[int, bool]:
-    return install_with_job(installer.installer_command(executable, directory), executable)
+def install_owned(executable: Path, directory: Path, cleanup: dict) -> tuple[int, bool]:
+    return install_with_job(installer.installer_command(executable, directory), executable,
+                            cleanup=cleanup)
 
 
-def launch_and_observe(app_path: Path, node: Path, config: dict) -> tuple[dict, bool]:
+def launch_and_observe(app_path: Path, node: Path, config: dict, observation: dict) -> dict:
     port = media.reserve_port()
     flags = f"--remote-debugging-port={port}"
     environment = os.environ.copy()
     policy = None
     app = None
     retired = False
+    primary_failure = None
+    observation["browser_flag_scope"] = "hklm_app_policy" if media.token_elevated() else "child_environment"
     try:
-        if media.token_elevated():
+        if observation["browser_flag_scope"] == "hklm_app_policy":
             policy = media.ScopedBrowserPolicy(flags)
             policy.install()
         else:
             environment["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = flags
         app = OwnedApp.launch(app_path, app_path.parent, environment, port)
         report = run_ui(node, port, config)
+        observation["ui_report"] = report
         app.witness_sidecar()
         retired = app.retire()
         if not retired:
             raise ContinuityFailure("whole_app_retirement_unconfirmed")
-        return report, True
+        return report
+    except BaseException as error:
+        primary_failure = error
+        cleanup = getattr(error, "release_cleanup", None)
+        if isinstance(cleanup, dict):
+            observation["launch_cleanup"] = {
+                field: cleanup.get(field) is True for field in
+                ("job_released", "job_forced_close", "job_close_failed", "process_retired")}
+        raise
     finally:
         if app is not None and not retired:
-            try: app.retire()
-            except Exception: pass
-        if policy is not None and not policy.remove():
+            try: retired = app.retire()
+            except Exception: retired = False
+        observation["app_retired"] = retired
+        policy_retired = True
+        if policy is not None:
+            try: policy_retired = policy.remove() is True
+            except Exception: policy_retired = False
+        observation["browser_policy_retired"] = policy_retired
+        if primary_failure is None and not policy_retired:
             raise ContinuityFailure("browser_policy_retirement_unconfirmed")
 
 
@@ -202,47 +252,67 @@ def execute(args: argparse.Namespace, result: dict) -> None:
     if tagged_source != BASELINE_SOURCE:
         raise ContinuityFailure("published_tag_source_invalid")
     result["published_nsis_sha256"] = BASELINE_INSTALLER_SHA256
+    result["published_expected_files"] = {
+        role: {"size_bytes": size, "sha256": sha256}
+        for role, (size, sha256) in BASELINE_FILES.items()}
     source, tree = media.source_identity(args.candidate_source, args.candidate_tree)
     if source == BASELINE_SOURCE:
         raise ContinuityFailure("candidate_not_distinct")
     candidate = installer.source_bound_candidate(installer.DELIVERY, source, tree)
-    result["candidate_source_commit"] = source
-    result["candidate_source_tree"] = tree
-    result["candidate_installer_sha256"] = candidate["installer_sha256"]
+    result["candidate_binding"] = candidate_binding(candidate)
     directory = Path(tempfile.mkdtemp(prefix="mesh-r8-install-", dir=parent))
     result["phase"] = "published_install"
-    code, child_retired = install_owned(args.baseline_installer, directory)
-    if code != 0 or not child_retired or not baseline_files_match(directory):
+    code, child_retired = install_owned(args.baseline_installer, directory,
+                                        result.setdefault("published_installer_custody", {}))
+    result["published_installer_exit_code"] = code
+    result["published_installer_job_retired"] = child_retired
+    result["published_installed_files"] = observed_baseline_files(directory)
+    if code != 0 or not child_retired or not file_rows_match(result["published_installed_files"]):
         raise ContinuityFailure("published_install_bytes_invalid")
     result["published_installed_files_verified"] = True
     roaming = media.known_folder("3EB685DB-65F9-4CF6-A03A-E3EF65729F3D")
     marker = args.run_id[-12:] + " " + str(args.run_attempt)
     result["phase"] = "published_ui_seed"
-    seed, retired = launch_and_observe(directory / "mesh-chat.exe", args.node,
-                                       ui_config("seed", BASELINE_SOURCE, marker))
-    if not retired or not protected_profile(roaming) or not baseline_files_match(directory):
+    observations = result.setdefault("ui_observations", {})
+    seed = launch_and_observe(directory / "mesh-chat.exe", args.node,
+                              ui_config("seed", BASELINE_SOURCE, marker),
+                              observations.setdefault("published_seed", {}))
+    result["published_installed_files_after_seed"] = observed_baseline_files(directory)
+    if (not protected_profile(roaming)
+            or not file_rows_match(result["published_installed_files_after_seed"])):
         raise ContinuityFailure("published_profile_or_retirement_invalid")
     result["published_efs_and_whole_app_retired"] = True
     result["phase"] = "same_version_installer_switch"
     if installer.source_bound_candidate(installer.DELIVERY, source, tree) != candidate:
         raise ContinuityFailure("candidate_changed_before_switch")
-    code, child_retired = install_owned(candidate["installer_path"], directory)
+    code, child_retired = install_owned(candidate["installer_path"], directory,
+                                        result.setdefault("candidate_installer_custody", {}))
     installed = installer.installed_artifacts(directory, candidate)
+    result["candidate_installer_exit_code"] = code
+    result["candidate_installer_job_retired"] = child_retired
+    result["candidate_installed_files_before_launch"] = installed
     if code != 0 or not child_retired or not installer.installed_artifacts_match(installed):
         raise ContinuityFailure("same_version_switch_failed_or_mixed_bytes")
     result["same_version_candidate_files_verified"] = True
     result["phase"] = "candidate_observe"
     config = ui_config("observe", source, marker)
-    observed, retired = launch_and_observe(directory / "mesh-chat.exe", args.node, config)
-    if not retired or not protected_profile(roaming):
+    observed = launch_and_observe(directory / "mesh-chat.exe", args.node, config,
+                                  observations.setdefault("candidate_observe", {}))
+    result["candidate_installed_files_after_observe"] = installer.installed_artifacts(directory, candidate)
+    if (not protected_profile(roaming)
+            or not installer.installed_artifacts_match(result["candidate_installed_files_after_observe"])):
         raise ContinuityFailure("candidate_profile_or_retirement_invalid")
     result["phase"] = "candidate_reopen"
-    reopened, retired = launch_and_observe(directory / "mesh-chat.exe", args.node, config)
-    if not retired or not protected_profile(roaming):
+    reopened = launch_and_observe(directory / "mesh-chat.exe", args.node, config,
+                                  observations.setdefault("candidate_reopen", {}))
+    result["candidate_installed_files_after_reopen"] = installer.installed_artifacts(directory, candidate)
+    if (not protected_profile(roaming)
+            or not installer.installed_artifacts_match(result["candidate_installed_files_after_reopen"])):
         raise ContinuityFailure("candidate_reopen_or_retirement_invalid")
     if not check_hashes(seed, observed, reopened):
         raise ContinuityFailure("ui_continuity_hashes_changed")
-    if (not installer.installed_artifacts_match(installer.installed_artifacts(directory, candidate))
+    result["candidate_installed_files_final"] = installer.installed_artifacts(directory, candidate)
+    if (not installer.installed_artifacts_match(result["candidate_installed_files_final"])
             or installer.source_bound_candidate(installer.DELIVERY, source, tree) != candidate
             or media.source_identity(source, tree) != (source, tree)):
         raise ContinuityFailure("candidate_changed_during_run")

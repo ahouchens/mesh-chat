@@ -2,6 +2,9 @@ name: Disposable installed Windows release continuity R8 diagnostic
 
 on:
   workflow_dispatch:
+  push:
+    branches: [codex/mesh-core-integration-lead]
+    paths: ['.github/workflows/windows-release-continuity-r8.yml']
 
 permissions:
   contents: read

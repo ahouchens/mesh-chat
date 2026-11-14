@@ -143,6 +143,30 @@ class ProcessApi:
         self.kernel.CloseHandle(handle)
 
 
+def cleanup_process_job(process, job):
+    """Attempt both independent retirements even if closing a job raises."""
+    outcome = {"job_released": job is None, "job_forced_close": False,
+               "job_close_failed": False, "process_retired": False}
+    if job is not None:
+        try:
+            outcome["job_released"], outcome["job_forced_close"] = job.close()
+        except Exception:
+            outcome["job_close_failed"] = True
+    try:
+        running = process.poll() is None
+    except Exception:
+        running = True
+    if running:
+        try: process.kill()
+        except Exception: pass
+    try:
+        process.wait(timeout=5)
+        outcome["process_retired"] = process.poll() is not None
+    except Exception:
+        pass
+    return outcome
+
+
 class OwnedApp:
     def __init__(self, process, job, api, port):
         self.process, self.job, self.api, self.port = process, job, api, port
@@ -164,12 +188,10 @@ class OwnedApp:
             api = api_factory()
             api.resume_initial_thread(process.pid)
             return cls(process, job, api, port)
-        except BaseException:
-            if job is not None:
-                job.close()
-            if process.poll() is None:
-                process.kill()
-            process.wait(timeout=5)
+        except BaseException as error:
+            outcome = cleanup_process_job(process, job)
+            try: error.release_cleanup = outcome
+            except Exception: pass
             raise
 
     def witness_sidecar(self):
@@ -205,18 +227,21 @@ class OwnedApp:
         finally:
             # Closing the kill-on-close job is mandatory even if a Windows API
             # observation raised. Forced termination never counts as evidence.
-            try:
-                released, forced = self.job.close()
-                self.retired = bool(clean and released and not forced)
-            finally:
-                for handle in self.sidecars:
-                    self.api.close_handle(handle)
-                self.sidecars.clear()
+            outcome = cleanup_process_job(self.process, self.job)
+            self.retired = bool(clean and outcome["job_released"]
+                                and not outcome["job_forced_close"]
+                                and not outcome["job_close_failed"]
+                                and outcome["process_retired"])
+            for handle in self.sidecars:
+                try: self.api.close_handle(handle)
+                except Exception: self.retired = False
+            self.sidecars.clear()
         return self.retired
 
 
 def install_with_job(command: str, executable: Path, *, timeout: int = 180,
-                     popen=subprocess.Popen, job_factory=WindowsJob, api_factory=ProcessApi):
+                     popen=subprocess.Popen, job_factory=WindowsJob, api_factory=ProcessApi,
+                     cleanup=None):
     """Use the R5 NSIS command while proving its entire child job has exited."""
     process = popen(command, executable=str(executable), cwd=executable.parent,
                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
@@ -232,10 +257,11 @@ def install_with_job(command: str, executable: Path, *, timeout: int = 180,
         code = process.wait(timeout=timeout)
         clean = job.wait_zero(20)
     finally:
-        if job is not None:
-            released, forced = job.close()
-            clean = bool(clean and released and not forced)
-        if process.poll() is None:
-            process.kill()
-        process.wait(timeout=5)
+        outcome = cleanup_process_job(process, job)
+        if cleanup is not None:
+            cleanup.update(outcome)
+        clean = bool(clean and outcome["job_released"]
+                     and not outcome["job_forced_close"]
+                     and not outcome["job_close_failed"]
+                     and outcome["process_retired"])
     return code, clean
