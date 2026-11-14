@@ -66,7 +66,10 @@ the specification's IDs or imply equal effort. Several packages overlap.
 - Focused boot run `43535708090` booted the baseline launcher. The observed
   launcher never started because ADB still listed the exited baseline emulator.
   Diagnostic cleanup now waits for that owned transport to disappear before
-  releasing its AVD. A new comparison is required; this is not a restart repair.
+  releasing its AVD. Successor `43536862480` launched both cases and isolated a
+  stdio conflict in the instrumented launcher. Candidate `563b91a` removes the
+  extra kernel console while retaining filtered Android logs; 2,072 harness
+  checks pass. Real boot verification and the original cold-restart fix remain.
 - Invitation dismissal now retains its operation identity across uncertain replies
   within the current profile lifetime (195 UI tests and TypeScript checks passed).
   Reducer event classification adds eight cases; packaged acceptance remains open.
@@ -84,14 +87,14 @@ its owned checkout and reports source evidence and gaps before integration.
 | Lead, D reviewing | R1 | Boot comparison cleanup now fences the next launch until the exact owned ADB transport retires. | Reviewed focused boot comparison, then cold-restart investigation and unchanged full acceptance. |
 | C | R0 | Mixed-actor and event-classification tests integrated; physical baseline provenance remains unresolved. | Reconcile remaining adapter and protocol boundary evidence. |
 | B | R3/R5 and R8 review | UI invitation dismissal integrated; independently review A's compatibility fixture repairs. | Reviewed fixture; packaged UI/media coexistence remains open. |
-| A | R8 | Candidate fixture narrowed to supported Node executable ownership; uncertain cleanup retains workspace. | Independent review and exact-source installed Windows execution. |
+| A | R8 | Repaired candidate fixture integrated after B review; 18 local tests pass. | Exact-source installed Windows execution using existing CI artifacts. |
 | D | R9/R1 review | Focused workflow and reopen runner integrated; independent boot-cleanup review. | Diagnostic-only reproduction using explicit artifact origins. |
 
 R2 helper retirement remains gated. R6/R7 implementation is not assigned by these
 preparation batches. Focused runs never close the full native or public-consumer
 gates. Baseline, UI and compatibility preparation documents are integrated. The
 mixed-actor trace and event-classification batch are integrated. A's repaired
-Windows pair/refusal fixture is under independent review; installed execution
+Windows pair/refusal fixture passed independent review and is integrated; installed execution
 requires a matching source-bound sidecar. These batches do not establish missing
 physical, signed-signaling, native or public cross-platform acceptance. Baseline
 clarification remains pending.

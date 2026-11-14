@@ -1,5 +1,40 @@
 # Connection runtime qualification ledger
 
+## Emulator console conflict isolated — November 13, 2026
+
+Run [43536862480](https://github.com/ahouchens/mesh-chat/actions/runs/43536862480)
+at `e92b98be397446186d414a357a999d882bab1e2d` launched both declared cases and
+retired both cleanly. Baseline boot passed. `observed_82` exited before boot with
+status 0; its 106 bounded console lines contained one `stdio_conflict` and one
+`serial_backend` signature, no kernel boot signature, and normal reader EOF.
+Artifact `14089922291` has ZIP SHA256
+`b2e9942ad1ce6253c9246aa5c7d97b5e5e4ac2a1ae3bbe350a0a90c3eefda3c4`.
+The report is `.test-tmp/focused-boot-e92b98b-report.json`; original ZIP and job
+log are retained alongside it. Package versions match the prior comparison.
+
+Root `563b91a` removes only `-show-kernel` from the actual emulator launcher,
+retaining filtered `-logcat` and its bounded piped observer. The next declared
+comparison is explicitly `baseline_b8` / `current_logcat`; earlier reports retain
+their original labels and source binding. Updated command expectations failed
+before the fix; **2,072 passed**, 4,285 unrelated cases deselected, zero skips,
+43.18 seconds afterward (`.test-tmp/emulator-stdio-green.xml`). A real boot check
+is still required. This addresses the newly introduced boot instrumentation
+regression; b8's original cold initialization and Windows inventory failures
+remain unresolved.
+
+R8 fixture `1a975fb` plus repair `3d7ad42` are integrated as `c584f4d` / `629c547`
+after B's independent review. Root **18 tests passed**, 0.83 seconds
+(`.test-tmp/r8-candidate.xml`). It uses the permitted Node image for both clients,
+waits for child stdout closure, and retains workspaces on uncertain retirement.
+Installed Windows execution remains pending; Python API, old-native upgrade,
+outbox, draft and receipt acceptance are explicitly unqualified.
+
+Additional verified archives recovered 48,158,069 bytes from 31 completed logs
+and 116,748,149 bytes from historical XML reports. Exact byte identities and ZIP
+locations are in `.test-tmp/completed-test-log-archive-receipt.json` and
+`.test-tmp/evidence-archives/dist-reports/index.jsonl`. Historical loose paths in
+older records now resolve through these archive indexes.
+
 ## Focused boot diagnostic cleanup — November 13, 2026
 
 Run [43534697409](https://github.com/ahouchens/mesh-chat/actions/runs/43534697409)
