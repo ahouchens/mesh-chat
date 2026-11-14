@@ -128,7 +128,8 @@ def run_fixture(node, directory, runtime, data, overall_deadline, *, fixture="se
     # The image fixture owns a full 120-second inner window. Its outer process
     # needs room to finish that window before this runner's retirement reserve.
     scripts = {"separate_process": ("separate-process-check.mjs", CHILD_SECONDS),
-               "image_admission": ("image-admission-check.mjs", 150)}
+               "image_admission": ("image-admission-check.mjs", 150),
+               "paired_process_recovery": ("paired-process-recovery-check.mjs", 390)}
     if fixture not in scripts:
         raise ValueError("fixture_selector")
     script, child_seconds = scripts[fixture]
