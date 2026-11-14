@@ -170,7 +170,7 @@ def test_canceled_read_waits_for_overlapped_completion_before_event_close(monkey
         def CloseHandle(self, handle): calls.append(("close", handle)); return True
     stop = Event()
     stop.set()
-    monkeypatch.setattr(ctypes, "get_last_error", lambda: pipe.ERROR_IO_PENDING)
+    monkeypatch.setattr(ctypes, "get_last_error", lambda: pipe.ERROR_IO_PENDING, raising=False)
     stream = pipe._Duplex(ReadKernel(), 71, stop, 30)
     assert stream._read(1) == b""
     assert calls == ["read", "wait", "cancel", ("completion", True), ("close", 81)]
@@ -195,7 +195,7 @@ def test_cancel_return_does_not_release_pending_operation_or_handle(monkeypatch,
             return False
         def CloseHandle(self, handle): calls.append(("close", handle)); return True
     kernel = PendingKernel()
-    monkeypatch.setattr(ctypes, "get_last_error", lambda: pipe.ERROR_IO_PENDING)
+    monkeypatch.setattr(ctypes, "get_last_error", lambda: pipe.ERROR_IO_PENDING, raising=False)
     stop = Event()
     stop.set()
     server = endpoint(kernel)
@@ -243,7 +243,7 @@ def test_failed_wait_cancels_and_completes_before_event_close(monkeypatch, opera
             calls.append(("completion", wait)); return False
         def CloseHandle(self, handle): calls.append(("close", handle)); return True
     kernel = FailedWaitKernel()
-    monkeypatch.setattr(ctypes, "get_last_error", lambda: pipe.ERROR_IO_PENDING)
+    monkeypatch.setattr(ctypes, "get_last_error", lambda: pipe.ERROR_IO_PENDING, raising=False)
     stream = pipe._Duplex(kernel, 71, Event(), 30)
     server = endpoint(kernel)
     with pytest.raises(OSError):
