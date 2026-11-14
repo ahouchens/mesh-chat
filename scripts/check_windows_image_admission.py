@@ -12,7 +12,7 @@ import time
 from uuid import uuid4
 
 import check_independent_core_consumers as bootstrap
-from check_windows_separate_process_consumer import run_fixture
+from check_windows_separate_process_consumer import FixtureExecutionFailure, run_fixture
 from native_windows_evidence import require_unchanged
 from stage_core_sdk import tools
 from stage_independent_core_consumers import ROOT, cleanup, digest, install_typescript, outside_directory
@@ -35,6 +35,8 @@ CHECKS = {**FIXTURE_CHECKS, "efs_profile_directory": True, "efs_vault_file": Tru
 MAX_STDOUT = 4096
 FIXTURE_SECONDS = 120
 TOTAL_SECONDS = 600
+FIXTURE_FAILURE_PHASES = frozenset({"arguments", "owner_start", "positive_control",
+    "copy_preflight", "wrong_image", "owner_survives", "artifact_binding"})
 
 
 def _unique_object(pairs):
@@ -67,6 +69,26 @@ def fixture_result(raw):
             or not 0 <= value["duration_ms"] < FIXTURE_SECONDS * 1000):
         raise ValueError("fixture_result")
     return value
+
+
+def fixture_failure(raw):
+    """Project one fixed phase from an exact, bounded failed child frame."""
+    try:
+        if (type(raw) is not bytes or not 0 < len(raw) <= MAX_STDOUT
+                or raw.count(b"\n") != 1 or not raw.endswith(b"\n")):
+            return None
+        value = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_object,
+                           parse_constant=_reject_constant)
+        if (type(value) is dict and set(value) == {"v", "passed", "scope", "phase", "duration_ms"}
+                and type(value["v"]) is int and value["v"] == 1
+                and value["passed"] is False and value["scope"] == FIXTURE_SCOPE
+                and type(value["phase"]) is str and value["phase"] in FIXTURE_FAILURE_PHASES
+                and type(value["duration_ms"]) is int
+                and 0 <= value["duration_ms"] <= FIXTURE_SECONDS * 1000):
+            return value["phase"]
+    except (ValueError, UnicodeError, TypeError):
+        pass
+    return None
 
 
 def verify_report(record, source, tree):
@@ -138,7 +160,7 @@ def run(expected_source, *, bootstrap_report=None, temporary_root=None):
         phase = "image_admission_execution"
         data = directory / "app-data"
         observed = fixture_result(run_fixture(node, directory, runtime, data, deadline,
-                                              fixture="image_admission"))
+                                              fixture="image_admission", failure_parser=fixture_failure))
         phase = "protected_profile"
         protection = bootstrap.protected_profile(data)
         phase = "final_artifact_binding"
@@ -170,6 +192,9 @@ def run(expected_source, *, bootstrap_report=None, temporary_root=None):
         result.update(phase=phase, failure_type=type(failure).__name__,
                       workspace_retained=directory is not None and directory.is_dir(),
                       duration_seconds=min(max(0, time.monotonic() - started), TOTAL_SECONDS + 60))
+        detail = failure.failure_detail if isinstance(failure, FixtureExecutionFailure) else None
+        if type(detail) is str and detail in FIXTURE_FAILURE_PHASES:
+            result["fixture_failure_phase"] = detail
     return result
 
 

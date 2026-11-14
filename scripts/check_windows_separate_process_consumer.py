@@ -176,7 +176,7 @@ def run_fixture(node, directory, runtime, data, overall_deadline, *, fixture="se
             phase = (fixture_failure(bytes(output.data)) if fixture == "separate_process" and not error.data
                      else None)
             detail = None
-            if fixture in {"paired_process_recovery", "private_admission"} and not error.data and callable(failure_parser):
+            if fixture in {"paired_process_recovery", "private_admission", "image_admission"} and not error.data and callable(failure_parser):
                 try:
                     detail = failure_parser(bytes(output.data))
                 except Exception:
