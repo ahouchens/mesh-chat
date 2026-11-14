@@ -129,6 +129,26 @@ def test_workflow_opt_in_depends_on_same_run_stage_and_retains_separate_report()
     assert "dist/reports/windows-candidate-pair-manifest.json" in upload["with"]["path"]
 
 
+def test_python_owned_consumer_is_opt_in_and_uses_successful_same_run_staging():
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["desktop-host"]["steps"]
+    download = next(i for i, step in enumerate(steps) if step.get("id") == "candidate_sdk_download")
+    execute = next(i for i, step in enumerate(steps)
+                   if "scripts/check_python_independent_consumer.py" in step.get("run", ""))
+    assert download < execute
+    condition = steps[execute]["if"]
+    assert "always()" in condition and "inputs.windows_candidate_pair == true" in condition
+    assert "needs.verify.result == 'success'" in condition
+    assert "steps.candidate_sdk_download.outcome == 'success'" in condition
+    assert '--expected-source "${{ github.sha }}"' in steps[execute]["run"]
+    upload = next(step for step in steps
+                  if step.get("with", {}).get("name", "").startswith("windows-independent-python-"))
+    assert "always()" in upload["if"] and "inputs.windows_candidate_pair == true" in upload["if"]
+    assert "${{ github.run_id }}-${{ github.run_attempt }}" in upload["with"]["name"]
+    assert set(upload["with"]["path"].splitlines()) == {
+        "dist/reports/windows-independent-python.json", "dist/reports/windows-independent-python-sdk/**"}
+
+
 def test_post_assembly_source_failure_cannot_leave_a_passing_report(tmp_path, monkeypatch):
     calls = 0
 

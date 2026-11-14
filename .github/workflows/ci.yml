@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       windows_candidate_pair:
-        description: Run the diagnostic Windows SDK candidate pair on the current sidecar
+        description: Run diagnostic Windows SDK candidate pairs and the Python-owned consumer
         type: boolean
         required: false
         default: false
@@ -177,6 +177,7 @@ jobs:
       - name: Qualify explicit first-time approval and paired messaging
         run: python scripts/test_packaged_transport.py --pairing --expected-source "${{ github.sha }}"
       - name: Download exact-run candidate SDK staging
+        id: candidate_sdk_download
         if: ${{ always() && inputs.windows_candidate_pair == true && needs.verify.result == 'success' }}
         uses: actions/download-artifact@v4
         with:
@@ -189,6 +190,19 @@ jobs:
       - name: Exercise installed Windows candidate pair
         if: ${{ always() && inputs.windows_candidate_pair == true && steps.candidate_assembly.outcome == 'success' }}
         run: python tests/core-sdk-upgrade/windows_candidate_pair.py --manifest "$env:RUNNER_TEMP\mesh-windows-candidate-pair-input\manifest.json" --expected-source "${{ github.sha }}" --output dist/reports/windows-candidate-pair.json
+      - name: Exercise installed Python SDK with its own normal Windows host
+        if: ${{ always() && inputs.windows_candidate_pair == true && needs.verify.result == 'success' && steps.candidate_sdk_download.outcome == 'success' }}
+        run: python scripts/check_python_independent_consumer.py --expected-source "${{ github.sha }}"
+      - name: Retain diagnostic Python-owned Windows consumer evidence
+        if: ${{ always() && inputs.windows_candidate_pair == true }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-independent-python-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            dist/reports/windows-independent-python.json
+            dist/reports/windows-independent-python-sdk/**
+          if-no-files-found: warn
+          retention-days: 14
       - name: Retain diagnostic Windows candidate pair evidence
         if: ${{ always() && inputs.windows_candidate_pair == true }}
         uses: actions/upload-artifact@v4
