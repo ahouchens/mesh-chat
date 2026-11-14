@@ -35,6 +35,10 @@ LEVEL = "windows_installed_typescript_candidate_pair_current_normal_host"
 CHECKS = {"major_refused_before_profile", "current_sdk_profile_created", "old_typescript_api_11",
           "reopened_same_identity", "old_typescript_after_reopen", "efs_profile_directory",
           "efs_vault_file", "clean_host_exits"}
+FAILURE_STAGES = {"install_current_typescript", "install_old_typescript", "install_python",
+                  "installed_package_versions", "copy_runtime", "driver", "driver_result",
+                  "efs_profile", "final_integrity", "retire_workspace"}
+DRIVER_PHASES = {"first_start", "major_refusal", "profile_create", "installed_old_client", "reopen"}
 
 
 def digest(path):
@@ -133,7 +137,7 @@ try {
  const view=await client.request('profile.query',{profile});
  const snapshot=await client.request('application.snapshot',{});
  if(client.capabilities.api_major!==1||client.capabilities.api_minor!==1
-    ||view.destination!==expected||snapshot.profile.destination!==expected)throw new Error();
+    ||view.destination!==expected||snapshot.profile?.destination_hash!==expected)throw new Error();
  process.stdout.write(JSON.stringify({passed:true})+'\n');
 }finally{client.close();}
 '''
@@ -210,11 +214,26 @@ def _install(command, *, cwd, env):
 
 
 class RetainedWorkspaceError(RuntimeError):
-    def __init__(self, cause, workspace, owner_retired):
+    def __init__(self, cause, workspace, owner_retired, stage=None, driver_phase=None):
         super().__init__("Candidate execution failed; installed workspace retained")
         self.cause_kind = type(cause).__name__
         self.workspace = workspace
         self.owner_retired = owner_retired
+        self.stage = stage
+        self.driver_phase = driver_phase
+
+
+def _driver_failure_phase(output):
+    if output is None:
+        return None
+    try:
+        observed = json.loads(output)
+    except (TypeError, ValueError):
+        return None
+    if type(observed) is not dict or observed.get("passed") is not False:
+        return None
+    phase = observed.get("phase")
+    return phase if type(phase) is str and phase in DRIVER_PHASES else None
 
 
 def _run_driver(command, *, cwd, env):
@@ -296,15 +315,20 @@ def execute(manifest_path, expected_source):
     env.update(PIP_CACHE_DIR=str(work / "pip-cache"), npm_config_cache=str(work / "npm-cache"),
                npm_config_update_notifier="false", PYTHONDONTWRITEBYTECODE="1")
     owner_retired = False
+    stage = "install_current_typescript"
+    output = None
     try:
         current, old, site = work / "current", work / "old", work / "python-site"
         current.mkdir(); old.mkdir(); site.mkdir()
         for directory, package in ((current, "typescript"), (old, "old_typescript")):
+            stage = "install_current_typescript" if package == "typescript" else "install_old_typescript"
             (directory / "package.json").write_text('{"private":true,"type":"module"}')
             _install([node, npm, "install", str(artifacts[package]), "--offline", "--ignore-scripts",
                       "--no-audit", "--no-fund", "--package-lock=false"], cwd=directory, env=env)
+        stage = "install_python"
         _install([sys.executable, "-m", "pip", "install", str(artifacts["python"]), "--target",
                   str(site), "--no-deps", "--no-index", "--no-compile"], cwd=work, env=env)
+        stage = "installed_package_versions"
         for directory, version in ((current, VERSION_FIELDS["typescript"]), (old, VERSION_FIELDS["old_typescript"])):
             installed = json.loads((directory / "node_modules/@mesh-chat/core-client/package.json").read_text())
             if installed.get("version") != version:
@@ -316,20 +340,25 @@ def execute(manifest_path, expected_source):
             shutil.copyfile(ROOT / "examples/typescript-independent-consumer" / name, current / name)
         (current / "driver.mjs").write_text(DRIVER, encoding="utf-8")
         (old / "old_client.mjs").write_text(OLD_TYPESCRIPT, encoding="utf-8")
+        stage = "copy_runtime"
         runtime = work / binary.name
         shutil.copy2(binary, runtime)
         if digest(runtime) != binding["sidecar_sha256"]:
             raise ValueError("Installed normal host changed")
+        stage = "driver"
         code, output = _run_driver([node, "driver.mjs", str(runtime), str(work / "app-data"),
                                     str(old)], cwd=current, env=env)
+        stage = "driver_result"
         observed = _confirmed_driver_result(code, output)
         owner_retired = True
+        stage = "efs_profile"
         profile = work / "app-data/mesh-core-runtime/profile-v1"
         for file in (profile, profile / "mesh-chat.vault"):
             if not file.is_file() and not file.is_dir():
                 raise ValueError("Protected profile is missing")
             if not getattr(file.stat(), "st_file_attributes", 0) & 0x4000:
                 raise ValueError("Normal host did not protect profile with EFS")
+        stage = "final_integrity"
         require_unchanged(binary, binding)
         for name, path in artifacts.items():
             if digest(path) != manifest["artifacts"][name]["sha256"]:
@@ -342,10 +371,12 @@ def execute(manifest_path, expected_source):
                 "python_api_qualified": False,
                 "continuity": {"identity": "current_host_restart", "outbox": "not_exercised",
                                "draft": "not_exercised", "receipt": "not_exercised"}}
+        stage = "retire_workspace"
         _remove_retired_workspace(work, parent, owner_retired=owner_retired)
         return result
     except Exception as error:
-        raise RetainedWorkspaceError(error, work, owner_retired) from error
+        phase = _driver_failure_phase(output) if stage == "driver_result" else None
+        raise RetainedWorkspaceError(error, work, owner_retired, stage, phase) from error
 
 
 def main():
@@ -364,6 +395,10 @@ def main():
                           owner_retirement_confirmed=error.owner_retired,
                           workspace_remaining=error.workspace.exists(),
                           retained_workspace=str(error.workspace) if error.workspace.exists() else None)
+            if type(error.stage) is str and error.stage in FAILURE_STAGES:
+                result["failure_stage"] = error.stage
+            if type(error.driver_phase) is str and error.driver_phase in DRIVER_PHASES:
+                result["driver_phase"] = error.driver_phase
     _write_report(args.output, result)
     print(json.dumps({"passed": result["passed"], "evidence_level": LEVEL}))
     return 0 if result["passed"] else 1

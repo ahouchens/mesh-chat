@@ -104,6 +104,56 @@ def test_candidate_scripts_parse_as_node_modules_without_source_aliases():
         assert "service/src" not in source and "sdk/typescript/src" not in source
 
 
+@pytest.mark.parametrize("snapshot_destination,accepted", [("a" * 32, True), ("b" * 32, False)])
+def test_old_client_checks_public_snapshot_destination_hash(tmp_path, snapshot_destination, accepted):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node is required to run the embedded old client")
+    major = int(subprocess.check_output([node, "--version"], text=True).strip().split(".")[0][1:])
+    if major < 22:
+        pytest.skip("The TypeScript package requires Node 22 or newer")
+    package = tmp_path / "node_modules/@mesh-chat/core-client"
+    package.mkdir(parents=True)
+    (package / "package.json").write_text(json.dumps({
+        "name": "@mesh-chat/core-client", "type": "module", "exports": "./index.mjs"}))
+    (package / "index.mjs").write_text('''export class CoreClient {
+  static async open(transport) {
+    return {capabilities:{api_major:1,api_minor:1,profiles:['profile']},
+      async request(operation) {
+        if (operation==='profile.query') return {destination:process.env.TEST_DESTINATION};
+        if (operation==='application.snapshot')
+          return {profile:{destination_hash:process.env.TEST_SNAPSHOT_DESTINATION}};
+        throw new Error('unexpected_operation');
+      }, close(){transport.close();}};
+  }
+}''')
+    (tmp_path / "old_client.mjs").write_text(candidate.OLD_TYPESCRIPT)
+    (tmp_path / "runner.mjs").write_text(r'''import {createServer} from 'node:net';
+import {spawn} from 'node:child_process';
+import {join} from 'node:path';
+import {randomUUID} from 'node:crypto';
+const directory=process.argv[2];
+const pipe=process.platform==='win32' ? `\\\\.\\pipe\\mesh-candidate-test-${randomUUID()}`
+                                    : join(directory,'candidate.sock');
+const server=createServer(socket=>socket.on('error',()=>{}));
+await new Promise((yes,no)=>{server.once('error',no);server.listen(pipe,yes);});
+const child=spawn(process.execPath,['old_client.mjs',pipe],
+  {cwd:directory,env:{...process.env,TEST_DESTINATION:'a'.repeat(32),
+    TEST_SNAPSHOT_DESTINATION:process.argv[3]},stdio:['pipe','pipe','ignore']});
+let output='';child.stdout.on('data',part=>output+=part);
+child.stdin.end('a'.repeat(32)+'\n');
+const exit=await new Promise((yes,no)=>{child.once('close',yes);child.once('error',no);});
+await new Promise(yes=>server.close(yes));
+process.stdout.write(JSON.stringify({exit,output})+'\n');''')
+    completed = subprocess.run([node, str(tmp_path / "runner.mjs"), str(tmp_path), snapshot_destination],
+                               capture_output=True, text=True, timeout=15)
+    assert completed.returncode == 0, completed.stderr
+    observed = json.loads(completed.stdout)
+    assert (observed["exit"] == 0) is accepted
+    if accepted:
+        assert json.loads(observed["output"]) == {"passed": True}
+
+
 def test_client_images_match_actual_normal_host_pipe_policy(monkeypatch):
     monkeypatch.syspath_prepend(str(FIXTURE.parents[1] / "service/src"))
     from mesh_chat.core_api.pipe_policy import allowed_images, image_allowed
@@ -173,3 +223,27 @@ def test_failed_owner_report_keeps_workspace_path_and_no_success(tmp_path, monke
     assert report == {"v": 1, "passed": False, "evidence_level": candidate.LEVEL,
         "failure_type": "TimeoutExpired", "owner_retirement_confirmed": False,
         "workspace_remaining": True, "retained_workspace": str(work)}
+
+
+def test_failure_report_projects_only_fixed_driver_stage_and_phase(tmp_path, monkeypatch):
+    work = tmp_path / "mesh-windows-candidate-pair-retained"
+    work.mkdir()
+    monkeypatch.setattr(candidate, "execute", lambda *a: (_ for _ in ()).throw(
+        candidate.RetainedWorkspaceError(ValueError("private detail"), work, False,
+                                         "driver_result", "installed_old_client")))
+    output = tmp_path / "report.json"
+    monkeypatch.setattr(sys, "argv", ["candidate", "--manifest", "candidate.json",
+        "--expected-source", "a" * 40, "--output", str(output)])
+    assert candidate.main() == 1
+    report = json.loads(output.read_text())
+    assert report["failure_stage"] == "driver_result"
+    assert report["driver_phase"] == "installed_old_client"
+    assert "private detail" not in output.read_text()
+
+
+def test_driver_failure_phase_drops_untrusted_or_unbounded_labels():
+    assert candidate._driver_failure_phase(
+        b'{"passed":false,"phase":"installed_old_client","message":"private"}') == "installed_old_client"
+    for output in (b'{"passed":false,"phase":"private"}', b'{"passed":true,"phase":"reopen"}',
+                   b'{"passed":false,"phase":[]}', b'not json'):
+        assert candidate._driver_failure_phase(output) is None
