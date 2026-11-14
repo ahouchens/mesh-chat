@@ -9,6 +9,21 @@ import { launchRuntime } from "./runtime.mjs";
 const SCOPE = "Installed public SDK Windows paired process recovery after explicit approval on one same-image caller; application-side discarded enqueue reply, pending replay and later single delivery; no cross-app caller isolation or full SC22/SC23/SC24 acceptance";
 const TOTAL_MS = 360000;
 const PENDING = new Set(["waiting_for_keys", "queued", "sending", "stored_for_delivery"]);
+const FAILURE_CAUSES = new Set([
+  "public_rows", "duplicate_public_record", "public_capabilities", "public_authority_changed",
+  "message_page", "duplicate_outbound", "pending_record_changed", "owner_session_count",
+  "helper_identity", "reply_not_discarded", "pending_not_reopened", "replay_handle_changed",
+  "changed_payload_accepted", "duplicate_after_replay", "receipt_records_changed", "retirement_count",
+  "paired_contract", "helper_deadline", "helper_closed", "helper_process_error", "helper_output",
+  "helper_reply", "helper_output_closed", "helper_unavailable", "helper_frame_budget",
+  "helper_write", "helper_request_pending", "helper_exit", "public_pairing_deadline",
+  "pairing_retired", "retirement_incomplete", "client_detach_incomplete",
+]);
+
+function fixedCause(error) {
+  if (error instanceof HelperCoreError) return "helper_core_error";
+  return error instanceof Error && FAILURE_CAUSES.has(error.message) ? error.message : "unavailable";
+}
 
 function one(rows, predicate) {
   if (!Array.isArray(rows)) throw new Error("public_rows");
@@ -71,7 +86,7 @@ async function reopen(previous, executable, api) {
   return peer;
 }
 
-async function pairedProcessLifetime(executable, offerer, answerer, receipts, owned, api) {
+async function pairedProcessLifetime(executable, offerer, answerer, receipts, owned, api, stage) {
   const sender = offerer, receiver = answerer;
   const context = { ...api, owned };
   let first, second, senderReopened, receiverReopened;
@@ -81,31 +96,39 @@ async function pairedProcessLifetime(executable, offerer, answerer, receipts, ow
   const parentRead = (peer) => (operation, fields) => peer.client.request(operation, fields,
     { timeoutMs: api.budget() });
   try {
+    stage("initial_authority");
     if (sender.clients.size !== 1 || receiver.clients.size !== 1) throw new Error("owner_session_count");
     await authority(sender, parentRead(sender));
     await authority(receiver, parentRead(receiver));
+    stage("receiver_stop");
     await api.retire(receiver); // The receiver is positively stopped before the unique enqueue.
 
+    stage("first_helper");
     first = new Helper(sender.runtime.pipe);
     if (!first.identityValid || first.child.pid === process.pid) throw new Error("helper_identity");
     firstPid = first.child.pid;
     await authority(sender, (op, fields) => first.request(op, fields, performance.now() + api.budget()));
     if (sender.clients.size + 1 !== 2) throw new Error("owner_session_count");
+    stage("enqueue_and_pending");
     await first.discardReply("message.enqueue", params, performance.now() + api.budget(), work.key);
     const observed = await api.wait(() => pending(sender, parentRead(sender), work.text));
     if (first.discardedReplies !== 1) throw new Error("reply_not_discarded");
     work.handle = observed.handle;
     work.recordId = observed.recordId;
+    stage("first_helper_stop");
     await first.closeInput(performance.now() + api.budget());
     positiveHelpers++;
     first = null;
     await pending(sender, parentRead(sender), work.text, work.handle, work.recordId);
 
+    stage("sender_stop");
     await api.retire(sender);
+    stage("sender_reopen");
     senderReopened = await reopen(sender, executable, context);
     await authority(senderReopened, parentRead(senderReopened));
     await pending(senderReopened, parentRead(senderReopened), work.text, work.handle, work.recordId);
 
+    stage("second_helper");
     second = new Helper(senderReopened.runtime.pipe);
     if (!second.identityValid || second.child.pid === firstPid) throw new Error("helper_identity");
     await authority(senderReopened,
@@ -115,6 +138,7 @@ async function pairedProcessLifetime(executable, offerer, answerer, receipts, ow
       (op, fields) => second.request(op, fields, performance.now() + api.budget()),
       work.text, work.handle, work.recordId);
     if (!before) throw new Error("pending_not_reopened");
+    stage("replay_and_conflict");
     const replay = await second.request("message.enqueue", params, performance.now() + api.budget(), work.key);
     if (replay.accepted !== true || replay.message !== work.handle) throw new Error("replay_handle_changed");
     try {
@@ -130,12 +154,15 @@ async function pairedProcessLifetime(executable, offerer, answerer, receipts, ow
     if (!after || after.handle !== before.handle || after.recordId !== before.recordId) {
       throw new Error("duplicate_after_replay");
     }
+    stage("second_helper_stop");
     await second.closeInput(performance.now() + api.budget());
     positiveHelpers++;
     second = null;
 
+    stage("receiver_reopen");
     receiverReopened = await reopen(receiver, executable, context);
     await authority(receiverReopened, parentRead(receiverReopened));
+    stage("delivery_receipt");
     await api.wait(async () => {
       const result = await senderReopened.client.request("message.query",
         { profile: senderReopened.profile, message: work.handle }, { timeoutMs: api.budget() });
@@ -150,6 +177,7 @@ async function pairedProcessLifetime(executable, offerer, answerer, receipts, ow
     if (inbound.length !== 1 || inbound[0].contact_id !== receiverReopened.contact.id
         || outbound.length !== 1 || outbound[0].id !== work.recordId
         || outbound[0].state !== "delivered") throw new Error("receipt_records_changed");
+    stage("final_stop");
     await api.retire(receiverReopened);
     await api.retire(senderReopened);
     if (positiveHelpers !== 2 || owned.filter(peer => !peer.rejected && peer.retired).length !== 4) {
@@ -170,13 +198,18 @@ async function pairedProcessLifetime(executable, offerer, answerer, receipts, ow
 async function main(args) {
   const started = performance.now();
   let phase = "arguments";
+  let stage = "initial_pairing";
   try {
     if (args.length !== 4 || args[0] !== "--runtime" || args[2] !== "--data-directory"
         || process.platform !== "win32" || !isAbsolute(args[1]) || !isAbsolute(args[3])) {
       throw new Error("arguments");
     }
     phase = "paired_process_recovery";
-    const paired = await runPairing(args[1], args[3], { afterPaired: pairedProcessLifetime, totalMs: TOTAL_MS });
+    const paired = await runPairing(args[1], args[3], {
+      afterPaired: (...values) => pairedProcessLifetime(...values, value => { stage = value; }),
+      totalMs: TOTAL_MS,
+    });
+    stage = "success_contract";
     const duration = Math.floor(performance.now() - started);
     if (duration < 0 || duration >= TOTAL_MS || paired.fresh_profiles !== 2
         || paired.explicit_contact_decisions !== 2 || paired.authenticated_receipts !== 2
@@ -201,8 +234,9 @@ async function main(args) {
       positive_owner_exits: paired.clean_host_exits,
       positive_helper_exits: paired.positive_helper_exits,
     }, duration_ms: duration };
-  } catch {
+  } catch (error) {
     return { v: 1, passed: false, scope: SCOPE, phase,
+      stage: phase === "arguments" ? "arguments" : stage, cause: fixedCause(error),
       duration_ms: Math.min(TOTAL_MS, Math.max(0, Math.floor(performance.now() - started))) };
   }
 }

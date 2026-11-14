@@ -12,7 +12,7 @@ import time
 from uuid import uuid4
 
 import check_independent_core_consumers as bootstrap
-from check_windows_separate_process_consumer import run_fixture
+from check_windows_separate_process_consumer import FixtureExecutionFailure, run_fixture
 from native_windows_evidence import require_unchanged
 from stage_core_sdk import tools
 from stage_independent_core_consumers import ROOT, cleanup, digest, install_typescript, outside_directory
@@ -42,6 +42,23 @@ CHECKS = {**FIXTURE_CHECKS, "efs_profile_directories": 2, "efs_vault_files": 2}
 MAX_STDOUT = 4096
 FIXTURE_SECONDS = 360
 TOTAL_SECONDS = 600
+FIXTURE_FAILURE_STAGES = frozenset({
+    "arguments", "initial_pairing", "initial_authority", "receiver_stop", "first_helper",
+    "enqueue_and_pending", "first_helper_stop", "sender_stop", "sender_reopen", "second_helper",
+    "replay_and_conflict", "second_helper_stop", "receiver_reopen", "delivery_receipt",
+    "final_stop", "success_contract",
+})
+FIXTURE_FAILURE_CAUSES = frozenset({
+    "public_rows", "duplicate_public_record", "public_capabilities", "public_authority_changed",
+    "message_page", "duplicate_outbound", "pending_record_changed", "owner_session_count",
+    "helper_identity", "reply_not_discarded", "pending_not_reopened", "replay_handle_changed",
+    "changed_payload_accepted", "duplicate_after_replay", "receipt_records_changed", "retirement_count",
+    "paired_contract", "helper_deadline", "helper_closed", "helper_process_error", "helper_output",
+    "helper_reply", "helper_output_closed", "helper_unavailable", "helper_frame_budget",
+    "helper_write", "helper_request_pending", "helper_exit", "public_pairing_deadline",
+    "pairing_retired", "retirement_incomplete", "client_detach_incomplete", "helper_core_error",
+    "unavailable",
+})
 
 
 def _unique_object(pairs):
@@ -74,6 +91,31 @@ def fixture_result(raw):
             or not 0 <= value["duration_ms"] < FIXTURE_SECONDS * 1000):
         raise ValueError("fixture_result")
     return value
+
+
+def fixture_failure(raw):
+    """Extract fixed failure labels only from one bounded, exact child frame."""
+    try:
+        if (type(raw) is not bytes or not 0 < len(raw) <= MAX_STDOUT
+                or raw.count(b"\n") != 1 or not raw.endswith(b"\n")):
+            return None
+        value = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_object,
+                           parse_constant=_reject_constant)
+        if (type(value) is not dict
+                or set(value) != {"v", "passed", "scope", "phase", "stage", "cause", "duration_ms"}
+                or type(value["v"]) is not int or value["v"] != 1 or value["passed"] is not False
+                or value["scope"] != FIXTURE_SCOPE
+                or type(value["phase"]) is not str
+                or value["phase"] not in {"arguments", "paired_process_recovery"}
+                or type(value["stage"]) is not str or value["stage"] not in FIXTURE_FAILURE_STAGES
+                or (value["phase"] == "arguments") != (value["stage"] == "arguments")
+                or type(value["cause"]) is not str or value["cause"] not in FIXTURE_FAILURE_CAUSES
+                or type(value["duration_ms"]) is not int
+                or not 0 <= value["duration_ms"] <= FIXTURE_SECONDS * 1000):
+            return None
+        return {"stage": value["stage"], "cause": value["cause"]}
+    except (ValueError, UnicodeError, TypeError):
+        return None
 
 
 def verify_report(record, source, tree):
@@ -144,7 +186,8 @@ def run(expected_source, *, bootstrap_report=None, temporary_root=None):
         phase = "paired_process_execution"
         data = directory / "app-data"
         observed = fixture_result(run_fixture(node, directory, runtime, data, deadline,
-                                              fixture="paired_process_recovery"))
+                                              fixture="paired_process_recovery",
+                                              failure_parser=fixture_failure))
         phase = "protected_profiles"
         for role in ("offerer", "answerer"):
             protection = bootstrap.protected_profile(data / role)
@@ -181,6 +224,11 @@ def run(expected_source, *, bootstrap_report=None, temporary_root=None):
         result.update(phase=phase, failure_type=type(failure).__name__,
                       workspace_retained=directory is not None and directory.is_dir(),
                       duration_seconds=min(max(0, time.monotonic() - started), TOTAL_SECONDS + 60))
+        detail = failure.failure_detail if isinstance(failure, FixtureExecutionFailure) else None
+        if (type(detail) is dict and set(detail) == {"stage", "cause"}
+                and type(detail["stage"]) is str and detail["stage"] in FIXTURE_FAILURE_STAGES
+                and type(detail["cause"]) is str and detail["cause"] in FIXTURE_FAILURE_CAUSES):
+            result.update(fixture_stage=detail["stage"], fixture_cause=detail["cause"])
     return result
 
 

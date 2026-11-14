@@ -1,6 +1,7 @@
 """Distinct installed paired-process recovery producer and evidence contract."""
 
 import copy
+import io
 import json
 from pathlib import Path
 import sys
@@ -22,6 +23,12 @@ def fixture_bytes():
                        separators=(",", ":")) + "\n").encode()
 
 
+def failure_bytes(stage="enqueue_and_pending", cause="pending_record_changed"):
+    return (json.dumps({"v": 1, "passed": False, "scope": producer.FIXTURE_SCOPE,
+                        "phase": "paired_process_recovery", "stage": stage, "cause": cause,
+                        "duration_ms": 71}, separators=(",", ":")) + "\n").encode()
+
+
 def test_fixture_frame_requires_exact_bounded_delivered_recovery():
     assert producer.fixture_result(fixture_bytes())["checks"] == producer.FIXTURE_CHECKS
     for raw in (fixture_bytes() + b"extra\n", fixture_bytes().rstrip(b"\n"),
@@ -33,6 +40,40 @@ def test_fixture_frame_requires_exact_bounded_delivered_recovery():
                 b"PRIVATE_MESSAGE\n", b"x" * (producer.MAX_STDOUT + 1)):
         with pytest.raises((ValueError, UnicodeError)):
             producer.fixture_result(raw)
+
+
+def test_failed_fixture_frame_selects_only_fixed_stage_and_cause():
+    assert producer.fixture_failure(failure_bytes()) == {
+        "stage": "enqueue_and_pending", "cause": "pending_record_changed"}
+    for raw in (failure_bytes() + b"extra\n", failure_bytes().rstrip(b"\n"),
+                failure_bytes().replace(b'"v":1', b'"v":1,"v":1'),
+                failure_bytes().replace(b'"passed":false', b'"passed":true'),
+                failure_bytes().replace(b'"stage":"enqueue_and_pending"', b'"stage":"PRIVATE_PATH"'),
+                failure_bytes().replace(b'"cause":"pending_record_changed"', b'"cause":"PRIVATE_TEXT"'),
+                failure_bytes().replace(b'"duration_ms":71', b'"duration_ms":360001'),
+                failure_bytes().replace(b'"phase":"paired_process_recovery"', b'"phase":"arguments"'),
+                failure_bytes().replace(b'"duration_ms":71', b'"duration_ms":71,"text":"PRIVATE"'),
+                b"PRIVATE_MESSAGE\n", b"x" * (producer.MAX_STDOUT + 1)):
+        assert producer.fixture_failure(raw) is None
+
+
+@pytest.mark.parametrize("stderr", [b"", b"PRIVATE_STDERR"])
+def test_selected_runner_retains_only_valid_failure_labels_with_empty_stderr(tmp_path, monkeypatch, stderr):
+    class Child:
+        returncode = 1
+        def __init__(self):
+            self.stdout = io.BytesIO(failure_bytes())
+            self.stderr = io.BytesIO(stderr)
+        def poll(self): return self.returncode
+        def wait(self, timeout): return self.returncode
+    monkeypatch.setattr(child_runner.subprocess, "Popen", lambda *args, **kwargs: Child())
+    with pytest.raises(child_runner.FixtureExecutionFailure) as caught:
+        child_runner.run_fixture("node", tmp_path, tmp_path / "host.exe", tmp_path / "data",
+                                 time.monotonic() + 10, fixture="paired_process_recovery",
+                                 failure_parser=producer.fixture_failure)
+    assert caught.value.failure_detail == (
+        {"stage": "enqueue_and_pending", "cause": "pending_record_changed"} if not stderr else None)
+    assert "PRIVATE" not in str(caught.value)
 
 
 def test_selected_outer_budget_preserves_full_inner_recovery_window(tmp_path, monkeypatch):
@@ -103,8 +144,9 @@ def prepared_run(tmp_path, monkeypatch, *, execution=None, staged=True):
         events.append("efs:" + data.name)
         return {"efs_profile_directory": True, "efs_vault_file": True}
     monkeypatch.setattr(producer.bootstrap, "protected_profile", protected)
-    def exercise(node, directory, runtime, data, deadline, *, fixture):
+    def exercise(node, directory, runtime, data, deadline, *, fixture, failure_parser):
         assert fixture == "paired_process_recovery"
+        assert failure_parser is producer.fixture_failure
         assert runtime == directory / binary.name and data == directory / "app-data"
         events.append("child_retired")
         return execution(runtime) if execution else fixture_bytes()
@@ -139,6 +181,30 @@ def test_failure_or_uncertain_result_retains_workspace(tmp_path, monkeypatch):
     assert result2["passed"] is False and result2["phase"] == "paired_process_execution"
     assert result2["workspace_retained"] is True and workspace2.is_dir()
     assert "cleanup" not in events2 and "PRIVATE_TIMEOUT" not in json.dumps(result2)
+
+
+def test_valid_fixed_failure_detail_survives_producer_without_content(tmp_path, monkeypatch):
+    def failed(_runtime):
+        raise child_runner.FixtureExecutionFailure(None, producer.fixture_failure(failure_bytes()))
+    report, workspace, events = prepared_run(tmp_path, monkeypatch, execution=failed)
+    result = producer.run("a" * 40, bootstrap_report=report, temporary_root=tmp_path)
+    assert result["passed"] is False and result["phase"] == "paired_process_execution"
+    assert result["failure_type"] == "FixtureExecutionFailure"
+    assert result["fixture_stage"] == "enqueue_and_pending"
+    assert result["fixture_cause"] == "pending_record_changed"
+    assert result["workspace_retained"] is True and workspace.is_dir()
+    assert "cleanup" not in events and "PRIVATE" not in json.dumps(result)
+
+
+def test_unvalidated_failure_detail_cannot_enter_producer_report(tmp_path, monkeypatch):
+    def failed(_runtime):
+        raise child_runner.FixtureExecutionFailure(None, {"stage": "PRIVATE_PATH",
+                                                       "cause": "pending_record_changed"})
+    report, workspace, _ = prepared_run(tmp_path, monkeypatch, execution=failed)
+    result = producer.run("a" * 40, bootstrap_report=report, temporary_root=tmp_path)
+    assert result["passed"] is False and result["workspace_retained"] is True and workspace.is_dir()
+    assert "fixture_stage" not in result and "fixture_cause" not in result
+    assert "PRIVATE" not in json.dumps(result)
 
 
 def test_missing_staged_fixture_or_efs_proof_refuses_success(tmp_path, monkeypatch):

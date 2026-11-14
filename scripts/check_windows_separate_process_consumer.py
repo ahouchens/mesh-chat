@@ -92,9 +92,10 @@ def fixture_failure(raw):
 
 
 class FixtureExecutionFailure(ValueError):
-    def __init__(self, failure_phase=None):
+    def __init__(self, failure_phase=None, failure_detail=None):
         super().__init__("fixture_process")
         self.failure_phase = failure_phase
+        self.failure_detail = failure_detail
 
 
 class _Capture:
@@ -123,7 +124,8 @@ class _Capture:
                 self.fault.set()
 
 
-def run_fixture(node, directory, runtime, data, overall_deadline, *, fixture="separate_process"):
+def run_fixture(node, directory, runtime, data, overall_deadline, *, fixture="separate_process",
+                failure_parser=None):
     """Own exactly one child, its bounded readers and one monotonic retirement window."""
     # The image fixture owns a full 120-second inner window. Its outer process
     # needs room to finish that window before this runner's retirement reserve.
@@ -173,7 +175,13 @@ def run_fixture(node, directory, runtime, data, overall_deadline, *, fixture="se
         if process.returncode != 0:
             phase = (fixture_failure(bytes(output.data)) if fixture == "separate_process" and not error.data
                      else None)
-            raise FixtureExecutionFailure(phase)
+            detail = None
+            if fixture == "paired_process_recovery" and not error.data and callable(failure_parser):
+                try:
+                    detail = failure_parser(bytes(output.data))
+                except Exception:
+                    pass  # A malformed child frame cannot become diagnostic evidence.
+            raise FixtureExecutionFailure(phase, detail)
         if error.data:
             raise ValueError("fixture_process")
         return bytes(output.data)

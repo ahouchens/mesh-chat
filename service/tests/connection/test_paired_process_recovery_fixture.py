@@ -86,6 +86,7 @@ globalThis.__paired = {
   },
   async runPairing(_executable,_directory,{afterPaired,totalMs}) {
     if (totalMs!==360000) throw new Error('wrong bound');
+    if (process.env.PAIR_FAULT==='initial_pairing_timeout') throw new Error('public_pairing_deadline');
     const sender=peer('offerer'),receiver=peer('answerer'),owned=[sender,receiver];
     incarnation.offerer=incarnation.answerer=1;
     const api={
@@ -221,16 +222,30 @@ def test_distinct_children_discarded_reply_and_later_single_receipt(tmp_path):
     assert "HANDLE_ONE" not in completed.stdout and "RECORD_ONE" not in completed.stdout
 
 
-@pytest.mark.parametrize("fault", ["missing_pending", "duplicate_pending", "replay_new_handle",
+@pytest.mark.parametrize("fault", ["initial_pairing_timeout", "missing_pending", "duplicate_pending", "replay_new_handle",
                                    "conflict_accepted", "changed_trust", "no_receipt",
                                    "duplicate_inbound", "first_child_nonzero"])
 def test_mutated_public_observation_or_child_exit_cannot_pass(tmp_path, fault):
     completed, report, events, state = execute(tmp_path, fault)
     assert completed.returncode == 1
-    assert report["passed"] is False and set(report) == {"v", "passed", "scope", "phase", "duration_ms"}
+    assert report["passed"] is False and set(report) == {
+        "v", "passed", "scope", "phase", "stage", "cause", "duration_ms"}
+    expected = {
+        "initial_pairing_timeout": ("initial_pairing", "public_pairing_deadline"),
+        "missing_pending": ("enqueue_and_pending", "unavailable"),
+        "duplicate_pending": ("enqueue_and_pending", "duplicate_outbound"),
+        "replay_new_handle": ("replay_and_conflict", "replay_handle_changed"),
+        "conflict_accepted": ("replay_and_conflict", "changed_payload_accepted"),
+        "changed_trust": ("second_helper", "public_authority_changed"),
+        "no_receipt": ("delivery_receipt", "unavailable"),
+        "duplicate_inbound": ("delivery_receipt", "duplicate_public_record"),
+        "first_child_nonzero": ("first_helper_stop", "helper_exit"),
+    }
+    assert (report["stage"], report["cause"]) == expected[fault]
     assert "PRIVATE" not in completed.stdout + completed.stderr
-    assert any(item["event"] == "owner_exit" for item in events)
+    assert fault == "initial_pairing_timeout" or any(item["event"] == "owner_exit" for item in events)
     assert len([item for item in events if item["event"] == "owner_exit"]) == (
+        0 if fault == "initial_pairing_timeout" else
         2 + len([item for item in events if item["event"] == "owner_reopen"]))
     assert len([item for item in events if item["event"] == "child_start"]) == len(
         [item for item in events if item["event"] == "child_exit"])
