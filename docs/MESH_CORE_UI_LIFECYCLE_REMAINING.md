@@ -136,3 +136,30 @@ test file passed 195/195 on this commit; TypeScript build passed. This is UI
 component evidence only. Installed Windows and Android supported-facade flows,
 restart behavior and native/media coexistence remain open in the acceptance
 register.
+
+## Workspace channel creation retry checkpoint
+
+The next R3/R5 public Core mutation audit found a concrete uncertain-reply gap
+in `App.tsx`: channel creation generated a new operation ID on every submit.
+Core's keyed `workspace.channel_create` can replay the original result, while
+the workspace directory permits duplicate display names. A committed creation
+whose reply was lost could therefore be submitted again as a second channel.
+The new regression first failed on two distinct IDs for that exact retry.
+
+Commit `1a21455fd6b18b28f9c0bd40d7949f898bd1ed85` retains an ID only for
+an actually submitted channel creation intent, fingerprinted by workspace
+handle, name, topic, visibility and member handles. Retrying the same details
+after an uncertain reply, including after closing and reopening the dialog in
+the same Messenger profile lifetime, reuses that ID. Changed details receive a
+new ID without discarding the earlier uncertain intent. A definitive Core
+refusal or completed refresh retires its ID; a successful Core reply followed
+by refresh failure is shown as created but not yet opened. Late results after
+profile retirement cannot update the new view. No private host, media, native
+carrier or shared-owner call site changed.
+
+The two focused App regressions cover lost reply and dialog reopening, changed
+details, return to an earlier uncertain intent and definitive refusal. The
+complete `src/App.test.tsx` file passed 197/197 and the TypeScript build passed
+on this code commit. This remains component-level UI evidence. Installed
+Windows/Android supported-facade behavior, native restart, and media
+coexistence remain open.
