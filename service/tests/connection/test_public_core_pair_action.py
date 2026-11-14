@@ -53,6 +53,10 @@ raise SystemExit(7 if os.environ.get("MESH_TEST_FAIL") else 0)
     (root / "scripts/public_core_restart_controller.py").write_text(
         controller.read_text().replace('"role":a.role',
             '"scenario":os.environ.get("PUBLIC_PAIR_SCENARIO"),"role":a.role'), encoding="utf-8")
+    for name in ("public_core_partition_controller.py", "public_core_android_gateway_runtime.py"):
+        (root / "scripts" / name).write_text(
+            controller.read_text().replace('"role":a.role',
+                '"scenario":os.environ.get("PUBLIC_PAIR_SCENARIO"),"role":a.role'), encoding="utf-8")
     return script, root
 
 
@@ -174,3 +178,17 @@ def test_restart_routes_exact_controller_and_admission_without_fresh_report(tmp_
     assert report["source"] == "a" * 40
     assert report["serial"] == ("emulator-5554" if role == "android" else None)
     assert not (root / f"dist/reports/public-core-pair-{role}.json").exists()
+
+
+@pytest.mark.parametrize("role", ["windows", "android"])
+def test_partition_routes_exact_public_role_or_owned_gateway_without_other_reports(tmp_path, role):
+    script, root = action(tmp_path)
+    result = invoke(script, {**environment(role), "INPUT_SCENARIO": "partition",
+                             "PUBLIC_PAIR_SCENARIO": "untrusted-parent-value"})
+    assert result.returncode == 0 and result.stderr == ""
+    report = json.loads((root / f"dist/reports/public-core-partition-{role}.json").read_text())
+    assert report["scenario"] == "partition" and report["role"] == role
+    assert report["source"] == "a" * 40
+    assert report["serial"] == ("emulator-5554" if role == "android" else None)
+    assert not (root / f"dist/reports/public-core-pair-{role}.json").exists()
+    assert not (root / f"dist/reports/public-core-restart-{role}.json").exists()

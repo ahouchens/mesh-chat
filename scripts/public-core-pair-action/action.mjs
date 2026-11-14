@@ -10,7 +10,7 @@ function admitted() {
   const scenario = process.env.INPUT_SCENARIO || "fresh";
   const jobs = { windows: "windows_public", android: "android_public" };
   const serial = process.env["INPUT_DISPOSABLE-EMULATOR-SERIAL"] || "";
-  if (!["fresh", "owner_restart"].includes(scenario)
+  if (!["fresh", "owner_restart", "partition"].includes(scenario)
       || !Object.prototype.hasOwnProperty.call(jobs, role)
       || process.env.GITHUB_JOB !== jobs[role]
       || process.env.GITHUB_ACTIONS !== "true"
@@ -26,7 +26,7 @@ function admitted() {
   return { role, serial, scenario };
 }
 
-async function runExactChild(command, args, cwd, scenario) {
+async function runExactChild(command, args, cwd, scenario, role) {
   const child = spawn(command, args, {
     cwd, env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1", PUBLIC_PAIR_SCENARIO: scenario },
     stdio: ["ignore", "pipe", "pipe"], windowsHide: true,
@@ -47,6 +47,8 @@ async function runExactChild(command, args, cwd, scenario) {
       clearTimeout(retirement);
       resolve({ ...result, expired, spawnFailed });
     };
+    // The partition's owned namespace includes emulator boot before the
+    // unchanged 1200-second public controller and bounded teardown.
     const controller = setTimeout(() => {
       expired = true;
       try { child.kill(); } catch { /* Exact child may already have exited. */ }
@@ -57,7 +59,7 @@ async function runExactChild(command, args, cwd, scenario) {
         child.unref();
         finish({ closed: false, code: null });
       }, RETIREMENT_MS);
-    }, CONTROLLER_MS);
+    }, scenario === "partition" && role === "android" ? 2_100_000 : CONTROLLER_MS);
     child.once("close", code => finish({ closed: true, code }));
   });
   return outcome.closed && !outcome.expired && !outcome.spawnFailed && outcome.code === 0;
@@ -67,14 +69,16 @@ try {
   const { role, serial, scenario } = admitted();
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
   const restart = scenario === "owner_restart";
-  const controller = path.join(root, restart
-    ? "scripts/public_core_restart_controller.py" : "scripts/public_core_pair_controller.py");
-  const prefix = restart ? "public-core-restart" : "public-core-pair";
+  const partition = scenario === "partition";
+  const controller = path.join(root, partition
+    ? role === "android" ? "scripts/public_core_android_gateway_runtime.py" : "scripts/public_core_partition_controller.py"
+    : restart ? "scripts/public_core_restart_controller.py" : "scripts/public_core_pair_controller.py");
+  const prefix = partition ? "public-core-partition" : restart ? "public-core-restart" : "public-core-pair";
   const output = path.join(root, `dist/reports/${prefix}-${role}.json`);
   const args = [controller, "--role", role, "--expected-source", process.env.GITHUB_SHA,
     "--output", output];
   if (role === "android") args.push("--disposable-emulator-serial", serial);
-  const passed = await runExactChild(process.env.INPUT_PYTHON || "python", args, root, scenario);
+  const passed = await runExactChild(process.env.INPUT_PYTHON || "python", args, root, scenario, role);
   process.stdout.write(`Public Core pair ${role} controller ${passed ? "passed" : "failed"}.\n`);
   if (!passed) process.exitCode = 1;
 } catch {

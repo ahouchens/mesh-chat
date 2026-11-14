@@ -1,0 +1,166 @@
+name: Installed public Windows Android partition diagnostic
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: public-core-partition-diagnostic-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verification:
+    uses: ./.github/workflows/ci.yml
+    with:
+      public_pair_producer: true
+
+  android:
+    uses: ./.github/workflows/android-webrtc.yml
+    with:
+      public_pair_producer: true
+
+  windows_public:
+    name: Installed public Windows partition role
+    needs: [verification, android]
+    if: ${{ needs.verification.result == 'success' && needs.android.result == 'success' }}
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: service/requirements-dev.lock
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - run: python -m pip install --disable-pip-version-check -r service/requirements-dev.lock
+      - run: npm ci --ignore-scripts --prefix scripts/native-interop-artifact
+      - uses: actions/download-artifact@v4
+        with:
+          name: desktop-transport-${{ github.sha }}
+          path: dist/reports
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-windows-tested-${{ github.sha }}
+          path: .
+      - name: Run installed Windows public partition role
+        uses: ./scripts/public-core-pair-action
+        with:
+          role: windows
+          scenario: partition
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: public-core-partition-windows-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            dist/reports/public-core-partition-windows.json
+            dist/reports/windows-independent-bootstrap.json
+          if-no-files-found: error
+          retention-days: 14
+
+  android_public:
+    name: Installed public Android partition role on owned KVM namespace
+    needs: [verification, android]
+    if: ${{ needs.verification.result == 'success' && needs.android.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: service/requirements-dev.lock
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v4
+      - run: python -m pip install --disable-pip-version-check -r service/requirements-dev.lock
+      - run: npm ci --ignore-scripts --prefix scripts/native-interop-artifact
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-webrtc-debug
+          path: .
+      - name: Enable KVM for the owned disposable emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Install the pinned KVM system image
+        run: sdkmanager "emulator" "platform-tools" "system-images;android-35;google_apis;x86_64"
+      - name: Run public Android partition role inside the owned gateway
+        uses: ./scripts/public-core-pair-action
+        with:
+          role: android
+          scenario: partition
+          disposable-emulator-serial: emulator-5554
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: public-core-partition-android-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            dist/reports/public-core-partition-android.json
+            dist/reports/android-independent-distribution.json
+          if-no-files-found: error
+          retention-days: 14
+
+  public_pair_check:
+    name: Check same-run installed public partition only
+    needs: [verification, android, windows_public, android_public]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - run: python -m pip install --disable-pip-version-check -r service/requirements-dev.lock
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: public-core-partition-windows-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist/qualification/public-partition/windows
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: public-core-partition-android-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist/qualification/public-partition/android
+      - name: Check public partition diagnostic only
+        env:
+          PUBLIC_PAIR_SCENARIO: partition
+          PUBLIC_PAIR_NEEDS: ${{ toJSON(needs) }}
+        run: >-
+          python scripts/check_public_core_partition.py
+          --expected-source "${{ github.sha }}"
+          --windows-report dist/qualification/public-partition/windows/public-core-partition-windows.json
+          --android-report dist/qualification/public-partition/android/public-core-partition-android.json
+          --windows-bootstrap dist/qualification/public-partition/windows/windows-independent-bootstrap.json
+          --android-distribution dist/qualification/public-partition/android/android-independent-distribution.json
+          --output dist/reports/public-core-partition-summary.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: public-core-partition-summary-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist/reports/public-core-partition-summary.json
+          if-no-files-found: error
+          retention-days: 14

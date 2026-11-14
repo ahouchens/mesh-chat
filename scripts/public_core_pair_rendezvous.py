@@ -24,7 +24,10 @@ JOBS = {"windows": "windows_public", "android": "android_public"}
 SENDERS = {"offer_code": {"windows"}, "invitation_accepted": {"android"},
            "approved": {"windows"}, "ready": set(JOBS), "done": set(JOBS),
            "owner_stopped": {"windows"}, "android_continuous": {"android"},
-           "owner_reopened": {"windows"}, "restart_ready": set(JOBS), "restart_done": set(JOBS)}
+           "owner_reopened": {"windows"}, "restart_ready": set(JOBS), "restart_done": set(JOBS),
+           "partition_ready": set(JOBS), "partition_blocked": {"android"},
+           "partition_checked": set(JOBS), "partition_restored": {"android"},
+           "partition_done": set(JOBS)}
 PHASES = frozenset(SENDERS)
 DOMAIN = b"public-core-pair:v1:"
 KEY_TTL = 1800
