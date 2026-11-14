@@ -3,12 +3,24 @@ name: Android native cold restart diagnostic
 on:
   workflow_call:
     inputs:
+      probe:
+        description: Reopen packaged peer or compare emulator boot launchers
+        required: false
+        type: string
+        default: reopen
       repetitions:
         description: Independent emulator runs (1 to 3, declared before execution)
-        required: true
+        required: false
         type: number
+        default: 1
   workflow_dispatch:
     inputs:
+      probe:
+        description: Reopen packaged peer or compare emulator boot launchers
+        required: false
+        type: choice
+        options: [reopen, boot_comparison]
+        default: reopen
       repetitions:
         description: Independent emulator runs (1 to 3, declared before execution)
         required: true
@@ -20,12 +32,20 @@ permissions:
 
 jobs:
   android_restart_diagnostic:
-    name: Packaged Android reopen diagnostic only
+    name: Focused Android restart diagnostic only
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
+      - name: Validate diagnostic mode
+        env:
+          RESTART_PROBE: ${{ inputs.probe }}
+          RESTART_REPETITIONS: ${{ inputs.repetitions }}
+        run: |
+          if [[ "$RESTART_PROBE" != "reopen" && "$RESTART_PROBE" != "boot_comparison" ]]; then exit 1; fi
+          if [[ "$RESTART_PROBE" == "boot_comparison" && "$RESTART_REPETITIONS" != "1" ]]; then exit 1; fi
       - uses: pnpm/setup@v3
+        if: ${{ inputs.probe == 'reopen' }}
         with:
           version: 11.25.0
           runtime: node@24
@@ -40,7 +60,9 @@ jobs:
           java-version: '21'
       - uses: android-actions/setup-android@v4
       - uses: gradle/actions/setup-gradle@v4
+        if: ${{ inputs.probe == 'reopen' }}
       - name: Install the qualification Android SDK and NDK
+        if: ${{ inputs.probe == 'reopen' }}
         shell: bash
         run: |
           yes | sdkmanager --licenses >/dev/null || true
@@ -48,28 +70,37 @@ jobs:
           echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/28.2.13676358" >> "$GITHUB_ENV"
           echo "NDK_HOME=$ANDROID_SDK_ROOT/ndk/28.2.13676358" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@1.90.0
+        if: ${{ inputs.probe == 'reopen' }}
         with:
           targets: aarch64-linux-android
       - uses: Swatinem/rust-cache@v2
+        if: ${{ inputs.probe == 'reopen' }}
         with:
           workspaces: src-tauri -> target
           shared-key: pr-android-arm64-debug
           cache-on-failure: true
-      - run: pnpm install --frozen-lockfile
-      - run: python -m pip install --disable-pip-version-check -r service/requirements-dev.lock
+      - if: ${{ inputs.probe == 'reopen' }}
+        run: pnpm install --frozen-lockfile
+      - if: ${{ inputs.probe == 'reopen' }}
+        run: python -m pip install --disable-pip-version-check -r service/requirements-dev.lock
       - name: Build the same-source Android app
+        if: ${{ inputs.probe == 'reopen' }}
         run: python scripts/build_android.py
       - name: Build the existing optimized native host
+        if: ${{ inputs.probe == 'reopen' }}
         working-directory: src-tauri/gen/android
         run: ./gradlew :webrtc-smoke:assembleRelease -PmeshWebRtcSmoke=true -PmeshRuntimeAbis=x86_64 --no-configuration-cache
       - name: Verify optimized WebRTC JNI classes
+        if: ${{ inputs.probe == 'reopen' }}
         run: python scripts/verify_android_webrtc.py plugins/tauri-plugin-mesh-runtime/android/webrtc-smoke/build/outputs/apk/release/webrtc-smoke-release.apk
       - name: Build the existing instrumentation host
+        if: ${{ inputs.probe == 'reopen' }}
         working-directory: src-tauri/gen/android
         run: |
           node ../../../scripts/build_desktop_transport_fixture.mjs
           ./gradlew :webrtc-smoke:assembleReleaseAndroidTest -PmeshWebRtcSmoke=true -PmeshRuntimeAbis=x86_64 --no-configuration-cache
       - name: Free disk for the emulator system image
+        if: ${{ inputs.probe == 'reopen' }}
         run: |
           df -h
           rm -rf "$ANDROID_SDK_ROOT/ndk/28.2.13676358" || true
@@ -84,12 +115,19 @@ jobs:
       - name: Install the native peer system image
         run: sdkmanager "emulator" "platform-tools" "system-images;android-35;google_apis;x86_64"
       - name: Run bounded reopen observations
+        if: ${{ inputs.probe == 'reopen' }}
         env:
           RESTART_REPETITIONS: ${{ inputs.repetitions }}
         run: >-
           python -B scripts/native_restart_diagnostic.py
           --expected-source "$GITHUB_SHA"
           --repetitions "$RESTART_REPETITIONS"
+          --output dist/reports/native-restart-diagnostic.json
+      - name: Compare emulator boot launchers
+        if: ${{ inputs.probe == 'boot_comparison' }}
+        run: >-
+          python -B scripts/native_emulator_boot_diagnostic.py
+          --expected-source "$GITHUB_SHA"
           --output dist/reports/native-restart-diagnostic.json
       - name: Retain every diagnostic result
         if: always()

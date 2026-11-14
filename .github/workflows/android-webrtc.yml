@@ -15,10 +15,16 @@ on:
         required: false
         default: false
       restart_diagnostic:
-        description: Packaged Android cold reopen diagnostic (not qualification)
+        description: Focused Android restart diagnostic (not qualification)
         type: boolean
         required: false
         default: false
+      restart_probe:
+        description: Reopen packaged peer or compare emulator boot launchers
+        type: choice
+        options: [reopen, boot_comparison]
+        required: false
+        default: reopen
       restart_repetitions:
         description: Independent restart attempts (1 to 3)
         type: number
@@ -29,7 +35,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: android-webrtc-${{ github.ref }}${{ github.event_name == 'workflow_dispatch' && inputs.restart_diagnostic && '-restart' || github.event_name == 'workflow_dispatch' && inputs.gateway_probe && '-gateway' || github.event_name == 'workflow_dispatch' && inputs.network_inventory && '-inventory' || '' }}
+  group: android-webrtc-${{ github.ref }}${{ github.event_name == 'workflow_dispatch' && ((inputs.restart_diagnostic && (inputs.gateway_probe || inputs.network_inventory)) || (inputs.gateway_probe && inputs.network_inventory)) && '-conflict' || github.event_name == 'workflow_dispatch' && inputs.restart_diagnostic && '-restart' || github.event_name == 'workflow_dispatch' && inputs.gateway_probe && '-gateway' || github.event_name == 'workflow_dispatch' && inputs.network_inventory && '-inventory' || '' }}
   cancel-in-progress: true
 
 jobs:
@@ -210,8 +216,9 @@ jobs:
           retention-days: 14
 
   restart_diagnostic:
-    name: Packaged Android reopen diagnostic only
+    name: Focused Android restart diagnostic only
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.restart_diagnostic && !inputs.network_inventory && !inputs.gateway_probe }}
     uses: ./.github/workflows/native-restart-diagnostic.yml
     with:
+      probe: ${{ inputs.restart_probe }}
       repetitions: ${{ inputs.restart_repetitions }}

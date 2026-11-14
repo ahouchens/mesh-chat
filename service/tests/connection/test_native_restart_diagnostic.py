@@ -80,7 +80,7 @@ def attempt(*, fail_reopen=False, fail_cleanup=False):
 def test_reopen_uses_packaged_peer_lifecycle_and_retains_only_comparisons():
     result, events = attempt()
     assert result["passed"] is True
-    assert result["reopen"] == {"service_replaced": True, "profile_authority_preserved": True,
+    assert result["reopen"] == {"service_replaced": True, "profile_handle_preserved": True,
                                 "identity_preserved": True}
     assert events == ["emulator_start", "peer_start", "crash_stop", "peer_start",
                       "clean_stop", "emulator_close"]
@@ -97,13 +97,64 @@ def test_reopen_failure_precedes_cleanup_failure_and_keeps_both():
     assert "PRIVATE" not in json.dumps(result)
 
 
+def test_in_progress_observation_retains_primary_before_cleanup():
+    events, observations = [], []
+    peer = FakePeer(events, fail_reopen=True, fail_cleanup=True)
+    result = diagnostic.run_attempt(1, emulator_factory=lambda: FakeEmulator(events),
+        peer_factory=lambda _key: peer, observe=lambda value: observations.append(
+            json.loads(json.dumps(value))))
+    initial = next(item for item in observations if item["stage"] == "peer_reopen"
+                   and "primary_failure" in item)
+    assert initial["primary_failure"]["error_code"] == "android_host_start_failed"
+    cleanup = next(item for item in observations if item["stage"] == "peer_cleanup"
+                   and "cleanup_failures" in item)
+    assert cleanup["primary_failure"] == initial["primary_failure"]
+    assert cleanup["cleanup_failures"][0]["stage"] == "peer_cleanup"
+    assert result["retirement_verified"] is False
+    assert "PRIVATE" not in json.dumps(observations)
+
+
+def test_emulator_retirement_failure_is_not_reusable():
+    events = []
+    class UnretiredEmulator(FakeEmulator):
+        def close(self):
+            self.events.append("emulator_close")
+            raise RuntimeError("PRIVATE_EMULATOR_DETAIL")
+    result = diagnostic.run_attempt(1, emulator_factory=lambda: UnretiredEmulator(events),
+        peer_factory=lambda _key: FakePeer(events))
+    assert result["retirement_verified"] is False and result["passed"] is False
+    assert [item["stage"] for item in result["cleanup_failures"]] == ["emulator_cleanup"]
+    assert "PRIVATE" not in json.dumps(result)
+
+
+def test_atomic_report_replacement_keeps_prior_checkpoint_on_error(tmp_path, monkeypatch):
+    path = tmp_path / "diagnostic.json"
+    diagnostic.write_report(path, {"v": 1, "passed": False, "current_attempt": None})
+    original = path.read_bytes()
+    def fail_replace(*_):
+        raise OSError("PRIVATE_REPLACE_DETAIL")
+    with monkeypatch.context() as patch:
+        patch.setattr(diagnostic.os, "replace", fail_replace)
+        with pytest.raises(OSError):
+            diagnostic.write_report(path, {"v": 1, "passed": False,
+                "current_attempt": {"index": 2, "stage": "peer_reopen"}})
+    assert path.read_bytes() == original
+    assert list(tmp_path.iterdir()) == [path]
+    with monkeypatch.context() as patch:
+        patch.setattr(diagnostic, "MAX_REPORT_BYTES", 8)
+        with pytest.raises(ValueError, match="budget"):
+            diagnostic.write_report(path, {"v": 1, "passed": True})
+    assert path.read_bytes() == original
+
+
 def test_all_declared_attempts_remain_diagnostic_only(monkeypatch):
     source = "a" * 40
     bindings = {"source_commit": source, "source_tree": "b" * 40,
                 "source_blobs": {"scripts/native_restart_diagnostic.py": "c" * 40}}
     monkeypatch.setattr(diagnostic, "source_binding", lambda _: bindings)
     monkeypatch.setattr(diagnostic, "artifact_binding", lambda: {"host.apk": "d" * 64})
-    monkeypatch.setattr(diagnostic, "run_attempt", lambda index: {"index": index, "passed": index != 2})
+    monkeypatch.setattr(diagnostic, "run_attempt", lambda index, observe=None:
+        {"index": index, "passed": index != 2, "retirement_verified": True})
     for key, value in {"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "workflow_dispatch",
                        "GITHUB_JOB": "android_restart_diagnostic", "GITHUB_SHA": source,
                        "GITHUB_REPOSITORY": "ahouchens/mesh-chat", "GITHUB_RUN_ID": "123",
@@ -117,6 +168,71 @@ def test_all_declared_attempts_remain_diagnostic_only(monkeypatch):
     assert "native_interop" not in report["evidence_level"]
 
 
+def test_checkpoints_preserve_completed_and_in_progress_attempts_then_block(tmp_path, monkeypatch):
+    source, executed = "a" * 40, []
+    monkeypatch.setattr(diagnostic, "source_binding", lambda _: {"source_commit": source,
+        "source_tree": "b" * 40, "source_blobs": {}})
+    monkeypatch.setattr(diagnostic, "artifact_binding", lambda: {"host.apk": "c" * 64})
+    def attempt(index, observe=None):
+        executed.append(index)
+        observe({"index": index, "stage": "peer_start"})
+        observe({"index": index, "stage": "peer_reopen"})
+        return {"index": index, "passed": index == 1, "retirement_verified": index == 1}
+    monkeypatch.setattr(diagnostic, "run_attempt", attempt)
+    for key, value in {"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "workflow_dispatch",
+                       "GITHUB_JOB": "android_restart_diagnostic", "GITHUB_SHA": source,
+                       "GITHUB_REPOSITORY": "ahouchens/mesh-chat", "GITHUB_RUN_ID": "123",
+                       "GITHUB_RUN_ATTEMPT": "1"}.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(diagnostic.sys, "platform", "linux")
+    path, snapshots = tmp_path / "report.json", []
+    def checkpoint(report):
+        diagnostic.write_report(path, report)
+        snapshots.append(json.loads(path.read_text()))
+    report = diagnostic.run(source, 3, checkpoint=checkpoint)
+    assert snapshots[0]["attempts"] == [] and snapshots[0]["current_attempt"] is None
+    assert any(len(item["attempts"]) == 1 and item["current_attempt"] ==
+               {"index": 2, "stage": "peer_reopen"} for item in snapshots)
+    assert executed == [1, 2]
+    assert [item["index"] for item in report["attempts"]] == [1, 2, 3]
+    assert report["attempts"][2] == {"index": 3, "passed": False, "blocked": True,
+                                      "reason": "prior_retirement_unresolved", "retirement_verified": False}
+    assert json.loads(path.read_text()) == report
+    assert report["passed"] is False and report["current_attempt"] is None
+
+
+def test_checkpoint_failure_never_claims_success_or_starts_next_attempt(tmp_path, monkeypatch):
+    source, executed = "a" * 40, []
+    monkeypatch.setattr(diagnostic, "source_binding", lambda _: {"source_commit": source,
+        "source_tree": "b" * 40, "source_blobs": {}})
+    monkeypatch.setattr(diagnostic, "artifact_binding", lambda: {"host.apk": "c" * 64})
+    def attempt(index, observe=None):
+        executed.append(index)
+        observe({"index": index, "stage": "peer_reopen"})
+        return {"index": index, "passed": True, "retirement_verified": True}
+    monkeypatch.setattr(diagnostic, "run_attempt", attempt)
+    for key, value in {"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "workflow_dispatch",
+                       "GITHUB_JOB": "android_restart_diagnostic", "GITHUB_SHA": source,
+                       "GITHUB_REPOSITORY": "ahouchens/mesh-chat", "GITHUB_RUN_ID": "123",
+                       "GITHUB_RUN_ATTEMPT": "1"}.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(diagnostic.sys, "platform", "linux")
+    path, failed = tmp_path / "report.json", False
+    def checkpoint(report):
+        nonlocal failed
+        current = report["current_attempt"]
+        if not failed and current == {"index": 1, "stage": "peer_reopen"}:
+            failed = True
+            raise OSError("PRIVATE_WRITE_DETAIL")
+        diagnostic.write_report(path, report)
+    report = diagnostic.run(source, 2, checkpoint=checkpoint)
+    assert executed == [1] and report["passed"] is False
+    assert report["runner_failure"]["stage"] == "report_checkpoint"
+    assert report["attempts"][1]["reason"] == "report_checkpoint_unavailable"
+    assert json.loads(path.read_text()) == report
+    assert "PRIVATE" not in path.read_text()
+
+
 def test_successful_reopen_cannot_enter_full_native_acceptance():
     source, tree = "a" * 40, "b" * 40
     focused = {"v": 1, "passed": True, "diagnostic_only": True,
@@ -127,15 +243,17 @@ def test_successful_reopen_cannot_enter_full_native_acceptance():
         verify_native_report(focused, source, tree, "android", workload="full")
 
 
-def test_unexpected_attempt_error_does_not_drop_declared_later_results(monkeypatch):
+def test_unexpected_attempt_error_blocks_later_repetitions(monkeypatch):
     source = "a" * 40
     monkeypatch.setattr(diagnostic, "source_binding", lambda _: {"source_commit": source,
         "source_tree": "b" * 40, "source_blobs": {}})
     monkeypatch.setattr(diagnostic, "artifact_binding", lambda: {"host.apk": "c" * 64})
-    def attempt(index):
+    executed = []
+    def attempt(index, observe=None):
+        executed.append(index)
         if index == 2:
             raise RuntimeError("PRIVATE_ATTEMPT_DETAIL")
-        return {"index": index, "passed": True}
+        return {"index": index, "passed": True, "retirement_verified": True}
     monkeypatch.setattr(diagnostic, "run_attempt", attempt)
     for key, value in {"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "workflow_dispatch",
                        "GITHUB_JOB": "android_restart_diagnostic", "GITHUB_SHA": source,
@@ -146,6 +264,7 @@ def test_unexpected_attempt_error_does_not_drop_declared_later_results(monkeypat
     report = diagnostic.run(source, 3)
     assert [item["index"] for item in report["attempts"]] == [1, 2, 3]
     assert report["attempts"][1]["primary_failure"]["exception_kind"] == "RuntimeError"
+    assert report["attempts"][2]["blocked"] is True and executed == [1, 2]
     assert report["passed"] is False and "PRIVATE" not in json.dumps(report)
 
 
@@ -178,6 +297,9 @@ def test_workflow_is_manual_and_keeps_diagnostic_artifact_separate():
     assert "native-interop-android-${{ github.sha }}" not in workflow
     assert "connection-qualification" not in workflow
     assert set(parsed["jobs"]) == {"android_restart_diagnostic"}
+    assert events["workflow_call"]["inputs"]["probe"]["default"] == "reopen"
+    assert events["workflow_call"]["inputs"]["repetitions"]["default"] == 1
+    assert events["workflow_dispatch"]["inputs"]["probe"]["options"] == ["reopen", "boot_comparison"]
 
 
 def expression_value(expression, event, **flags):
@@ -220,14 +342,24 @@ def test_android_workflow_call_keeps_ordinary_job_and_restart_is_isolated():
     assert selected_jobs(workflow, "workflow_call") == {"android"}
     assert workflow["jobs"]["restart_diagnostic"]["uses"] == "./.github/workflows/native-restart-diagnostic.yml"
     assert workflow["jobs"]["restart_diagnostic"]["with"]["repetitions"] == "${{ inputs.restart_repetitions }}"
+    assert workflow["jobs"]["restart_diagnostic"]["with"]["probe"] == "${{ inputs.restart_probe }}"
     inputs = workflow.get("on", workflow.get(True))["workflow_dispatch"]["inputs"]
     assert inputs["restart_diagnostic"]["default"] is False
     assert inputs["restart_repetitions"]["default"] == 1
+    assert inputs["restart_probe"]["default"] == "reopen"
+    assert inputs["restart_probe"]["options"] == ["reopen", "boot_comparison"]
     suffix = workflow["concurrency"]["group"].split("${{")[-1].removesuffix("}}")
     assert expression_value(suffix, "workflow_dispatch") == ""
     assert expression_value(suffix, "workflow_dispatch", restart_diagnostic=True) == "-restart"
     assert expression_value(suffix, "workflow_dispatch", gateway_probe=True) == "-gateway"
     assert expression_value(suffix, "workflow_dispatch", network_inventory=True) == "-inventory"
+    for flags in (
+        {"restart_diagnostic": True, "gateway_probe": True},
+        {"restart_diagnostic": True, "network_inventory": True},
+        {"gateway_probe": True, "network_inventory": True},
+        {"restart_diagnostic": True, "gateway_probe": True, "network_inventory": True},
+    ):
+        assert expression_value(suffix, "workflow_dispatch", **flags) == "-conflict"
 
 
 def test_diagnostic_uses_existing_android_package_recipe():
@@ -247,3 +379,30 @@ def test_diagnostic_uses_existing_android_package_recipe():
     ):
         assert focused[new]["run"] == ordinary[old]["run"]
         assert focused[new].get("working-directory") == ordinary[old].get("working-directory")
+
+
+def test_boot_comparison_skips_package_build_and_reopen_uses_only_its_runner():
+    path = Path(__file__).resolve().parents[3] / ".github/workflows/native-restart-diagnostic.yml"
+    steps = yaml.safe_load(path.read_text())["jobs"]["android_restart_diagnostic"]["steps"]
+    for step in steps:
+        name = step.get("name")
+        if name in {"Validate diagnostic mode", "Retain every diagnostic result"}:
+            continue
+        condition = step.get("if")
+        if condition is None:
+            assert step.get("uses") in {"actions/checkout@v7", "actions/setup-python@v7",
+                                        "actions/setup-java@v5", "android-actions/setup-android@v4"} or name in {
+                                            "Enable KVM for the packaged peer", "Install the native peer system image"}
+        else:
+            assert condition in {"${{ inputs.probe == 'reopen' }}", "${{ inputs.probe == 'boot_comparison' }}"}
+    boot = next(step for step in steps if step.get("name") == "Compare emulator boot launchers")
+    reopen = next(step for step in steps if step.get("name") == "Run bounded reopen observations")
+    assert "scripts/native_emulator_boot_diagnostic.py" in boot["run"]
+    assert "scripts/native_restart_diagnostic.py" in reopen["run"]
+    assert "--output dist/reports/native-restart-diagnostic.json" in boot["run"]
+    assert "--output dist/reports/native-restart-diagnostic.json" in reopen["run"]
+    assert boot["if"] == "${{ inputs.probe == 'boot_comparison' }}"
+    assert reopen["if"] == "${{ inputs.probe == 'reopen' }}"
+    admission = next(step for step in steps if step.get("name") == "Validate diagnostic mode")
+    assert '"$RESTART_PROBE" != "reopen"' in admission["run"]
+    assert '"$RESTART_PROBE" == "boot_comparison" && "$RESTART_REPETITIONS" != "1"' in admission["run"]
