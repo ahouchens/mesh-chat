@@ -16,7 +16,8 @@ APP_ID = "com.meshchat.core.independent"
 APPLICATION_FILES = ("settings.gradle.kts", "build.gradle.kts", "gradle.properties", "README.md",
     "app/build.gradle.kts", "app/src/main/AndroidManifest.xml",
     "app/src/main/java/com/meshchat/core/independent/ConsumerApplication.kt",
-    "app/src/androidTest/java/com/meshchat/core/independent/IndependentConsumerTest.kt")
+    "app/src/androidTest/java/com/meshchat/core/independent/IndependentConsumerTest.kt",
+    "app/src/androidTest/java/com/meshchat/core/independent/IndependentPublicSessionTest.kt")
 PUBLICATIONS = {
     f"repository/com/meshchat/{artifact}/{VERSION}/{artifact}-{VERSION}{suffix}":
         ROOT / producer / f"build/repository/com/meshchat/{artifact}/{VERSION}/{artifact}-{VERSION}{suffix}"

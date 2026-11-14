@@ -25,3 +25,24 @@ Packaging checks validate the Gradle API/runtime dependency variants, every
 advertised artifact hash, Python service assets, native libraries and merged
 service permissions. Component tests of these checks are separate from actual
 publication assembly, installation and instrumentation evidence in CI.
+
+The separate `scripts/check_android_independent_public_session.py` runner uses
+the verified APKs in `dist/android-independent-consumer`. It clears the installed
+app, starts one long-lived main-process instrumentation method, connects over a
+nonce-protected loopback port and exercises multiple requests through one own
+Binder `CoreClient`. The first executable phases prove fresh public state,
+profile creation, profile query, and explicit runtime shutdown. It writes
+`dist/reports/android-independent-public-session.json` with source and artifact
+hashes, phase results and cleanup status. This runner requires an Android device
+with ADB and the staged distribution report; it does not build APKs.
+
+The test-only port accepts length-prefixed UTF-8 JSON objects. After
+`{"id":"auth","action":"authenticate","nonce":"<64 lowercase hex>"}`,
+send monotonically numbered `request` objects with `id`, `step`, `operation`,
+`params` and an `idempotency_key` when the public operation requires one.
+`finish` carries the next step and ends the session. Frames are limited to
+65,536 bytes and 128 public requests. The operation allowlist includes public
+pairing begin/query/cancel, contact invitation and approval decisions,
+connection snapshot/start, and message enqueue/query/received for a later
+Windows peer controller. Those peer and message phases still need same-run
+installed Android and Windows evidence; this first runner makes no such claim.
