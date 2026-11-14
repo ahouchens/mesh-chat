@@ -5184,8 +5184,8 @@ describe("desktop workspaces", () => {
       policies: { channel_creation: "owner_and_admins", posting: "owner_and_admins", invitation_requests: "owner_and_admins" },
       members: [...workspace.members, administrator, member],
     };
-    const mount = (submit: (payload: Record<string, unknown>) => unknown) => {
-      let current: Snapshot = { ...snapshot(), workspaces: [adminWorkspace], workspace_channels: [workspaceChannel],
+    const mount = (submit: (payload: Record<string, unknown>) => unknown, initialWorkspace = adminWorkspace) => {
+      let current: Snapshot = { ...snapshot(), workspaces: [initialWorkspace], workspace_channels: [workspaceChannel],
         workspace_admin_requests: [], workspace_join_requests: [], workspace_invitations: [], workspace_drafts: [] };
       let failRefresh = false;
       api.runtimePlatform.mockResolvedValue("desktop");
@@ -5249,7 +5249,78 @@ describe("desktop workspaces", () => {
       control.failNextRefresh();
       fireEvent.click(within(settings).getByRole("button", { name: "Request invitation" }));
       expect((await within(settings).findByRole("alert")).textContent).toMatch(/was submitted.*could not be loaded/i);
+      fireEvent.click(within(settings).getByRole("button", { name: "Back from workspace settings" }));
+      fireEvent.click(screen.getByRole("button", { name: "People in Lakewatcher" }));
+      const reopened = await screen.findByRole("region", { name: "Workspace settings for Lakewatcher" });
+      expect(within(reopened).getByRole("alert").textContent).toMatch(/same request without creating another/i);
+      fireEvent.click(within(reopened).getByRole("button", { name: "Request invitation" }));
+      await waitFor(() => expect(within(reopened).queryByRole("alert")).toBeNull());
+      expect(calls).toHaveLength(1);
+      fireEvent.click(within(reopened).getByRole("button", { name: "Request invitation" }));
+      await waitFor(() => expect(calls).toHaveLength(2));
+      expect(calls[1].operation_id).not.toBe(calls[0].operation_id);
+    });
+
+    it("uses the retained key through the non-Core service path", async () => {
+      const calls: Array<Record<string, unknown>> = [];
+      const legacy = { ...adminWorkspace, core_handle: undefined,
+        members: adminWorkspace.members.map((item) => ({ ...item, core_handle: undefined })) };
+      mount((payload) => {
+        calls.push(payload);
+        if (calls.length === 1) throw new Error("reply lost after commit");
+        return { state: "submitted" };
+      }, legacy);
+      const settings = await openPeople();
       fireEvent.click(within(settings).getByRole("button", { name: "Request invitation" }));
+      await within(settings).findByRole("alert");
+      fireEvent.click(within(settings).getByRole("button", { name: "Request invitation" }));
+      await waitFor(() => expect(calls).toHaveLength(2));
+      expect(calls[0].operation_id).toEqual(expect.any(String));
+      expect(calls[1].operation_id).toBe(calls[0].operation_id);
+      expect(api.coreApiWorkspaceAdminSubmit).not.toHaveBeenCalled();
+    });
+
+    it("passes the same key to fallback only when Core is explicitly unavailable", async () => {
+      const calls: Array<Record<string, unknown>> = [];
+      api.coreApiWorkspaceAdminSubmit.mockRejectedValueOnce(new Error("core_api_unavailable"));
+      mount((payload) => { calls.push(payload); return { state: "submitted" }; });
+      const settings = await openPeople();
+      fireEvent.click(within(settings).getByRole("button", { name: "Request invitation" }));
+      await waitFor(() => expect(calls).toHaveLength(1));
+      expect(calls[0].operation_id).toBe(api.coreApiWorkspaceAdminSubmit.mock.calls[0][5]);
+    });
+
+    it("keeps an earlier uncertain request key when a later replay is refused", async () => {
+      const calls: Array<Record<string, unknown>> = [];
+      mount((payload) => {
+        calls.push(payload);
+        if (calls.length === 1) throw new Error("reply lost after commit");
+        if (calls.length === 2) throw Object.assign(new Error("forbidden"), { code: "forbidden" });
+        return { state: "submitted" };
+      });
+      const settings = await openPeople();
+      const request = within(settings).getByRole("button", { name: "Request invitation" });
+      fireEvent.click(request);
+      await waitFor(() => expect(within(settings).getByRole("alert").textContent).toMatch(/not confirmed/i));
+      fireEvent.click(request);
+      await waitFor(() => expect(within(settings).getByRole("alert").textContent).toMatch(/retry was refused.*earlier request outcome remains unconfirmed/i));
+      fireEvent.click(request);
+      await waitFor(() => expect(calls).toHaveLength(3));
+      expect(new Set(calls.map((item) => item.operation_id)).size).toBe(1);
+    });
+
+    it("retires a key refused on its first request", async () => {
+      const calls: Array<Record<string, unknown>> = [];
+      mount((payload) => {
+        calls.push(payload);
+        if (calls.length === 1) throw Object.assign(new Error("forbidden"), { code: "forbidden" });
+        return { state: "submitted" };
+      });
+      const settings = await openPeople();
+      const request = within(settings).getByRole("button", { name: "Request invitation" });
+      fireEvent.click(request);
+      await waitFor(() => expect(within(settings).getByRole("alert").textContent).toMatch(/was not submitted/i));
+      fireEvent.click(request);
       await waitFor(() => expect(calls).toHaveLength(2));
       expect(calls[1].operation_id).not.toBe(calls[0].operation_id);
     });
@@ -7534,6 +7605,31 @@ describe("workspace access recommendations", () => {
     await waitFor(() => expect(sends).toHaveLength(2));
     expect(sends[1].operation_id).not.toBe(sends[0].operation_id);
     expect(sends[1].recommendation).toBe(createdText);
+  });
+
+  it("keeps an uncertain access send key when a later replay is refused", async () => {
+    const sent: string[] = [];
+    api.serviceCommand.mockImplementation((command: string, payload?: { operation_id?: string }) => {
+      if (command === "list_remote_profiles") return { profiles: [accessProfile] };
+      if (command === "list_workspace_access_recommendations") return { recommendations: [] };
+      if (command === "create_workspace_access_recommendation") return recommendation("MESHACCESS1:first");
+      if (command === "send_workspace_access_recommendation") {
+        sent.push(payload?.operation_id ?? "");
+        if (sent.length === 1) throw new Error("reply lost after commit");
+        if (sent.length === 2) throw Object.assign(new Error("forbidden"), { code: "forbidden" });
+        return { sent_devices: 1 };
+      }
+      return {};
+    });
+    renderAccess();
+    await prepareAccess();
+    fireEvent.click(screen.getByRole("button", { name: "Send to workspace members" }));
+    await screen.findByRole("button", { name: "Retry send to workspace members" });
+    fireEvent.click(screen.getByRole("button", { name: "Retry send to workspace members" }));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/retry was refused.*earlier send remains unconfirmed/i));
+    fireEvent.click(screen.getByRole("button", { name: "Retry send to workspace members" }));
+    await screen.findByText(/Queued the recommendation for 1 active member device/);
+    expect(new Set(sent).size).toBe(1);
   });
 
   it("keeps the uncertain key and signed document when settings close and reopen in one profile lifetime", async () => {

@@ -3451,7 +3451,7 @@ export function WorkspaceAuthoritySettingsContent({ workspace, transitions, busy
   return <WorkspaceSettingsPanel><div className="form-stack"><WorkspaceAuthorityPanel workspace={workspace} transitions={transitions} busy={busy} onOffer={onOffer} onAccept={onAccept} onFinalize={onFinalize} onReportLoss={onReportLoss} />{error && <p className="form-error" role="alert">{error}</p>}</div></WorkspaceSettingsPanel>;
 }
 
-type WorkspaceAccessSendAttempt = { intent: string; operationId: string; inFlight: boolean };
+type WorkspaceAccessSendAttempt = { intent: string; operationId: string; inFlight: boolean; attempted: boolean };
 type WorkspaceAccessSendRecovery = {
   scope: string;
   created: WorkspaceAccessRecommendation;
@@ -3466,7 +3466,7 @@ const workspaceAccessSendScope = (workspace: Workspace) => JSON.stringify([
   workspace.authority_device_id, workspace.epoch, workspace.manifest_hash, workspaceAccessOwner(workspace),
 ]);
 const workspaceAdminRequestScope = (workspace: Workspace) => JSON.stringify([
-  workspace.core_handle ?? workspace.id, workspace.id, workspace.local_member_id,
+  workspace.id, workspace.local_member_id,
   workspace.local_device_id, workspace.local_role, workspace.authority_device_id,
   workspace.epoch, workspace.manifest_hash, workspace.state,
 ]);
@@ -3564,9 +3564,11 @@ export function WorkspaceAccessSettingsContent({ workspace, onSaved, sendRecover
     let attempt = sendAttempt.current;
     if (attempt?.inFlight) return;
     if (!attempt || attempt.intent !== intent) {
-      attempt = { intent, operationId: newOperationId(), inFlight: false };
+      attempt = { intent, operationId: newOperationId(), inFlight: false, attempted: false };
       sendAttempt.current = attempt;
     }
+    const priorAttempt = attempt.attempted;
+    attempt.attempted = true;
     attempt.inFlight = true;
     saveSendRecovery(activeCreated, "retry", attempt);
     setBusy(true); setError(""); setNotice("");
@@ -3583,10 +3585,12 @@ export function WorkspaceAccessSettingsContent({ workspace, onSaved, sendRecover
       if (!mounted.current || !profileEffects.isCurrent() || currentScope.current !== scope
           || currentRecommendation.current !== recommendation || sendAttempt.current !== attempt) return;
       const refused = ["forbidden", "invalid_request", "idempotency_conflict"].includes(profileErrorCode(reason));
-      if (refused) sendAttempt.current = null;
-      setSendState(refused ? "idle" : "retry");
-      saveSendRecovery(activeCreated, refused ? "idle" : "retry", refused ? null : attempt);
-      setError(refused ? `The recommendation was not sent: ${errorMessage(reason)}`
+      if (refused && !priorAttempt) sendAttempt.current = null;
+      setSendState(refused && !priorAttempt ? "idle" : "retry");
+      saveSendRecovery(activeCreated, refused && !priorAttempt ? "idle" : "retry", refused && !priorAttempt ? null : attempt);
+      setError(refused ? priorAttempt
+        ? "This retry was refused. The earlier send remains unconfirmed; retry the same action after restoring access."
+        : `The recommendation was not sent: ${errorMessage(reason)}`
         : "Send was not confirmed. Retry checks the same action.");
     } finally {
       attempt.inFlight = false;
@@ -4345,7 +4349,7 @@ type WorkspaceMessageInvalidations = Record<string, {
 function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageInvalidations, promptDismissalKeys, notificationTarget, onNotificationHandled, onLock, initialInvitation, onInvitationHandled, initialPairingCode = "", initialWebRTCJoin = false, onWebRTCJoinHandled, onPairingHandled }: { snapshot: Snapshot; theme: Theme; onThemeChange: (theme: Theme) => void; refresh: (afterCurrent?: boolean) => Promise<Snapshot>; workspaceMessageInvalidations: WorkspaceMessageInvalidations; promptDismissalKeys: Map<string, string>; notificationTarget: NotificationOpenTarget | null; onNotificationHandled: () => void; onLock: () => Promise<void>; initialInvitation: string; onInvitationHandled: () => void; initialPairingCode?: string; initialWebRTCJoin?: boolean; onWebRTCJoinHandled?: () => void; onPairingHandled?: () => void }) {
   const profileEffects = useProfileEffectScope();
   const workspaceAccessSendRecovery = useRef(new Map<string, WorkspaceAccessSendRecovery>());
-  const adminRequestAttempts = useRef(new Map<string, { scope: string; operationId: string; inFlight: boolean }>());
+  const adminRequestAttempts = useRef(new Map<string, { scope: string; operationId: string; inFlight: boolean; accepted: boolean; attempted: boolean }>());
   const adminRequestInFlightScope = useRef<string | null>(null);
   const admitProfileRequest = useProfileRequestAdmission();
   const lifetime = useProfileLifetime();
@@ -5559,41 +5563,64 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     requestedRole: "admin" | "member" | null,
   ) => {
     const workspace = selectedWorkspace;
-    if (!workspace?.core_handle || !profileCurrent() || workspaceActionBusy) return;
+    if (!workspace || !profileCurrent() || workspaceActionBusy) return;
     const scope = workspaceAdminRequestScope(workspace);
     if (adminRequestInFlightScope.current === scope) return;
     const member = targetMemberId ? workspace.members.find((item) => item.id === targetMemberId) : null;
-    if (targetMemberId && !member?.core_handle) {
+    if (targetMemberId && !member) {
       setWorkspaceActionError("The selected member is no longer available. Refresh the workspace.");
       return;
     }
     const targetHandle = member?.core_handle ?? null;
-    const intent = JSON.stringify([scope, requestKind, targetHandle, requestedRole, ""]);
+    const intent = JSON.stringify([scope, requestKind, targetMemberId, requestedRole, ""]);
     const attempt = adminRequestAttempts.current.get(intent)
-      ?? { scope, operationId: newOperationId(), inFlight: false };
+      ?? { scope, operationId: newOperationId(), inFlight: false, accepted: false, attempted: false };
     if (attempt.inFlight) return;
+    const priorAttempt = attempt.attempted;
     adminRequestAttempts.current.set(intent, attempt);
     adminRequestInFlightScope.current = scope;
     attempt.inFlight = true;
     setWorkspaceActionBusy(true); setWorkspaceActionError("");
     const stillCurrent = () => profileCurrent() && currentAdminRequestScope.current === scope;
     try {
-      await coreApiWorkspaceAdminSubmit(
-        workspace.core_handle, requestKind, targetHandle, requestedRole, "",
-        attempt.operationId, admitProfileRequest);
-      if (adminRequestAttempts.current.get(intent) === attempt) adminRequestAttempts.current.delete(intent);
+      if (!attempt.accepted) {
+        attempt.attempted = true;
+        let submitted = false;
+        if (workspace.core_handle && (!targetMemberId || targetHandle)) {
+          try {
+            await coreApiWorkspaceAdminSubmit(
+              workspace.core_handle, requestKind, targetHandle, requestedRole, "",
+              attempt.operationId, admitProfileRequest);
+            submitted = true;
+          } catch (reason) {
+            if (!String(reason).includes("core_api_unavailable")) throw reason;
+          }
+        }
+        if (!submitted) {
+          await serviceCommand("submit_workspace_admin_request", {
+            workspace_id: workspace.id, request_kind: requestKind,
+            ...(targetMemberId ? { target_member_id: targetMemberId } : {}),
+            ...(requestedRole ? { requested_role: requestedRole } : {}),
+            note: "", operation_id: attempt.operationId,
+          }, admitProfileRequest);
+        }
+        attempt.accepted = true;
+      }
       if (!stillCurrent()) return;
       try {
         await refresh(true);
+        if (adminRequestAttempts.current.get(intent) === attempt) adminRequestAttempts.current.delete(intent);
       } catch {
         if (stillCurrent()) setWorkspaceActionError(
-          "The request was submitted, but the updated workspace list could not be loaded. Refresh before submitting again; another submit creates a new request.");
+          "The request was submitted, but the updated workspace list could not be loaded. Retry to check the same request without creating another.");
       }
     } catch (reason) {
       if (!stillCurrent()) return;
       const refused = ["forbidden", "invalid_request", "idempotency_conflict"].includes(profileErrorCode(reason));
-      if (refused && adminRequestAttempts.current.get(intent) === attempt) adminRequestAttempts.current.delete(intent);
-      setWorkspaceActionError(refused ? `The request was not submitted: ${errorMessage(reason)}`
+      if (refused && !priorAttempt && adminRequestAttempts.current.get(intent) === attempt) adminRequestAttempts.current.delete(intent);
+      setWorkspaceActionError(refused ? priorAttempt
+        ? "This retry was refused. The earlier request outcome remains unconfirmed; retry the same action after restoring access."
+        : `The request was not submitted: ${errorMessage(reason)}`
         : "The request was not confirmed. Retry the same request to check this action.");
     } finally {
       attempt.inFlight = false;
