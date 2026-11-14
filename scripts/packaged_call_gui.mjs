@@ -1,6 +1,7 @@
 // Drive the exact installed WebView2 page through user input. No Core mutation,
 // service command, synthetic media object, or DOM click is issued here.
 import { createInterface } from "node:readline";
+import { targetRect, readView } from "./packaged_call_gui_dom.mjs";
 
 const [portText, source] = process.argv.slice(2);
 const port = Number(portText);
@@ -8,60 +9,6 @@ const START_MS = 20_000;
 const COMMAND_MS = 20_000;
 const MAX_FRAME = 16 * 1024;
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-function targetRect(kind, label, scope) {
-  const norm = (value) => (value || "").replace(/\s+/g, " ").trim();
-  const root = scope === "dialog" ? document.querySelector('[role="dialog"][aria-modal="true"]') : document;
-  if (!root) return null;
-  let rows;
-  if (kind === "button") rows = [...root.querySelectorAll("button")]
-    .filter((row) => norm(row.getAttribute("aria-label")) === label || norm(row.textContent) === label);
-  else if (kind === "peer") rows = [...root.querySelectorAll("button.contact-row")]
-    .filter((row) => norm(row.querySelector(".contact-row__content strong")?.textContent) === label);
-  else if (kind === "field") rows = [...root.querySelectorAll("label")]
-    .filter((row) => norm(row.querySelector("span")?.textContent || row.textContent) === label)
-    .map((row) => row.querySelector("input, textarea") ||
-      (row.htmlFor ? document.getElementById(row.htmlFor) : null))
-    .filter(Boolean);
-  else return null;
-  if (rows.length !== 1 || rows[0].disabled || rows[0].readOnly) return null;
-  const row = rows[0];
-  const box = row.getBoundingClientRect();
-  const style = getComputedStyle(row);
-  const x = box.left + box.width / 2;
-  const y = box.top + box.height / 2;
-  const hit = document.elementFromPoint(x, y);
-  if (box.width < 2 || box.height < 2 || style.display === "none" || style.visibility !== "visible"
-      || !hit || !(row === hit || row.contains(hit))) return null;
-  return { x, y };
-}
-
-function readView(expectedText) {
-  const dialog = document.querySelector('[role="dialog"][aria-modal="true"]');
-  const status = [...(dialog?.querySelectorAll('[role="status"]') || [])]
-    .map((row) => row.textContent?.replace(/\s+/g, " ").trim()).filter(Boolean)[0] || "";
-  const conversation = document.querySelector('section.conversation[aria-label]');
-  const messages = [...(conversation?.querySelectorAll("article.message") || [])];
-  const matched = typeof expectedText === "string" && expectedText.length > 0
-    ? messages.filter((row) => row.querySelector(".message__content")?.textContent === expectedText ||
-      row.textContent?.includes(expectedText)) : [];
-  return { appMounted: Boolean(document.querySelector("#root > *")) && document.title === "Mesh Chat",
-    dialogTitle: dialog?.querySelector("h2")?.textContent?.trim().slice(0, 100) || null,
-    status: status.slice(0, 160), conversationOpen: Boolean(conversation),
-    callEnabled: Boolean(conversation?.querySelector('button[aria-label="Call Independent peer"]:not([disabled])')),
-    peerVisible: [...document.querySelectorAll("button.contact-row .contact-row__content strong")]
-      .some((row) => row.textContent?.trim() === "Independent peer"),
-    relayOption: [...(dialog?.querySelectorAll("button") || [])].some((row) =>
-      row.textContent?.replace(/\s+/g, " ").trim() === "Use the relay"),
-    relayPanelVisible: [...(dialog?.querySelectorAll("h3") || [])].some((row) =>
-      row.textContent?.trim() === "Internet relay is available"),
-    contactPreview: [...(dialog?.querySelectorAll("button") || [])].some((row) =>
-      row.textContent?.replace(/\s+/g, " ").trim() === "Accept contact"),
-    matchedCount: Math.min(matched.length, 2),
-    matchedInbound: matched.some((row) => row.classList.contains("message--inbound")),
-    matchedOutboundDelivered: matched.some((row) => row.classList.contains("message--outbound") &&
-      Boolean(row.querySelector(".delivery--delivered"))) };
-}
 
 function timeout(promise, ms) {
   let timer;
@@ -203,7 +150,7 @@ class Gui {
 }
 
 const BUTTONS = new Set(["Join with WebRTC", "Create profile and continue", "Use the relay",
-  "Review and create answer", "Accept contact", "Audio call", "Hang up", "Close", "Send message"]);
+  "Review and create answer", "Accept contact", "Audio call", "Hang up", "Send message"]);
 const FIELDS = new Set(["Display name", "Paste the signed WebRTC offer or mailbox code",
   "Message Independent peer"]);
 
@@ -225,6 +172,16 @@ async function main() {
             && ["page", "dialog"].includes(request.scope)) {
           await gui.click("button", request.label, request.scope);
           value = { clicked: true };
+        } else if (request.action === "close_call") {
+          await gui.click("call_close", "Close", "dialog");
+          value = { clicked: true };
+        } else if (request.action === "close_onboarding") {
+          const view = await gui.evaluate(readView);
+          if (view.dialogTitle === null) value = { alreadyDismissed: true };
+          else if (view.dialogTitle === "Connect with WebRTC") {
+            await gui.click("onboarding_close", "Close", "dialog");
+            value = { clicked: true };
+          } else throw new Error("gui_target_unavailable");
         } else if (request.action === "open_peer" && request.label === "Independent peer") {
           await gui.click("peer", request.label, "page");
           value = { clicked: true };

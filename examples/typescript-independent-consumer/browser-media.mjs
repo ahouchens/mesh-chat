@@ -1,9 +1,9 @@
 // Real Chromium media peer for the installed Windows call scenario. The page
 // has no Core credentials; only the ordinary public SDK app handles signaling.
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { lstat, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -11,6 +11,27 @@ const START_MS = 20_000;
 const COMMAND_MS = 25_000;
 const MAX_SDP = 128 * 1024;
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+export async function boundedTargets(response) {
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("browser_target_body_missing");
+  const chunks = [];
+  let size = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > 65536) {
+      void reader.cancel().catch(() => {});
+      throw new Error("browser_target_body_limit");
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+  return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+}
 
 // These functions run in the isolated browser page, not in the Node app.
 export async function browserAnswer(offer, ice) {
@@ -108,16 +129,17 @@ function deadline(promise, ms, code) {
 }
 
 export class BrowserMedia {
-  constructor(executable, pagePath) {
+  constructor(executable, pagePath, profileDirectory = null) {
     this.executable = executable;
     this.pageUrl = pathToFileURL(pagePath).href;
+    this.providedDirectory = profileDirectory;
     this.pending = new Map();
     this.nextId = 1;
   }
 
   async start() {
     if (this.child || this.directory) throw new Error("browser_already_started");
-    this.directory = await mkdtemp(join(tmpdir(), "mesh-call-peer-"));
+    this.directory = this.providedDirectory || await mkdtemp(join(tmpdir(), "mesh-call-peer-"));
     const child = spawn(this.executable, ["--headless=new", "--no-first-run", "--disable-extensions",
       "--disable-gpu", "--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream",
       "--autoplay-policy=no-user-gesture-required", "--remote-debugging-port=0",
@@ -147,7 +169,7 @@ export class BrowserMedia {
       try {
         const response = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(1000) });
         if (!response.ok || Number(response.headers.get("content-length")) > 65536) throw new Error();
-        const rows = await response.json();
+        const rows = await boundedTargets(response);
         if (!Array.isArray(rows) || rows.length > 32) throw new Error();
         const matches = rows.filter((row) => row?.type === "page" && row.url === this.pageUrl);
         if (matches.length > 1) throw new Error("browser_page_ambiguous");
@@ -246,7 +268,7 @@ export class BrowserMedia {
         await pause(250);
       }
     }
-    if (this.directory && this.exited) {
+    if (this.directory && this.exited && !this.providedDirectory) {
       await rm(this.directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
       this.directory = undefined;
     }
@@ -255,16 +277,30 @@ export class BrowserMedia {
   }
 }
 
-async function runProtocol(executable) {
+async function runProtocol(executable, profileDirectory) {
   if (process.platform !== "win32" || typeof executable !== "string" || !executable.toLowerCase().endsWith("msedge.exe")) {
     throw new Error("browser_executable_invalid");
   }
-  const media = new BrowserMedia(executable, fileURLToPath(new URL("./browser-media.html", import.meta.url)));
+  const runnerTemp = process.env.RUNNER_TEMP;
+  if (!runnerTemp || !isAbsolute(runnerTemp) || !profileDirectory || !isAbsolute(profileDirectory)
+      || !/^mesh-call-edge-[A-Za-z0-9_-]+$/.test(basename(profileDirectory))
+      || dirname(await realpath(profileDirectory)) !== await realpath(runnerTemp)
+      || !(await lstat(profileDirectory)).isDirectory() || (await lstat(profileDirectory)).isSymbolicLink()) {
+    throw new Error("browser_profile_invalid");
+  }
+  const media = new BrowserMedia(executable, fileURLToPath(new URL("./browser-media.html", import.meta.url)),
+    profileDirectory);
   let retired = false;
   try {
+    const lines = createInterface({ input: process.stdin, crlfDelay: Infinity })[Symbol.asyncIterator]();
+    const first = await lines.next();
+    if (first.done || first.value !== '{"start":true}') throw new Error("browser_start_gate_invalid");
     await media.start();
     process.stdout.write('{"ready":true}\n');
-    for await (const line of createInterface({ input: process.stdin, crlfDelay: Infinity })) {
+    while (true) {
+      const next = await lines.next();
+      if (next.done) break;
+      const line = next.value;
       if (Buffer.byteLength(line) > 256 * 1024) throw new Error("browser_frame_limit");
       const request = JSON.parse(line);
       if (!Number.isSafeInteger(request?.id) || request.id < 1) throw new Error("browser_request_invalid");
@@ -276,7 +312,7 @@ async function runProtocol(executable) {
           value = await media.observe();
         } else if (request.action === "close") {
           value = await media.close();
-          retired = value.stopped && value.browserRetired && value.devtoolsClosed && value.profileRemoved;
+          retired = value.stopped && value.browserRetired && value.devtoolsClosed;
         } else throw new Error("browser_action_invalid");
         process.stdout.write(JSON.stringify({ id: request.id, ok: true, value }) + "\n");
         if (retired) return;
@@ -288,7 +324,7 @@ async function runProtocol(executable) {
   } finally {
     if (!retired) {
       const value = await media.close();
-      if (!value.stopped || !value.browserRetired || !value.devtoolsClosed || !value.profileRemoved) {
+      if (!value.stopped || !value.browserRetired || !value.devtoolsClosed) {
         throw new Error("browser_cleanup_unconfirmed");
       }
     }
@@ -296,7 +332,7 @@ async function runProtocol(executable) {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  runProtocol(process.argv[2]).catch(() => {
+  runProtocol(process.argv[2], process.argv[3]).catch(() => {
     process.stderr.write("browser_media_peer_failed\n");
     process.exitCode = 1;
   });

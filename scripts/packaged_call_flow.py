@@ -79,6 +79,9 @@ class Flow:
         if type(identity.get("destination")) is not str: raise ValueError("call_peer_identity")
         self.destination = identity["destination"]
         self.request("settings.update", {"profile": self.profile, "settings": ALTERNATE_PATHS})
+        network = self.request("settings.query", {"profile": self.profile}).get("settings")
+        if type(network) is not dict or any(network.get(key) is not False for key in ALTERNATE_PATHS):
+            raise ValueError("call_peer_alternate_paths")
         settings = self.request("call.settings_query", {"profile": self.profile}).get("settings")
         if type(settings) is not dict or not all(key in settings for key in CALL_KEYS):
             raise ValueError("call_peer_settings")
@@ -149,11 +152,23 @@ class Flow:
         self.receive("approved")
         self.wait("contact_approved", lambda: True if self.gui_view()["peerVisible"] else None,
                   seconds=120)
-        self.gui_click("Close")
+        self.dismiss_onboarding()
         self.peer.request("open_peer", label="Independent peer")
         self.wait("conversation", lambda: True if self.gui_view()["conversationOpen"]
                   and self.gui_view()["callEnabled"] else None)
         self.checks["signed_pair_and_explicit_approval"] = True
+
+    def dismiss_onboarding(self):
+        try:
+            self.wait("onboarding_auto_dismissed", lambda: True if self.gui_view()["dialogTitle"] is None else None,
+                      seconds=4)
+        except TimeoutError as error:
+            if str(error) != "call_onboarding_auto_dismissed": raise
+            title = self.gui_view()["dialogTitle"]
+            if title != "Connect with WebRTC": raise ValueError("call_onboarding_dialog_changed")
+            self.peer.request("close_onboarding")
+        self.wait("onboarding_dismissed", lambda: True if self.gui_view()["dialogTitle"] is None else None,
+                  seconds=10)
 
     def connection(self):
         identity = self.request("profile.query", {"profile": self.profile})
@@ -251,7 +266,7 @@ class Flow:
             self.gui_click("Hang up")
             self.wait("gui_call_ended", lambda: True if self.gui_view()["status"] == "" and
                 self.gui_view()["dialogTitle"] == "Call Independent peer" else None)
-            self.gui_click("Close")
+            self.peer.request("close_call")
             self.gui_inbound(text_for(self.pair_id, "peer", "during"))
             self.publish("call_hungup")
             self.checks["gui_start_hangup_and_during_receipt_rendered_after"] = True
@@ -289,9 +304,10 @@ class Flow:
             self.publish("during_peer_sent")
             self.receive("call_hungup")
             def ended():
-                calls = self.snapshot().get("calls")
-                if type(calls) is not list: raise ValueError("call_catalog_invalid")
-                return True if any(row.get("id") == call_id and row.get("state") == "ended" for row in calls) else None
+                media = self.request("call.media_query", {"profile": self.profile, "call": handle}).get("media")
+                if type(media) is not dict or media.get("id") != call_id:
+                    raise ValueError("call_terminal_media_identity")
+                return True if media.get("state") == "ended" else None
             self.wait("remote_hangup", ended)
             self.checks["browser_media_retired"] = browser.close()
             if not self.checks["browser_media_retired"]: raise ValueError("call_browser_cleanup")

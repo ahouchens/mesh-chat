@@ -12,6 +12,7 @@ import threading
 import time
 
 import packaged_media_preflight as media
+from packaged_call_io import BoundedWriter
 import run_packaged_media_preflight as installer
 
 
@@ -22,12 +23,19 @@ MAX_FRAME = 16 * 1024
 
 class GuiControl:
     def __init__(self, node, port, source, deadline):
+        self.node, self.port, self.source = node, port, source
         self.deadline = deadline
         self.responses = queue.Queue(maxsize=2)
         self.sequence = 0
-        self.process = subprocess.Popen([str(node), str(DRIVER), str(port), source],
+        self.process = self.reader = self.writer = None
+        self.cleanup = {}
+
+    def open(self):
+        self.process = subprocess.Popen([str(self.node), str(DRIVER), str(self.port), self.source],
             cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL, shell=False, creationflags=subprocess.CREATE_NO_WINDOW)
+            stderr=subprocess.DEVNULL, shell=False, bufsize=0,
+            creationflags=subprocess.CREATE_NO_WINDOW)
+        self.writer = BoundedWriter(self.process.stdin, self._terminate)
         self.reader = threading.Thread(target=self._read, daemon=True)
         self.reader.start()
         try:
@@ -36,10 +44,9 @@ class GuiControl:
             if line != b'{"ready":true}\n':
                 raise ValueError("gui_not_ready")
         except Exception:
-            if self.process.poll() is None: self.process.kill()
-            self.process.wait(timeout=5)
-            self.reader.join(timeout=2)
+            self._terminate()
             raise
+        return self
 
     def _remaining(self, maximum):
         value = min(maximum, self.deadline - time.monotonic())
@@ -57,6 +64,16 @@ class GuiControl:
             try: self.responses.put_nowait(None)
             except queue.Full: pass
 
+    def _terminate(self):
+        if self.process is None: return True
+        try:
+            if self.process.poll() is None: self.process.kill()
+            self.process.wait(timeout=5)
+            if self.reader is not None: self.reader.join(timeout=2)
+            return self.process.poll() is not None and (self.reader is None or not self.reader.is_alive())
+        except Exception:
+            return False
+
     def request(self, action, **params):
         self.sequence += 1
         request_id = self.sequence
@@ -64,10 +81,12 @@ class GuiControl:
                            separators=(",", ":"), ensure_ascii=False) + "\n").encode("utf-8")
         if not 2 <= len(data) <= MAX_FRAME:
             raise ValueError("gui_frame_limit")
-        self.process.stdin.write(data)
-        self.process.stdin.flush()
-        try: line = self.responses.get(timeout=self._remaining(25))
-        except queue.Empty: raise TimeoutError("gui_reply_deadline") from None
+        deadline = min(self.deadline, time.monotonic() + 25)
+        self.writer.write(data, deadline)
+        try: line = self.responses.get(timeout=max(0, deadline - time.monotonic()))
+        except queue.Empty:
+            self._terminate()
+            raise TimeoutError("gui_reply_deadline") from None
         if line is None: raise ValueError("gui_reply_invalid")
         value = json.loads(line.decode("utf-8"))
         if type(value) is not dict or value.get("id") != request_id or value.get("ok") is not True:
@@ -75,22 +94,40 @@ class GuiControl:
         return value.get("value")
 
     def close(self):
-        self.process.stdin.close()
-        try:
-            passed = self.process.wait(timeout=self._remaining(10)) == 0
-            self.reader.join(timeout=2)
-            return passed and not self.reader.is_alive()
-        except (subprocess.TimeoutExpired, TimeoutError):
-            self.process.kill()
-            try: self.process.wait(timeout=5)
-            except subprocess.TimeoutExpired: return False
+        if self.process is None:
+            self.cleanup = {"writer_retired": True, "reader_retired": True,
+                            "process_retired": True, "stdin_closed": True}
             return False
+        if self.writer is not None and self.writer.faulted:
+            self._terminate()
+        closed = threading.Event()
+        errors = []
+        def close_input():
+            try: self.process.stdin.close()
+            except Exception as error: errors.append(error)
+            finally: closed.set()
+        thread = threading.Thread(target=close_input, daemon=True)
+        thread.start()
+        if not closed.wait(5): self._terminate()
+        thread.join(timeout=2)
+        try:
+            code = self.process.wait(timeout=self._remaining(10))
+        except (subprocess.TimeoutExpired, TimeoutError):
+            self._terminate()
+            code = self.process.poll()
+        if self.reader is not None: self.reader.join(timeout=2)
+        self.cleanup = {"writer_retired": self.writer is None or self.writer.retired,
+                        "reader_retired": self.reader is None or not self.reader.is_alive(),
+                        "process_retired": self.process.poll() is not None,
+                        "stdin_closed": closed.is_set() and not errors and not thread.is_alive()}
+        return code == 0 and all(self.cleanup.values())
 
 
 class InstalledGui:
-    def __init__(self, source, tree, run_id, run_attempt, node):
+    def __init__(self, source, tree, run_id, run_attempt, node, deadline):
         self.source, self.tree = source, tree
         self.run_id, self.run_attempt, self.node = run_id, run_attempt, node
+        self.deadline = deadline
         self.installed = self.candidate = self.preflight = None
         self.app = self.policy = self.control = None
         self.port = None
@@ -135,7 +172,8 @@ class InstalledGui:
         self.app = subprocess.Popen([str(app)], cwd=self.installed, env=environment,
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             shell=False, creationflags=subprocess.CREATE_NO_WINDOW)
-        self.control = GuiControl(self.node, self.port, self.source, time.monotonic() + 720)
+        self.control = GuiControl(self.node, self.port, self.source, self.deadline)
+        self.control.open()
         return self
 
     def request(self, action, **params):
@@ -147,6 +185,7 @@ class InstalledGui:
         if self.control is not None:
             try: self.cleanup["driver_retired"] = self.control.close()
             except Exception: self.cleanup["driver_retired"] = False
+            self.cleanup.update({"driver_" + key: value for key, value in self.control.cleanup.items()})
             success &= self.cleanup["driver_retired"]
         try: self.cleanup["app_retired"] = media.retire(self.app, self.port)
         except Exception: self.cleanup["app_retired"] = False

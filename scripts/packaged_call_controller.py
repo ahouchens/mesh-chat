@@ -70,7 +70,7 @@ def run(role, source):
         temporary = tempfile.TemporaryDirectory(prefix="packaged-call-exchange-", dir=parent)
         if role == "gui":
             peer = InstalledGui(source, context["source_tree"], str(context["run_id"]),
-                                context["run_attempt"], Path("node"))
+                                context["run_attempt"], Path("node"), started + TOTAL_SECONDS - 30)
             peer.open()
             result["capture_preflight"] = peer.preflight
             result["installed"] = {key: peer.candidate[key] for key in
@@ -82,7 +82,8 @@ def run(role, source):
             result["installed"] = {"sidecar_sha256": peer.binding["sidecar_sha256"],
                                    "sdk_sha256": peer.sdk_hash,
                                    "bootstrap_report_sha256": peer.report_hash}
-            browser = BrowserProcess(peer.node, edge_path()).open(started + TOTAL_SECONDS - 30)
+            browser = BrowserProcess(peer.node, edge_path(), parent)
+            browser.open(started + TOTAL_SECONDS - 30)
         result["phase"] = "sealed_exchange"
         exchange = Exchange(context, role, Path(temporary.name))
         exchange.connect(min(started + TOTAL_SECONDS - 60, time.monotonic() + 600))
@@ -96,6 +97,7 @@ def run(role, source):
         if browser is not None:
             try: result["cleanup"]["browser_retired"] = browser.close()
             except Exception: result["cleanup"]["browser_retired"] = False
+            result["cleanup"].update({"browser_" + key: value for key, value in browser.cleanup.items()})
         if peer is not None:
             if role == "gui":
                 try: result["cleanup"]["gui_retired"] = peer.close()
