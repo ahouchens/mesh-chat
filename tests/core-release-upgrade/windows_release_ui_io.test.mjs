@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { test } from "node:test";
 import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
-import { boundedCdpFrame, closeBoundedSocket, completeAfterCleanup, readBoundedInput, withDeadline } from "../../scripts/windows_release_ui_io.mjs";
+import { boundedCdpFrame, closeBoundedSocket, closeCheckedSocket, completeAfterCleanup, readBoundedInput, withDeadline } from "../../scripts/windows_release_ui_io.mjs";
 
 test("oversized unterminated stdin is refused before EOF", async () => {
   const input = new PassThrough();
@@ -45,6 +45,9 @@ test("CDP frame is byte-bounded before JSON parsing", () => {
   assert.deepEqual(boundedCdpFrame('{"id":1}'), { id: 1 });
   assert.throws(() => boundedCdpFrame('{' + "x".repeat(65_536)), /ui_cdp_frame_unbounded/);
   assert.throws(() => boundedCdpFrame(new Uint8Array(10)), /ui_cdp_frame_unbounded/);
+  for (const shape of ["null", "[]", "1", '"text"', "true"]) {
+    assert.throws(() => boundedCdpFrame(shape), /ui_cdp_frame_invalid/);
+  }
 });
 
 test("socket close is observed before success; missing close fails in a bound", async () => {
@@ -80,6 +83,32 @@ test("success cannot be emitted before cleanup; failed cleanup rejects it", asyn
   await assert.rejects(completeAfterCleanup(async () => "ready", async () => {
     throw new Error("retirement_failed");
   }), /retirement_failed/);
+});
+
+test("protocol fault during final socket retirement defeats successful readback", async () => {
+  class FaultOnClose extends EventTarget {
+    readyState = 1;
+    close() {
+      this.readyState = 2;
+      queueMicrotask(() => {
+        this.dispatchEvent(new MessageEvent("message", { data: "null" }));
+        this.readyState = 3;
+        this.dispatchEvent(new Event("close"));
+      });
+    }
+  }
+  const socket = new FaultOnClose();
+  let protocolFailed = false;
+  socket.addEventListener("message", (event) => {
+    try { boundedCdpFrame(event.data); }
+    catch { protocolFailed = true; }
+  });
+  await assert.rejects(
+    completeAfterCleanup(async () => "successful_readback", () => closeCheckedSocket(socket, () => protocolFailed)),
+    /ui_cdp_frame_invalid/
+  );
+  assert.equal(socket.readyState, 3);
+  assert.equal(protocolFailed, true);
 });
 
 function invokeWithoutEof(data) {

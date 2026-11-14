@@ -56,7 +56,11 @@ export function boundedCdpFrame(data, limit = 65_536) {
   if (typeof data !== "string" || Buffer.byteLength(data, "utf8") > limit) {
     throw new Error("ui_cdp_frame_unbounded");
   }
-  return JSON.parse(data);
+  const frame = JSON.parse(data);
+  if (frame === null || typeof frame !== "object" || Array.isArray(frame)) {
+    throw new Error("ui_cdp_frame_invalid");
+  }
+  return frame;
 }
 
 export async function closeBoundedSocket(socket, deadlineMs = 3_000, timers = globalThis) {
@@ -77,6 +81,12 @@ export async function closeBoundedSocket(socket, deadlineMs = 3_000, timers = gl
     socket.removeEventListener("close", onClose);
     socket.removeEventListener("error", onError);
   }
+}
+
+export async function closeCheckedSocket(socket, protocolFailed) {
+  await closeBoundedSocket(socket);
+  if (protocolFailed()) throw new Error("ui_cdp_frame_invalid");
+  return true;
 }
 
 export async function completeAfterCleanup(action, cleanup) {

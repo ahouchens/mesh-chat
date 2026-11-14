@@ -1,6 +1,6 @@
 // Drive only visible released-app controls; read back through two read-only commands.
 import { checkedConfig, checkedReadback, EVIDENCE_LEVEL, projectReadback } from "./windows_release_ui_contract.mjs";
-import { boundedCdpFrame, closeBoundedSocket, completeAfterCleanup, readBoundedInput, withDeadline } from "./windows_release_ui_io.mjs";
+import { boundedCdpFrame, closeCheckedSocket, completeAfterCleanup, readBoundedInput, withDeadline } from "./windows_release_ui_io.mjs";
 
 const START_MS = 20_000;
 const STEP_MS = 20_000;
@@ -253,7 +253,7 @@ class Gui {
     return this.settledReadback(markers);
   }
 
-  async close() { return closeBoundedSocket(this.socket); }
+  async close() { return closeCheckedSocket(this.socket, () => this.protocolFailed === true); }
 }
 
 async function inputConfig() {
