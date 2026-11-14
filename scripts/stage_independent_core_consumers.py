@@ -22,7 +22,9 @@ FILES = ("package.json", "consumer.mjs", "runtime.mjs", "bootstrap-check.mjs", "
          "separate-process-check.mjs", "public-process-helper.mjs", "paired-process-recovery-check.mjs",
          "image-admission-check.mjs", "relay-settings.mjs", "pairing-diagnostics.mjs",
          "owner-pairing-diagnostic.mjs", "connection-readiness.mjs",
-         "browser-media.mjs", "browser-media.html", "browser-media.test.mjs", "README.md")
+         "browser-media.mjs", "browser-media.html", "browser-media.test.mjs",
+         "private-helper-protocol.test.mjs", "private-admission-evidence.mjs",
+         "private-admission-check.mjs", "README.md")
 LEVEL = "independent_public_sdk_application_staging"
 
 
