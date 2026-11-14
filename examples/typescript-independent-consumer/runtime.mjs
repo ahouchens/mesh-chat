@@ -23,13 +23,17 @@ function observe(child, pipe, timeoutMs, refusal, pairingDiagnostics = false) {
   const observationDeadline = performance.now() + timeoutMs;
   let pending = Buffer.alloc(0), started = false, stopped = false, failed = false;
   let closing = false, exited = false, retiring = false, protocolError;
+  let helperSequence = 0, pendingHelper = null, controlBusy = false;
   let accept, reject, complete;
   const ready = new Promise((yes, no) => { accept = yes; reject = no; });
   const closed = new Promise(yes => { complete = yes; });
   let diagnostic, diagnosticSeen = false, diagnosticComplete;
   const diagnosticReady = new Promise(resolve => { diagnosticComplete = resolve; });
   function fail() {
+    if (protocolError) return;
     protocolError = new Error("app_owned_runtime_unavailable");
+    pendingHelper?.reject(protocolError);
+    pendingHelper = null;
     reject(protocolError);
     if (!closing) { closing = true; child.stdin.end(); }
   }
@@ -62,6 +66,17 @@ function observe(child, pipe, timeoutMs, refusal, pairingDiagnostics = false) {
           if (performance.now() > observationDeadline) throw new Error();
           started = true;
           accept();
+        } else if (value.type === "helper_registered" || value.type === "helper_removed") {
+          const pendingRequest = pendingHelper;
+          const keys = value.type === "helper_registered" ? "invitation,sequence,type,v" : "sequence,type,v";
+          if (refusal || !started || closing || failed || !pendingRequest
+              || performance.now() > pendingRequest.deadline
+              || value.type !== pendingRequest.type || value.sequence !== pendingRequest.sequence
+              || Object.keys(value).sort().join() !== keys
+              || (value.type === "helper_registered" && (typeof value.invitation !== "string"
+                || !/^[0-9a-f]{64}$/.test(value.invitation)))) throw new Error();
+          pendingHelper = null;
+          pendingRequest.resolve(value.type === "helper_registered" ? value.invitation : true);
         } else if (value.type === "runtime_pairing_diagnostics" && pairingDiagnostics && !refusal) {
           // Malformed optional diagnostics cannot grant authority or change lifecycle success.
           try {
@@ -91,7 +106,7 @@ function observe(child, pipe, timeoutMs, refusal, pairingDiagnostics = false) {
   });
   child.on("close", code => {
     exited = true;
-    if (code !== (refusal ? 2 : 0) || pending.length || !stopped || (refusal ? !failed : !started)) fail();
+    if (pendingHelper || code !== (refusal ? 2 : 0) || pending.length || !stopped || (refusal ? !failed : !started)) fail();
     else if (!protocolError && refusal) {
       if (performance.now() > observationDeadline) fail();
       else accept();
@@ -101,6 +116,12 @@ function observe(child, pipe, timeoutMs, refusal, pairingDiagnostics = false) {
   });
   return {
     ready,
+    async registerHelper(pid, timeoutMs = 5000) {
+      return controlHelper("REGISTER/1", "helper_registered", pid, timeoutMs);
+    },
+    async removeHelper(pid, timeoutMs = 5000) {
+      return controlHelper("REMOVE/1", "helper_removed", pid, timeoutMs);
+    },
     async pairingDiagnostic(timeoutMs = 2000) {
       if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > 2000) throw new Error("invalid_diagnostic_budget");
       if (!pairingDiagnostics || !closing) return {outcome:"not_received"};
@@ -114,6 +135,7 @@ function observe(child, pipe, timeoutMs, refusal, pairingDiagnostics = false) {
       if (!Number.isSafeInteger(remainingMs) || remainingMs < 0 || remainingMs > 30000) throw new Error("invalid_runtime_budget");
       const alreadyExited = exited, retirementDeadline = performance.now() + remainingMs;
       if (!closing) { closing = true; child.stdin.end(); }
+      if (pendingHelper) fail();
       let deadline;
       try {
         await Promise.race([closed, new Promise((_, no) => {
@@ -125,6 +147,46 @@ function observe(child, pipe, timeoutMs, refusal, pairingDiagnostics = false) {
       return { stopped: true, exit_code: refusal ? 2 : 0, ...(refusal ? { refused: true, error: "unavailable" } : {}) };
     },
   };
+
+  async function controlHelper(verb, type, pid, timeoutMs) {
+    if (refusal || !started || failed || closing || exited || protocolError || controlBusy
+        || !Number.isSafeInteger(pid) || pid < 1 || pid > 0xffffffff
+        || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 5000
+        || helperSequence === 0xffffffff) throw new Error("app_owned_helper_control_unavailable");
+    const sequence = (++helperSequence).toString(16).padStart(8, "0");
+    const line = `${verb} ${sequence} ${pid}\n`;
+    if (Buffer.byteLength(line) > 40) throw new Error("app_owned_helper_control_unavailable");
+    const deadline = performance.now() + timeoutMs;
+    controlBusy = true;
+    const response = new Promise((resolve, reject) => {
+      pendingHelper = {type, sequence, deadline, resolve, reject};
+    });
+    response.catch(() => {});
+    async function bounded(promise) {
+      const remaining = Math.max(0, Math.floor(deadline - performance.now()));
+      if (!remaining) throw new Error("app_owned_helper_control_deadline");
+      let timer;
+      try {
+        return await Promise.race([promise, new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error("app_owned_helper_control_deadline")), remaining);
+        })]);
+      } finally { clearTimeout(timer); }
+    }
+    try {
+      await bounded(new Promise((resolve, reject) => {
+        child.stdin.write(line, error => error ? reject(new Error("app_owned_helper_control_write")) : resolve());
+      }));
+      const value = await bounded(response);
+      if (protocolError || closing || failed || exited) throw new Error("app_owned_helper_control_failed");
+      return value;
+    } catch {
+      fail();
+      throw new Error("app_owned_helper_control_failed");
+    } finally {
+      if (pendingHelper?.sequence === sequence) pendingHelper = null;
+      controlBusy = false;
+    }
+  }
 }
 
 function spawnRuntime(executable, dataDirectory, { timeoutMs = 30000, onOwned = () => {}, pairingDiagnostics = false } = {}, refusal = false) {
@@ -142,6 +204,8 @@ function spawnRuntime(executable, dataDirectory, { timeoutMs = 30000, onOwned = 
     MESH_CHAT_CORE_API_CLIENT_IMAGE: process.execPath,
     MESH_CHAT_APP_PARENT_PID: String(process.pid),
   });
+  // Proposed future host opt-in: MESH_CHAT_APP_PRIVATE_HELPER_ADMISSION=1.
+  // Keep it unset until Python wiring acknowledges the private admission mode.
   if (pairingDiagnostics) environment.MESH_CHAT_APP_PAIRING_DIAGNOSTICS = "1";
   const child = spawn(resolve(executable), ["--app-owned-native"], {
     env: environment, stdio: ["pipe", "pipe", "pipe"], windowsHide: true,

@@ -4,6 +4,64 @@ import { TextDecoder } from "node:util";
 
 const MAX_FRAME = 256 * 1024;
 const MAX_STDERR = 8192;
+const INVITATION = /^MESH-INVITE\/1 ([0-9a-f]{64})\n$/;
+
+// One iterator owns stdin for the private invitation and all later public
+// command frames. Any bytes following the first LF remain buffered in order.
+export class PrivateConsumerInput {
+  constructor(input) {
+    this.input = input;
+    this.iterator = input[Symbol.asyncIterator]();
+    this.pending = Buffer.alloc(0);
+  }
+
+  async line(limit) {
+    while (true) {
+      const end = this.pending.indexOf(10);
+      if (end >= 0) {
+        if (end + 1 > limit) throw new Error("private_input_limit");
+        const line = this.pending.subarray(0, end + 1);
+        this.pending = this.pending.subarray(end + 1);
+        return line;
+      }
+      if (this.pending.length >= limit) throw new Error("private_input_limit");
+      const next = await this.iterator.next();
+      if (next.done) {
+        if (this.pending.length) throw new Error("private_input_partial_eof");
+        return null;
+      }
+      const chunk = Buffer.from(next.value);
+      if (chunk.length > MAX_FRAME || this.pending.length + chunk.length > MAX_FRAME) {
+        throw new Error("private_input_limit");
+      }
+      this.pending = Buffer.concat([this.pending, chunk]);
+    }
+  }
+
+  async invitation(timeoutMs = 5000) {
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 5000) {
+      throw new Error("private_invitation_deadline");
+    }
+    try {
+      const line = await bounded(this.line(79), timeoutMs);
+      if (line === null || line.length !== 79) throw new Error();
+      const text = new TextDecoder("utf-8", { fatal: true }).decode(line);
+      if (!INVITATION.test(text)) throw new Error();
+      return line.subarray(14, 78).toString("ascii");
+    } catch {
+      this.input.destroy?.();
+      throw new Error("private_invitation_invalid");
+    }
+  }
+
+  async *frames() {
+    while (true) {
+      const line = await this.line(MAX_FRAME);
+      if (line === null) return;
+      yield JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(line));
+    }
+  }
+}
 
 function budget(deadline, limit = 30000) {
   const ms = Math.min(limit, Math.floor(deadline - performance.now()));
@@ -29,8 +87,14 @@ export class HelperCoreError extends Error {
 }
 
 export class Helper {
-  constructor(pipe) {
-    this.child = spawn(process.execPath, ["consumer.mjs", "--pipe", pipe], {
+  constructor(pipe, {privateMode = false} = {}) {
+    if (typeof privateMode !== "boolean") throw new Error("private_helper_mode_invalid");
+    this.privateMode = privateMode;
+    this.privateStarted = false;
+    this.privateStarting = false;
+    const args = privateMode ? ["consumer.mjs", "--private-helper", "--pipe", pipe]
+      : ["consumer.mjs", "--pipe", pipe];
+    this.child = spawn(process.execPath, args, {
       cwd: new URL(".", import.meta.url), env: cleanEnvironment(),
       stdio: ["pipe", "pipe", "pipe"], windowsHide: true,
     });
@@ -120,8 +184,41 @@ export class Helper {
   }
 
   canRequest() {
-    return !this.pending && !this.exited && !this.outputFailure
+    return (!this.privateMode || this.privateStarted) && !this.pending && !this.exited && !this.outputFailure
       && this.child.exitCode === null && !this.child.stdin.destroyed;
+  }
+
+  async startPrivate(runtime, deadline) {
+    if (!this.privateMode || this.privateStarted || this.privateStarting || !this.identityValid
+        || this.exited || this.outputFailure || !runtime
+        || typeof runtime.registerHelper !== "function" || typeof runtime.removeHelper !== "function") {
+      throw new Error("private_helper_start_unavailable");
+    }
+    this.privateStarting = true;
+    let registered = false;
+    try {
+      const token = await bounded(runtime.registerHelper(this.child.pid, budget(deadline, 5000)),
+        budget(deadline, 5000));
+      registered = true;
+      if (typeof token !== "string" || !/^[0-9a-f]{64}$/.test(token) || this.exited) throw new Error();
+      const line = `MESH-INVITE/1 ${token}\n`;
+      await bounded(Promise.race([
+        new Promise((resolve, reject) => this.child.stdin.write(line,
+          error => error ? reject(new Error()) : resolve())),
+        this.exit.then(() => { throw new Error(); }),
+      ]), budget(deadline, 5000));
+      if (this.exited || this.outputFailure) throw new Error();
+      this.privateStarted = true;
+      return this;
+    } catch {
+      this.outputFailure = true;
+      try { this.child.stdin.end(); } catch {}
+      if (registered) {
+        try { await bounded(runtime.removeHelper(this.child.pid, budget(deadline, 5000)),
+          budget(deadline, 5000)); } catch {}
+      }
+      throw new Error("private_helper_start_failed");
+    } finally { this.privateStarting = false; }
   }
 
   async _send(operation, params, deadline, idempotencyKey, discard) {

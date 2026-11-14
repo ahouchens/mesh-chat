@@ -4,6 +4,7 @@ import { connectNamedPipe } from "@mesh-chat/core-client/node";
 import { once } from "node:events";
 import { TextDecoder } from "node:util";
 import { launchRuntime } from "./runtime.mjs";
+import { PrivateConsumerInput } from "./public-process-helper.mjs";
 
 const MAX_FRAME = 256 * 1024;
 process.stdout.on("error", () => process.exit(1));
@@ -60,16 +61,24 @@ async function reply(value) {
 
 async function main() {
   const args = process.argv.slice(2);
-  let runtime, client;
+  let runtime, client, transport;
   try {
-    let pipe;
+    let pipe, privateMode = false;
     if (args.length === 2 && args[0] === "--pipe") pipe = args[1];
+    else if (args.length === 3 && args[0] === "--private-helper" && args[1] === "--pipe") {
+      privateMode = true;
+      pipe = args[2];
+    }
     else if (args.length === 4 && args[0] === "--runtime" && args[2] === "--data-directory") {
       runtime = await launchRuntime(args[1], args[3]);
       pipe = runtime.pipe;
     } else throw new Error("explicit_host_bootstrap_required");
-    client = await CoreClient.open(await connectNamedPipe(pipe), { requestTimeoutMs: 30000 });
-    for await (const value of frames(process.stdin)) {
+    const privateInput = privateMode ? new PrivateConsumerInput(process.stdin) : null;
+    const invitation = privateInput ? await privateInput.invitation() : null;
+    transport = await connectNamedPipe(pipe);
+    if (invitation !== null) await transport.writeLine(`MESH-HELPER/1 ${invitation}\n`);
+    client = await CoreClient.open(transport, { requestTimeoutMs: 30000 });
+    for await (const value of privateInput ? privateInput.frames() : frames(process.stdin)) {
       const command = request(value);
       try {
         // Keys and consent decisions come only from the application's caller.
@@ -84,7 +93,7 @@ async function main() {
     }
   } finally {
     // Closing this SDK client detaches; it does not stop or replace its host.
-    try { client?.close(); }
+    try { if (client) client.close(); else transport?.close(); }
     finally { if (runtime) await runtime.stop(); }
   }
 }
