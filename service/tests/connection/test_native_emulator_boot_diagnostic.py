@@ -172,3 +172,43 @@ def test_early_exit_is_captured_before_cleanup_without_losing_primary(monkeypatc
     assert result["console"]["counts"]["disk_insufficient"] == 1
     assert not result["passed"] and checkpoints[-1]["status"] == "completed"
     assert "PRIVATE" not in json.dumps(result)
+
+
+def test_retirement_waits_for_owned_adb_listing_before_releasing_avd(monkeypatch, tmp_path):
+    root = tmp_path / "owned-avd"
+    root.mkdir()
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+    emulator = SimpleNamespace(sdk=tmp_path / "sdk", name=root.name, root=root, serial="emulator-5554",
+        old_environment={}, _boot_transport_owned=True,
+        process=SimpleNamespace(stdout=None, poll=lambda: 0))
+    replies = iter(["List of devices attached\nemulator-5554\toffline\n"] * 2 + ["List of devices attached\n"])
+    calls = []
+    def devices(argv, **options):
+        assert argv == [str(emulator.sdk / "platform-tools/adb"), "devices"]
+        calls.append(argv)
+        assert root.exists()
+        return next(replies)
+    monkeypatch.setattr(diagnostic.subprocess, "check_output", devices)
+    monkeypatch.setattr(diagnostic.time, "sleep", lambda _: None)
+    diagnostic.retire(emulator, diagnostic.BootConsole())
+    assert len(calls) == 3 and emulator._boot_transport_owned is False
+    assert emulator.process is None and not root.exists()
+
+
+@pytest.mark.parametrize("foreign", [False, True])
+def test_retirement_keeps_avd_when_transport_is_unresolved_or_foreign(monkeypatch, tmp_path, foreign):
+    root = tmp_path / "owned-avd"
+    root.mkdir()
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+    emulator = SimpleNamespace(sdk=tmp_path / "sdk", name=root.name, root=root, serial="emulator-5554",
+        old_environment={}, _boot_transport_owned=True,
+        process=SimpleNamespace(stdout=None, poll=lambda: 0))
+    monkeypatch.setattr(diagnostic.subprocess, "check_output", lambda *a, **k:
+        "List of devices attached\n" + ("unrelated-device\tdevice\n" if foreign else "emulator-5554\toffline\n"))
+    now = [0]
+    monkeypatch.setattr(diagnostic.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(diagnostic.time, "sleep", lambda seconds: now.__setitem__(0, now[0] + seconds))
+    with pytest.raises(diagnostic.PeerFailure, match="unowned_android_device_present" if foreign else "emulator_transport_retirement_failed"):
+        diagnostic.retire(emulator, diagnostic.BootConsole())
+    assert root.exists() and emulator._boot_transport_owned
+    assert now[0] <= 30
