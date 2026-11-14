@@ -102,7 +102,7 @@ its owned checkout and reports source evidence and gaps before integration.
 | --- | --- | --- | --- |
 | Lead | R0/R6/R9 | Working 0.9.66 baseline identified; public pair controller, strict checker and isolated workflow integrated and reviewed. | Integrate reviewed fixes and bind platform results to the roadmap; full acceptance remains open. |
 | C | R1/R6 | Public session/flow work integrated; bounded Android test-host EOF observation designed. | Independently review D's observer; preserve five parked native interop files. |
-| B | R3/R5/R8 | Installed Windows Python and current/old TypeScript consumers passed; media install stopped at byte mismatch. | Monitor observed-byte replacement `43554916988`; fix the demonstrated cause, then prepare CallDialog plus messaging. |
+| B | R3/R5/R8 | Installed Windows Python and current/old TypeScript consumers passed; media replacement isolates the mismatch to the desktop app. | Trace the packaged/staged app divergence from `43554916988`, fix the demonstrated cause, then prepare CallDialog plus messaging. |
 | A | R6/R8 | Android public-session smoke passed; installed cross-platform fresh-pair workflow integrated. | Monitor first public pair run `43556580958` at `4565ce1`, then address its result before restart and partition extensions. |
 | D | R1/R9 | Native run `43551695082` failed on a partial Android test-control reply before cold restart. | Add bounded test-harness stage/ordinal/forward observation, obtain independent review, then one exact-source reproduction. |
 
@@ -286,8 +286,11 @@ it does not prove peer traffic.
 That Windows run's separate media job failed before capture because installed
 bytes differed from the expected build. It did not record which binary differed.
 Observed app/sidecar size and digest reporting is integrated; replacement run
-`43554916988` at `c808769` is active. R5's next milestone is a diagnosed and repaired
-installed capture preflight, followed by actual CallDialog plus messaging.
+`43554916988` at `c808769` passed verification and Windows host checks but failed
+media installation again. The sidecar matches exactly; the installed desktop app
+has the expected 8,690,688 bytes but a different digest. Packaging/staging cause
+is under investigation. R5's next milestone is a diagnosed and repaired installed
+capture preflight, followed by actual CallDialog plus messaging.
 
 Native replacement `43551695082` at `ceb84c5` passed its producers but failed in
 impaired receipts before any cold restart. Android read one byte of a four-byte

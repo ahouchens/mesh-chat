@@ -1,5 +1,42 @@
 # Connection runtime qualification ledger
 
+## Installed desktop app mismatch isolated — November 13, 2026
+
+Run [43554916988](https://github.com/ahouchens/mesh-chat/actions/runs/43554916988),
+attempt 1 at `c80876986c9d7305f071db5a8c2009ede60809d0`, tree
+`50073ce9bce8a2f8a42a7b68b8280f214fe70c51`, passed verification and Windows host
+jobs. Its media installation failed again before capture. The new bounded
+observations distinguish the files: the installed sidecar matches its expected
+54,668,946 bytes and SHA256
+`9113ce4398e52e8ca171a1ea76969e035ce295e0fbe11bd2c6da192a2a8a4b5a`.
+The desktop app matches the expected 8,690,688 bytes, but its installed SHA256 is
+`fa592e1b9d39fb39d3bc63d1603289e75f7e7c3242bd749191816a68cac00ad6`
+instead of the staged
+`9a4df800eccd60c59e3afb94f90abde6fac72f0892aaf4661db2ae88dd9551b6`.
+NSIS exited zero and the owned installer process retired. These facts identify
+the mismatching file; they do not yet identify the packaging/staging cause.
+
+Root independently validated artifact `14098782290`, 3,035-byte ZIP SHA256
+`bbc1273d7c44df9b0336cffb4609662991d7c6e9e56dad0e473e1760915809c8`, its
+run/source metadata and three bounded JSON entries. Evidence is retained in
+`.test-tmp/media-c808769.zip` and `.test-tmp/media-c808769-validated.json`.
+Exact installed-byte checks remain required. No capture or CallDialog
+coexistence acceptance follows from this failed installation.
+
+## Public installed fresh-pair diagnostic dispatched — November 13, 2026
+
+The controller, public flow, sealed setup transport, strict paired checker and
+isolated workflow are integrated through `4565ce1`. The combined focused suite
+passed 301 tests, zero skips; D reviewed the workflow and final setup-time bound
+without a remaining blocker. Source
+`4565ce1c7c265fa56acdc3990036cedf2277deeb`, tree
+`dac53090fbfdcbc0a56f8fb1911c844332d38c1a`, is frozen for first run
+[43556580958](https://github.com/ahouchens/mesh-chat/actions/runs/43556580958),
+attempt 1. Only `public_pair_diagnostic` is enabled on the manual parent route.
+The run must produce both installed roles and a successful same-run paired
+checker before any fresh-pair result can be claimed. Restart, partition,
+authority recovery, full SC21 and media coexistence remain outside this case.
+
 ## Paired diagnostic stopped in impaired receipts — November 13, 2026
 
 Run [43551695082](https://github.com/ahouchens/mesh-chat/actions/runs/43551695082),
