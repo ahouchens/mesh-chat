@@ -1,0 +1,29 @@
+{
+  "v": 1,
+  "tag": "v0.9.66",
+  "tag_object": "964848e68ed54ceffcbbb8b4a2355f46995e2efa",
+  "source_commit": "7c40f7b23eab3e9d83ff7ca1075c90c4d84ce516",
+  "source_tree": "96daefa74c38a5cfd7863e37e3effcb7a06dc6cd",
+  "excluded_sdk_fixture_source": "174728edad62aae6ef16e95b075183d06c5cdda3",
+  "release_id": 428222939,
+  "published_at": "2026-10-29T18:04:32Z",
+  "metadata_sha256": "3543c26f91da885de97cd7389185e637abbf35e99863ccb1bc3d98f344685981",
+  "checksums_sha256": "6306c25b130e10287b857829a29a6ea9b4dbfa27acaa9c1a25550e95345410a4",
+  "assets": {
+    "Mesh-Chat_0.9.66_x64-setup.exe": {
+      "id": 689437206,
+      "size_bytes": 28012178,
+      "sha256": "a20b381a8c7199c40aeba0487634c1302043c3e07d8b66c7838be8abfc050e23"
+    },
+    "Mesh-Chat_0.9.66_x64_en-US.msi": {
+      "id": 689437207,
+      "size_bytes": 30011392,
+      "sha256": "dadbffdedb39c1714abc426d9a2ded1eb815d84be0dfb11e7c7c88c332f2f34e"
+    },
+    "mesh-chat-0.9.66-android-arm64-release.apk": {
+      "id": 689437208,
+      "size_bytes": 46971989,
+      "sha256": "ea5d18576e36c6562a25902620b131f21096d27ac90031c64fbcdff45958a5f6"
+    }
+  }
+}

@@ -7,3 +7,7 @@
 /examples/typescript-independent-consumer/*.html text eol=lf
 /examples/typescript-independent-consumer/package.json text eol=lf
 /examples/typescript-independent-consumer/README.md text eol=lf
+
+# Release intake pins the exact retained public metadata and checksum bytes.
+/tests/core-release-upgrade/release-metadata.json text eol=lf
+/tests/core-release-upgrade/SHA256SUMS.txt text eol=lf

@@ -75,6 +75,17 @@ TypeScript tarball from `git archive`; it never treats a source import as a
 distribution install. See [`tests/core-sdk-upgrade/README.md`](../tests/core-sdk-upgrade/README.md)
 and `android-system-complete-sdk-staging.json` in the freeze.
 
+The separate [published 0.9.66 release intake](../tests/core-release-upgrade/README.md)
+checks explicitly supplied release binaries offline against the retained
+release metadata and checksum text. Its annotated tag resolves to source
+`7c40f7b23eab3e9d83ff7ca1075c90c4d84ce516`, tree
+`96daefa74c38a5cfd7863e37e3effcb7a06dc6cd`; the metadata snapshot
+SHA-256 is `3543c26f91da885de97cd7389185e637abbf35e99863ccb1bc3d98f344685981`.
+This is distinct from the rebuilt SDK fixture source above. The intake has no
+published-binary pass until all local asset bytes are supplied and validated;
+even a pass does not qualify native upgrade, an installed platform pair,
+physical-device bytes or a support window.
+
 ## Storage, export and uninstall boundary
 
 The runtime owns the vault and its lifetime lock. SDK clients attach through
