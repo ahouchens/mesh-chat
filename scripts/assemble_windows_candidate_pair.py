@@ -24,6 +24,7 @@ SOURCES = {
     "sdk_staging": STAGING,
     "old_staging": ROOT / "dist/sdk-upgrade/upgrade-artifacts.json",
 }
+SOURCE_NAMES = {name: path.name for name, path in SOURCES.items()}
 LEVEL = "windows_candidate_pair_input_assembly_only"
 
 
@@ -52,8 +53,8 @@ def read_report(path, limit=128 * 1024):
     return value
 
 
-def checked_artifact(path, name, contract):
-    if (path.name != contract.ARTIFACT_NAMES[name] or not path.is_file() or path.is_symlink()
+def checked_artifact(path, name, contract, expected_name):
+    if (path.name != expected_name or not path.is_file() or path.is_symlink()
             or not 0 < path.stat().st_size <= contract.MAX_BYTES[name]):
         raise ValueError("Required candidate artifact is missing or exceeds its bound")
     return {"sha256": digest(path), "size_bytes": path.stat().st_size}
@@ -106,7 +107,8 @@ def assemble(output, source, tree, run_id, run_attempt, artifact_id, *, contract
     runner_temp = Path(os.environ["RUNNER_TEMP"]).resolve(strict=True)
     if output.parent != runner_temp or output.is_relative_to(ROOT) or output.exists():
         raise ValueError("Candidate input directory must be fresh under runner temp")
-    records = {name: checked_artifact(path, name, contract) for name, path in SOURCES.items()}
+    records = {name: checked_artifact(path, name, contract, SOURCE_NAMES[name])
+               for name, path in SOURCES.items()}
     staging_sha = verify_staging(source, tree, records, contract)
     output.mkdir()
     artifacts = output / "artifacts"
@@ -115,7 +117,7 @@ def assemble(output, source, tree, run_id, run_attempt, artifact_id, *, contract
     for name, path in SOURCES.items():
         target = artifacts / contract.ARTIFACT_NAMES[name]
         shutil.copyfile(path, target)
-        if checked_artifact(target, name, contract) != records[name]:
+        if checked_artifact(target, name, contract, contract.ARTIFACT_NAMES[name]) != records[name]:
             raise ValueError("Candidate artifact changed during assembly")
         manifest_artifacts[name] = {"path": "artifacts/" + target.name, **records[name]}
     manifest = {"v": 1, "source_commit": source, "source_tree": tree,

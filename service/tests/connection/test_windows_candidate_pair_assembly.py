@@ -32,7 +32,7 @@ def staged_inputs(tmp_path, monkeypatch):
     inputs = tmp_path / "inputs"
     inputs.mkdir()
     paths = {}
-    for name, filename in contract.ARTIFACT_NAMES.items():
+    for name, filename in assembly.SOURCE_NAMES.items():
         path = inputs / filename
         path.write_bytes((name + " exact bytes").encode())
         paths[name] = path
@@ -67,6 +67,8 @@ def test_exact_manifest_and_provenance_are_assembled_outside_checkout(tmp_path, 
     output = tmp_path / "candidate"
     report = assembly.assemble(output, SOURCE, TREE, "123", "2", "456", contract=contract)
     manifest, artifacts = contract.validate_manifest(output / "manifest.json", SOURCE, TREE)
+    assert paths["sdk_staging"].name == "core-sdk-distribution-staging.json"
+    assert artifacts["sdk_staging"].name == "core-sdk-staging.json"
     assert report["passed"] is True
     assert report["run_id"] == "123" and report["run_attempt"] == "2"
     assert report["verification_artifact"] == "core-sdk-verification-" + SOURCE
