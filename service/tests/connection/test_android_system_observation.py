@@ -100,6 +100,30 @@ def test_emulator_reader_start_failure_retires_exact_process_and_pipe(monkeypatc
     assert_android_cleaned(script)
 
 
+def test_emulator_start_preserves_primary_and_separate_failed_cleanup(monkeypatch, tmp_path):
+    from test_ui_core_boundary_interop_peers import scripted_android, assert_android_cleaned
+    import native_interop_android_system as module
+    script = scripted_android(monkeypatch, tmp_path)
+    primary = RuntimeError("PRIVATE_START")
+    cleanup = OSError("PRIVATE_CLEANUP")
+    close = script.emulator.close
+    monkeypatch.setattr(module.threading.Thread, "start", lambda _: (_ for _ in ()).throw(primary))
+    monkeypatch.setattr(script.emulator, "close", lambda: (_ for _ in ()).throw(cleanup))
+    with pytest.raises(RuntimeError) as caught:
+        script.emulator.start(script.apks)
+    assert caught.value is primary
+    assert primary.__cause__ is cleanup
+    result = script.emulator.failure_start_observation(primary)
+    assert result == {"process": {"state": "running", "exit_status": None},
+                      "cleanup_exception_kind": "os_error"}
+    assert script.emulator.failure_start_observation(RuntimeError("PRIVATE_START")) is None
+    result["process"]["state"] = "PRIVATE_MUTATION"
+    assert script.emulator.failure_start_observation(primary)["process"]["state"] == "running"
+    assert "PRIVATE" not in json.dumps(script.emulator.failure_start_observation(primary))
+    close()
+    assert_android_cleaned(script)
+
+
 def test_emulator_retains_custody_until_console_reader_finishes(monkeypatch, tmp_path):
     from test_ui_core_boundary_interop_peers import scripted_android
     import native_interop_peers as peers

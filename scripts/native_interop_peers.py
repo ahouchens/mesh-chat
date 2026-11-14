@@ -766,6 +766,7 @@ class AndroidEmulator:
         self.serial = "emulator-5554"
         self.process = None
         self.old_environment = {}
+        self._start_failure = None
         from native_interop_android_system import AndroidSystemObservation
         self.observation = AndroidSystemObservation()
 
@@ -775,6 +776,7 @@ class AndroidEmulator:
             timeout=timeout).decode().strip()
 
     def start(self, apks, *, diagnostics=None):
+        self._start_failure = None
         diagnostics = diagnostics if diagnostics is not None else PreflightDiagnostics()
         with diagnostics.scope("android_devices"):
             devices = subprocess.check_output([str(self.sdk / "platform-tools/adb"), "devices"],
@@ -823,9 +825,22 @@ class AndroidEmulator:
                     self._adb("install", "-r", str(apk), timeout=120)
             with diagnostics.scope("android_notification_grant"):
                 self._adb("shell", "pm", "grant", AndroidPeer.APP, "android.permission.POST_NOTIFICATIONS")
-        except Exception:
-            self.close()
+        except Exception as error:
+            from native_interop_android_start import exception_kind
+            observed = {"process": process_observation(self.process), "cleanup_exception_kind": None}
+            self._start_failure = (error, observed)
+            try:
+                self.close()
+            except Exception as cleanup:
+                observed["cleanup_exception_kind"] = exception_kind(cleanup, peer_failure=isinstance(cleanup, PeerFailure))
+                raise error from cleanup
             raise
+
+    def failure_start_observation(self, error):
+        recorded = self._start_failure
+        if recorded is None or recorded[0] is not error:
+            return None
+        return {**recorded[1], "process": dict(recorded[1]["process"])}
 
     def close(self):
         self.observation.phase("cleanup")
