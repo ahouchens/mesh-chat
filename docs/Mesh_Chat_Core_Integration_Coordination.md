@@ -1,6 +1,19 @@
 # Core integration coordination — 2026-11-09
 
-Current November 14 integration: root has integrated private admission through
+Current November 14 integration: `de7c54f` passed 7,204 connection tests, two
+platform skips, exact SDK staging, strict types and 44 affected service tests.
+Image failure attribution `4a92903` then passed 161 affected checks with one
+platform skip. Both `a9f10b3` CI runs are closed failed on Linux mock setup;
+the R5 Windows runner also failed image admission with no retained inner phase.
+Full-run Windows passed actual paired recovery, which root validated against
+exact-source fixtures, SDK and binary bytes. Its cross-platform role was skipped.
+A reviewed D's failure-attribution patch; D reviews the retained recovery proof.
+C implements a separate bounded released-app/profile-continuity lane, with no
+installer-upgrade claim at unchanged version. Root prepares the next authorized
+tested feature push and full native/installed-call CI. Default promotion remains
+gated; private R7 installed execution, actual calls and native restart are open.
+
+Earlier November 14 integration: root has integrated private admission through
 `5fa473f`, portable pipe-test setup correction `7a8ca2f`, and release byte intake
 through `a1f1657`. Full run `43581311705` and installed-call run `43581311710`
 at locally validated `a9f10b3` are still executing native/Windows jobs, but their

@@ -1,5 +1,48 @@
 # Connection runtime qualification ledger
 
+## Installed Windows recovery verified; successor locally validated — November 14, 2026
+
+Full run `43581311705`, attempt 1 at `a9f10b3`, closed failed: seven jobs
+passed, four failed and nine were skipped. Its Windows desktop job
+`132410157418` passed. Root validated the exact-source report schemas, all 17
+staged application file hashes, SDK archive, actual sidecar bytes and build
+manifest. Desktop artifact `14109087851` has ZIP SHA-256
+`b2027db7bb544e91736b331163c707fca781cb4d8f5afbec545158890e0c519b`;
+native artifact `14109182219` has ZIP SHA-256
+`e54c85a9c42443134dd3500c35d066170de91c9c0bf0ae85d2886171734c5c22`.
+
+Installed paired-process recovery passed in 73.136 seconds (75.501 seconds
+including the producer). It proved application-side discarded reply, independent
+pending commit, sender reopen with original handle, changed-payload conflict,
+receiver reopen, one authenticated delivery and one inbound record, four clean
+owner exits, two clean helper exits, two EFS profiles/vaults and cleanup.
+This verifies correction `3322776` at the declared Windows recovery scope.
+Bootstrap, separate-process lifetime, image-path admission, ordinary public
+pairing and native control/lifecycle reports passed at the same source. The
+cross-platform native job was skipped after Linux verification failed, so it
+does not resolve the earlier Android cold-initialize failure or qualify R1/R7.
+
+Installed-call run `43581311710` at the same source also closed failed. Its
+Windows job `132410314647` passed bootstrap and separate-process lifetime but
+failed image admission in 9.635 seconds. Desktop artifact `14109107072`, ZIP
+SHA-256 `e593bc421c83561acc02e2bf2129fb5f2c0e0ad4170df914ed91e9e550f26cbe`,
+retains `image_admission_execution/FixtureExecutionFailure`; the inner phase
+was discarded. The cause remains unresolved; the passing other runner does not
+erase this failure. Correction `4a92903` retains only a strict fixed phase from
+the failed fixture, preserving the failed outcome and existing bounds. All 161
+affected checks passed with one platform skip. No actual call role executed.
+
+Successor `de7c54f3b000ac317075516228db511153a547a0`, tree
+`509c4c81630fa16520b8984f7d2eb6a993283e7b`, passed all 7,204 local connection
+tests, with two platform skips, exact-source SDK staging and strict typing.
+Its installed R7 private-admission producer passed independent B/D review;
+172 neighboring producer/selection checks passed with one platform skip, and
+44 affected IPC/Windows pipe/service checks passed. The producer is integrated,
+but installed private-admission execution remains pending. The only subsequent
+code change is the reviewed image-reporting correction above. Fresh Linux,
+full native and installed-call CI remain required; no default promotion or
+refactor completion is claimed.
+
 ## Private admission integration and Linux fixture correction — November 14, 2026
 
 Frozen source `a9f10b304124182f42ef00a101b685abed2b8245`, tree

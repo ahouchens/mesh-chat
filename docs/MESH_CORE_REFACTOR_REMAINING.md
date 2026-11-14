@@ -1,7 +1,7 @@
 # Mesh Core refactor: remaining work and completion map
 
 Prepared November 13, 2026; refreshed November 14 through private admission
-`5fa473f`, Linux fixture correction `7a8ca2f`, release intake `a1f1657`, and
+`de7c54f`, image attribution `4a92903`, release intake `a1f1657`, and
 the source-bound results below. The last full native qualification remains failed;
 focused diagnostics do not replace it. This is a compact planning register, not
 new qualification evidence.
@@ -51,6 +51,19 @@ the specification's IDs or imply equal effort. Several packages overlap.
 
 ## Current checkpoint
 
+- Both `a9f10b3` runs are closed failed. Full-run Windows job `132410157418`
+  passed installed image admission, pairing and paired consumer recovery;
+  exact artifact and binary validation confirms receiver reopen and authenticated
+  later delivery. This verifies the cleanup-slot repair at its declared Windows
+  scope. The cross-platform native job was skipped after the Linux test-setup
+  failure. The R5 runner separately failed image admission with no inner phase;
+  `4a92903` now retains fixed failure phases, and 161 affected checks pass with
+  one platform skip. Its actual call role did not execute.
+- Integrated candidate `de7c54f` passed 7,204 connection tests with two platform
+  skips, exact-source SDK staging, strict types and 44 affected service tests.
+  It includes the reviewed installed private-admission producer. A new tested
+  source with the small reporting correction needs fresh Linux/native/call CI.
+- Earlier checkpoint before those runs closed:
 - Source `a9f10b3` passed 7,142 local connection tests, two platform skips,
   exact-source SDK staging and strict types, then started full run `43581311705`
   and installed-call run `43581311710`. Their Linux policy/verification jobs

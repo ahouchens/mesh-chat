@@ -1,6 +1,16 @@
 # Acceptance reconciliation: specification invariants and scenarios
 
-Current November 14 checkpoint: full run `43581311705` and installed-call run
+Current November 14 checkpoint: both `a9f10b3` runs closed failed. Full-run
+Windows paired recovery passed and its exact artifacts, SDK and sidecar bytes
+were validated; this closes the receiver-cleanup fixture defect at its declared
+scope. Cross-platform native qualification was skipped after Linux test setup
+failed. R5's runner separately failed image admission, so actual call roles did
+not run. Candidate `de7c54f` passed 7,204 connection tests with two platform
+skips and strict types; `4a92903` adds reviewed fixed-phase failure reporting.
+Installed private admission, full durable isolation, native cold restart and
+CallDialog coexistence remain unqualified. No default promotion follows.
+
+Earlier November 14 checkpoint: full run `43581311705` and installed-call run
 `43581311710` at `a9f10b3` remain active with failed Linux prerequisite jobs.
 Their seven Windows-only test mock setup failures are corrected locally in
 `7a8ca2f`; a new Linux pass is required. Integrated private admission through
