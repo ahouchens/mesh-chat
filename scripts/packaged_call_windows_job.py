@@ -105,6 +105,7 @@ class WindowsJob:
         if self.handle is None: return False, False
         forced = not self.wait_zero()
         zero = self.terminate() if forced else True
-        closed = self.api.CloseHandle(self.handle)
+        if not zero: return False, forced
+        if not self.api.CloseHandle(self.handle): return False, forced
         self.handle = None
-        return bool(zero and closed), forced
+        return True, forced

@@ -52,7 +52,7 @@ jobs:
         run: |
           python -m unittest discover -s scripts -p "test_packaged_call_*.py"
           node examples/typescript-independent-consumer/browser-media.test.mjs
-          pnpm exec vitest run scripts/packaged_call_gui_dom.test.mjs
+          pnpm exec vitest run --config scripts/packaged_call_vitest.config.mjs
       - name: Build same-source candidate after exact verification
         run: python scripts/release.py build --platform desktop --skip-tests --report dist/reports/packaged-media-build.json
       - name: Retain exact candidate for installed GUI role

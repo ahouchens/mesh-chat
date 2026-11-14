@@ -77,6 +77,7 @@ class BrowserProcess:
         self.cleanup = {}
         self.closed = False
         self.close_result = False
+        self.profile_removed = False
 
     def _read(self):
         try:
@@ -188,23 +189,22 @@ class BrowserProcess:
         if self.reader is not None: self.reader.join(timeout=2)
         try: job_zero, forced = self.job.close() if self.job is not None else (self.process is None, False)
         except Exception: job_zero, forced = False, True
-        profile_removed = False
-        if job_zero and self.directory is not None:
+        if job_zero and self.directory is not None and not self.profile_removed:
             try:
                 target = self.directory.resolve(strict=True)
                 if (target.parent != self.temporary_root or not target.name.startswith("mesh-call-edge-")
                         or self.directory.is_symlink()):
                     raise ValueError("browser_profile_ownership")
                 shutil.rmtree(target)
-                profile_removed = not os.path.lexists(target)
+                self.profile_removed = not os.path.lexists(target)
             except Exception:
-                profile_removed = False
+                self.profile_removed = False
         self.cleanup = {"writer_retired": self.writer is None or self.writer.retired,
                         "reader_retired": self.reader is None or not self.reader.is_alive(),
                         "stdin_closed": closed.is_set() and not close_errors and
                             (closer is None or not closer.is_alive()),
                         "node_retired": self.process is None or self.process.poll() is not None,
-                        "job_zero_and_released": job_zero, "edge_profile_removed": profile_removed}
-        self.closed = True
+                        "job_zero_and_released": job_zero, "edge_profile_removed": self.profile_removed}
+        self.closed = all(self.cleanup.values())
         self.close_result = self.retired and code == 0 and not forced and all(self.cleanup.values())
         return self.close_result

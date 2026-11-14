@@ -24,7 +24,13 @@ class BoundedWriter:
 
         def worker():
             try:
-                self.stream.write(data)
+                offset = 0
+                view = memoryview(data)
+                while offset < len(data):
+                    count = self.stream.write(view[offset:])
+                    if type(count) is not int or not 0 < count <= len(data) - offset:
+                        raise ValueError("owned_write_short_or_invalid")
+                    offset += count
                 self.stream.flush()
             except Exception as error:
                 errors.append(error)

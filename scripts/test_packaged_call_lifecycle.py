@@ -30,6 +30,67 @@ def bounded_line(process, seconds=3):
 
 @unittest.skipUnless(sys.platform == "win32", "Windows child and Job Object checks")
 class PackagedCallLifecycleTest(unittest.TestCase):
+    def test_bounded_writer_completes_short_writes_and_rejects_zero(self):
+        class ShortStream:
+            def __init__(self, count): self.count, self.data = count, bytearray()
+            def write(self, value):
+                if self.count:
+                    self.data.extend(value[:self.count])
+                return min(self.count, len(value))
+            def flush(self): pass
+        stream = ShortStream(3)
+        BoundedWriter(stream, lambda: True).write(b"abcdefg", time.monotonic() + 2)
+        self.assertEqual(stream.data, b"abcdefg")
+        for count in (0, None, -1, 4, True):
+            class InvalidStream:
+                def write(self, value): return count
+                def flush(self): pass
+            with self.subTest(count=count), self.assertRaisesRegex(ValueError, "owned_write_failed"):
+                BoundedWriter(InvalidStream(), lambda: True).write(b"abc", time.monotonic() + 2)
+
+    def test_job_release_failure_retains_handle_for_retry(self):
+        job = WindowsJob()
+        real_api = job.api
+        class FailOnce:
+            def __init__(self): self.attempts = 0
+            def __getattr__(self, name): return getattr(real_api, name)
+            def CloseHandle(self, handle):
+                self.attempts += 1
+                return False if self.attempts == 1 else real_api.CloseHandle(handle)
+        proxy = FailOnce()
+        job.api = proxy
+        try:
+            self.assertEqual(job.close(), (False, False))
+            self.assertIsNotNone(job.handle)
+            self.assertEqual(job.close(), (True, False))
+            self.assertIsNone(job.handle)
+            self.assertEqual(proxy.attempts, 2)
+        finally:
+            job.api = real_api
+            if job.handle is not None: job.close()
+
+    def test_browser_cleanup_retries_unreleased_job_and_preserves_failure(self):
+        with tempfile.TemporaryDirectory(prefix="mesh-call-test-") as temporary:
+            edge = Path(temporary) / "msedge.exe"
+            edge.write_bytes(b"test-placeholder")
+            browser = BrowserProcess(Path(sys.executable), edge, Path(temporary))
+            browser.directory = Path(tempfile.mkdtemp(prefix="mesh-call-edge-", dir=temporary))
+            class FailOnceJob:
+                def __init__(self): self.calls = 0
+                def close(self):
+                    self.calls += 1
+                    return (False, False) if self.calls == 1 else (True, False)
+            browser.job = FailOnceJob()
+            self.assertFalse(browser.close())
+            self.assertFalse(browser.closed)
+            self.assertTrue(browser.directory.exists())
+            self.assertFalse(browser.close())
+            self.assertTrue(browser.closed)
+            self.assertFalse(browser.directory.exists())
+            self.assertEqual(browser.job.calls, 2)
+            self.assertTrue(browser.cleanup["job_zero_and_released"])
+            self.assertTrue(browser.cleanup["edge_profile_removed"])
+
     def test_stalled_reader_cannot_extend_write_deadline(self):
         child = subprocess.Popen([sys.executable, "-c", "import time;time.sleep(60)"],
             stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
