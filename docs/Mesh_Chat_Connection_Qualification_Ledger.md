@@ -1,5 +1,33 @@
 # Connection runtime qualification ledger
 
+## Three packaged reopens passed — November 13, 2026
+
+Run [43540388648](https://github.com/ahouchens/mesh-chat/actions/runs/43540388648)
+at `6819084d4d2b3a5f94a6b40e144f049b04d4b5fb` passed all three declared
+independent emulator attempts. Each packaged host crash/reopen replaced the service
+incarnation, preserved the caller-visible profile handle and durable identity,
+and verified retirement without a cleanup failure. All five tracked-source
+checkpoints were captured, matched tree `cd27b9e2585afb63c0d83368d8e31679a525479a`,
+and were clean. The final job and restore-only cache cleanup passed.
+
+Artifact `14091477773` has ZIP SHA256
+`04579094f396870b75a2f3f3025b6bf578a5e4b316200af41df1b978a34132bc`.
+Both JSON reports, final job metadata/log, the predeclared freeze and root
+validation are retained under `.test-tmp/focused-reopen-6819084-*`. Root verified
+the artifact envelope, source/tree/blobs, exact attempt count, outcomes and all
+checkpoint records. The same-job optimized host APK SHA256 is
+`dc6ab3804c3ffda77c8aa138f96de5e073c1d0c8d3170a752b3bf1a4ea9be2a2`;
+the instrumentation APK SHA256 is
+`82f508c05151eafae834366d0d2f108f2b3d7219bc284022a19d0c6d91199e78`.
+
+This unblocks R1's packaged build/reopen diagnostic and confirms the shared
+emulator cleanup on these attempts. It does not reproduce the historical b8
+six-path prefix, pair Windows with Android, exchange authenticated receipts or
+close the original Android restart/Windows inventory failures. The next R1/R4
+batch reproduces that prefix and first paired cold cycle in a separate diagnostic
+scope; full fault/100-cycle acceptance and R2 promotion remain gated. Windows
+candidate-pair run `43539960943` remains active at its distinct source `71226a7`.
+
 ## Build handoff and shared cleanup repair — November 13, 2026
 
 Packaged reopen run `43538167917` at `304f863` built its APKs, then failed

@@ -74,6 +74,10 @@ the specification's IDs or imply equal effort. Several packages overlap.
   reopen attempt. The Gradle wrapper executable bit is corrected and build
   checkpoints now expose remaining file/mode changes. The shared emulator owner
   also retains custody until its ADB transport disappears (2,078 tests pass).
+  Run `43540388648` at `6819084` passed all three packaged crash/reopen attempts,
+  preserving identity/profile handle and verifying retirement. All five build
+  source checkpoints were clean. Next reproduce the six-path prefix and first
+  paired cold cycle; this Android-only result has no paired receipt evidence.
   The original cold-restart and Windows inventory failures remain open.
 - Invitation dismissal now retains its operation identity across uncertain replies
   within the current profile lifetime. Channel creation now also reuses its
@@ -91,9 +95,9 @@ its owned checkout and reports source evidence and gaps before integration.
 
 | Owner | Roadmap batch | Exclusive file scope / concrete deliverable | Next milestone |
 | --- | --- | --- | --- |
-| Lead, A reviewing | R1 | Boot repair passed; shared cleanup and source-binding build handoff repairs are integrated. | Re-run declared packaged reopen, then original cold-restart investigation and unchanged full native acceptance. |
-| C | R0 | Mixed-actor and event-classification tests integrated; physical baseline provenance remains unresolved. | Reconcile remaining adapter and protocol boundary evidence. |
-| B | R3/R5 and R8 review | UI invitation dismissal integrated; independently review A's compatibility fixture repairs. | Reviewed fixture; packaged UI/media coexistence remains open. |
+| Lead, D reviewing | R1 | Boot repair and three packaged reopens passed; all build checkpoints clean. | Reproduce the original six-path prefix and first paired cold restart, then unchanged full native acceptance. |
+| C | R0/R1 preparation | Mixed-actor and event-classification tests integrated; physical baseline provenance remains unresolved. | Review a diagnostic reuse plan for the six-path prefix and first paired cold cycle. |
+| B | R3/R5 | Invitation dismissal and channel-creation retry repairs integrated. | Audit the next concrete independent pending-action/lifecycle gap; packaged UI/media coexistence remains open. |
 | A | R8/R1 review | Repaired candidate fixture and build-mode review integrated. | Review results of exact-source installed Windows execution. |
 | D | R9/R8 | Opt-in Windows candidate workflow integrated; run `43539960943` active. Android build-source checkpoints integrated. | Interpret source-bound results; no mixed-source acceptance. |
 
