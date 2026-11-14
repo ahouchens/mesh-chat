@@ -23,6 +23,21 @@ def test_release_rejects_quick_native_workload_even_when_jobs_pass(tmp_path):
         release.qualification(path, SOURCE, TREE)
 
 
+@pytest.mark.parametrize("marker", ["workload", "peer_level"])
+def test_release_rejects_diagnostic_native_evidence_even_when_jobs_pass(tmp_path, marker):
+    path, _, _ = fixture(tmp_path)
+    manifest = json.loads(path.read_text())
+    if marker == "workload":
+        manifest["native_workload"] = "b8_first_cold"
+    else:
+        peer = component("native_windows_peer", checks=7)
+        peer["evidence_level"] = "packaged_windows_android_emulator_b8_first_cold_diagnostic_only"
+        manifest["suites"].append(peer)
+    path.write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="diagnostic"):
+        release.qualification(path, SOURCE, TREE)
+
+
 def component(name, *, tests=None, checks=None):
     return {"suite": name, "evidence_level": "component", "source_commit": SOURCE,
             "source_tree": TREE, "tests": tests, "checks": checks,

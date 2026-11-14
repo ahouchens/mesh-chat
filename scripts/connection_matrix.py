@@ -136,6 +136,8 @@ def android_evidence(record, source, tree):
 
 
 def collect(directory: Path, source: str, tree: str, required, *, native_workload="full"):
+    if native_workload not in ("quick", "full"):
+        raise ValueError("Unknown required native qualification workload")
     policy_path = directory / "policy/connection-policy.json"
     policy = read(policy_path)
     executed = policy_evidence(policy_path.with_suffix(".xml"), source, source,

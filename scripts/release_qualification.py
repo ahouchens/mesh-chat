@@ -88,6 +88,10 @@ def qualification(path, source, tree):
     if any(jobs[name] != "success" for name in required):
         raise ValueError("A required qualification suite did not succeed")
     suites = records(manifest)
+    if manifest.get("native_workload") not in (None, "quick", "full") or any(
+            record["suite"] in {"native_windows_peer", "native_android_peer"}
+            and record["evidence_level"].endswith("_diagnostic_only") for record in suites):
+        raise ValueError("Native diagnostic evidence cannot qualify a release")
     if manifest.get("native_workload") == "quick" or any(
             record["suite"] in {"native_windows_peer", "native_android_peer"}
             and record["evidence_level"].endswith("_quick_smoke") for record in suites):

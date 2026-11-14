@@ -31,6 +31,13 @@ def test_diagnostic_has_exact_full_prefix_and_one_cold_cycle():
         assert workloads.selected_workload(event, ["scripts/native_interop_controller.py"]) in {"quick", "full"}
 
 
+def test_required_matrix_rejects_diagnostic_workload_before_reading_reports(tmp_path):
+    import connection_matrix
+    with pytest.raises(ValueError, match="qualification workload"):
+        connection_matrix.collect(tmp_path, "a" * 40, "b" * 40, ["native_interop"],
+                                  native_workload=DIAGNOSTIC)
+
+
 @pytest.mark.parametrize("event,actions,selected,job,allowed", [
     ("workflow_dispatch", "true", "full", "native_windows_peer", True),
     ("workflow_dispatch", "true", "full", "native_android_peer", False),
