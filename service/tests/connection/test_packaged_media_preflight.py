@@ -194,7 +194,8 @@ class PublishedCandidateTests(unittest.TestCase):
             with self.subTest(stderr=stderr[:70]):
                 self.assertIsNone(preflight.bounded_probe_failure(stderr))
 
-    def _mocked_preflight_probe(self, probe_outcome, app_exit=None):
+    def _mocked_preflight_probe(self, probe_outcome, app_exit=None, elevated=False,
+                                policy_cleanup_error=False):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             output = root / "preflight.json"
@@ -220,18 +221,34 @@ class PublishedCandidateTests(unittest.TestCase):
                     patch.object(preflight, "known_folder", return_value=root), \
                     patch.object(preflight, "require_fresh_app_data"), \
                     patch.object(preflight, "reserve_port", return_value=12345), \
+                    patch.object(preflight, "token_elevated", return_value=elevated), \
+                    patch.object(preflight, "ScopedBrowserPolicy") as policy, \
                     patch.object(preflight, "retire", return_value=True) as retirement, \
                     patch.object(preflight.subprocess, "Popen") as launch, \
                     patch.object(preflight.subprocess, "run", side_effect=[node_version, probe_outcome]):
                 launch.return_value.poll.return_value = app_exit
+                policy.return_value.remove.return_value = True
+                if policy_cleanup_error:
+                    policy.return_value.remove.side_effect = RuntimeError("registry_changed")
                 with redirect_stdout(StringIO()):
                     self.assertEqual(preflight.main(), 1)
                 launch.assert_called_once()
                 self.assertEqual(launch.call_args.args[0], [str((root / "mesh-chat.exe").resolve())])
-                self.assertEqual(launch.call_args.kwargs["env"]["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"],
-                                 "--remote-debugging-port=12345 --use-fake-device-for-media-stream "
-                                 "--use-fake-ui-for-media-stream")
+                if elevated:
+                    self.assertNotIn("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", launch.call_args.kwargs["env"])
+                else:
+                    self.assertEqual(launch.call_args.kwargs["env"]["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"],
+                                     "--remote-debugging-port=12345 --use-fake-device-for-media-stream "
+                                     "--use-fake-ui-for-media-stream")
                 retirement.assert_called_once()
+                if elevated:
+                    policy.assert_called_once_with(
+                        "--remote-debugging-port=12345 --use-fake-device-for-media-stream "
+                        "--use-fake-ui-for-media-stream")
+                    policy.return_value.install.assert_called_once_with()
+                    policy.return_value.remove.assert_called_once_with()
+                else:
+                    policy.assert_not_called()
             result = json.loads(output.read_text(encoding="utf-8"))
             return result, output.read_text(encoding="utf-8")
 
@@ -244,6 +261,8 @@ class PublishedCandidateTests(unittest.TestCase):
         self.assertEqual(result["phase"], "webview2_capture")
         self.assertTrue(result["app_retired"])
         self.assertTrue(result["app_running_after_probe"])
+        self.assertFalse(result["app_token_elevated"])
+        self.assertEqual(result["browser_flag_scope"], "child_environment")
         self.assertEqual(result["probe_failure"],
                          {"stage": "target_discovery", "code": "app_webview_unavailable"})
         self.assertNotIn("private detail", raw)
@@ -254,6 +273,100 @@ class PublishedCandidateTests(unittest.TestCase):
         result, _ = self._mocked_preflight_probe(
             subprocess.CompletedProcess([], 1, stdout="", stderr=marker), app_exit=7)
         self.assertFalse(result["app_running_after_probe"])
+
+    def test_elevated_host_uses_and_retires_scoped_browser_policy(self):
+        marker = preflight.PROBE_FAILURE_PREFIX + json.dumps(
+            {"stage": "target_discovery", "code": "app_webview_unavailable"})
+        result, _ = self._mocked_preflight_probe(
+            subprocess.CompletedProcess([], 1, stdout="", stderr=marker), elevated=True)
+        self.assertTrue(result["app_token_elevated"])
+        self.assertEqual(result["browser_flag_scope"], "hklm_app_policy")
+        self.assertTrue(result["browser_policy_retired"])
+
+    def test_elevated_policy_cleanup_error_fails_the_preflight(self):
+        marker = preflight.PROBE_FAILURE_PREFIX + json.dumps(
+            {"stage": "target_discovery", "code": "app_webview_unavailable"})
+        result, _ = self._mocked_preflight_probe(
+            subprocess.CompletedProcess([], 1, stdout="", stderr=marker), elevated=True,
+            policy_cleanup_error=True)
+        self.assertFalse(result["browser_policy_retired"])
+        self.assertEqual(result["failure"], "browser_policy_cleanup_unconfirmed")
+
+    def test_scoped_browser_policy_refuses_foreign_value_and_cleans_exact_own_value(self):
+        class Registry:
+            HKEY_LOCAL_MACHINE = 1
+            KEY_QUERY_VALUE = 2
+            KEY_SET_VALUE = 4
+            KEY_WOW64_64KEY = 8
+            REG_SZ = 1
+
+            def __init__(self):
+                self.paths = {"SOFTWARE"}
+                self.value = None
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def OpenKey(self, hive, path, _reserved, access):
+                assert hive == self.HKEY_LOCAL_MACHINE
+                assert access in {10, 14}
+                if path not in self.paths:
+                    raise FileNotFoundError
+                return self
+
+            def CreateKeyEx(self, hive, path, reserved, access):
+                assert (hive, path, reserved, access) == (self.HKEY_LOCAL_MACHINE,
+                                                           preflight.WEBVIEW_POLICY_PATH, 0, 14)
+                parts = path.split("\\")
+                self.paths.update("\\".join(parts[:depth]) for depth in range(1, len(parts) + 1))
+                return self
+
+            def QueryValueEx(self, _key, name):
+                assert name == preflight.WEBVIEW_POLICY_APP
+                if self.value is None:
+                    raise FileNotFoundError
+                return self.value
+
+            def SetValueEx(self, _key, name, reserved, kind, value):
+                assert (name, reserved, kind) == (preflight.WEBVIEW_POLICY_APP, 0, self.REG_SZ)
+                self.value = (value, kind)
+
+            def DeleteValue(self, _key, name):
+                assert name == preflight.WEBVIEW_POLICY_APP
+                self.value = None
+
+            def DeleteKeyEx(self, hive, path, *, access):
+                assert (hive, access) == (self.HKEY_LOCAL_MACHINE, self.KEY_WOW64_64KEY)
+                assert path in self.paths and not any(item.startswith(path + "\\") for item in self.paths)
+                assert path != preflight.WEBVIEW_POLICY_PATH or self.value is None
+                self.paths.remove(path)
+
+        registry = Registry()
+        with patch.object(preflight.importlib, "import_module", return_value=registry):
+            owned = preflight.ScopedBrowserPolicy("--remote-debugging-port=12345")
+            owned.install()
+            self.assertEqual(registry.value, (owned.flags, registry.REG_SZ))
+            self.assertTrue(owned.remove())
+            self.assertEqual(registry.paths, {"SOFTWARE"})
+
+            registry.CreateKeyEx(registry.HKEY_LOCAL_MACHINE, preflight.WEBVIEW_POLICY_PATH, 0, 14)
+            registry.value = ("foreign", registry.REG_SZ)
+            existing = preflight.ScopedBrowserPolicy("--remote-debugging-port=12345")
+            with self.assertRaisesRegex(preflight.PreflightFailure, "browser_policy_preexisting"):
+                existing.install()
+            self.assertTrue(existing.remove())
+            self.assertEqual(registry.value, ("foreign", registry.REG_SZ))
+
+            registry.value = None
+            changed = preflight.ScopedBrowserPolicy("--remote-debugging-port=12345")
+            changed.install()
+            registry.value = ("foreign", registry.REG_SZ)
+            with self.assertRaisesRegex(preflight.PreflightFailure, "browser_policy_changed"):
+                changed.remove()
+            self.assertEqual(registry.value, ("foreign", registry.REG_SZ))
 
     def test_probe_timeout_keeps_primary_failure_and_bounded_marker(self):
         marker = preflight.PROBE_FAILURE_PREFIX + json.dumps(

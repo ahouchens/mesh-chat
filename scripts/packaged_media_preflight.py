@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import ctypes
 import hashlib
+import importlib
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -44,6 +45,8 @@ HEX64 = re.compile(r"[a-fA-F0-9]{64}\Z")
 HEX40 = re.compile(r"[a-f0-9]{40}\Z")
 VERSION = re.compile(r"(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\Z")
 MAX_REPORT_BYTES = 16 * 1024
+WEBVIEW_POLICY_PATH = r"SOFTWARE\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments"
+WEBVIEW_POLICY_APP = "mesh-chat.exe"
 
 
 class PreflightFailure(RuntimeError):
@@ -291,6 +294,91 @@ def reserve_port() -> int:
         return listener.getsockname()[1]
 
 
+def token_elevated() -> bool:
+    """Check the current token; the ordinary child inherits this same token."""
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel32.GetCurrentProcess.restype = ctypes.c_void_p
+    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+    kernel32.CloseHandle.restype = ctypes.c_bool
+    advapi32.OpenProcessToken.argtypes = [ctypes.c_void_p, ctypes.c_uint32,
+                                          ctypes.POINTER(ctypes.c_void_p)]
+    advapi32.OpenProcessToken.restype = ctypes.c_bool
+    advapi32.GetTokenInformation.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_void_p,
+                                             ctypes.c_uint32, ctypes.POINTER(ctypes.c_uint32)]
+    advapi32.GetTokenInformation.restype = ctypes.c_bool
+    token = ctypes.c_void_p()
+    if not advapi32.OpenProcessToken(kernel32.GetCurrentProcess(), 0x0008, ctypes.byref(token)):
+        raise PreflightFailure("token_elevation_unavailable")
+    try:
+        elevated = ctypes.c_uint32()
+        returned = ctypes.c_uint32()
+        if (not advapi32.GetTokenInformation(token, 20, ctypes.byref(elevated),
+                                             ctypes.sizeof(elevated), ctypes.byref(returned))
+                or returned.value != ctypes.sizeof(elevated)):
+            raise PreflightFailure("token_elevation_unavailable")
+        return elevated.value != 0
+    finally:
+        kernel32.CloseHandle(token)
+
+
+class ScopedBrowserPolicy:
+    """Provide CI browser flags to an elevated WebView2 host, then remove only our value."""
+
+    def __init__(self, flags: str):
+        self.flags = flags
+        self.registry = importlib.import_module("winreg")
+        self.created_paths = []
+        self.installed = False
+
+    def _access(self):
+        return (self.registry.KEY_QUERY_VALUE | self.registry.KEY_SET_VALUE
+                | self.registry.KEY_WOW64_64KEY)
+
+    def install(self):
+        registry = self.registry
+        parts = WEBVIEW_POLICY_PATH.split("\\")
+        for depth in range(2, len(parts) + 1):
+            path = "\\".join(parts[:depth])
+            try:
+                with registry.OpenKey(registry.HKEY_LOCAL_MACHINE, path, 0,
+                                      registry.KEY_QUERY_VALUE | registry.KEY_WOW64_64KEY):
+                    pass
+            except FileNotFoundError:
+                self.created_paths.append(path)
+        key = registry.CreateKeyEx(registry.HKEY_LOCAL_MACHINE, WEBVIEW_POLICY_PATH, 0, self._access())
+        with key:
+            try:
+                registry.QueryValueEx(key, WEBVIEW_POLICY_APP)
+            except FileNotFoundError:
+                pass
+            else:
+                raise PreflightFailure("browser_policy_preexisting")
+            registry.SetValueEx(key, WEBVIEW_POLICY_APP, 0, registry.REG_SZ, self.flags)
+            self.installed = True
+            if registry.QueryValueEx(key, WEBVIEW_POLICY_APP) != (self.flags, registry.REG_SZ):
+                raise PreflightFailure("browser_policy_changed")
+
+    def remove(self) -> bool:
+        registry = self.registry
+        if self.installed:
+            with registry.OpenKey(registry.HKEY_LOCAL_MACHINE, WEBVIEW_POLICY_PATH, 0, self._access()) as key:
+                if registry.QueryValueEx(key, WEBVIEW_POLICY_APP) != (self.flags, registry.REG_SZ):
+                    raise PreflightFailure("browser_policy_changed")
+                registry.DeleteValue(key, WEBVIEW_POLICY_APP)
+                try:
+                    registry.QueryValueEx(key, WEBVIEW_POLICY_APP)
+                except FileNotFoundError:
+                    self.installed = False
+                else:
+                    raise PreflightFailure("browser_policy_cleanup_unconfirmed")
+        while self.created_paths:
+            registry.DeleteKeyEx(registry.HKEY_LOCAL_MACHINE, self.created_paths[-1],
+                                 access=registry.KEY_WOW64_64KEY)
+            self.created_paths.pop()
+        return True
+
+
 def cdp_closed(port: int) -> bool:
     try:
         with urlopen(f"http://127.0.0.1:{port}/json/list", timeout=0.5):
@@ -376,6 +464,7 @@ def main() -> int:
               "run_id": args.run_id, "run_attempt": args.run_attempt}
     process = None
     port = None
+    policy = None
     try:
         if sys.platform != "win32" or not re.fullmatch(r"[0-9]{1,20}", args.run_id) or args.run_attempt < 1:
             raise PreflightFailure("platform_or_run_invalid")
@@ -414,9 +503,17 @@ def main() -> int:
         report["node_major"] = int(match.group(1))
         port = reserve_port()
         environment = os.environ.copy()
-        environment["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = (
+        browser_flags = (
             f"--remote-debugging-port={port} --use-fake-device-for-media-stream --use-fake-ui-for-media-stream"
         )
+        report["app_token_elevated"] = token_elevated()
+        if report["app_token_elevated"]:
+            policy = ScopedBrowserPolicy(browser_flags)
+            policy.install()
+            report["browser_flag_scope"] = "hklm_app_policy"
+        else:
+            environment["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = browser_flags
+            report["browser_flag_scope"] = "child_environment"
         report["phase"] = "webview2_capture"
         process = subprocess.Popen([str(args.app.resolve())], cwd=args.app.parent, env=environment,
                                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -451,6 +548,13 @@ def main() -> int:
             report["app_retired"] = False
         if not report["app_retired"]:
             report["failure"] = "app_retirement_unconfirmed"
+        if policy is not None:
+            try:
+                report["browser_policy_retired"] = policy.remove()
+            except Exception:
+                report["browser_policy_retired"] = False
+            if not report["browser_policy_retired"]:
+                report["failure"] = "browser_policy_cleanup_unconfirmed"
         report["passed"] = "failure" not in report and report["app_retired"] and report["phase"] == "retirement"
         write_report(args.output, report)
     print(json.dumps(report, sort_keys=True))
