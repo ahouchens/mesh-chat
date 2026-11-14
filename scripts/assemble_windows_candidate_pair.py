@@ -180,7 +180,7 @@ def main():
                                         "reason": "candidate_execution_pending",
                                         "manifest_sha256": report["manifest_sha256"]})
     except Exception as error:
-        report.update(failure_type=type(error).__name__)
+        report.update(passed=False, failure_type=type(error).__name__)
     write_report(args.report, report)
     print(json.dumps({key: value for key, value in report.items() if key != "artifacts"}))
     return 0 if report["passed"] else 1

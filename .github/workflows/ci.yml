@@ -97,7 +97,7 @@ jobs:
   desktop-host:
     name: Check Windows desktop host
     needs: verify
-    if: ${{ always() && (inputs.windows_candidate_pair != true || needs.verify.result == 'success') }}
+    if: ${{ !cancelled() && (inputs.windows_candidate_pair != true || needs.verify.result == 'success') }}
     runs-on: windows-latest
     timeout-minutes: 60
     steps:

@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -100,6 +101,8 @@ def test_workflow_opt_in_depends_on_same_run_stage_and_retains_separate_report()
     assert workflow["jobs"]["verify"]["outputs"]["candidate_sdk_artifact_id"] == "${{ steps.candidate_sdk_upload.outputs.artifact-id }}"
     job = workflow["jobs"]["desktop-host"]
     assert job["needs"] == "verify"
+    assert "!cancelled()" in job["if"]
+    assert "always()" not in job["if"]
     assert "inputs.windows_candidate_pair != true" in job["if"]
     assert "needs.verify.result == 'success'" in job["if"]
     steps = job["steps"]
@@ -122,3 +125,37 @@ def test_workflow_opt_in_depends_on_same_run_stage_and_retains_separate_report()
     assert "dist/reports/windows-candidate-pair-assembly.json" in upload["with"]["path"]
     assert "dist/reports/windows-candidate-pair.json" in upload["with"]["path"]
     assert "dist/reports/windows-candidate-pair-manifest.json" in upload["with"]["path"]
+
+
+def test_post_assembly_source_failure_cannot_leave_a_passing_report(tmp_path, monkeypatch):
+    calls = 0
+
+    def source_identity(_):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise ValueError("Source changed after assembly")
+        return SOURCE, TREE
+
+    monkeypatch.setitem(sys.modules, "test_packaged_lifecycle",
+                        SimpleNamespace(source_identity=source_identity))
+    monkeypatch.setattr(assembly.sys, "platform", "win32")
+    monkeypatch.setattr(assembly.platform, "machine", lambda: "AMD64")
+    monkeypatch.setattr(assembly, "assemble", lambda *args: {
+        "v": 1, "passed": True, "manifest_sha256": "c" * 64})
+    for key, value in {"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "workflow_dispatch",
+                       "GITHUB_JOB": "desktop-host", "GITHUB_SHA": SOURCE,
+                       "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1"}.items():
+        monkeypatch.setenv(key, value)
+    report = tmp_path / "windows-candidate-pair-assembly.json"
+    monkeypatch.setattr(sys, "argv", ["assemble_windows_candidate_pair.py",
+                                  "--expected-source", SOURCE,
+                                  "--verification-artifact-id", "456",
+                                  "--output-dir", str(tmp_path / "inputs"),
+                                  "--report", str(report),
+                                  "--retained-manifest", str(tmp_path / "manifest.json")])
+    assert assembly.main() == 1
+    value = json.loads(report.read_text(encoding="utf-8"))
+    assert value["passed"] is False and value["failure_type"] == "ValueError"
+    pending = json.loads((tmp_path / "windows-candidate-pair.json").read_text(encoding="utf-8"))
+    assert pending["passed"] is False and pending["status"] == "not_run"
