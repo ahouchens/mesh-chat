@@ -3,7 +3,7 @@ name: Installed public Windows Android partition diagnostic
 on:
   workflow_dispatch:
   push:
-    branches: [codex/mesh-core-integration-lead]
+    branches: [codex/mesh-core-restart-diagnostic]
     paths: ['.github/workflows/public-core-partition-diagnostic.yml']
 
 permissions:

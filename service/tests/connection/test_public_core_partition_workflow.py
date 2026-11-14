@@ -12,7 +12,7 @@ def test_manual_partition_route_uses_exact_producers_owned_android_gateway_and_s
     workflow = yaml.safe_load((ROOT / ".github/workflows/public-core-partition-diagnostic.yml").read_text())
     events = workflow.get("on", workflow.get(True))
     assert events == {"workflow_dispatch": None, "push": {
-        "branches": ["codex/mesh-core-integration-lead"],
+        "branches": ["codex/mesh-core-restart-diagnostic"],
         "paths": [".github/workflows/public-core-partition-diagnostic.yml"]}}
     assert workflow["concurrency"]["cancel-in-progress"] is False
     jobs = workflow["jobs"]
