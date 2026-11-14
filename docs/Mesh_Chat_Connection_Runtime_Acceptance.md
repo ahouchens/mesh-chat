@@ -1,6 +1,14 @@
 # Acceptance reconciliation: specification invariants and scenarios
 
-Current November 14 checkpoint: the latest full native run `43568841923` remains
+Current November 14 checkpoint: full run `43581311705` and installed-call run
+`43581311710` at `a9f10b3` remain active with failed Linux prerequisite jobs.
+Their seven Windows-only test mock setup failures are corrected locally in
+`7a8ca2f`; a new Linux pass is required. Integrated private admission through
+`5fa473f` remains opt-in and has component evidence only. Published 0.9.66 byte
+intake at `a1f1657` passed against actual release assets but does not qualify an
+installed upgrade. No acceptance row is promoted by these partial results.
+
+Earlier November 14 checkpoint: the latest completed full native run `43568841923` remains
 failed at Android's first cold initialize. Public owner-restart `43571465943`
 failed its Windows paired-process prerequisite; neither public role executed.
 Successor CI `43575546186` at `9833142` failed at `receiver_reopen/unavailable`.

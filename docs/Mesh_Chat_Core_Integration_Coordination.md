@@ -1,6 +1,17 @@
 # Core integration coordination — 2026-11-09
 
-Current November 14 integration: Windows CI `43575546186` at `9833142` closed
+Current November 14 integration: root has integrated private admission through
+`5fa473f`, portable pipe-test setup correction `7a8ca2f`, and release byte intake
+through `a1f1657`. Full run `43581311705` and installed-call run `43581311710`
+at locally validated `a9f10b3` are still executing native/Windows jobs, but their
+Linux policy/verification jobs failed seven identical Windows-only mock setup
+cases. The corrected 16-case portable test passes locally; fresh Linux CI is
+required. A's installed R7 producer is under B/D independent review. C is
+investigating the next installed baseline upgrade using verified published
+0.9.66 source/bytes. Root owns integration, source-bound validation, push,
+failure closure and roadmap reconciliation. No default or R2 promotion is made.
+
+Earlier November 14 integration: Windows CI `43575546186` at `9833142` closed
 failed at `receiver_reopen/unavailable`, after verification and ordinary pairing
 passed. Root reproduced the real cleanup registry rejecting the second receiver
 lifetime. D's fix is integrated as `3322776`; it reserves cleanup before launch,

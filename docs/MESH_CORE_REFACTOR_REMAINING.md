@@ -1,7 +1,7 @@
 # Mesh Core refactor: remaining work and completion map
 
-Prepared November 13, 2026; refreshed November 14 through receiver recovery
-correction `3322776`, failed CI `43575546186`, installed-call implementation, and
+Prepared November 13, 2026; refreshed November 14 through private admission
+`5fa473f`, Linux fixture correction `7a8ca2f`, release intake `a1f1657`, and
 the source-bound results below. The last full native qualification remains failed;
 focused diagnostics do not replace it. This is a compact planning register, not
 new qualification evidence.
@@ -51,6 +51,22 @@ the specification's IDs or imply equal effort. Several packages overlap.
 
 ## Current checkpoint
 
+- Source `a9f10b3` passed 7,142 local connection tests, two platform skips,
+  exact-source SDK staging and strict types, then started full run `43581311705`
+  and installed-call run `43581311710`. Their Linux policy/verification jobs
+  exposed seven identical mock-setup failures: `ctypes.get_last_error` does not
+  exist on Linux. Correction `7a8ca2f` passes all 16 pipe retirement tests with
+  that attribute removed. Native/Windows jobs are still running; the correction
+  needs fresh Linux CI. Neither current run qualifies the refactor.
+- Opt-in Python/Node private owner and helper admission is integrated through
+  `5fa473f`, with 133 Python and 451 Node/integration checks passing. The live
+  Windows process witness passed positive and wrong-parent/image controls.
+  The installed producer is under independent review; default admission and
+  R7/full isolation acceptance remain unchanged.
+- All published 0.9.66 Windows installer and Android APK bytes passed the new
+  offline intake at `a1f1657`, whose 22 focused tests also pass. This establishes
+  released baseline bytes at `7c40f7b`; installed upgrade and compatibility
+  scenarios remain open. No old binary was executed during intake.
 - Latest full run `43568841923` at `d9ab09f` closed failed at the first Android
   cold `initialize`: control EOF, ADB instrumentation client exit 255, then
   offline transport during rollback. Windows exhausted the partner started

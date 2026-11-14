@@ -1,5 +1,42 @@
 # Connection runtime qualification ledger
 
+## Private admission integration and Linux fixture correction — November 14, 2026
+
+Frozen source `a9f10b304124182f42ef00a101b685abed2b8245`, tree
+`d692e7b8299d48f8081490b4e2a4e60cfcf77b1f`, passed 7,142 local connection
+tests with two platform skips, exact-source SDK staging and strict model/reducer
+typing. It was pushed normally to `codex/mesh-core-restart-diagnostic`.
+Full qualification [43581311705](https://github.com/ahouchens/mesh-chat/actions/runs/43581311705)
+and installed-call [43581311710](https://github.com/ahouchens/mesh-chat/actions/runs/43581311710)
+started at that exact source, attempt 1. Their native/Windows jobs are still
+running at this checkpoint; neither run is passing qualification.
+
+The Linux policy job failed seven tests after 7,490 passes. Both verification
+jobs failed the same seven cases after 8,712 passes and 54 existing skips.
+All failures are test setup in `test_core_pipe_retirement.py`: Linux's `ctypes`
+has no `get_last_error`, and the Windows mock used pytest's default
+`raising=True`. Correction `7a8ca2f` explicitly allows creation of that mocked
+attribute. All 16 retirement cases passed with the attribute removed before
+pytest began. This check reproduces the missing-attribute condition on Windows;
+a fresh Linux CI pass is still required. Production pipe behavior is unchanged.
+
+R7's opt-in Python owner/roster/pipe admission is integrated through `a3b06c9`,
+with 133 affected checks passing. Node private control, one-use helper proof,
+exact revocation refusal and installed fixture are integrated through `5fa473f`,
+with 451 integrated checks passing. A live Windows process-witness check passed
+for the owned child and refused wrong-parent and wrong-image identities, with
+positive process/reader/stream cleanup. This witness did not execute an installed
+Core host. The private selector remains off by default; installed same-image
+admission, full durable isolation and R7 acceptance remain open.
+
+R8 release intake is integrated through `a1f1657`; all 22 focused checks passed.
+Root supplied and verified all four actual published 0.9.66 files against the
+committed metadata and checksum pins, including the Windows EXE/MSI and Android
+APK. The released source is `7c40f7b23eab3e9d83ff7ca1075c90c4d84ce516`,
+distinct from rebuilt SDK fixture `174728e`. The retained local intake result is
+`published_release_byte_intake_only`. No installer or APK was executed, and no
+installed upgrade, physical-device byte identity or support window is qualified.
+
 ## Receiver-reopen fixture defect and installed-call candidate — November 14, 2026
 
 Local candidate `d73113f` completed 7,138 passing connection tests, two platform
