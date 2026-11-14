@@ -11,16 +11,25 @@ Owner-restart run `43567293402` failed its Android prerequisite at an ADB
 disconnect; neither public restart role ran. Full run `43568841923` at `d9ab09f`
 passed the Windows/Android prerequisites, including installed image admission,
 then failed at Android's first cold `initialize` with control EOF and later ADB
-offline during rollback. Windows exhausted the partner started barrier. A owns
-the lifecycle audit and missing initialize-stage attribution; the cause is unproven.
+offline during rollback. Windows exhausted the partner started barrier. Reviewed
+Android reader custody and initialize attribution are integrated; the cause is unproven.
 Separate media run `43568844257` passed all
 seven installed WebView2 capture checks and app/policy cleanup at that source.
 Paired recovery and checking observation through `6ec440a` passed 6,994 local
 connection tests with two existing platform skips, plus affected service tests
 and strict typing. Gateway `447e865` and Android harness through `e044ebb` passed
 their focused checks. Actual gateway run `43571468699` at `12fd342` exposed a
-strict parser omission for Linux's numeric `seed` suffix; D owns its correction.
-Public owner-restart run `43571465943` remains active at `12fd342`, monitored by C.
+strict parser omission for Linux's numeric `seed` suffix. Corrected capability
+run `43572907432` at `e6fbbe0` passed with 208 directional drops, restored echo
+and exact cleanup; it is not packaged-peer partition qualification.
+Public owner-restart run `43571465943` failed its Windows paired recovery
+prerequisite in 45.543 seconds; neither public role ran. D owns diagnosis after
+the bounded failure labels integrated through `8b1c119`. Local retained-runtime
+diagnostics instead reached the 360-second initial-invitation deadline, which
+does not establish CI's cause. At `8b0befd`, 7,041 connection tests and strict
+typing passed with two platform skips; follow-ups through `8b1c119` passed 106
+affected checks with one platform skip. A owns a read-only R7 caller admission
+design; C reviews R5 exchange/flow/controller and the Windows CI routing.
 B is implementing actual installed CallDialog plus a separate public-SDK/browser
 peer and messaging receipts. Lead owns failure-summary retention in the required
 CI gate and source-bound closure/integration. Full native, owner-restart and CallDialog coexistence

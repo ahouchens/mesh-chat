@@ -1,5 +1,55 @@
 # Connection runtime qualification ledger
 
+## Gateway capability passed; recovery attribution integrated — November 14, 2026
+
+Gateway run [43572907432](https://github.com/ahouchens/mesh-chat/actions/runs/43572907432),
+attempt 1 at `e6fbbe06170f25623dbfc718ee15bb2fb683a345`, tree
+`18309abae141c70de495d6189a6279968e8751ea`, passed after the numeric seed parser
+correction. Root and D independently validated artifact `14105620299`, ZIP SHA-256
+`57db10ef4f0e1dbbb9de21ecb8a1051db5dee2381dfb964a403e965ad03cf4a6`.
+The owned directional loss counter increased by 208 packets, echo was absent
+during loss and restored afterward, and exact qdisc cleanup passed. All 193 probe
+commands and 25 cleanup commands stayed within the declared bounds. This is
+disposable OS gateway capability evidence, explicitly `qualification=false`;
+it does not exercise selected packaged-peer traffic or close SC04/SC05.
+
+Public owner-restart run
+[43571465943](https://github.com/ahouchens/mesh-chat/actions/runs/43571465943),
+attempt 1 at `12fd3429093636cd11826dc8a8851d45a4224e64`, tree
+`44c59b92e52cd43046d523933f9b9b98a56bd341`, failed the Windows paired-process
+recovery prerequisite in 45.543 seconds. Android's prerequisite passed. Neither
+cross-platform public role ran. Earlier Windows image admission, separate-process
+lifetime and ordinary public pairing passed. The failed producer discarded the
+inner fixture failure frame, so the CI root cause is still unestablished.
+Root verified desktop artifact `14105386004`, ZIP SHA-256
+`6ad1e4e8733399ca0e1a2d331227d5df583461264778e452e0b3fa91eaca3bf3`,
+and the failed aggregate artifact `14104674307`, ZIP SHA-256
+`f66052476856791c2aabf57e52796c9cc8fc3bd73697c94e682f532eb9c4f82a`.
+
+Android reader custody and initialize observations through `8b0befd` passed
+7,041 local connection tests with two platform-specific skips; strict typing
+passed for the model and reducer. Stop retains the exact process/reader until
+retirement and never closes a buffered stream under its live reader. Initialize
+failure snapshots distinguish pre-probe process facts from the later ADB probe
+and preserve the original error before rollback. These are reviewed correctness
+and attribution changes, not proof of the earlier native EOF cause.
+
+Follow-ups `f824e0e`, `4d1f59b` and `8b1c119` preserve partial Android observations
+and bounded Windows fixture failure labels. At `8b1c119`, 106 affected tests
+passed with Node 24 and one platform-specific skip. The full 7,041-test result
+belongs to `8b0befd`, before these follow-ups. The recovery producer keeps its
+original success predicates and deadlines. Gate workflow `d03944b` also ensures
+the rejecting checker runs after failed artifact downloads; 111 focused checks
+and independent review passed.
+
+A local diagnostic used the retained `12fd342` runtime and SDK with only the
+reviewed `2ca9315` application diagnostics. It expired at 360.125 seconds during
+`initial_pairing`, `explicit_approval/invitation_wait`, with code `unavailable`.
+This differs from CI's 45.543-second failure and may reflect the local restricted
+network environment. It does not establish the CI cause or count as qualification.
+No owned runtime process remained afterward. Full native, public owner-restart,
+actual CallDialog/media coexistence and R2 promotion gates remain open.
+
 ## Full native restart and directional gateway closures — November 14, 2026
 
 Full run [43568841923](https://github.com/ahouchens/mesh-chat/actions/runs/43568841923),

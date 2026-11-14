@@ -1,6 +1,7 @@
 # Mesh Core refactor: remaining work and completion map
 
-Prepared November 13, 2026; refreshed November 14 through recovery/checking `6ec440a`, Android harness `e044ebb`, and
+Prepared November 13, 2026; refreshed November 14 through Android custody and
+recovery attribution `8b1c119`, gateway capability run `43572907432`, and
 the source-bound results below. The last full native qualification remains failed;
 focused diagnostics do not replace it. This is a compact planning register, not
 new qualification evidence.
@@ -55,8 +56,20 @@ the specification's IDs or imply equal effort. Several packages overlap.
   offline transport during rollback. Windows exhausted the partner started
   barrier. The cause remains unresolved; image admission and the separate
   installed capture pass remain valid. Gateway `43571468699` at `12fd342` failed
-  because its strict directional-loss parser omitted Linux's numeric seed field;
-  the correction and a new actual capability execution are required.
+  because its strict directional-loss parser omitted Linux's numeric seed field.
+  The corrected capability passed in `43572907432` at `e6fbbe0`, including 208
+  counted directional drops, restored echo and exact cleanup. It remains
+  `qualification=false`; actual packaged-peer partition acceptance is open.
+- Public owner-restart `43571465943` at `12fd342` failed the Windows paired-process
+  recovery prerequisite after 45.543 seconds. Neither public role ran. The inner
+  failure frame was discarded; reviewed fixed-stage attribution is now integrated.
+  A local mixed-source diagnostic instead timed out waiting for the initial
+  invitation after 360 seconds, which does not establish the CI cause.
+- Android custody/initialize changes at `8b0befd` passed 7,041 local connection
+  tests with two platform skips and strict typing. Follow-ups through `8b1c119`
+  passed 106 affected tests with one platform skip. The native EOF cause is still
+  unproven. Actual CallDialog harness implementation is under independent review;
+  bounded I/O, browser cleanup and settings verification corrections precede CI.
 - Core/API, SDK packages, typed UI migration and native transport implementations
   already exist. Do not restart them from scratch.
 - All ten nonnative jobs passed in historical full run `b8e3e20`. Both native peers
@@ -108,10 +121,10 @@ its owned checkout and reports source evidence and gaps before integration.
 | Owner | Roadmap batch | Exclusive file scope / concrete deliverable | Next milestone |
 | --- | --- | --- | --- |
 | Lead | R0/R6/R9 | Working 0.9.66 baseline identified; public pair controller, strict checker and isolated workflow integrated and reviewed. | Integrate reviewed fixes and bind platform results to the roadmap; full acceptance remains open. |
-| C | R1/R6/R7 | Paired consumer-process producer and bounded Android per-case transport observations are integrated through `e044ebb`. | Monitor public owner-restart `43571465943` at `12fd342`, including actual paired recovery execution; preserve parked native edits. |
+| C | R1/R6/R7 | Initialize attribution and partial-stream preservation are integrated through `f824e0e`; parked native edits remain separate. | Review installed CallDialog evidence and exact-source Windows recovery CI routing. |
 | B | R3/R5/R8 | Media run `43568844257` at `d9ab09f` passed all seven installed WebView2 capture checks and app/policy cleanup. | Implement the next bounded actual CallDialog/media plus receipt scenario; preserve baseline modal semantics. |
-| A | R1/R6/R8 | Public fresh pair and strict aggregate passed in `43564598454` at `0685cfb`; checking-poll observation is integrated as `6ec440a`. | Investigate first-cold initialize failure in `43568841923` and cover missing failure attribution without retrying uncertain effects. |
-| D | R1/R4/R7/R9 | Paired consumer-process fixture is integrated; actual gateway output identified the directional seed-parser defect. | Correct the strict parser while preserving foreign-qdisc rejection; independently verify actual capability recovery and cleanup. |
+| A | R1/R6/R8 | Exact Android stop-reader custody is integrated and independently reviewed. | Specify trusted caller admission for the unresolved same-image cross-application boundary. |
+| D | R1/R4/R7/R9 | Gateway capability passed in `43572907432`; bounded recovery attribution is integrated through `8b1c119`. | Diagnose the actual Windows paired recovery failure with fixed stage labels; distinguish local invitation timeout from CI. |
 
 R2 helper retirement remains gated. R6 preparation is assigned; R7's installed
 process fixture and exact report validation passed for fresh-profile detach,

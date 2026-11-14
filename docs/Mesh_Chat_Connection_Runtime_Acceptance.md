@@ -1,5 +1,16 @@
 # Acceptance reconciliation: specification invariants and scenarios
 
+Current November 14 checkpoint: the latest full native run `43568841923` remains
+failed at Android's first cold initialize. Public owner-restart `43571465943`
+failed its Windows paired-process prerequisite; neither public role executed.
+Gateway capability `43572907432` passed after its parser correction, but remains
+`qualification=false` and does not close selected packaged-peer partition cases.
+Android custody/attribution and Windows failure-label improvements through
+`8b1c119` have local test evidence only. Actual CallDialog coexistence and
+same-image caller isolation remain open. See the newest entries in the
+[qualification ledger](Mesh_Chat_Connection_Qualification_Ledger.md) for source,
+artifact hashes and evidence limits. Earlier results below remain historical.
+
 Full run [43520421850](https://github.com/ahouchens/mesh-chat/actions/runs/43520421850)
 at `b8e3e20` is **failed**: ten jobs passed, both native peers and the aggregate
 failed, and two optional jobs were skipped. The complete Windows and Linux
