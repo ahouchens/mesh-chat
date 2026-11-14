@@ -14,6 +14,7 @@ from mesh_chat.connection.model import (
     Failure, Operation, Phase, Policy, Resource, Result, Retire, Tick, Work,
 )
 from mesh_chat.connection.projection import snapshot
+from mesh_chat.connection.reconcile import connection_key
 from mesh_chat.connection.reducer import transition
 from mesh_chat.connection.runtime import ConnectionRuntime
 from mesh_chat.connection.effects import BoundedEffectRunner
@@ -614,6 +615,10 @@ def test_domain_checked_handoff_adopts_only_actual_physical_peer_then_requires_n
     physical, session = context["physical"], context["session"]
     profile_id = first._native_webrtc_controls[session]["profile_id"]
     assert first._native_pairing_ready(context), first._reconnect_profile_public(first._reconnect_profile(profile_id))["effective"]["reasons"]
+    assert first._native_pairing_checking_observation_snapshot(context, {
+        "phase": "checking", "event": "tick", "reason": "phase_timeout"}) == {
+            "as_of": "last_checking_poll", "resource": "current", "profile": "authorized",
+            "ice": "connected", "channel": "open"}
     attached = []
     def attach(logical, *, expected_physical):
         assert logical == session and expected_physical == physical
@@ -642,6 +647,91 @@ def test_domain_checked_handoff_adopts_only_actual_physical_peer_then_requires_n
     first._native_pairing_retire(context, Resource("native", physical))
     assert context["state"] == "transferred"
     assert attempts == ["transferred"] * (2 if checkpoint_fails else 1)
+
+
+def test_approved_contact_reconnect_is_blocked_until_failed_pairing_retires_its_resource(native_pairing):
+    """A later contact connection cannot be mistaken for the original handoff."""
+    from test_reconnect_service import _add_contact
+
+    create, _ = native_pairing
+    first, _, created, closed, _, _ = create()
+    second, *_ = create()
+    first_id, second_id = str(uuid4()), str(uuid4())
+    first.native_pairing_begin(first_id, role="offer", authorized=lambda: True)
+    run_until(first, lambda: first.native_pairing_status(first_id)["pairing_code"] is not None)
+    code = first.native_pairing_status(first_id)["pairing_code"]
+    second.native_pairing_begin(second_id, role="answer", pairing_code=code, authorized=lambda: True)
+    run_until(second, lambda: second.native_pairing_status(second_id)["state"] == "awaiting_approval")
+    first._connection_runtime.now = lambda: monotonic() + 6
+    run_until(first, lambda: first.native_pairing_status(first_id)["state"] == "awaiting_approval")
+    context = first._native_pairing_contexts[first_id]
+    physical, session = context["physical"], context["session"]
+    contact = _add_contact(first, "contact-second", second._identity,
+        second._require_profile()["destination_hash"])
+    profile = first.reconnect_capabilities_get(contact["id"])["profile"]
+    profile_id = profile["id"]
+
+    assert first._native_webrtc_peers[session] == profile["destination_hash"]
+    projected = next(value for value in first._connection_runtime.profiles()["profiles"]
+                     if value["id"] == profile_id)
+    assert projected["effective"]["reasons"] == ["pairing_pending"]
+    assert not projected["active"] and not projected["manual_carrier_authorized"]
+    assert not first._native_pairing_ready(context)
+    timeout_cause = {"phase": "checking", "event": "tick", "reason": "phase_timeout"}
+    assert first._native_pairing_checking_observation_snapshot(context, timeout_cause) == {
+        "as_of": "last_checking_poll", "resource": "current", "profile": "unbound",
+        "ice": "not_checked", "channel": "not_checked"}
+    first._connection_runtime.step()
+    assert not first._connection_runtime.snapshots()[profile_id]["messaging_ready"]
+    assert not first._native_webrtc_profile_sessions
+
+    first._connection_runtime.now = lambda: monotonic() + 100
+    run_until(first, lambda: context["state"] == "retired")
+    assert physical in closed and len(created) == 1
+    assert session not in first._native_webrtc_live
+    assert not first._native_webrtc_profile_sessions
+    pairing_key = connection_key({"id": context["id"], "scope_kind": "pairing",
+                                  "local_device_id": context["identity_hash"]})
+    assert first._connection_runtime.owner.pairing_retirement_diagnostic(
+        key=pairing_key, runtime_epoch=context["runtime_epoch"], source=context["source"]) == timeout_cause
+    assert first._native_pairing_checking_observation_snapshot(context, timeout_cause)["profile"] == "unbound"
+    bound, observed = context["checking_observation"]
+    context["checking_observation"] = ((*bound[:-1], "foreign-physical"), observed)
+    assert first._native_pairing_checking_observation_snapshot(context, timeout_cause) is None
+    projected = next(value for value in first._connection_runtime.profiles()["profiles"]
+                     if value["id"] == profile_id)
+    assert "pairing_pending" not in projected["effective"]["reasons"]
+
+
+def test_last_checking_poll_separates_profile_ice_and_channel_gates(native_pairing):
+    from test_reconnect_service import _add_contact
+
+    create, _ = native_pairing
+    first, *_ = create()
+    second, *_ = create()
+    first_id, second_id = str(uuid4()), str(uuid4())
+    first.native_pairing_begin(first_id, role="offer", authorized=lambda: True)
+    run_until(first, lambda: first.native_pairing_status(first_id)["pairing_code"] is not None)
+    code = first.native_pairing_status(first_id)["pairing_code"]
+    second.native_pairing_begin(second_id, role="answer", pairing_code=code, authorized=lambda: True)
+    run_until(second, lambda: second.native_pairing_status(second_id)["state"] == "awaiting_approval")
+    first._connection_runtime.now = lambda: monotonic() + 6
+    run_until(first, lambda: first.native_pairing_status(first_id)["state"] == "awaiting_approval")
+    context = first._native_pairing_contexts[first_id]
+    contact = _add_contact(first, "contact-second", second._identity,
+                           second._require_profile()["destination_hash"])
+    profile_id = first.reconnect_capabilities_get(contact["id"])["profile"]["id"]
+    first._native_webrtc_controls.setdefault(context["session"], {})["profile_id"] = profile_id
+    cause = {"phase": "checking", "event": "tick", "reason": "phase_timeout"}
+    for authorized, ice, channel, expected in (
+            (False, "connected", "open", ("denied", "connected", "open")),
+            (True, "checking", "open", ("authorized", "not_connected", "open")),
+            (True, "connected", "connecting", ("authorized", "connected", "not_open"))):
+        first._authorized_manual_native_carrier = lambda *_, **__: context["session"] if authorized else None
+        first.native_webrtc_stats = lambda *_: {"ice_connection_state": ice, "data_channel_state": channel}
+        assert first._native_pairing_target(context) is None
+        observed = first._native_pairing_checking_observation_snapshot(context, cause)
+        assert (observed["profile"], observed["ice"], observed["channel"]) == expected
 
 
 def test_completed_lock_drops_pairing_capabilities_and_identity_references(native_pairing):

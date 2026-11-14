@@ -96,6 +96,33 @@ def test_offer_gather_snapshot_stays_inside_bounded_owner_lock():
     assert diagnostics.observe_pairing(service)["intents"][0]["gather_failure"] == gather
 
 
+@pytest.mark.parametrize("mode", ["valid", "wrong_phase", "malformed", "throwing"])
+def test_trusted_owner_checking_observation_is_source_and_timeout_bound(mode):
+    service, context, _, _ = service_with_one_public_intent()
+    owner = service._connection_runtime.owner
+    cause = {"phase": "checking", "event": "tick", "reason": "phase_timeout"}
+    owner.pairing_retirement_diagnostic = lambda **_: (
+        {**cause, "phase": "wait_answer"} if mode == "wrong_phase" else cause)
+    observed = {"as_of": "last_checking_poll", "resource": "current", "profile": "denied",
+                "ice": "connected", "channel": "not_open"}
+    calls = []
+
+    def snapshot(selected_context, selected_cause):
+        assert owner._lock._is_owned()
+        assert selected_context is context and selected_cause == cause
+        calls.append(True)
+        if mode == "throwing":
+            raise RuntimeError("PRIVATE_FAILURE")
+        return {**observed, "sdp": "PRIVATE_SDP"} if mode == "malformed" else observed
+
+    service._native_pairing_checking_observation_snapshot = snapshot
+    result = diagnostics.observe_pairing(service)["intents"][0]
+    assert result["retirement"] == ({**cause, "phase": "wait_answer"} if mode == "wrong_phase" else cause)
+    assert result.get("checking_observation") == (observed if mode == "valid" else None)
+    assert calls == ([] if mode == "wrong_phase" else [True])
+    assert "PRIVATE" not in str(result)
+
+
 @pytest.mark.parametrize("mode", ["valid", "wrong_phase", "wrong_stage", "malformed", "throwing"])
 def test_trusted_owner_answer_gather_failure_is_optional_and_phase_bound(mode):
     service, context, _, _ = service_with_one_public_intent(role="answer")

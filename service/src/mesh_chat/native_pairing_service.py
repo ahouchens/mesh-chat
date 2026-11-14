@@ -15,7 +15,8 @@ from uuid import UUID, uuid4, uuid5
 
 from .call_manager import CallOutcomeRequiresResync
 from .connection.diagnostics import (
-    gather_failure_at_deadline, gather_failure_at_result, validated_gather_for_retirement,
+    gather_failure_at_deadline, gather_failure_at_result, validated_checking_observation,
+    validated_gather_for_retirement,
 )
 from .connection.pairing_ice_diagnostics import (
     ice_diagnostic, ufrag_pair, unavailable_ice_diagnostic, validated_pairing_ice_diagnostic,
@@ -816,20 +817,52 @@ class NativePairingServiceMixin:
     def _native_pairing_target(self, context):
         self._native_pairing_check(context)
         if not self._native_resources.current(context["session"], context["physical"]):
+            self._native_pairing_note_checking(context, "missing", "not_checked")
             return None
         profile_id = self._native_webrtc_controls.get(context["session"], {}).get("profile_id")
         if not profile_id:
+            self._native_pairing_note_checking(context, "current", "unbound")
             return None
         try:
             profile = self._reconnect_profile(profile_id)
+        except (ContactNotApproved, ValidationError):
+            self._native_pairing_note_checking(context, "current", "unavailable")
+            return None
+        try:
             session = self._authorized_manual_native_carrier(profile, allow_pairing_session=context["session"])
         except (ContactNotApproved, ValidationError):
+            self._native_pairing_note_checking(context, "current", "denied")
             return None
         stats = self.native_webrtc_stats(context["session"])
+        self._native_pairing_note_checking(context, "current",
+            "authorized" if session == context["session"] else "denied",
+            "connected" if stats.get("ice_connection_state") in {"connected", "completed"} else "not_connected",
+            "open" if stats.get("data_channel_state") == "open" else "not_open")
         if (session != context["session"] or stats.get("ice_connection_state") not in {"connected", "completed"}
                 or stats.get("data_channel_state") != "open"):
             return None
         return connection_key(profile)
+
+    def _native_pairing_note_checking(self, context, resource, profile, ice="not_checked", channel="not_checked"):
+        """Retain fixed last-poll labels under the existing exact source custody."""
+        try:
+            context["checking_observation"] = (
+                (context["id"], context["runtime_epoch"], context["source"],
+                 context["session"], context["physical"]),
+                {"as_of": "last_checking_poll", "resource": resource, "profile": profile,
+                 "ice": ice, "channel": channel})
+        except Exception:
+            pass  # Optional observation cannot affect pairing.
+
+    def _native_pairing_checking_observation_snapshot(self, context, retirement):
+        try:
+            binding, observed = context["checking_observation"]
+            if binding != (context["id"], context["runtime_epoch"], context["source"],
+                           context["session"], context["physical"]):
+                return None
+            return validated_checking_observation(retirement, observed)
+        except Exception:
+            return None
 
     def _native_pairing_ready(self, context):
         with self._dispatch_lock, self._native_webrtc_lock:

@@ -35,6 +35,42 @@ def answer_observation(as_of="failed_result"):
     return value
 
 
+def checking_observation():
+    return dict(status="observed", total_intents=1, intents=[dict(role="offer", state="retired",
+        retirement=dict(phase="checking", event="tick", reason="phase_timeout"),
+        checking_observation=dict(as_of="last_checking_poll", resource="current",
+                                  profile="authorized", ice="connected", channel="not_open"))])
+
+
+@pytest.mark.parametrize("profile,ice,channel", [
+    ("unbound", "not_checked", "not_checked"),
+    ("denied", "not_checked", "not_checked"),
+    ("denied", "connected", "not_open"),
+    ("authorized", "not_connected", "open"),
+    ("authorized", "connected", "not_open"),
+])
+def test_checking_observation_survives_both_consumer_boundaries(profile, ice, channel):
+    value = checking_observation()
+    value["intents"][0]["checking_observation"].update(profile=profile, ice=ice, channel=channel)
+    assert project(value)["value"] == value
+    validate_report(value)
+
+
+@pytest.mark.parametrize("fault", ["raw", "wrong_phase", "wrong_event", "missing", "inconsistent"])
+def test_checking_observation_rejects_unsafe_or_misattributed_fields(fault):
+    value = checking_observation()
+    intent = value["intents"][0]
+    observed = intent["checking_observation"]
+    if fault == "raw": observed["sdp"] = "PRIVATE_SDP"
+    elif fault == "wrong_phase": intent["retirement"]["phase"] = "wait_answer"
+    elif fault == "wrong_event": intent["retirement"]["event"] = "failed"
+    elif fault == "missing": del observed["channel"]
+    else: observed["profile"] = "unbound"
+    assert project(value) == {"rejected": True}
+    with pytest.raises(ValueError):
+        validate_report(value)
+
+
 def project(value):
     node, _ = staging.tools()
     module = (ROOT / "examples/typescript-independent-consumer/owner-pairing-diagnostic.mjs").as_uri()

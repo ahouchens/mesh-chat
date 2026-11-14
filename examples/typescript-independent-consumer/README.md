@@ -118,8 +118,11 @@ After a public failure, the owner sends EOF and observes the exact child's
 bounded terminal pairing cause before SDK detachment and service cleanup.
 The additional observation window is at most two seconds, shared concurrently
 by the original two hosts. A missed window remains unavailable even if a frame
-arrives later. Only fixed phase/event/reason labels are retained, with no
-documents or identifiers. This private lifetime observation grants no Core
+arrives later. The owner retains fixed phase/event/reason labels and optional
+fixed gather or last checking poll labels, with no documents or identifiers.
+The checking sample distinguishes profile authorization, ICE and channel gates
+only when each was inspected; `not_checked` makes missing evidence explicit.
+This private lifetime observation grants no Core
 capability and never satisfies pairing, receipt, or shutdown acceptance.
 
 Input and output are bounded newline-delimited JSON on dedicated inherited

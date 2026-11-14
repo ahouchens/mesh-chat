@@ -50,6 +50,30 @@ function gatherFailure(intent, retirement) {
   return result;
 }
 
+function checkingObservation(intent, retirement) {
+  const value = intent.checking_observation;
+  if (!["retiring", "retired"].includes(intent.state)
+      || retirement?.phase !== "checking" || retirement?.event !== "tick"
+      || retirement?.reason !== "phase_timeout"
+      || !fields(value, "as_of,resource,profile,ice,channel")
+      || value.as_of !== "last_checking_poll"
+      || !["current", "missing"].includes(value.resource)
+      || !["not_checked", "unbound", "unavailable", "denied", "authorized"].includes(value.profile)
+      || !["not_checked", "connected", "not_connected"].includes(value.ice)
+      || !["not_checked", "open", "not_open"].includes(value.channel)) {
+    throw new Error("invalid_owner_diagnostic");
+  }
+  const unchecked = value.ice === "not_checked" && value.channel === "not_checked";
+  if ((value.resource === "missing") !== (value.profile === "not_checked")
+      || (value.ice === "not_checked") !== (value.channel === "not_checked")
+      || (["not_checked", "unbound", "unavailable"].includes(value.profile) && !unchecked)
+      || (value.profile === "authorized" && unchecked)) {
+    throw new Error("invalid_owner_diagnostic");
+  }
+  return {as_of:value.as_of,resource:value.resource,profile:value.profile,
+    ice:value.ice,channel:value.channel};
+}
+
 export function ownerPairingObservation(value) {
   if (!fields(value, "status,total_intents,intents") || !["observed", "unavailable"].includes(value.status)
       || !Number.isSafeInteger(value.total_intents) || value.total_intents < 0 || value.total_intents > 32
@@ -61,7 +85,9 @@ export function ownerPairingObservation(value) {
   if (value.total_intents !== 1 || value.intents.length !== 1) throw new Error("invalid_owner_diagnostic");
   const intent = value.intents[0];
   const hasGather = intent !== null && typeof intent === "object" && Object.hasOwn(intent, "gather_failure");
-  if (!fields(intent, "role,state,retirement" + (hasGather ? ",gather_failure" : "")) || !["offer", "answer"].includes(intent.role)
+  const hasChecking = intent !== null && typeof intent === "object" && Object.hasOwn(intent, "checking_observation");
+  if (!fields(intent, "role,state,retirement" + (hasGather ? ",gather_failure" : "")
+      + (hasChecking ? ",checking_observation" : "")) || !["offer", "answer"].includes(intent.role)
       || !states.has(intent.state)) throw new Error("invalid_owner_diagnostic");
   let retirement = null;
   if (intent.retirement !== null) {
@@ -74,6 +100,7 @@ export function ownerPairingObservation(value) {
   }
   const projected = {role:intent.role,state:intent.state,retirement};
   if (hasGather) projected.gather_failure = gatherFailure(intent, retirement);
+  if (hasChecking) projected.checking_observation = checkingObservation(intent, retirement);
   return {status:"observed",total_intents:1,intents:[projected]};
 }
 

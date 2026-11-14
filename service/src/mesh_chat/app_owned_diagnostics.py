@@ -2,7 +2,9 @@
 
 from dataclasses import dataclass
 
-from .connection.diagnostics import validated_gather_for_retirement, validated_pairing_retirement
+from .connection.diagnostics import (
+    validated_checking_observation, validated_gather_for_retirement, validated_pairing_retirement,
+)
 from .connection.model import Resource
 from .connection.reconcile import connection_key
 
@@ -115,6 +117,7 @@ def _observe_pairing(service):
         state = context["state"]
         retirement = None
         gather = None
+        checking = None
         if state in {"retiring", "retired"}:
             owner = service._connection_runtime.owner
             if not _acquire(owner._lock):
@@ -134,6 +137,13 @@ def _observe_pairing(service):
                             retirement, provider(context, retirement)) if callable(provider) else None
                     except Exception:
                         pass  # Optional evidence cannot replace the proven retirement row.
+                if retirement == {"phase": "checking", "event": "tick", "reason": "phase_timeout"}:
+                    try:
+                        provider = getattr(service, "_native_pairing_checking_observation_snapshot", None)
+                        checking = validated_checking_observation(
+                            retirement, provider(context, retirement)) if callable(provider) else None
+                    except Exception:
+                        pass  # Optional evidence cannot replace the proven retirement row.
             finally:
                 owner._lock.release()
             if retirement is None or "unknown" in retirement.values():
@@ -141,6 +151,8 @@ def _observe_pairing(service):
         intent = {"role": proof.role, "state": state, "retirement": retirement}
         if gather is not None:
             intent["gather_failure"] = gather
+        if checking is not None:
+            intent["checking_observation"] = checking
         return {"status": "observed", "total_intents": total, "intents": [intent]}
     finally:
         service._dispatch_lock.release()

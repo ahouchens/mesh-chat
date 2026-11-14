@@ -32,6 +32,33 @@ def validated_pairing_retirement(value) -> dict | None:
     return {key: value[key] for key in allowed}
 
 
+CHECKING_OBSERVATION_FIELDS = {
+    "as_of": frozenset({"last_checking_poll"}),
+    "resource": frozenset({"current", "missing"}),
+    "profile": frozenset({"not_checked", "unbound", "unavailable", "denied", "authorized"}),
+    "ice": frozenset({"not_checked", "connected", "not_connected"}),
+    "channel": frozenset({"not_checked", "open", "not_open"}),
+}
+
+
+def validated_checking_observation(retirement, value) -> dict | None:
+    """A last-poll sample is evidence only for the exact checking timeout."""
+    cause = validated_pairing_retirement(retirement)
+    if (cause != {"phase": "checking", "event": "tick", "reason": "phase_timeout"}
+            or type(value) is not dict or set(value) != set(CHECKING_OBSERVATION_FIELDS)
+            or any(type(key) is not str for key in value)
+            or any(type(value[key]) is not str or value[key] not in choices
+                   for key, choices in CHECKING_OBSERVATION_FIELDS.items())):
+        return None
+    unchecked = value["ice"] == "not_checked" and value["channel"] == "not_checked"
+    if ((value["resource"] == "missing") != (value["profile"] == "not_checked")
+            or (value["ice"] == "not_checked") != (value["channel"] == "not_checked")
+            or (value["profile"] in {"not_checked", "unbound", "unavailable"} and not unchecked)
+            or (value["profile"] == "authorized" and unchecked)):
+        return None
+    return {key: value[key] for key in CHECKING_OBSERVATION_FIELDS}
+
+
 GATHER_FAILURE_FIELDS = {
     "as_of": frozenset({"phase_deadline"}),
     "worker": frozenset({"queued", "started", "completed", "unknown"}),

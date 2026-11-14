@@ -252,6 +252,28 @@ def owner_gather_details(intent, cause):
             raise ValueError("Owner gather exception labels are invalid")
 
 
+def owner_checking_details(intent, cause):
+    value = intent["checking_observation"]
+    choices = {
+        "as_of": {"last_checking_poll"}, "resource": {"current", "missing"},
+        "profile": {"not_checked", "unbound", "unavailable", "denied", "authorized"},
+        "ice": {"not_checked", "connected", "not_connected"},
+        "channel": {"not_checked", "open", "not_open"},
+    }
+    if (intent["state"] not in {"retiring", "retired"}
+            or cause != {"phase": "checking", "event": "tick", "reason": "phase_timeout"}
+            or type(value) is not dict or set(value) != set(choices)
+            or any(type(value[key]) is not str or value[key] not in allowed
+                   for key, allowed in choices.items())):
+        raise ValueError("Owner checking observation is invalid")
+    unchecked = value["ice"] == value["channel"] == "not_checked"
+    if ((value["resource"] == "missing") != (value["profile"] == "not_checked")
+            or (value["ice"] == "not_checked") != (value["channel"] == "not_checked")
+            or (value["profile"] in {"not_checked", "unbound", "unavailable"} and not unchecked)
+            or (value["profile"] == "authorized" and unchecked)):
+        raise ValueError("Owner checking observation labels are inconsistent")
+
+
 def owner_retirement_details(value):
     if (type(value) is not dict or set(value) != {"scope", "budget_ms", "peers"}
             or value["scope"] != "trusted_owner_before_cleanup" or type(value["budget_ms"]) is not int
@@ -288,7 +310,8 @@ def owner_retirement_details(value):
             raise ValueError("Owner diagnostic intent attribution is ambiguous")
         intent = observed["intents"][0]
         if (type(intent) is not dict or set(intent) not in (
-                {"role", "state", "retirement"}, {"role", "state", "retirement", "gather_failure"})
+                {"role", "state", "retirement"}, {"role", "state", "retirement", "gather_failure"},
+                {"role", "state", "retirement", "checking_observation"})
                 or intent["role"] != ("offer" if role == "offerer" else "answer")
                 or type(intent["state"]) is not str or intent["state"] not in PAIRING_STATES - {"unknown"}):
             raise ValueError("Owner diagnostic intent is invalid")
@@ -300,6 +323,8 @@ def owner_retirement_details(value):
             raise ValueError("Owner diagnostic retirement is invalid")
         if "gather_failure" in intent:
             owner_gather_details(intent, cause)
+        if "checking_observation" in intent:
+            owner_checking_details(intent, cause)
 
 
 def failure_details(value):
