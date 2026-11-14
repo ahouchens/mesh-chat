@@ -220,14 +220,18 @@ milestone and before final acceptance so CI repair does not become the project.
 
 ## Integration update — November 13, 2026
 
-Source `ef86e8f` is pushed on the isolated diagnostic branch. R1/R4 run
-`43544372506` exercises the six-path prefix and first paired cold cycle after its
-same-run package producers. The normal required qualification gate is excluded
-from this diagnostic route. R8 run `43544375713` retries the corrected installed
-Windows fixture. A monitors Windows and D monitors the paired run. The R6 audit
+Source `6773e64` is pushed on the isolated diagnostic branch. Runs at `ef86e8f`
+failed prerequisite verification in two diagnostic tests before either requested
+scenario. The staged/worktree inventory and workflow-expression test repairs pass
+146 affected tests. R1/R4 replacement `43546317181` exercises the six-path prefix
+and first paired cold cycle after its same-run package producers; the normal
+required qualification gate is excluded from this diagnostic route. R8 replacement
+`43546319373` retries the corrected installed Windows fixture.
+A monitors Windows and D monitors the paired run. The R6 audit
 identified staged Android public pairing/receipt instrumentation as the next
-cross-platform consumer batch. C is implementing a separate Python-owned Windows
-consumer to close the installed Python API gap without widening caller authority.
+cross-platform consumer batch. A separate Python-owned Windows consumer and its
+opt-in CI step are integrated through `849600c`, with 189 related tests passing;
+actual installed execution remains pending. Caller authority is unchanged.
 B is preparing the first installed Windows app audio-call coexistence scenario;
 existing engine tests do not exercise calls and messaging through the app UI.
 

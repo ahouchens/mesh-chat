@@ -126,6 +126,21 @@ installed workspace and fails the report. The separate pinned component
 fixture above supplies local format-1-to-2 message/receipt/draft evidence,
 without turning this fixture into a native upgrade claim.
 
+The separate `examples/python-independent-consumer` application and
+`scripts/check_python_independent_consumer.py` now prepare the Python-owned
+lifetime. They install the staged standalone wheel outside the checkout, launch
+the exact frozen host with the Python executable as its authorized caller, and
+exercise public profile creation, key replay/conflict, query and same-identity
+owner reopen. Actual DPAPI/EFS, two confirmed clean host exits and artifact/source
+rechecks are required. A timeout, malformed success or uncertain retirement keeps
+the workspace. Reports contain fixed phases and hashes rather than private data.
+The existing opt-in Windows candidate run executes this fixture after successful
+same-run SDK staging and retains a distinct `windows-independent-python` artifact.
+Root's 189 related tests passed, including timeout and typed retirement evidence
+regressions. Installed Windows execution is still pending; this preparation does
+not change the candidate-pair report's Python claim or establish peer delivery,
+native upgrade, Android or SC21 acceptance.
+
 Run it only with a prepared manifest and Node 22+:
 
 ```sh
