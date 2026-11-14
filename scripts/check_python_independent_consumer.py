@@ -75,6 +75,8 @@ def verify_report(record, source, tree):
             or record.get("owner_retirement_confirmed") is not True
             or record.get("workspace_retained") is not False
             or record.get("cleanup") != "passed" or record.get("checks") != CHECKS
+            or any(type(record["checks"].get(name)) is not type(expected)
+                   for name, expected in CHECKS.items())
             or not isinstance(record.get("application_files"), dict)
             or set(record["application_files"]) != set(FILES)
             or type(record.get("duration_seconds")) not in {int, float}
@@ -153,7 +155,9 @@ def main():
                               application_retirement_outcome=observed["retirement_outcome"])
             raise ValueError("Installed Python application bootstrap failed")
         expected_application = {name: value for name, value in CHECKS.items() if not name.startswith("efs_")}
-        if observed != expected_application:
+        if (observed != expected_application
+                or any(type(observed.get(name)) is not type(expected)
+                       for name, expected in expected_application.items())):
             raise ValueError("Python application did not prove two clean owner shutdowns")
         owner_retired = True
         result["owner_retirement_confirmed"] = True

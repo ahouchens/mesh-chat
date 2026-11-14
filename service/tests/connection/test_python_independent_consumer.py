@@ -137,6 +137,8 @@ def report():
 
 @pytest.mark.parametrize("change", [
     lambda value: value["checks"].update(reopen_same_public_identity=False),
+    lambda value: value["checks"].update(fresh_without_profile=1),
+    lambda value: value["checks"].update(clean_host_exits=True),
     lambda value: value.update(scope="SC21"),
     lambda value: value.update(sdk_sha256="0" * 63),
     lambda value: value.update(cleanup="pending"),
@@ -176,8 +178,9 @@ def test_staged_wheel_rejects_wrong_source_and_changed_bytes(tmp_path, monkeypat
         check.staged_wheel(directory, staging, "a" * 40, "b" * 40)
 
 
-@pytest.mark.parametrize("timeout", [True, False])
-def test_checker_retains_uncertain_workspace_and_removes_confirmed_one(tmp_path, monkeypatch, timeout):
+@pytest.mark.parametrize("scenario", ["pip_timeout", "consumer_timeout", "consumer_nonzero",
+                                      "malformed_count", "malformed_boolean", "confirmed"])
+def test_checker_retains_uncertain_workspace_and_removes_confirmed_one(tmp_path, monkeypatch, scenario):
     import native_windows_evidence
     binary, wheel, staging = (tmp_path / name for name in ("host.exe", "sdk.whl", "staging.json"))
     binary.write_bytes(b"host")
@@ -200,24 +203,38 @@ def test_checker_retains_uncertain_workspace_and_removes_confirmed_one(tmp_path,
     def run(command, **_kwargs):
         calls.append(command)
         if len(calls) == 1:
-            if timeout:
+            if scenario == "pip_timeout":
                 raise subprocess.TimeoutExpired(command, 1)
             return SimpleNamespace(returncode=0, stdout=b"")
+        if scenario == "consumer_timeout":
+            raise subprocess.TimeoutExpired(command, 1)
+        if scenario == "consumer_nonzero":
+            return SimpleNamespace(returncode=1, stdout=json.dumps({"passed": False,
+                "phase": "profile_create", "error_code": "unavailable",
+                "retirement_outcome": "unconfirmed"}).encode())
         application_checks = {name: value for name, value in check.CHECKS.items()
                               if not name.startswith("efs_")}
+        if scenario == "malformed_count":
+            application_checks["clean_host_exits"] = True
+        elif scenario == "malformed_boolean":
+            application_checks["fresh_without_profile"] = 1
         return SimpleNamespace(returncode=0, stdout=json.dumps(application_checks).encode())
     monkeypatch.setattr(check.subprocess, "run", run)
     output = tmp_path / "result.json"
     monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
     monkeypatch.setattr(sys, "argv", ["check.py", "--expected-source", "a" * 40,
                                       "--sdk-report", str(staging), "--output", str(output)])
-    assert check.main() == (1 if timeout else 0)
+    confirmed = scenario == "confirmed"
+    assert check.main() == (0 if confirmed else 1)
     result = json.loads(output.read_text())
-    assert result["owner_retirement_confirmed"] is (not timeout)
-    assert result["workspace_retained"] is timeout
-    assert work.exists() is timeout
-    if timeout:
+    assert result["owner_retirement_confirmed"] is confirmed
+    assert result["workspace_retained"] is not confirmed
+    assert work.exists() is not confirmed
+    if not confirmed:
         assert result["retained_workspace"] == work.name
-        assert result["failure_type"] == "TimeoutExpired"
+        assert result["failure_type"] == ("TimeoutExpired" if scenario.endswith("timeout") else "ValueError")
+        if scenario == "consumer_nonzero":
+            assert result["application_phase"] == "profile_create"
+            assert result["application_retirement_outcome"] == "unconfirmed"
     else:
         assert result["passed"] is True and result["cleanup"] == "passed"
