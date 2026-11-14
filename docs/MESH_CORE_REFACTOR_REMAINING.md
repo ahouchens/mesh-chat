@@ -51,7 +51,7 @@ the specification's IDs or imply equal effort. Several packages overlap.
 
 - Core/API, SDK packages, typed UI migration and native transport implementations
   already exist. Do not restart them from scratch.
-- All ten nonnative jobs passed in the latest reviewed full run. Both native peers
+- All ten nonnative jobs passed in historical full run `b8e3e20`. Both native peers
   completed the six direct/TURN/impaired path cases.
 - Full native qualification failed at the first Android cold restart. Initialization
   lost its socket; rollback then observed ADB offline. Zero cold receipt cycles
@@ -63,6 +63,13 @@ the specification's IDs or imply equal effort. Several packages overlap.
   closed failed after native Android exited before boot. Exact JVM83 and Android
   component evidence passed. No restart repair is established.
   Earlier intermittent failures remain in the ledger.
+- Focused boot run `43535708090` booted the baseline launcher. The observed
+  launcher never started because ADB still listed the exited baseline emulator.
+  Diagnostic cleanup now waits for that owned transport to disappear before
+  releasing its AVD. A new comparison is required; this is not a restart repair.
+- Invitation dismissal now retains its operation identity across uncertain replies
+  within the current profile lifetime (195 UI tests and TypeScript checks passed).
+  Reducer event classification adds eight cases; packaged acceptance remains open.
 - Full native acceptance, shared-owner promotion and the complete refactor are
   still open. Test count growth is not a measure of roadmap completion.
 
@@ -74,15 +81,20 @@ its owned checkout and reports source evidence and gaps before integration.
 
 | Owner | Roadmap batch | Exclusive file scope / concrete deliverable | Next milestone |
 | --- | --- | --- | --- |
-| Lead, A reviewing | R1 | Existing native restart harness; finish current full run and correlate primary startup failure with bounded guest observations. | Demonstrated cause, coherent repair, focused real-platform repetition, then unchanged full acceptance. |
-| C | R0/R9 review | Baseline provenance remains unresolved; mixed-actor test integrated and root-tested (323 focused cases). Read-only review of D focused diagnostic. | Review repaired diagnostic before execution. |
-| B | R3/R5 | `src/App.tsx`, `src/App.test.tsx`: preserve invitation-dismissal action identity through uncertain responses within the authorized profile lifetime. | Focused UI regression and review; packaged coexistence remains open. |
-| A | R8 | New `MESH_CORE_COMPATIBILITY_CANDIDATES.md`: candidate version pairs, refusals, installed upgrade evidence and distribution gaps. | Smallest missing compatibility/consumer fixture batch. |
-| D | R9 | New focused restart workflow/runner/tests and a minimal opt-in hook in `android-webrtc.yml`; default qualification, concurrency isolation and lifecycle implementation remain intact. | Reviewed diagnostic-only native reproduction using explicit artifact origins. |
+| Lead, D reviewing | R1 | Boot comparison cleanup now fences the next launch until the exact owned ADB transport retires. | Reviewed focused boot comparison, then cold-restart investigation and unchanged full acceptance. |
+| C | R0 | Mixed-actor and event-classification tests integrated; physical baseline provenance remains unresolved. | Reconcile remaining adapter and protocol boundary evidence. |
+| B | R3/R5 and R8 review | UI invitation dismissal integrated; independently review A's compatibility fixture repairs. | Reviewed fixture; packaged UI/media coexistence remains open. |
+| A | R8 | Candidate fixture narrowed to supported Node executable ownership; uncertain cleanup retains workspace. | Independent review and exact-source installed Windows execution. |
+| D | R9/R1 review | Focused workflow and reopen runner integrated; independent boot-cleanup review. | Diagnostic-only reproduction using explicit artifact origins. |
 
 R2 helper retirement remains gated. R6/R7 implementation is not assigned by these
 preparation batches. Focused runs never close the full native or public-consumer
-gates. Reviewed preparation: C `046a8dd`/`d3c8426` records unresolved baseline provenance and policy evidence gaps; B `cd6a132` maps UI/lifecycle/media gaps; A `e97ed9e` maps candidate compatibility pairs. Integration is pending while current source-bound CI completes. C is adding a narrow multi-actor fairness trace; A is implementing the available installed Windows pair/refusal fixture. Neither batch can establish missing physical, signed-signaling, native or public cross-platform acceptance. Baseline clarification remains pending.
+gates. Baseline, UI and compatibility preparation documents are integrated. The
+mixed-actor trace and event-classification batch are integrated. A's repaired
+Windows pair/refusal fixture is under independent review; installed execution
+requires a matching source-bound sidecar. These batches do not establish missing
+physical, signed-signaling, native or public cross-platform acceptance. Baseline
+clarification remains pending.
 
 ## Work register
 

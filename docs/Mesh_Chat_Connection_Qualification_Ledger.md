@@ -1,5 +1,46 @@
 # Connection runtime qualification ledger
 
+## Focused boot diagnostic cleanup — November 13, 2026
+
+Run [43534697409](https://github.com/ahouchens/mesh-chat/actions/runs/43534697409)
+at `1f7f042` failed workflow validation before any emulator ran: the dispatch
+string `1` was passed to a reusable numeric input. `6e24000` converts it with
+`fromJSON` and passed 39 focused tests.
+
+Run [43535708090](https://github.com/ahouchens/mesh-chat/actions/runs/43535708090)
+at `6e240008b7cfe60e177f595a933792ee64081f0a` executed the baseline boot successfully.
+The observed case never launched: preparation detected the retired baseline's
+remaining ADB listing. Both reported no cleanup exception, demonstrating that
+process exit alone was an insufficient cleanup boundary. No conclusion about
+the observed launcher flags or the earlier full-run boot exit follows.
+
+Artifact `14089223770`, ZIP SHA256
+`08a7bc8065ba72aca8fbe71ef1563a171d21b8f75536e175d33463749e579593`,
+is retained as `.test-tmp/focused-boot-6e24000-artifact.zip`; its extracted report
+and job log are retained alongside it. Emulator revision was `37.2.13`, API35
+Google APIs x86_64 image revision 9. This ordinary-runner comparison exercised no
+APK, profile, receipt or qualification network namespace.
+
+Root `2ecd648` adds a bounded 30-second wait for the exact owned ADB transport to
+disappear after process/reader retirement. Unrelated devices fail immediately;
+unresolved cleanup retains AVD/environment custody and blocks the next case.
+Three regression cases failed before the fix; all 42 focused boot/reopen tests
+passed afterward (`.test-tmp/boot-transport-green.xml`). This repairs diagnostic
+sequencing only; native restart acceptance remains open.
+
+C's `384ee07` is integrated as `62719e7`: eight production-reducer event cases
+cover stale authority, cooldown through stop/start, old completion allocation,
+bridge repair and stale observations. Root reran the reducer, phase matrix,
+property and replay suites: **356 passed**, zero skips, 24.10 seconds
+(`.test-tmp/r0-classification.xml`). No production policy changed; adapter epochs,
+storage failures and signed signaling remain separate evidence boundaries.
+
+Seven historical CI evidence directories were compressed with per-file SHA256
+verification before removing loose copies, recovering 72,291,149 bytes. Archive
+paths, original file identities and archive hashes are retained in
+`.test-tmp/historical-ci-archive-receipt.json`. Current native-run evidence remains
+separate and intact.
+
 ## Current independent R0/R9 integration — November 13, 2026
 
 C's `037aa3516b54b02b6c477607bdc6fd5c17ede140` is integrated as `694e390`.
