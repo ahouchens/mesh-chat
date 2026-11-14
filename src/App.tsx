@@ -3065,8 +3065,11 @@ function JoinWorkspaceDialog({ initialValue = "", promptId, promptWorkspaceName,
   </Dialog>;
 }
 
-function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles, contacts, webrtcActive, onOpenWebRTC, onClose }: { workspace: Workspace; existingInvitations: WorkspaceInvitation[]; remoteProfiles: RemoteProfile[]; contacts: Contact[]; webrtcActive: boolean; onOpenWebRTC: () => void; onClose: () => void }) {
+function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles, contacts, webrtcActive, contactInviteKeys, profileCurrent, onOpenWebRTC, onClose }: { workspace: Workspace; existingInvitations: WorkspaceInvitation[]; remoteProfiles: RemoteProfile[]; contacts: Contact[]; webrtcActive: boolean; contactInviteKeys: Map<string, string>; profileCurrent: () => boolean; onOpenWebRTC: () => void; onClose: () => void }) {
   const admitProfileRequest = useProfileRequestAdmission();
+  const contactInviteInFlight = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const availableContacts = contacts.filter((candidate) => {
     if (candidate.trust !== "approved" && candidate.trust !== "verified") return false;
     return !workspace.members.some((member) => member.status === "active"
@@ -3102,21 +3105,35 @@ function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles,
     return () => { active = false; };
   }, []);
   const sendContactInvite = async () => {
-    if (!contactId || contactBusy) return;
+    if (!contactId || contactInviteInFlight.current || !profileCurrent()) return;
+    contactInviteInFlight.current = true;
+    const intendedContactId = contactId;
+    const intent = JSON.stringify([workspace.core_handle ?? workspace.id, intendedContactId]);
+    const operationId = contactInviteKeys.get(intent) ?? newOperationId();
+    contactInviteKeys.set(intent, operationId);
     const selectedContact = contacts.find((candidate) => candidate.id === contactId);
     setContactBusy(true); setContactFeedback(""); setContactError("");
     try {
       const result = await fetchWorkspaceConnection(workspace, "invite_contact",
-        { contact_id: contactId }, undefined, admitProfileRequest) as unknown as { sent: boolean; message_state?: string; invitation: WorkspaceInvitationFormats };
+        { contact_id: intendedContactId }, operationId, admitProfileRequest) as unknown as { sent: boolean; message_state?: string; invitation: WorkspaceInvitationFormats };
+      if (!profileCurrent() || !mounted.current) return;
+      if (contactInviteKeys.get(intent) === operationId) contactInviteKeys.delete(intent);
       if (result.invitation) {
-        setExisting((current) => [...current, { ...result.invitation, offered_manifest_digest: "", state: "active", created_at: Date.now() / 1000, contact_id: contactId, contact_display_name: selectedContact?.display_name, delivery_state: result.message_state }]);
+        setExisting((current) => current.some((item) => item.id === result.invitation.id)
+          ? current : [...current, { ...result.invitation, offered_manifest_digest: "", state: "active", created_at: Date.now() / 1000, contact_id: intendedContactId, contact_display_name: selectedContact?.display_name, delivery_state: result.message_state }]);
       }
       setContactFeedback(`Workspace invitation queued over the existing verified contact route${result.message_state ? ` (${result.message_state})` : ""}.`);
       setContactId("");
     } catch (reason) {
-      setContactError(errorMessage(reason));
+      if (!profileCurrent() || !mounted.current) return;
+      const refused = ["forbidden", "invalid_request", "idempotency_conflict"].includes(profileErrorCode(reason));
+      if (refused && contactInviteKeys.get(intent) === operationId) contactInviteKeys.delete(intent);
+      setContactError(refused
+        ? "The invitation could not be sent. Review the contact or refresh your profile."
+        : "Invitation was not confirmed. Retrying this contact checks the same action.");
     } finally {
-      setContactBusy(false);
+      contactInviteInFlight.current = false;
+      if (profileCurrent() && mounted.current) setContactBusy(false);
     }
   };
   const create = async (manual = false) => {
@@ -4358,6 +4375,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
   const [contactInviteDismissError, setContactInviteDismissError] = useState<{ id: string; message: string } | null>(null);
   const contactInviteDismissInFlight = useRef<string | null>(null);
   const channelCreationAttempts = useRef(new Map<string, { operationId: string; accepted: boolean }>());
+  const workspaceContactInviteKeys = useRef(new Map<string, string>()).current;
   const incomingCall = (snapshot.calls ?? []).find((call) => call.direction === "inbound" && call.state === "ringing");
   const contactInvitePrompt = (snapshot.workspace_invitation_prompts ?? []).find((prompt) =>
     prompt.state === "pending" && !dismissedContactInviteIds.has(prompt.id),
@@ -6850,7 +6868,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       {selectedWorkspace && workspaceBrowseOpen && <BrowseWorkspaceChannelsDialog workspace={selectedWorkspace} channels={selectedWorkspaceChannels.filter((channel) => channel.visibility === "public")} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceBrowseOpen(false)} onOpen={(channelId) => { setWorkspaceMentionsOpen(false); setWorkspaceThreadsOpen(false); setWorkspaceThreadRootId(null); setWorkspaceSelectedChannelId(channelId); setWorkspaceSelectedDirectId(null); setWorkspaceBrowseOpen(false); setMobileSidebarOpen(false); }} onSubscribe={(channelId, subscribed) => void runWorkspaceChannelAction("set_workspace_channel_subscription", { channel_id: channelId, subscribed })} onSync={() => void runWorkspaceChannelAction("sync_workspace_channels")} onCreate={() => { setWorkspaceBrowseOpen(false); setWorkspaceCreateChannelOpen(true); }} />}
       {selectedWorkspace && workspaceCreateChannelOpen && <CreateWorkspaceChannelDialog workspace={selectedWorkspace} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceCreateChannelOpen(false)} onCreate={(name, topic, visibility, memberIds) => void runWorkspaceChannelAction("create_workspace_channel", { name, topic, visibility, member_ids: memberIds })} />}
       {selectedWorkspace && selectedWorkspaceChannel && workspaceManageChannelOpen && <ManageWorkspaceChannelDialog workspace={selectedWorkspace} channel={selectedWorkspaceChannel} transfers={workspaceChannelTransfers.filter((item) => item.workspace_id === selectedWorkspace.id)} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceManageChannelOpen(false)} onUpdate={(name, topic, archived) => void runWorkspaceChannelAction("update_workspace_channel", { channel_id: selectedWorkspaceChannel.id, name, topic, archived })} onMembers={(memberIds) => void runWorkspaceChannelAction("update_workspace_private_channel_members", { channel_id: selectedWorkspaceChannel.id, member_ids: memberIds })} onLeave={() => void runWorkspaceChannelAction("leave_workspace_private_channel", { channel_id: selectedWorkspaceChannel.id })} onOfferTransfer={(successorMemberId) => void runWorkspaceChannelAction("offer_workspace_channel_transfer", { channel_id: selectedWorkspaceChannel.id, successor_member_id: successorMemberId })} onAcceptTransfer={(transferId) => void runWorkspaceChannelAction("accept_workspace_channel_transfer", { transfer_id: transferId })} onRecover={() => void runWorkspaceChannelAction("recover_workspace_channel", { channel_id: selectedWorkspaceChannel.id })} />}
-      {selectedWorkspace && inviteWorkspaceOpen && <WorkspaceInviteDialog workspace={selectedWorkspace} existingInvitations={workspaceInvitations.filter((invitation) => invitation.workspace_id === selectedWorkspace.id)} remoteProfiles={snapshot.remote_profiles ?? []} contacts={snapshot.contacts ?? []} webrtcActive={webrtcSessionActive} onOpenWebRTC={() => { setInviteWorkspaceOpen(false); setWebRtcOnboardingOpen(true); }} onClose={() => setInviteWorkspaceOpen(false)} />}
+      {selectedWorkspace && inviteWorkspaceOpen && <WorkspaceInviteDialog workspace={selectedWorkspace} existingInvitations={workspaceInvitations.filter((invitation) => invitation.workspace_id === selectedWorkspace.id)} remoteProfiles={snapshot.remote_profiles ?? []} contacts={snapshot.contacts ?? []} webrtcActive={webrtcSessionActive} contactInviteKeys={workspaceContactInviteKeys} profileCurrent={profileCurrent} onOpenWebRTC={() => { setInviteWorkspaceOpen(false); setWebRtcOnboardingOpen(true); }} onClose={() => setInviteWorkspaceOpen(false)} />}
       {selectedWorkspace && workspaceSettingsSection && <div className={`settings-page-slot workspace-settings-slot ${hasForegroundRequest ? "dialog-suspended" : ""}`} aria-hidden={hasForegroundRequest ? true : undefined}>
         <WorkspaceSettingsPage key={selectedWorkspace.id} name={selectedWorkspace.name} role={selectedWorkspace.local_role}
           section={workspaceSettingsSection} busy={workspaceActionBusy} pendingRequests={selectedWorkspace.pending_owner_review_count}

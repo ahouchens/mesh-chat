@@ -6034,8 +6034,157 @@ describe("desktop workspaces", () => {
     expect(within(dialog).queryByRole("group", { name: "Invitation path" })).toBeNull();
     fireEvent.change(within(dialog).getByRole("combobox", { name:"Verified contact" }), { target:{ value:approved.id } });
     fireEvent.click(within(dialog).getByRole("button", { name:"Send workspace invitation" }));
-    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("invite_contact_to_workspace", { workspace_id:workspace.id, contact_id:approved.id }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("invite_contact_to_workspace", { workspace_id:workspace.id, contact_id:approved.id, operation_id: expect.any(String) }));
     expect(await within(dialog).findByText(/queued over the existing verified contact route/i)).toBeTruthy();
+  });
+
+  it("retries a committed verified-contact invitation with one Core identity after a lost reply and dialog reopen", async () => {
+    const current: Snapshot = { ...snapshot([approved]), workspaces: [workspace], workspace_channels: [workspaceChannel], workspace_join_requests: [], workspace_invitations: [], workspace_drafts: [] };
+    const committed = new Set<string>();
+    let sends = 0;
+    let attempts = 0;
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string, payload?: Record<string, unknown>) => {
+      if (command === "snapshot") return current;
+      if (command === "list_workspace_messages") return { messages: [], next_cursor: null, high_water: 0 };
+      if (command === "invite_contact_to_workspace") {
+        attempts++;
+        const key = typeof payload?.operation_id === "string" ? payload.operation_id : `implicit-${attempts}`;
+        if (!committed.has(key)) { committed.add(key); sends++; }
+        if (attempts === 1) throw new Error("reply_lost_after_commit");
+        return { sent: true, message_state: "queued" };
+      }
+      return {};
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Invite people to Lakewatcher" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Send workspace invitation" }));
+    await waitFor(() => expect(within(dialog).getByRole("alert")).toBeTruthy());
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Invite people to Lakewatcher" }));
+    const reopened = await screen.findByRole("dialog");
+    fireEvent.click(within(reopened).getByRole("button", { name: "Send workspace invitation" }));
+    await waitFor(() => expect(api.serviceCommand.mock.calls.filter(([command]) => command === "invite_contact_to_workspace")).toHaveLength(2));
+    const calls = api.serviceCommand.mock.calls.filter(([command]) => command === "invite_contact_to_workspace");
+    expect(calls[0][1].operation_id).toEqual(expect.any(String));
+    expect(calls[1][1].operation_id).toBe(calls[0][1].operation_id);
+    expect(sends).toBe(1);
+  });
+
+  it("keeps the invitation identity when a pending reply arrives after its dialog closes", async () => {
+    const current: Snapshot = { ...snapshot([approved]), workspaces: [workspace], workspace_channels: [workspaceChannel], workspace_join_requests: [], workspace_invitations: [], workspace_drafts: [] };
+    const pending = deferred<unknown>();
+    let attempts = 0;
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "list_workspace_messages") return { messages: [], next_cursor: null, high_water: 0 };
+      if (command === "invite_contact_to_workspace") return ++attempts === 1 ? pending.promise : { sent: true, message_state: "queued" };
+      return {};
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Invite people to Lakewatcher" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Send workspace invitation" }));
+    await waitFor(() => expect(api.serviceCommand.mock.calls.filter(([command]) => command === "invite_contact_to_workspace")).toHaveLength(1));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Invite people to Lakewatcher" }));
+    const reopened = await screen.findByRole("dialog");
+    await act(async () => { pending.resolve({ sent: true, message_state: "queued" }); });
+    expect(within(reopened).queryByText(/queued over the existing verified contact route/i)).toBeNull();
+    fireEvent.click(within(reopened).getByRole("button", { name: "Send workspace invitation" }));
+    await waitFor(() => expect(api.serviceCommand.mock.calls.filter(([command]) => command === "invite_contact_to_workspace")).toHaveLength(2));
+    const calls = api.serviceCommand.mock.calls.filter(([command]) => command === "invite_contact_to_workspace");
+    expect(calls[1][1].operation_id).toBe(calls[0][1].operation_id);
+  });
+
+  it("separates contact invitation intents and retires refused or confirmed keys", async () => {
+    const other = { ...approved, id: "contact-other", display_name: "Bailey", destination_hash: "ab".repeat(16) };
+    const current: Snapshot = { ...snapshot([approved, other]), workspaces: [workspace], workspace_channels: [workspaceChannel], workspace_join_requests: [], workspace_invitations: [], workspace_drafts: [] };
+    let attempts = 0;
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "list_workspace_messages") return { messages: [], next_cursor: null, high_water: 0 };
+      if (command === "invite_contact_to_workspace") {
+        attempts++;
+        if (attempts === 1) throw new Error("reply_lost_after_commit");
+        if (attempts === 2) throw Object.assign(new Error("refused"), { code: "forbidden" });
+        return { sent: true, message_state: "queued" };
+      }
+      return {};
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Invite people to Lakewatcher" }));
+    const dialog = await screen.findByRole("dialog");
+    const contact = within(dialog).getByRole("combobox", { name: "Verified contact" });
+    const send = within(dialog).getByRole("button", { name: "Send workspace invitation" });
+    fireEvent.click(send);
+    expect((await within(dialog).findByRole("alert")).textContent).toContain("not confirmed");
+    fireEvent.change(contact, { target: { value: other.id } });
+    fireEvent.click(send);
+    expect((await within(dialog).findByRole("alert")).textContent).toContain("could not be sent");
+    fireEvent.click(send);
+    await within(dialog).findByText(/queued over the existing verified contact route/i);
+    fireEvent.change(contact, { target: { value: other.id } });
+    fireEvent.click(send);
+    await waitFor(() => expect(api.serviceCommand.mock.calls.filter(([command]) => command === "invite_contact_to_workspace")).toHaveLength(4));
+    const calls = api.serviceCommand.mock.calls.filter(([command]) => command === "invite_contact_to_workspace");
+    expect(calls[0][1].contact_id).toBe(approved.id);
+    expect(calls.slice(1).every(([, payload]) => payload.contact_id === other.id)).toBe(true);
+    expect(calls[0][1].operation_id).not.toBe(calls[1][1].operation_id);
+    expect(calls[1][1].operation_id).not.toBe(calls[2][1].operation_id);
+    expect(calls[2][1].operation_id).not.toBe(calls[3][1].operation_id);
+    expect(api.serviceCommand.mock.calls.some(([command]) => command === "native_webrtc_close" || command === "end_call")).toBe(false);
+  });
+
+  it("fences a late contact invitation result across profile retirement", async () => {
+    const current: Snapshot = { ...snapshot([approved]), workspaces: [workspace], workspace_channels: [workspaceChannel], workspace_join_requests: [], workspace_invitations: [], workspace_drafts: [] };
+    const pending = deferred<unknown>();
+    let attempts = 0;
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "list_workspace_messages") return { messages: [], next_cursor: null, high_water: 0 };
+      if (command === "invite_contact_to_workspace") return ++attempts === 1 ? pending.promise : { sent: true, message_state: "queued" };
+      return {};
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Invite people to Lakewatcher" }));
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Send workspace invitation" }));
+    await waitFor(() => expect(api.serviceCommand.mock.calls.filter(([command]) => command === "invite_contact_to_workspace")).toHaveLength(1));
+    const first = api.serviceCommand.mock.calls.find(([command]) => command === "invite_contact_to_workspace")![1].operation_id;
+    fireEvent.click(screen.getByRole("button", { name: "Lock Mesh Chat" }));
+    await act(async () => { pending.resolve({ sent: true, message_state: "queued" }); });
+    await screen.findByRole("heading", { name: "Mesh Chat is locked" });
+    fireEvent.click(screen.getByRole("button", { name: "Unlock" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Invite people to Lakewatcher" }));
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Send workspace invitation" }));
+    await waitFor(() => expect(api.serviceCommand.mock.calls.filter(([command]) => command === "invite_contact_to_workspace")).toHaveLength(2));
+    const second = api.serviceCommand.mock.calls.filter(([command]) => command === "invite_contact_to_workspace")[1][1].operation_id;
+    expect(second).not.toBe(first);
   });
 
   const promptSnapshot = (...ids: string[]): Snapshot => ({
