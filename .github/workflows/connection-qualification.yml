@@ -169,6 +169,7 @@ jobs:
           name: direct-qualification-Windows-${{ github.sha }}
           path: dist/qualification/direct-Windows
       - name: Reject missing, failed, canceled or unexpectedly skipped suites
+        if: always()
         env:
           QUALIFICATION_NEEDS: ${{ toJSON(needs) }}
         run: >-

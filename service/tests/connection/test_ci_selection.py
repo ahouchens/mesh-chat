@@ -365,3 +365,6 @@ def test_native_topology_starts_after_both_real_packages_and_is_a_required_final
     downloads = [step.get("with", {}).get("name", "") for step in jobs["gate"]["steps"] if step.get("uses", "").startswith("actions/download-artifact@")]
     assert any(name.startswith("native-interop-windows-") for name in downloads)
     assert any(name.startswith("native-interop-android-") for name in downloads)
+    check = next(step for step in jobs["gate"]["steps"]
+                 if "--check-plan" in step.get("run", ""))
+    assert check["if"] == "always()"
