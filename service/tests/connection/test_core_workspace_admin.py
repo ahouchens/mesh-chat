@@ -10,10 +10,11 @@ import RNS
 
 from mesh_chat.core_api.composition import bind_service_session
 from mesh_chat.core_api.session import Grant
+from mesh_chat.workspace_wire import parse_workspace_payload
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from test_workspace_service import (_deliver, _deliver_all, _flush, _joined_pair,  # noqa: E402
-                                   _op, _service)
+                                   _native, _op, _service)
 
 from test_core_messages import host, request  # noqa: E402, F401
 
@@ -792,5 +793,125 @@ def test_new_component_mutations_execute_and_replay_through_the_real_vault(host)
                                  conversation=channel_id, text="")
     assert cleared["ok"], cleared
     assert reopened.store.list("workspace_draft") == []
+
+
+def test_admin_requests_replay_once_after_reply_loss_and_host_reopen(tmp_path):
+    root = tmp_path / "admin-request-replay"
+    (owner, owner_network, owner_profile, admin, admin_network, admin_profile,
+     workspace, admin_key, admin_identity) = _joined_pair(root, base=142_000)
+    workspace_id = workspace["id"]
+    admin_member_id = admin._require_workspace(workspace_id)["local_member_id"]
+    reopened = None
+    third = None
+    try:
+        owner.change_workspace_role(workspace_id, admin_member_id, "admin", _op(142_010))
+        _deliver_all(admin, _flush(owner, owner_network),
+                     source_profile=owner_profile, recipient_profile=admin_profile)
+        owner.update_workspace_policies(
+            workspace_id, "owner_and_admins", "owner_and_admins", _op(142_011),
+            "owner_and_admins")
+        _deliver_all(admin, _flush(owner, owner_network),
+                     source_profile=owner_profile, recipient_profile=admin_profile)
+        invitation_to_third = owner.create_workspace_invitation_command(workspace_id, _op(142_012))
+        third, third_network = _service(root / "third", RNS.Identity(), "Casey")
+        third_profile = third._require_profile()
+        third.submit_workspace_join(invitation_to_third["text"], _op(142_013))
+        _deliver_all(owner, _flush(third, third_network),
+                     source_profile=third_profile, recipient_profile=owner_profile)
+        pending = next(item for item in owner.workspace_snapshot()["workspace_join_requests"]
+                       if item["workspace_id"] == workspace_id
+                       and item["display_name"] == "Casey")
+        owner.approve_workspace_join(workspace_id, pending["id"], _op(142_014))
+        controls = _flush(owner, owner_network)
+        controls.sort(key=lambda item: 0 if parse_workspace_payload(
+            _native(item, source=b"\x00" * 16, destination=b"\x01" * 16)
+        ).kind == "workspace_manifest_root" else 1)
+        _deliver_all(admin, controls, source_profile=owner_profile,
+                     recipient_profile=admin_profile)
+        _deliver_all(third, controls, source_profile=owner_profile,
+                     recipient_profile=third_profile)
+        assert third._require_workspace(workspace_id)["state"] == "active"
+        admin._shutdown.clear()
+        client, profile = open_client(
+            admin, permissions=("observe", "read", "approve", "send"), caller="admin-app")
+        workspace_handle = client.request(request("workspace.query", profile=profile)
+                                          )["result"]["workspaces"][0]["workspace"]
+        members = client.request(request("workspace.members", profile=profile,
+                                         workspace=workspace_handle))["result"]["members"]
+        target_member = next(item["member"] for item in members if item["display_name"] == "Casey")
+        own_member = next(item["member"] for item in members if item["display_name"] == "Bailey")
+        invitation = {"workspace": workspace_handle, "request_kind": "invitation",
+                      "note": "Invite a teammate"}
+        role_change = {"workspace": workspace_handle, "request_kind": "role_change",
+                       "target_member": target_member, "requested_role": "admin",
+                       "note": "Promote Casey"}
+        cases = [("admin-invitation-replay-key", invitation),
+                 ("admin-role-change-replay-key", role_change)]
+
+        def submit(session, handle, key, params):
+            return component_request(session, "workspace.admin_request_submit", key,
+                                     profile=handle, **params)
+
+        first = [submit(client, profile, key, params) for key, params in cases]
+        assert all(item["ok"] for item in first), first
+        # The transport loses both replies; a new Core session uses the same caller and keys.
+        client.detach()
+        retry, retry_profile = open_client(
+            admin, permissions=("observe", "read", "approve", "send"), caller="admin-app")
+        assert retry_profile == profile
+        assert [submit(retry, retry_profile, key, params) for key, params in cases] == first
+
+        def retained(service):
+            requests = [item for item in service.store.list("workspace_admin_request")
+                        if item["workspace_id"] == workspace_id]
+            deliveries = [item for item in service.store.list("workspace_delivery")
+                          if item["workspace_id"] == workspace_id
+                          and item["kind"] == "workspace_admin_request"]
+            return requests, deliveries
+
+        requests, deliveries = retained(admin)
+        assert len(requests) == len(deliveries) == 2
+        retained_ids = ({item["id"] for item in requests}, {item["id"] for item in deliveries})
+        admin.close()
+        reopened, _ = _service(root / "member", admin_identity, "Bailey", vault_key=admin_key)
+        reopened._shutdown.clear()
+        again, reopened_profile = open_client(
+            reopened, permissions=("observe", "read", "approve", "send"), caller="admin-app")
+        assert reopened_profile == profile
+        assert [submit(again, reopened_profile, key, params) for key, params in cases] == first
+        requests, deliveries = retained(reopened)
+        assert ({item["id"] for item in requests}, {item["id"] for item in deliveries}) == retained_ids
+        assert len(requests) == len(deliveries) == 2
+
+        changed = [
+            (cases[0][0], {**invitation, "note": "Different note"}),
+            (cases[0][0], {"workspace": workspace_handle, "request_kind": "member_removal",
+                           "target_member": own_member, "note": invitation["note"]}),
+            (cases[1][0], {**role_change, "target_member": own_member}),
+            (cases[1][0], {**role_change, "requested_role": "member"}),
+        ]
+        second = reopened.create_workspace(_op(142_015), "Other scope", "")
+        other = next(item["workspace"] for item in again.request(
+            request("workspace.query", profile=reopened_profile))["result"]["workspaces"]
+            if item["name"] == second["name"])
+        changed.append((cases[0][0], {**invitation, "workspace": other}))
+        for key, params in changed:
+            assert submit(again, reopened_profile, key, params)["error"]["code"] == "idempotency_conflict"
+        read_only, read_profile = open_client(
+            reopened, permissions=("observe", "read", "approve"), caller="admin-app")
+        assert submit(read_only, read_profile, *cases[0])["error"]["code"] == "forbidden"
+        other_caller, _ = open_client(
+            reopened, permissions=("observe", "read", "approve", "send"), caller="other-app")
+        assert submit(other_caller, reopened_profile, *cases[0])["error"]["code"] == "forbidden"
+        requests, deliveries = retained(reopened)
+        assert len(requests) == len(deliveries) == 2
+    finally:
+        if reopened is not None:
+            reopened.close()
+        else:
+            admin.close()
+        if third is not None:
+            third.close()
+        owner.close()
 
 
