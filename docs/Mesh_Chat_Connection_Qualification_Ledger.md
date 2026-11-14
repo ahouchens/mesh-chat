@@ -1,5 +1,48 @@
 # Connection runtime qualification ledger
 
+## Build handoff and shared cleanup repair — November 13, 2026
+
+Packaged reopen run `43538167917` at `304f863` built its APKs, then failed
+`source_binding/ValueError` before any emulator or reopen attempt. All three
+declared attempts remain unexecuted. Artifact `14091032142`, ZIP SHA256
+`56cf209f63e8eb347dab6a39d81b71d8b8e7a693c7c5075334feb5aacb0ea154`, and job
+`132272131570`'s log are retained under `.test-tmp/focused-reopen-304f863-*`.
+Rust cache cleanup also attempted Cargo after the workflow removed its toolchain;
+this was secondary to the diagnostic failure.
+
+Root `71226a7` records `src-tauri/gen/android/gradlew` as executable (`100755`),
+with unchanged blob `249efbb032ce46a80c687c0723eb172e85f6a136`. It was `100644`
+in the failed source, yet later `./gradlew` steps executed successfully without
+an explicit workflow chmod. This supports a mode-change cause for the dirty
+checkout; the retained run cannot rule out other mutations. A reviewed this
+mode-only repair. D's `6da7220`, integrated as `b3db895`, adds bounded tracked
+path/status/hash/mode checkpoints around builds and makes Rust cache restore-only.
+The clean-source gate remains intact. Root **51 focused cases passed**, 2.89 s
+(`.test-tmp/reopen-checkpoints.xml`).
+
+Root `b71e1a5`/`5203495` extends the proven boot-diagnostic transport retirement
+fence to the shared emulator owner: exact process and reader first, valid empty
+ADB inventory next, then AVD/environment release. A malformed response, foreign
+device, ADB error or bounded timeout retains custody; repeated close can finish
+later without probing a new owner after successful release. A reviewed the
+implementation and test reconciliation. Root **2,078 passed**, zero skips,
+46.90 s (`.test-tmp/shared-transport-final.xml`). Initial failing expectations
+remain in `.test-tmp/shared-transport-verified.xml`; no case was dropped.
+
+The reviewed R8 workflow/assembler is integrated through `61d637c`. Root's
+**23 assembly/manifest tests passed**, 0.99 s, with test outputs outside the
+checkout as required (`.test-tmp/r8-workflow-verified.xml`). The first local
+invocation placed its synthetic output inside the checkout and was correctly
+rejected; that report remains retained. Actual same-source execution is running
+at `71226a7` in [43539960943](https://github.com/ahouchens/mesh-chat/actions/runs/43539960943),
+with freeze `.test-tmp/windows-candidate-71226a7-freeze.json`.
+
+B's channel-creation retry fix is integrated as `299f118`/`300f761`: an uncertain
+reply retains the same submitted Core action identity across dialog reopening;
+changed intent and definitive refusal do not reuse it incorrectly. Root **197
+App tests passed**, with TypeScript checks passing. This is component UI evidence,
+not installed UI/media coexistence or full refactor completion.
+
 ## Repaired boot comparison passed; packaged reopen next — November 13, 2026
 
 Run [43537710895](https://github.com/ahouchens/mesh-chat/actions/runs/43537710895)
