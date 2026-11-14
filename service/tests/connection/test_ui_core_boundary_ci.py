@@ -124,6 +124,26 @@ def test_required_lifetime_evidence_keeps_bootstrap_and_session_scope_distinct()
     assert "timeout=330" in (ROOT / "scripts/check_independent_core_pairing.py").read_text()
 
 
+def test_distinct_image_fixture_is_required_after_bootstrap_and_has_separate_evidence():
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+    steps = workflow["jobs"]["desktop-host"]["steps"]
+    positions = {script: next(index for index, step in enumerate(steps)
+                             if f"scripts/{script}.py" in step.get("run", ""))
+                 for script in ("check_independent_core_consumers", "check_windows_image_admission",
+                                "check_independent_core_pairing")}
+    image = positions["check_windows_image_admission"]
+    assert positions["check_independent_core_consumers"] < image < positions["check_independent_core_pairing"]
+    assert steps[image]["run"] == (
+        'python scripts/check_windows_image_admission.py --expected-source "${{ github.sha }}"')
+    assert "continue-on-error" not in steps[image] and "if" not in steps[image]
+    upload = next(step for step in steps if step.get("uses", "").startswith("actions/upload-artifact@")
+                  and step.get("with", {}).get("name") == "desktop-transport-${{ github.sha }}")
+    assert upload["if"] == "always()"
+    assert "dist/reports/windows-independent-image-admission.json" in upload["with"]["path"]
+    from stage_independent_core_consumers import FILES
+    assert "image-admission-check.mjs" in FILES
+
+
 def test_android_typed_app_cases_are_required_by_the_artifact_bound_inventory():
     spec = importlib.util.spec_from_file_location("boundary_android", ROOT / "scripts/android_qualification.py")
     android = importlib.util.module_from_spec(spec)

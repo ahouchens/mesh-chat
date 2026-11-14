@@ -85,6 +85,18 @@ cover paired pending work, wrong-image callers, cross-application isolation or
 full SC22/SC26 acceptance: same-user Node processes with the exact allowed
 executable image currently receive the same owner grant.
 
+`image-admission-check.mjs` exercises the separate executable-path boundary on
+one ordinary frozen Windows owner. It first proves an original-image helper can
+connect and query a fresh profile. A byte-identical Node copy at another absolute
+path must run and import the installed SDK, connect to the same OS pipe, then
+receive a transport closure before any Core reply. Timeout, failed connection,
+or any received byte cannot count as rejection. The original owner and a fresh
+allowed helper must still work afterward, and image/SDK hashes must match.
+Copying, hashing and deletion run in bounded owned children whose close events
+precede cleanup claims. The distinct installed report requires positive owner
+retirement and EFS profile/vault checks. It does not establish isolation between
+applications that use the same allowed image path or complete SC22/R7 acceptance.
+
 The qualification pairing check opts into a one-shot owner diagnostic with
 `MESH_CHAT_APP_PAIRING_DIAGNOSTICS=1`; ordinary launches leave it disabled.
 After a public failure, the owner sends EOF and observes the exact child's
