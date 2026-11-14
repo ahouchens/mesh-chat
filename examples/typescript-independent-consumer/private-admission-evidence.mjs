@@ -1,6 +1,6 @@
 // Narrow admission and post-removal evidence for the installed private fixture.
 import { randomUUID } from "node:crypto";
-import { isAbsolute, resolve } from "node:path";
+import { win32 as windowsPath } from "node:path";
 import { HelperCoreError } from "./public-process-helper.mjs";
 
 // Caller supplies a transport only after a successful OS pipe connection.
@@ -34,9 +34,9 @@ export async function requireRevokedHelper(helper, profile, settings, deadline) 
 
 export function hostWitnessScript(hostPid, ownerPid, executable) {
   if (![hostPid, ownerPid].every(pid => Number.isSafeInteger(pid) && pid > 0 && pid <= 0xffffffff)
-      || hostPid === ownerPid || !isAbsolute(executable)) throw new Error("host_witness_arguments");
+      || hostPid === ownerPid || !windowsPath.isAbsolute(executable)) throw new Error("host_witness_arguments");
   // Encode the expected executable as data; it never becomes PowerShell source.
-  const expected = Buffer.from(resolve(executable), "utf16le").toString("base64");
+  const expected = Buffer.from(windowsPath.resolve(executable), "utf16le").toString("base64");
   return `$ErrorActionPreference='Stop'; `
     + `$p=[System.Diagnostics.Process]::GetProcessById(${hostPid}); $null=$p.Handle; `
     + `$info=Get-CimInstance -ClassName Win32_Process -Filter 'ProcessId = ${hostPid}'; `
