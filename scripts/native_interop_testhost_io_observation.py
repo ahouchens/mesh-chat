@@ -5,13 +5,20 @@ import subprocess
 import threading
 import time
 
+from native_interop_android_observation import INSTRUMENTATION_CODES, MARKERS, PROCESS_STATES
+from native_interop_android_system import system_snapshot
+
 
 STAGES = frozenset({"read_header", "read_body", "dispatch", "write_header", "write_body",
-                    "flush", "snapshot_dispatch_enter", "snapshot_flush_complete"})
+                    "flush", "snapshot_dispatch_enter", "snapshot_flush_complete",
+                    "initialize_dispatch_enter", "initialize_return", "initialize_flush_complete"})
+MILESTONES = ("snapshot_dispatch_enter", "snapshot_flush_complete",
+              "initialize_dispatch_enter", "initialize_return", "initialize_flush_complete")
 CATEGORIES = frozenset({"none", "eof", "timeout", "io", "protocol", "other"})
 STATUS = re.compile(rb"INSTRUMENTATION_STATUS: mesh_interop_io=v1\|([1-9][0-9]{0,7})\|"
                     rb"(read_header|read_body|dispatch|write_header|write_body|flush|"
-                    rb"snapshot_dispatch_enter|snapshot_flush_complete)\|"
+                    rb"snapshot_dispatch_enter|snapshot_flush_complete|initialize_dispatch_enter|"
+                    rb"initialize_return|initialize_flush_complete)\|"
                     rb"(none|eof|timeout|io|protocol|other)\|([0-9]{1,6})\|([01])\r?\n\Z")
 MAX_MS = 120000
 
@@ -55,51 +62,111 @@ class TesthostIoStatus:
         if previous and row["ordinal"] > previous[-1]["last"]["ordinal"] + 1:
             previous = ()
         same = previous[-1] if previous and previous[-1]["last"]["ordinal"] == row["ordinal"] else None
-        entry = {"last": row,
-                 "snapshot_dispatch_enter": bool(same and same["snapshot_dispatch_enter"])
-                     or row["stage"] == "snapshot_dispatch_enter",
-                 "snapshot_flush_complete": bool(same and same["snapshot_flush_complete"])
-                     or row["stage"] == "snapshot_flush_complete"}
+        entry = {"last": row, **{name: bool(same and same[name]) or row["stage"] == name
+                                 for name in MILESTONES}}
         self._latest = tuple(item for item in previous if item["last"]["ordinal"] == row["ordinal"] - 1)[-1:] + (entry,)
 
     def matching(self, ordinal):
         if type(ordinal) is not int or not 1 <= ordinal <= 99999999:
             return []
-        return [{"last": dict(item["last"]),
-                 "snapshot_dispatch_enter": item["snapshot_dispatch_enter"],
-                 "snapshot_flush_complete": item["snapshot_flush_complete"]}
+        return [{"last": dict(item["last"]), **{name: item[name] for name in MILESTONES}}
                 for item in self._latest if item["last"]["ordinal"] in (ordinal - 1, ordinal)]
 
 
-def failure_snapshot(value, ordinal):
-    """Validate one captured EOF observation before report retention."""
+def reader_observation(reader):
+    """Inspect the already-owned reader without joining it."""
+    if reader is None:
+        return "absent"
+    try:
+        alive = reader.is_alive()
+        return "alive" if alive is True else "ended" if alive is False else "unknown"
+    except Exception:
+        return "unknown"
+
+
+def _process_snapshot(value):
+    if (type(value) is not dict or set(value) != {"state", "exit_status"}
+            or type(value["state"]) is not str or value["state"] not in PROCESS_STATES
+            or (value["state"] == "exited") != (type(value["exit_status"]) is int)
+            or (value["state"] != "exited" and value["exit_status"] is not None)
+            or (type(value["exit_status"]) is int and not -255 <= value["exit_status"] <= 255)):
+        return None
+    return dict(value)
+
+
+def _instrumentation_snapshot(value):
+    if (type(value) is not dict or set(value) != {"reader_eof", "code", "marker"}
+            or type(value["reader_eof"]) is not bool
+            or (value["code"] is not None and (type(value["code"]) is not str
+                or value["code"] not in INSTRUMENTATION_CODES))
+            or (value["marker"] is not None and (type(value["marker"]) is not str
+                or value["marker"] not in MARKERS))):
+        return None
+    return dict(value)
+
+
+def _statuses_snapshot(value, ordinal):
     if (type(ordinal) is not int or not 1 <= ordinal <= 99999999
-            or type(value) is not dict or set(value) != {"statuses", "device", "forward", "app_process"}
-            or type(value["device"]) is not str
-            or value["device"] not in {"device", "offline", "unauthorized", "other", "unknown", "timeout"}
-            or type(value["forward"]) is not str
-            or value["forward"] not in {"present", "absent", "unknown", "timeout"}
-            or type(value["app_process"]) is not str
-            or value["app_process"] not in {"absent", "one", "multiple", "unknown", "timeout"}
-            or type(value["statuses"]) is not list or len(value["statuses"]) > 2):
+            or type(value) is not list or len(value) > 2):
         return None
     selected = []
-    for entry in value["statuses"]:
-        if (type(entry) is not dict or set(entry) != {"last", "snapshot_dispatch_enter", "snapshot_flush_complete"}
-                or type(entry["snapshot_dispatch_enter"]) is not bool
-                or type(entry["snapshot_flush_complete"]) is not bool):
+    for entry in value:
+        if (type(entry) is not dict or set(entry) != {"last", *MILESTONES}
+                or any(type(entry[name]) is not bool for name in MILESTONES)):
             return None
         row = snapshot(entry["last"])
         if row is None or row["ordinal"] not in (ordinal - 1, ordinal):
             return None
         if selected and row["ordinal"] <= selected[-1]["last"]["ordinal"]:
             return None
-        if entry["snapshot_flush_complete"] and not entry["snapshot_dispatch_enter"]:
+        if (entry["snapshot_flush_complete"] and not entry["snapshot_dispatch_enter"]
+                or entry["initialize_return"] and not entry["initialize_dispatch_enter"]
+                or entry["initialize_flush_complete"] and not entry["initialize_return"]
+                or (entry["snapshot_dispatch_enter"] or entry["snapshot_flush_complete"])
+                    and (entry["initialize_dispatch_enter"] or entry["initialize_return"]
+                         or entry["initialize_flush_complete"])):
             return None
-        selected.append({"last": row, "snapshot_dispatch_enter": entry["snapshot_dispatch_enter"],
-                         "snapshot_flush_complete": entry["snapshot_flush_complete"]})
-    return {"statuses": selected, "device": value["device"], "forward": value["forward"],
-            "app_process": value["app_process"]}
+        selected.append({"last": row, **{name: entry[name] for name in MILESTONES}})
+    return selected
+
+
+def pre_probe_snapshot(value, ordinal):
+    """Retain only observations from owned handles before any ADB probe."""
+    fields = {"instrumentation_process", "instrumentation_reader", "adb_server_process",
+              "emulator_process", "instrumentation", "emulator_system", "statuses"}
+    if type(value) is not dict or set(value) != fields:
+        return None
+    processes = {key: _process_snapshot(value[key]) for key in
+                 ("instrumentation_process", "adb_server_process", "emulator_process")}
+    status = _instrumentation_snapshot(value["instrumentation"])
+    rows = _statuses_snapshot(value["statuses"], ordinal)
+    system = system_snapshot(value["emulator_system"]) if value["emulator_system"] is not None else None
+    if (any(item is None for item in processes.values()) or status is None or rows is None
+            or (value["emulator_system"] is not None and system is None)
+            or type(value["instrumentation_reader"]) is not str
+            or value["instrumentation_reader"] not in {"absent", "alive", "ended", "unknown"}):
+        return None
+    return {**processes, "instrumentation_reader": value["instrumentation_reader"],
+            "instrumentation": status, "emulator_system": system, "statuses": rows}
+
+
+def failure_snapshot(value, ordinal):
+    """Validate an EOF observation with separate pre- and post-probe states."""
+    fields = {"statuses", "device", "forward", "app_process"}
+    if (type(value) is not dict or not fields <= set(value) or set(value) - fields - {"pre_probe"}
+            or type(value["device"]) is not str
+            or value["device"] not in {"device", "offline", "unauthorized", "other", "unknown", "timeout"}
+            or type(value["forward"]) is not str
+            or value["forward"] not in {"present", "absent", "unknown", "timeout"}
+            or type(value["app_process"]) is not str
+            or value["app_process"] not in {"absent", "one", "multiple", "unknown", "timeout"}):
+        return None
+    rows = _statuses_snapshot(value["statuses"], ordinal)
+    pre = pre_probe_snapshot(value["pre_probe"], ordinal) if "pre_probe" in value else None
+    if rows is None or ("pre_probe" in value and pre is None):
+        return None
+    return {"statuses": rows, "device": value["device"], "forward": value["forward"],
+            "app_process": value["app_process"], **({"pre_probe": pre} if pre is not None else {})}
 
 
 def _bounded_adb(argv, deadline, limit, cleanup_slice):

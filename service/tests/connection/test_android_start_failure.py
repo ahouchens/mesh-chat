@@ -13,7 +13,8 @@ import native_interop_controller as controller
 import native_interop_peers as peers
 
 
-@pytest.mark.parametrize("stage", ["authenticate", "initialize", "inventory", "binding", "initialize_eof"])
+@pytest.mark.parametrize("stage", ["authenticate", "initialize", "inventory", "binding",
+                                   "initialize_eof", "initialize_eof_status"])
 @pytest.mark.parametrize("cleanup_fails", [False, True])
 def test_startup_cause_survives_offline_rollback(monkeypatch, stage, cleanup_fails):
     from native_interop_android_system import AndroidSystemObservation
@@ -36,10 +37,13 @@ def test_startup_cause_survives_offline_rollback(monkeypatch, stage, cleanup_fai
     monkeypatch.setattr(peers.socket, "create_connection", lambda *a, **k: SimpleNamespace(
         close=lambda: None, settimeout=lambda _: None, sendall=lambda _: None, recv=lambda _: b""))
     original = peers.PeerFailure("internal")
-    expected_stage = "initialize" if stage == "initialize_eof" else stage
+    expected_stage = "initialize" if stage.startswith("initialize_eof") else stage
     def operation(name):
         if name == expected_stage:
-            if stage == "initialize_eof":
+            if stage.startswith("initialize_eof"):
+                if stage == "initialize_eof_status":
+                    peer._testhost_io.observe(
+                        b"INSTRUMENTATION_STATUS: mesh_interop_io=v1|1|initialize_dispatch_enter|none|7|0\n")
                 peer.system_observation.consume(io.BytesIO(b"[ 1.0] Kernel panic - not syncing: PRIVATE\n"))
                 return peers.AndroidPeer._request(peer, name, {})
             raise original
@@ -51,10 +55,22 @@ def test_startup_cause_survives_offline_rollback(monkeypatch, stage, cleanup_fai
         peer.start()
     value = peer.failure_start_observation(caught.value)
     assert value["stage"] == expected_stage and value["exception_kind"] == "peer_failure"
-    assert value["error_code"] == ("peer_closed" if stage == "initialize_eof" else "internal")
-    if stage == "initialize_eof":
+    assert value["error_code"] == ("peer_closed" if stage.startswith("initialize_eof") else "internal")
+    if stage.startswith("initialize_eof"):
         assert value["transport"]["action"] == "initialize"
         assert value["transport"]["eof_stage"] == "header"
+        assert value["request_ordinal"] == 1
+        testhost = value["testhost_io"]
+        assert testhost["pre_probe"]["instrumentation_process"] == {"state": "exited", "exit_status": 255}
+        assert testhost["pre_probe"]["adb_server_process"] == {"state": "absent", "exit_status": None}
+        assert testhost["pre_probe"]["emulator_process"] == {"state": "absent", "exit_status": None}
+        assert testhost["pre_probe"]["emulator_system"]["counts"]["kernel_panic"] == 1
+        assert testhost["pre_probe"]["statuses"] == ([] if stage == "initialize_eof" else testhost["statuses"])
+        if stage == "initialize_eof_status":
+            from native_interop_android_start import start_failure_snapshot
+            assert testhost["statuses"][0]["initialize_dispatch_enter"] is True
+            assert testhost["statuses"][0]["initialize_return"] is False
+            assert start_failure_snapshot({**value, "request_ordinal": 2}) is None
         assert peer._transport_failure is None  # stop reset it; retained copy survives.
         assert peer.system_observation.snapshot()["events"] == [
             {"event": "kernel_panic", "phase": "peer_initialize"}]
@@ -71,6 +87,8 @@ def test_startup_cause_survives_offline_rollback(monkeypatch, stage, cleanup_fai
                      ["forward", "--remove", "tcp:4567"]]
     projected = controller.android_start_failure(peer, SimpleNamespace(process=None), caught.value)
     assert projected["android_start_failure"]["stage"] == expected_stage
+    if stage.startswith("initialize_eof"):
+        assert projected["android_start_failure"]["testhost_io"] == value["testhost_io"]
     assert "PRIVATE" not in json.dumps(projected)
     assert controller.android_start_failure(peer, None, original) == {}
     assert peer.failure_start_observation(peers.PeerFailure("android_host_start_failed")) is None
@@ -99,12 +117,25 @@ def test_start_observer_failure_cannot_replace_primary_or_prevent_cleanup(monkey
     {"stage": "PRIVATE"}, {"exception_kind": []}, {"error_code": "PRIVATE"},
     {"rollback_exception_kind": True}, {"private": "PRIVATE"},
     {"transport": {}}, {"rollback_lifecycle": {}}, {"v": True},
+    {"testhost_io": {}}, {"request_ordinal": 1},
 ])
 def test_start_snapshot_rejects_malformed_or_private_fields(change):
     from native_interop_android_start import start_failure_snapshot
     value = {"v": 1, "stage": "initialize", "exception_kind": "peer_failure",
         "error_code": "internal", "rollback_exception_kind": None, **change}
     assert start_failure_snapshot(value) is None
+
+
+def test_bad_initialize_testhost_dto_cannot_erase_primary_start_attribution():
+    from native_interop_android_start import start_observation, start_failure_snapshot
+
+    original = peers.PeerFailure("peer_closed")
+    selected = start_observation("initialize", original, peer_failure=True,
+                                 testhost_io={"private": "PRIVATE"}, request_ordinal=2)
+    assert selected["stage"] == "initialize" and selected["error_code"] == "peer_closed"
+    assert "testhost_io" not in selected and "PRIVATE" not in json.dumps(selected)
+    assert start_failure_snapshot({**selected, "request_ordinal": 2,
+                                   "testhost_io": {"private": "PRIVATE"}}) is None
 
 
 def test_start_projection_rejects_throwing_or_unrelated_provider():

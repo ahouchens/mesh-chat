@@ -1,6 +1,8 @@
 """Bounded testhost I/O attribution never changes an Android controller failure."""
 
 from pathlib import Path
+from io import BytesIO
+import queue
 import subprocess
 import sys
 import time
@@ -11,6 +13,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
 import native_interop_testhost_io_observation as io
+import native_interop_peers as peers
 from native_interop_peers import AndroidPeer, PeerFailure
 from native_interop_controller import android_control_failure
 
@@ -23,7 +26,7 @@ def presence(device="device", forward="present", app_process="one"):
     return {"device": device, "forward": forward, "app_process": app_process}
 
 
-def test_kotlin_emits_only_the_exact_fixed_status_format_and_snapshot_markers():
+def test_kotlin_emits_only_the_exact_fixed_status_format_and_request_markers():
     source = (ROOT / "plugins/tauri-plugin-mesh-runtime/android/src/androidTest/java/com/meshchat/runtime"
               / "PackagedNativeInteropBoundaryTest.kt").read_text(encoding="utf-8")
     assert '"v1|$ordinal|$stage|$category|$elapsed|$capped"' in source
@@ -37,6 +40,9 @@ def test_kotlin_emits_only_the_exact_fixed_status_format_and_snapshot_markers():
         assert io.event(line(17, "read_header", category))["category"] == category
     assert '"mesh_interop_start_ordinal"' in source
     assert '"mesh_interop_start_ordinal", str(self._sequence + 1)' in (ROOT / "scripts/native_interop_peers.py").read_text()
+    assert 'reportIo(ordinal, "initialize_dispatch_enter", "none", started)' in source
+    assert 'reportIo(ordinal, "initialize_return", "none", started)' in source
+    assert 'if (initializeRequest) reportIo(ordinal, "initialize_flush_complete", "none", started)' in source
     for stage in io.STAGES:
         assert f'"{stage}"' in source
         assert io.event(line(17, stage)) == {"ordinal": 17, "stage": stage, "category": "none",
@@ -74,7 +80,7 @@ def test_ordinal_window_retains_current_and_one_predecessor_and_late_status_is_f
 def test_failure_snapshot_rejects_oversize_and_bad_shape():
     row = {"last": {"ordinal": 4, "stage": "read_header", "category": "eof", "elapsed_ms": 0,
                     "elapsed_capped": False},
-           "snapshot_dispatch_enter": False, "snapshot_flush_complete": False}
+           **dict.fromkeys(io.MILESTONES, False)}
     unknown = presence("unknown", "unknown", "unknown")
     assert io.failure_snapshot({"statuses": [row], **unknown}, 4)
     assert io.failure_snapshot({"statuses": [row] * 3, **unknown}, 4) is None
@@ -85,6 +91,24 @@ def test_failure_snapshot_rejects_oversize_and_bad_shape():
     assert io.snapshot({**row["last"], "elapsed_ms": 120001}) is None
     assert io.snapshot({**row["last"], "elapsed_capped": True}) is None
     assert io.snapshot(io.event(line(4, "read_header", ms=120000, capped=1))) is not None
+
+
+def test_initialize_milestones_are_bounded_and_ordered():
+    status = io.TesthostIoStatus()
+    status.observe(line(2, "initialize_dispatch_enter"))
+    before = status.matching(2)
+    assert before[0]["initialize_dispatch_enter"] is True
+    assert before[0]["initialize_return"] is False
+    status.observe(line(2, "initialize_return"))
+    status.observe(line(2, "initialize_flush_complete"))
+    after = status.matching(2)
+    assert after[0]["initialize_flush_complete"] is True
+    assert io.failure_snapshot({"statuses": after, **presence()}, 2) is not None
+    assert io.failure_snapshot({"statuses": [{**after[0], "initialize_dispatch_enter": False}],
+                                **presence()}, 2) is None
+    assert io.failure_snapshot({"statuses": [{**after[0], "initialize_return": False}],
+                                **presence()}, 2) is None
+    assert io.event(line(2, "initialize_return", "PRIVATE")) is None
 
 
 def subprocess_adb(monkeypatch, replies):
@@ -229,6 +253,7 @@ def test_broken_presence_observer_does_not_erase_transport_eof(monkeypatch):
     peer.process = SimpleNamespace(poll=lambda: None)
     peer.forward = "12345"
     peer.socket = SimpleNamespace(settimeout=lambda _: None, sendall=lambda _: None, recv=lambda _: b"")
+    peer.system_observation = SimpleNamespace(snapshot=lambda: {"private": "PRIVATE"})
     with pytest.raises(PeerFailure) as caught:
         peer.core("application.snapshot")
     observed = android_control_failure(peer, SimpleNamespace(process=None), caught.value)["android_control_failure"]
@@ -237,6 +262,8 @@ def test_broken_presence_observer_does_not_erase_transport_eof(monkeypatch):
     assert observed["testhost_io"]["device"] == "unknown"
     assert observed["testhost_io"]["forward"] == "unknown"
     assert observed["testhost_io"]["app_process"] == "unknown"
+    assert observed["testhost_io"]["pre_probe"]["emulator_system"] is None
+    assert "PRIVATE" not in str(observed)
 
 
 def test_status_arriving_during_presence_sample_is_retained(monkeypatch):
@@ -255,3 +282,75 @@ def test_status_arriving_during_presence_sample_is_retained(monkeypatch):
     assert observed["forward"] == "present"
     assert observed["statuses"][0]["snapshot_dispatch_enter"] is True
     assert observed["statuses"][0]["snapshot_flush_complete"] is True
+
+
+def test_initialize_eof_preserves_owned_state_before_probe_changes_it(monkeypatch):
+    from native_interop_android_system import AndroidSystemObservation
+
+    peer = AndroidPeer(b"k" * 32)
+    peer.forward = "12345"
+    peer.socket = SimpleNamespace(settimeout=lambda _: None, sendall=lambda _: None, recv=lambda _: b"")
+    states = {"client": None, "server": None, "emulator": None}
+    peer.process = SimpleNamespace(poll=lambda: states["client"])
+    peer.adb_server_process = SimpleNamespace(poll=lambda: states["server"])
+    peer.emulator_process = SimpleNamespace(poll=lambda: states["emulator"])
+    peer._reader = SimpleNamespace(is_alive=lambda: True)
+    peer.system_observation = AndroidSystemObservation()
+    peer._testhost_io.observe(line(1, "initialize_dispatch_enter"))
+
+    def sample(*_):
+        states.update(client=255, server=1, emulator=1)
+        peer._testhost_io.observe(line(1, "initialize_return"))
+        peer._testhost_io.observe(line(1, "initialize_flush_complete"))
+        peer.system_observation.consume(BytesIO(b"Kernel panic - not syncing: PRIVATE\n"))
+        return presence("offline", "unknown", "unknown")
+
+    monkeypatch.setattr("native_interop_peers.control_path_presence", sample)
+    with pytest.raises(PeerFailure, match="peer_closed") as caught:
+        peer._request("initialize", {})
+    observed = peer.failure_testhost_observation(caught.value)
+    assert observed["device"] == "offline"
+    assert observed["statuses"][0]["initialize_flush_complete"] is True
+    pre = observed["pre_probe"]
+    assert pre["instrumentation_process"] == {"state": "running", "exit_status": None}
+    assert pre["adb_server_process"] == {"state": "running", "exit_status": None}
+    assert pre["emulator_process"] == {"state": "running", "exit_status": None}
+    assert pre["instrumentation_reader"] == "alive"
+    assert pre["emulator_system"]["counts"]["kernel_panic"] == 0
+    assert pre["statuses"][0]["initialize_dispatch_enter"] is True
+    assert pre["statuses"][0]["initialize_return"] is False
+    assert peer.failure_transport_observation(caught.value)["process"] == {
+        "state": "exited", "exit_status": 255}
+    assert peer.system_observation.snapshot()["counts"]["kernel_panic"] == 1
+    assert io.failure_snapshot({**observed, "pre_probe": {**pre, "private": "PRIVATE"}}, 1) is None
+    assert io.failure_snapshot({**observed, "pre_probe": {
+        **pre, "adb_server_process": {"state": "exited", "exit_status": True}}}, 1) is None
+
+
+def test_reader_keeps_the_observation_owned_by_its_instrumentation_process(monkeypatch):
+    class Stream:
+        def __init__(self):
+            self.lines = queue.Queue()
+
+        def readline(self, _limit):
+            return self.lines.get(timeout=5)
+
+    stream = Stream()
+    stream.lines.put(b"INSTRUMENTATION_STATUS: mesh_interop_port=12345\n")
+    process = SimpleNamespace(stdout=stream, poll=lambda: None)
+    monkeypatch.setattr(peers.subprocess, "Popen", lambda *a, **k: process)
+    monkeypatch.setattr(peers.socket, "create_connection", lambda *a, **k: object())
+    peer = AndroidPeer(b"k" * 32)
+    monkeypatch.setattr(peer, "_adb", lambda *a: "4567")
+    monkeypatch.setattr(peer, "_request", lambda *a, **k: {})
+    monkeypatch.setattr(peer, "inventory", lambda: {})
+    monkeypatch.setattr(peer, "_initial_binding", lambda _: None)
+    assert peer.start() == {}
+    original = peer._testhost_io
+    peer._testhost_io = io.TesthostIoStatus()
+    stream.lines.put(line(1, "initialize_dispatch_enter"))
+    stream.lines.put(b"")
+    peer._reader.join(timeout=2)
+    assert not peer._reader.is_alive()
+    assert original.matching(1)[0]["initialize_dispatch_enter"] is True
+    assert peer._testhost_io.matching(1) == []

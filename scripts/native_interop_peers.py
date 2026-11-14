@@ -404,6 +404,9 @@ class AndroidPeer:
         self._instrumentation_status = _instrumentation_status()
         self._testhost_io = TesthostIoStatus()
         self._testhost_failure = None
+        self._reader = None
+        self.adb_server_process = None
+        self.emulator_process = None
         self.processes_started, self.clean_exits, self.forced_exits = 0, 0, 0
 
     def _adb(self, *args):
@@ -456,6 +459,7 @@ class AndroidPeer:
         self._instrumentation_status = _instrumentation_status()
         self._testhost_io = TesthostIoStatus()
         self._testhost_failure = None
+        self._reader = None
         self._observe_system_phase("peer_start")
         nonce = os.urandom(32).hex()
         self.process = subprocess.Popen([self.adb, "shell", "am", "instrument", "-w", "-r",
@@ -466,13 +470,14 @@ class AndroidPeer:
         ports = queue.Queue(maxsize=2)
         process = self.process
         status = self._instrumentation_status
+        testhost_io = self._testhost_io
         def reader():
             try:
                 while line := process.stdout.readline(8193):
                     if status is not None:
                         try: status.observe(line)
                         except Exception: pass  # Status observation cannot affect port admission.
-                    try: self._testhost_io.observe(line)
+                    try: testhost_io.observe(line)
                     except Exception: pass  # Optional testhost status cannot affect the reader.
                     if len(line) > 8192:
                         continue
@@ -520,7 +525,9 @@ class AndroidPeer:
             from native_interop_android_start import start_observation
             observed = start_observation(stage, error, peer_failure=isinstance(error, PeerFailure),
                 transport=self.failure_transport_observation(error),
-                lifecycle=self.failure_lifecycle_observation(error))
+                lifecycle=self.failure_lifecycle_observation(error),
+                testhost_io=self.failure_testhost_observation(error) if stage == "initialize" else None,
+                request_ordinal=self._sequence if stage == "initialize" else None)
         except Exception:
             pass  # Failure observation cannot prevent rollback.
         try:
@@ -589,6 +596,24 @@ class AndroidPeer:
                 raise
         except PeerFailure as error:
             if error.code == "peer_closed" and eof is not None:
+                pre_probe = None
+                try:
+                    from native_interop_testhost_io_observation import pre_probe_snapshot, reader_observation
+                    from native_interop_android_system import system_snapshot
+                    system = getattr(self, "system_observation", None)
+                    try: cached_system = system_snapshot(system.snapshot()) if system is not None else None
+                    except Exception: cached_system = None
+                    pre_probe = pre_probe_snapshot({
+                        "instrumentation_process": process_observation(self.process),
+                        "instrumentation_reader": reader_observation(self._reader),
+                        "adb_server_process": process_observation(self.adb_server_process),
+                        "emulator_process": process_observation(self.emulator_process),
+                        "instrumentation": self._instrumentation_status.snapshot(),
+                        "emulator_system": cached_system,
+                        "statuses": self._testhost_io.matching(self._sequence),
+                    }, self._sequence)
+                except Exception:
+                    pass  # Optional pre-probe evidence cannot change the EOF.
                 try:
                     presence = control_path_presence(self.adb, self.forward, self.APP) if eof[0] == "header" else {
                         "device": "unknown", "forward": "unknown", "app_process": "unknown"}
@@ -612,7 +637,8 @@ class AndroidPeer:
                     self._transport_failure = None
                 try:
                     statuses = self._testhost_io.matching(self._sequence)
-                    io = failure_snapshot({"statuses": statuses, **presence}, self._sequence)
+                    io = failure_snapshot({"statuses": statuses, **presence,
+                        **({"pre_probe": pre_probe} if pre_probe is not None else {})}, self._sequence)
                     if io is not None:
                         self._testhost_failure = (error, identifier, io)
                 except Exception:

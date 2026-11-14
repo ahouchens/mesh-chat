@@ -167,6 +167,7 @@ def run_attempt(index, emulator_factory=AndroidEmulator, peer_factory=AndroidPee
         mark("peer_start")
         peer = peer_factory(os.urandom(32))
         peer.system_observation = emulator.observation
+        peer.emulator_process = emulator.process
         first_inventory = peer.start()
         mark("initial_profile")
         profile, identity = authority(peer)

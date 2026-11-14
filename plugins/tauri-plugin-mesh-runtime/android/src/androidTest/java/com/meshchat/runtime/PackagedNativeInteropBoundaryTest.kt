@@ -80,6 +80,7 @@ class PackagedNativeInteropBoundaryTest {
                         val action = frame.getString("action")
                         val payload = frame.getJSONObject("payload")
                         val snapshotRequest = action == "core" && payload.opt("operation") == "application.snapshot"
+                        val initializeRequest = action == "initialize"
                         stage = "dispatch"
                         if (snapshotRequest) reportIo(ordinal, "snapshot_dispatch_enter", "none", started)
                         val diagnosticRequest = action == "inspect" && payload.opt("command") == "qualification.network_diagnostic"
@@ -104,7 +105,10 @@ class PackagedNativeInteropBoundaryTest {
                                     val request = JSONObject().put("profile_dir", directory!!.absolutePath)
                                         .put("vault_key", payload.getString("vault_key")).put("display_name", "Mesh qualification")
                                         .put("platform", "android")
-                                    reply = JSONObject(qualification.callAttr("android_initialize", request.toString()).toString())
+                                    reportIo(ordinal, "initialize_dispatch_enter", "none", started)
+                                    val initializedReply = qualification.callAttr("android_initialize", request.toString()).toString()
+                                    reportIo(ordinal, "initialize_return", "none", started)
+                                    reply = JSONObject(initializedReply)
                                     initialized = reply.optBoolean("ok")
                                 }
                                 "core" -> {
@@ -207,6 +211,7 @@ class PackagedNativeInteropBoundaryTest {
                         stage = "flush"
                         output.flush()
                         if (snapshotRequest) reportIo(ordinal, "snapshot_flush_complete", "none", started)
+                        if (initializeRequest) reportIo(ordinal, "initialize_flush_complete", "none", started)
                         if (!authenticated) error("Controller authentication failed")
                         } catch (failure: Throwable) {
                             val category = when (failure) {

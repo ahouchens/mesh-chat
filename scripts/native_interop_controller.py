@@ -1643,6 +1643,8 @@ def main(*, gateway=None):
         else:
             peer = AndroidPeer(key)
             peer.system_observation = getattr(emulator, "observation", None)
+            peer.emulator_process = getattr(emulator, "process", None)
+            peer.adb_server_process = getattr(gateway, "server", None)
         transport = GithubArtifacts(context, args.role, ROOT / ".test-tmp/native-interop-rendezvous")
         rendezvous = Rendezvous(context, args.role)
         controller = Controller(args.role, peer, transport, rendezvous, context, workload=args.workload,
